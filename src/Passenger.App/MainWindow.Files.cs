@@ -464,9 +464,12 @@ public partial class MainWindow
         return true;
     }
 
+    /// <summary>How long a delete waits for the design-time builds of the projects it takes to end.</summary>
+    private static readonly TimeSpan BuildsGoing = TimeSpan.FromSeconds(60);
+
     /// <summary>Deletes a file or folder to the Trash, once asked (unless it was already); its open files are saved first,
     /// so the Trash and Local History have what the editor showed, and close once it is gone, or keep their tabs when it
-    /// could not go.</summary>
+    /// could not go. The design-time builds of the projects in it are held off, those running waited out.</summary>
     public async Task<bool> DeleteAsync(string path, bool asked = false)
     {
         string what = Path.GetFileName(path);
@@ -485,6 +488,21 @@ public partial class MainWindow
         }
         History.LocalHistory? keeping = session.LocalHistory;
         History.HistoryDeletion? taken = keeping is null ? null : await keeping.CaptureAsync(path);
+        // A design-time build of a project in it, still writing its obj/, would make the folder again once it had gone.
+        (IDisposable held, Task built) = session.DesignTimeBuilds.HoldOff(path);
+        using IDisposable releasing = held;
+        if (!built.IsCompleted)
+        {
+            status.Text = $"Waiting for the design-time build of {what} to end before it goes to the Trash…";
+            try
+            {
+                await built.WaitAsync(BuildsGoing);
+            }
+            catch (TimeoutException)
+            {
+                // Moved anyway: what the build writes after makes only build output there again.
+            }
+        }
         try
         {
             Trash.Move(path);

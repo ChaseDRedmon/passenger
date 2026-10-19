@@ -251,16 +251,46 @@ public sealed class ProjectBuilds
         queued.Add(path);
     }
 
+    /// <summary>The folders about to go (to the Trash) whose projects' builds are held off (<see cref="HoldOff"/>).</summary>
+    private readonly List<string> heldOff = [];
+
+    /// <summary>Holds off the design-time builds of the projects under a folder about to go until disposed, and is done
+    /// (<c>Built</c>) once those already running have ended, each landing as its builds end: MSBuild writes a build's obj/
+    /// as it goes, so one still running would make the folder again once it had gone.</summary>
+    public (IDisposable Held, Task Built) HoldOff(string going)
+    {
+        UiThread.Check();
+        heldOff.Add(going);
+        Task built = Task.WhenAll([.. waiting.Where(w => PathNames.Within(w.Key, going) && !queued.Contains(w.Key)).Select(w => (Task)w.Value.Task)]);
+        return (new HeldOff(this, going), built);
+    }
+
+    private sealed class HeldOff(ProjectBuilds builds, string going) : IDisposable
+    {
+        private bool released;
+
+        public void Dispose()
+        {
+            if (!released)
+            {
+                released = true;
+                builds.heldOff.Remove(going);
+                // Those it held build now: gone, they fail to load and write nothing.
+                builds.Pump();
+            }
+        }
+    }
+
     /// <summary>Has the host build what is queued, all of it at once, the next round once this one ends.</summary>
     private void Pump()
     {
-        if (building || queued.Count == 0 || folder is null)
+        if (building || folder is null || queued.Count(p => !heldOff.Any(h => PathNames.Within(p, h))) is 0)
         {
             return;
         }
         building = true;
-        List<string> round = [.. queued];
-        queued.Clear();
+        List<string> round = [.. queued.Where(p => !heldOff.Any(h => PathNames.Within(p, h)))];
+        queued.RemoveAll(round.Contains);
         Dictionary<string, string> properties = new(solution(), StringComparer.OrdinalIgnoreCase)
         {
             // What Roslyn's server gives its own build host, so Razor's generated C# is in the builds as it would be there.

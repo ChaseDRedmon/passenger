@@ -129,7 +129,7 @@ public sealed class ExplorerFilesTests : IDisposable
         Ui.WaitFor(() => Finished(window, "Moved"), "the project's folder to go");
         Assert.Equal("Moved Lib to the Trash", window.Status);
         Assert.Equal(["Remove Project", "Delete Project Files"], asked);
-        Assert.False(Directory.Exists(library), "The project's own folder stayed after the second question was answered");
+        Assert.False(Directory.Exists(library), $"The project's own folder stayed after the second question was answered, holding [{string.Join(", ", Left(library))}]");
         Assert.True(File.Exists(Path.Combine(trash, "Lib", "Lib.csproj")), "The project's folder is not in the Trash");
         string left = File.ReadAllText(solution);
         Assert.Contains("Shop.csproj", left, StringComparison.Ordinal);
@@ -281,6 +281,10 @@ public sealed class ExplorerFilesTests : IDisposable
     }
 
     /// <summary>Whether the status bar says the work ended, as it does or with why it could not.</summary>
+    /// <summary>What a folder holds, by its paths inside it, for a failure to name.</summary>
+    private static IEnumerable<string> Left(string path) =>
+        Directory.Exists(path) ? Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(path, p)) : [];
+
     private static bool Finished(MainWindow window, string done) =>
         window.Status is { } status && (status.StartsWith(done, StringComparison.Ordinal) || status.Contains("could not", StringComparison.Ordinal));
 
