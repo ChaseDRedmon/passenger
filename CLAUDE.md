@@ -560,8 +560,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
   `LiveTreeController.Watching`; `debug_state` carries `bindingValues`; `hot_reload` is Apply Hot Reload Changes
   (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word); the headless `--mcp` IDE
-  keeps the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `McpTests.Actions`
-  holds `ide_actions` to every `AppActions` id. The tools reach the
+  starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `McpTests.Actions`
+  holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
+  the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
+  range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
+  `find_in_files`/`replace_in_files` are the window's own search in its scopes and masks once `FileIndex.IsWalking` is
+  false; the `local_history` tools wait for `LocalHistory.IsRecording`, their revert `RevertLocalHistoryAsync`;
+  `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `build_output` the Build
+  console, and `profile` takes `attach`. The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them
   three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
