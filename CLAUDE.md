@@ -96,7 +96,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Programs` and `ShellEnvironment` find the tools as the login shell would; `PathNames` makes paths canonical
   (`realpath`, or `GetFinalPathNameByHandle` on Windows) and answers `IsUnder` for every "is this inside that folder".
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
-  thread-safe snapshot), `TextDocument` (undo, change events in LSP order), carets
+  thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
+  `TextEditing.MapOffset`/`MapRange`/`MapThrough` carry an offset through a key's edits by halving: pass `e.Edits` as
+  it came, not a copy), carets
   (`SelectionSet`) and every editing command as a pure function to an `EditPlan`. `MarkupIndent` is Enter's indent in
   XAML, MSBuild files, XML and HTML, as Rider's: in after a start tag, the end tag split onto its own line, under the
   first attribute inside a tag, HTML's void elements known and its optional end tags closed as HTML's parser closes
@@ -197,7 +199,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
   client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
-  goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Roslyn reads a column past a line's
+  goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Requests resume off the caller's
+  thread inside Passenger.Lsp (`ConfigureAwait(false)`), and a large answer (completion's list) is read in
+  `LspDocument` before its caller resumes, so the UI thread never decodes it. Roslyn reads a column past a line's
   end as the line's end, so no change is sent between a "\r\n"'s halves: `LspDocument.Unsplit` takes in the half
   beside it and puts it back. `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
@@ -410,7 +414,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   tool window and the keys it takes ahead of the IDE's.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
-  and the bottom panel's Build, Run and Problems windows. Every console (Run, Build, Debug, the profiler's) is written
+  and the bottom panel's Build, Run and Problems windows (Problems' File tab lists markers moved by keys once typing
+  pauses, 250 ms, and fresh markers for the text already shown at once). Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
   Rider's 1024 KB, and what is typed into it sent to the program. A run configuration is data (`RunConfiguration`: the
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
@@ -448,7 +453,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `TestOutcome.Attachments` is read from VSTest's `TestResult.Attachments` and the platform's `attachments.N.uri`/
   `display-name` properties; `ToolWindows/TestFramesStrip` shows every picture attachment over the details, and
   `FrameViewer` shows one at its size with zoom.
-- `src/Passenger.App/Navigation`: Recent Files and the Go to popups, `NavigationHistory` (Back and Forward, the places
+- `src/Passenger.App/Navigation`: Recent Files and the Go to popups (Go to File scores every file on every key on the
+  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order),
+  `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
   `RecentLocationsPopup`; `Navigator` records the places visited and edited. Base and Derived Symbols use the
   server's type hierarchy, references and implementations, since Roslyn has no go-to-base request
@@ -773,7 +780,9 @@ own; a test says what a person would see or get ("an edit saved keeps the file's
 "typing never loses a word's colour"), and its failure message names the consequence. The long
 random editing session checks every key against a plain string model, which is what keeps the rope,
 the line index and undo honest; keep it passing rather than narrowing it; it also runs with soft wrap on, moves checked against what a move among rows
-must do and rows against a fresh editor's. One test of something a person sees or
+must do and rows against a fresh editor's. Performance is held by what the UI thread allocates, compared between a
+small case and a large one, rather than by a time where a time is noisy; to see where the UI thread's time goes,
+attach Passenger's own profiler to the test process (`ProfilingSession.AttachAsync(Environment.ProcessId, …)`). One test of something a person sees or
 gets is worth more than many that restate the code they call: a test that only checks one type or function on its own
 is deleted, and what it covered tested through the window instead. `BannedSymbols.txt` makes that a build error
 (RS0030) for the internals tests used to drive directly (the terminal's emulator, a Roslyn or profiling session started
