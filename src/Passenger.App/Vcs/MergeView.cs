@@ -740,8 +740,8 @@ public sealed class MergeView : DockPanel
                     path.CubicBezierTo(new Point(width / 2, rightBottom), new Point(width / 2, leftBottom), new Point(0, leftBottom));
                     path.EndFigure(true);
                 }
-                IBrush line = Find(edge, Brushes.Gray);
-                context.DrawGeometry(Find(tint, Brushes.Gray), new Pen(line, 1), band);
+                IBrush line = Find(edge, Brushes.Transparent);
+                context.DrawGeometry(Find(tint, Brushes.Transparent), new Pen(line, 1), band);
                 Pen pen = new(line, 1.6, lineCap: PenLineCap.Round);
                 if (Icon(i, ignore: false) is { } arrow)
                 {

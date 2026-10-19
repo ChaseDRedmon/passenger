@@ -73,7 +73,7 @@ public sealed class FrameChart : Control
         double[] totals = [.. frames.Select(Total).Order()];
         double span = Math.Max(Budget * 2, Math.Min(totals[^1], UiFrames.Percentile(totals, 0.9) * 1.5));
         double scale = (bottom - top) / span;
-        IBrush muted = Brush("Passenger.TextMuted", Brushes.Gray);
+        IBrush muted = Brush("Passenger.TextMuted", Brushes.Transparent);
         Typeface face = new("Inter");
 
         // The 60 Hz budget, and the tallest frame's time.
@@ -82,10 +82,10 @@ public sealed class FrameChart : Control
         Label(context, "16.7 ms", budget, face, muted);
         Label(context, span >= 1000 ? $"{span / 1000:0.0} s" : $"{span:0} ms", top, face, muted);
 
-        IBrush measure = Brush("Passenger.Graph.0", Brushes.SteelBlue);
-        IBrush arrange = Brush("Passenger.Graph.1", Brushes.SeaGreen);
-        IBrush record = Brush("Passenger.Graph.2", Brushes.Orange);
-        IBrush composite = Brush("Passenger.Graph.3", Brushes.MediumPurple);
+        IBrush measure = Brush("Passenger.Graph.0", Brushes.Transparent);
+        IBrush arrange = Brush("Passenger.Graph.1", Brushes.Transparent);
+        IBrush record = Brush("Passenger.Graph.2", Brushes.Transparent);
+        IBrush composite = Brush("Passenger.Graph.3", Brushes.Transparent);
         for (int i = 0; i < frames.Count; i++)
         {
             UiFrame frame = frames[i];
@@ -99,11 +99,11 @@ public sealed class FrameChart : Control
             if (Total(frame) > span)
             {
                 // Cut short: its top is the scale's, marked.
-                context.FillRectangle(Brush("Passenger.Graph.4", Brushes.IndianRed), new Rect(x, top - 3, Bar, 2));
+                context.FillRectangle(Brush("Passenger.Graph.4", Brushes.Transparent), new Rect(x, top - 3, Bar, 2));
             }
             if (chosen == i)
             {
-                context.DrawRectangle(null, new Pen(Brush("Passenger.Accent", Brushes.SteelBlue), 1.5), new Rect(x - 1.5, top - 5, Bar + 3, bottom - top + 7));
+                context.DrawRectangle(null, new Pen(Brush("Passenger.Accent", Brushes.Transparent), 1.5), new Rect(x - 1.5, top - 5, Bar + 3, bottom - top + 7));
             }
 
             void Stack(IBrush brush, double ms, double opacity)

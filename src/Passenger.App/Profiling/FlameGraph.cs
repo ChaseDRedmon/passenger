@@ -96,7 +96,7 @@ public sealed class FlameGraph : Control
     private void Draw(DrawingContext context, CallNode node, Rect bar, bool dim)
     {
         bars.Add((bar, node));
-        IBrush fill = Brush($"Passenger.Graph.{Colour(node)}", Brushes.SteelBlue);
+        IBrush fill = Brush($"Passenger.Graph.{Colour(node)}", Brushes.Transparent);
         using (context.PushOpacity(dim ? 0.3 : 0.55))
         {
             context.FillRectangle(fill, bar.Deflate(new Thickness(0, 0, 1, 0)));
@@ -105,7 +105,7 @@ public sealed class FlameGraph : Control
         {
             return;
         }
-        FormattedText label = new(Short(node.Name), CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Inter"), 11, Brush("Passenger.Text", Brushes.White))
+        FormattedText label = new(Short(node.Name), CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Inter"), 11, Brush("Passenger.Text", Brushes.Transparent))
         {
             MaxTextWidth = Math.Max(1, bar.Width - 8),
             MaxLineCount = 1,

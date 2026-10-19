@@ -1,5 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:app="using:Passenger.App"
              x:Class="Passenger.App.App"
              Name="Passenger"
              RequestedThemeVariant="Dark">
@@ -7,6 +8,8 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="avares://Passenger/Theme/Tokens.axaml" />
+                <!-- Fluent's own keys as the tokens of whichever theme is in force (Themes lays Harbour after these). -->
+                <app:FluentKeys />
                 <ResourceInclude Source="avares://Passenger/Theme/Icons.axaml" />
                 <ResourceInclude Source="avares://Passenger/Theme/ControlThemes.axaml" />
             </ResourceDictionary.MergedDictionaries>

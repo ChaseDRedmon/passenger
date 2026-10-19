@@ -35,12 +35,12 @@ public sealed class TerminalView : Control
     private (long Line, int Column)? anchor;
     private (long Line, int Column)? active;
     private bool selecting;
-    private IBrush foreground = Brushes.White;
-    private IBrush background = Brushes.Black;
-    private IBrush cursor = Brushes.White;
-    private IBrush selection = Brushes.SteelBlue;
-    private IBrush link = Brushes.CornflowerBlue;
-    private IBrush linkUnderline = Brushes.SteelBlue;
+    private IBrush foreground = Brushes.Transparent;
+    private IBrush background = Brushes.Transparent;
+    private IBrush cursor = Brushes.Transparent;
+    private IBrush selection = Brushes.Transparent;
+    private IBrush link = Brushes.Transparent;
+    private IBrush linkUnderline = Brushes.Transparent;
 
     /// <summary>Where the pointer is over the view, for a link to underline as Cmd or Ctrl goes down; null when it is not.</summary>
     private Point? pointer;
@@ -253,11 +253,11 @@ public sealed class TerminalView : Control
     private void Refresh()
     {
         palette.Clear();
-        foreground = Find("Passenger.Terminal.Foreground") ?? Brushes.White;
-        background = Find("Passenger.Terminal.Background") ?? Brushes.Black;
+        foreground = Find("Passenger.Terminal.Foreground") ?? Brushes.Transparent;
+        background = Find("Passenger.Terminal.Background") ?? Brushes.Transparent;
         cursor = Find("Passenger.Terminal.Cursor") ?? foreground;
-        selection = Find("Passenger.Terminal.Selection") ?? Brushes.SteelBlue;
-        link = Find("Passenger.Syntax.Link") ?? Brushes.CornflowerBlue;
+        selection = Find("Passenger.Terminal.Selection") ?? Brushes.Transparent;
+        link = Find("Passenger.Syntax.Link") ?? Brushes.Transparent;
         linkUnderline = Find("Passenger.Editor.LinkUnderline") ?? link;
         Measure();
         FitSize();
@@ -268,7 +268,7 @@ public sealed class TerminalView : Control
 
     private void Measure()
     {
-        FormattedText probe = new("MMMMMMMMMM", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(FontFamily), FontSize, Brushes.White);
+        FormattedText probe = new("MMMMMMMMMM", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(FontFamily), FontSize, Brushes.Transparent);
         cellWidth = probe.WidthIncludingTrailingWhitespace / 10;
         cellHeight = Math.Ceiling(FontSize * 1.25);
         glyphs = new Typeface(FontFamily).GlyphTypeface.CharacterToGlyphMap;

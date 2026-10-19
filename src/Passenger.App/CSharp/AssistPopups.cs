@@ -100,7 +100,7 @@ internal sealed partial class InfoCard : Border
         .Replace("&amp;", "&");
 
     internal static IBrush Brush(string key) =>
-        Application.Current is { } app && app.TryFindResource(key, app.ActualThemeVariant, out object? value) && value is IBrush brush ? brush : Brushes.Gray;
+        Application.Current is { } app && app.TryFindResource(key, app.ActualThemeVariant, out object? value) && value is IBrush brush ? brush : Brushes.Transparent;
 
     /// <summary>A line without its images, and without the space one began it with.</summary>
     private static string Imageless(string line)

@@ -9,6 +9,9 @@ using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Styling;
+using System.Text.RegularExpressions;
+using Avalonia.Markup.Xaml.Styling;
+using Avalonia.Themes.Fluent;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Settings;
@@ -710,6 +713,246 @@ public sealed class UiRulesTests : IDisposable
             || k.StartsWith("Passenger.Syntax.", StringComparison.Ordinal) || k.StartsWith("Passenger.SyntaxStyle.", StringComparison.Ordinal) || k.StartsWith("Passenger.Diff.", StringComparison.Ordinal))];
         Assert.Equal(scheme, Keys(rider, ThemeVariant.Dark));
         Assert.Equal(scheme, Keys(rider, ThemeVariant.Light));
+        // A theme is tokens alone: Fluent's own keys are FluentKeys.axaml's, once for every theme.
+        foreach ((string file, ResourceDictionary theme) in (ReadOnlySpan<(string, ResourceDictionary)>)[("Tokens.axaml", passenger), ("Harbour.axaml", harbour), ("RiderScheme.axaml", rider)])
+        {
+            string[] others = [.. theme.Keys.Concat(theme.ThemeDictionaries.Values.SelectMany(v => ((ResourceDictionary)v).Keys)).Select(k => k.ToString()!)
+                .Where(k => !k.StartsWith("Passenger.", StringComparison.Ordinal)).Distinct().Order(StringComparer.Ordinal)];
+            Assert.True(others.Length == 0, $"{file} gives {string.Join(", ", others)}, which are not Passenger's tokens: name Fluent's keys once for every theme in FluentKeys.axaml");
+        }
+    }
+
+    /// <summary>Every colour, brush and corner Fluent gives is the look's own token in either look, Dark and Light
+    /// (FluentKeys.axaml), so a control left to Fluent never shows another theme's colours or Fluent's greys: a tooltip, a
+    /// drop-down's list and an unfocused field had Fluent's grey under both themes, each theme mapping Fluent's keys by
+    /// itself. A key is left to Fluent only by the reasons below; an Avalonia update that adds one fails here until it is
+    /// mapped.</summary>
+    [AvaloniaFact]
+    public void Every_colour_and_corner_Fluent_gives_is_the_looks_own_token_dark_and_light()
+    {
+        Application app = Application.Current!;
+        FluentTheme fluent = app.Styles.OfType<FluentTheme>().Single();
+        HashSet<string> keys = new(StringComparer.Ordinal);
+        KeysOf(fluent.Resources, keys);
+        foreach (Styles child in ((IEnumerable<IStyle>)fluent).OfType<Styles>())
+        {
+            KeysOf(child.Resources, keys);
+        }
+        string source = UiSource();
+        List<string> unmapped = [];
+        List<string> wrong = [];
+        List<string> mapped = [];
+        foreach (string key in keys.Order(StringComparer.Ordinal))
+        {
+            object? dark = fluent.TryGetResource(key, ThemeVariant.Dark, out object? d) ? d : null;
+            object? light = fluent.TryGetResource(key, ThemeVariant.Light, out object? l) ? l : null;
+            if (!Painted(dark) && !Painted(light))
+            {
+                continue;
+            }
+            if (Clear(dark) && Clear(light))
+            {
+                continue;
+            }
+            if (LeftToFluent(key, dark ?? light, source) is { } why)
+            {
+                Assert.True(!why.StartsWith('!'), $"{key} is left to Fluent, but {why[1..]}");
+                continue;
+            }
+            if (!FluentKeys.Tokens.TryGetValue(key, out string? token))
+            {
+                unmapped.Add(key);
+                continue;
+            }
+            mapped.Add(key);
+        }
+        Assert.True(unmapped.Count == 0, $"Fluent gives {unmapped.Count} keys Passenger's controls can reach that no theme answers for, each showing Fluent's own colour "
+            + $"under every look: name each in FluentKeys.axaml as the token it is, or say in this test why no control of Passenger's reads it:\n{string.Join("\n", unmapped)}");
+        foreach (Look look in (Look[])[Look.Passenger, Look.Harbour])
+        {
+            using IDisposable worn = Wearing(look);
+            foreach (ThemeVariant variant in (ThemeVariant[])[ThemeVariant.Dark, ThemeVariant.Light])
+            {
+                foreach ((string key, string token) in FluentKeys.Tokens)
+                {
+                    bool has = app.TryGetResource(token, variant, out object? own);
+                    if (!has || !app.TryGetResource(key, variant, out object? found) || !ReferenceEquals(found, own))
+                    {
+                        wrong.Add($"{look} {variant}: {key} is not {token}{(has ? "" : ", which the look lacks")}");
+                    }
+                }
+            }
+        }
+        Assert.True(wrong.Count == 0, $"{wrong.Count} of Fluent's keys are not the look's own token:\n{string.Join("\n", wrong)}");
+        string[] stale = [.. FluentKeys.Tokens.Keys.Where(k => !keys.Contains(k)).Order(StringComparer.Ordinal)];
+        Assert.True(stale.Length == 0, $"FluentKeys.axaml names {string.Join(", ", stale)}, which Fluent no longer gives");
+    }
+
+    /// <summary>Why a key Fluent gives is left to it, or null when a control of Passenger's can reach it; a reason that
+    /// does not hold starts with '!'.</summary>
+    private static string? LeftToFluent(string key, object? value, string source)
+    {
+        // Fluent's palette colours, read only into its own brushes as they load: a control asks for a brush (mapped), and
+        // nothing of Passenger's asks for a colour by name.
+        if (value is Color)
+        {
+            return Regex.IsMatch(source, $@"\b{key}\b") ? $"!Passenger's source reads {key}, a colour Fluent's palette gives" : "a palette colour";
+        }
+        // ControlThemes.axaml's scrollbar is Passenger's whole, so Fluent's scrollbar keys are never read.
+        if (key.StartsWith("ScrollBar", StringComparison.Ordinal))
+        {
+            Application.Current!.TryGetResource(typeof(ScrollBar), null, out object? ours);
+            FluentTheme fluent = Application.Current.Styles.OfType<FluentTheme>().Single();
+            fluent.TryGetResource(typeof(ScrollBar), null, out object? theirs);
+            return ReferenceEquals(ours, theirs) ? "!the scrollbar's control theme is Fluent's, not ControlThemes.axaml's" : "Passenger's own scrollbar";
+        }
+        // Fluent's Button.accent alone reads these; Passenger's emphasised button is Button.primary (Shell.axaml).
+        if (key.StartsWith("AccentButton", StringComparison.Ordinal))
+        {
+            return Regex.IsMatch(source, "\"accent\"") ? "!a control of Passenger's takes Fluent's accent class" : "Fluent's accent button";
+        }
+        // Controls Passenger never shows: none of its windows names one.
+        foreach ((string prefix, string[] controls) in Unshown)
+        {
+            if (key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                string? shown = controls.FirstOrDefault(c => Regex.IsMatch(source, $@"\b{c}\b"));
+                return shown is null ? $"no {controls[0]}" : $"!Passenger shows a {shown}, whose {prefix} keys must be named in FluentKeys.axaml";
+            }
+        }
+        return null;
+    }
+
+    private static readonly (string Prefix, string[] Controls)[] Unshown =
+    [
+        ("AutoCompleteBox", ["AutoCompleteBox"]),
+        ("Calendar", ["Calendar", "CalendarDatePicker"]),
+        ("DatePicker", ["DatePicker", "CalendarDatePicker"]),
+        ("TimePicker", ["TimePicker"]),
+        ("DateTime", ["DatePicker", "TimePicker"]),
+        ("ToggleSwitch", ["ToggleSwitch"]),
+        ("Slider", ["Slider"]),
+        ("TreeView", ["TreeView", "TreeViewItem"]),
+        ("TabItem", ["TabItem", "TabControl"]),
+        ("TabControl", ["TabControl"]),
+        ("TabbedPage", ["TabbedPage"]),
+        ("SplitButton", ["SplitButton", "ToggleSplitButton"]),
+        ("SplitView", ["SplitView"]),
+        ("HyperlinkButton", ["HyperlinkButton"]),
+        ("HyperlinkVisited", ["HyperlinkButton"]),
+        ("Expander", ["Expander"]),
+        ("GroupBox", ["GroupBox"]),
+        ("NotificationCard", ["NotificationCard", "WindowNotificationManager"]),
+        ("PipsPager", ["PipsPager"]),
+        ("TableView", ["TableView"]),
+        ("RefreshVisualizer", ["RefreshContainer", "RefreshVisualizer"]),
+        ("NavigationBar", ["NavigationPage", "DrawerPage"]),
+        ("NavigationControl", ["NavigationPage", "DrawerPage"]),
+        ("Flyout", ["Flyout", "FlyoutPresenter"]),
+    ];
+
+    private static bool Painted(object? value) => value is Color or IBrush or CornerRadius;
+
+    private static bool Clear(object? value) => value is ISolidColorBrush { Color.A: 0 } or Color { A: 0 };
+
+    private static void KeysOf(IResourceProvider provider, HashSet<string> keys)
+    {
+        if (provider is ResourceInclude include)
+        {
+            KeysOf(include.Loaded, keys);
+            return;
+        }
+        if (provider is IResourceDictionary dictionary)
+        {
+            keys.UnionWith(dictionary.Keys.OfType<string>());
+            foreach (IThemeVariantProvider variant in dictionary.ThemeDictionaries.Values)
+            {
+                KeysOf(variant, keys);
+            }
+            foreach (IResourceProvider merged in dictionary.MergedDictionaries)
+            {
+                KeysOf(merged, keys);
+            }
+        }
+    }
+
+    /// <summary>No colour and no rounded corner is written outside the theme files (Theme/): each is a token of the look
+    /// in force, so a look draws the whole window. The editor's palette had 54 colours of its own for a token a theme
+    /// left out, the profiler's charts and the terminal named colours. Where a colour is the content's, not the
+    /// window's, it is allowed below, saying why.</summary>
+    [Fact]
+    public void No_colour_or_rounded_corner_is_written_outside_the_theme_files()
+    {
+        Regex colour = new(@"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\b|\bColor\.(?:FromRgb|FromArgb|FromUInt32|FromHsl|FromHsv|Parse)\b|\bColors\.\w+|\bBrushes\.(?!Transparent\b)\w+|new SolidColorBrush\(\s*(?:Color|Colors)\.");
+        Regex corners = new(@"new CornerRadius\(\s*([0-9.,\s]+)\)|CornerRadius\s*=\s*([0-9.]+)\b|CornerRadius=""([0-9.,\s]+)""");
+        List<string> found = [];
+        foreach ((string path, string text) in UiFiles())
+        {
+            string[] lines = text.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                string trimmed = line.TrimStart();
+                if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith("<!--", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                foreach (Match match in colour.Matches(line))
+                {
+                    if (!ContentsColour(path, match.Value))
+                    {
+                        found.Add($"{path}:{i + 1}: {match.Value}");
+                    }
+                }
+                foreach (Match match in corners.Matches(line))
+                {
+                    string numbers = string.Concat(match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value);
+                    if (numbers.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries).Any(n => double.Parse(n, System.Globalization.CultureInfo.InvariantCulture) != 0))
+                    {
+                        found.Add($"{path}:{i + 1}: {match.Value}");
+                    }
+                }
+            }
+        }
+        Assert.True(found.Count == 0, $"{found.Count} colours or rounded corners are written outside Theme/, so one look's would show under another: give each a token "
+            + $"(Tokens.axaml and Harbour.axaml, Dark and Light) or a radius resource, and read that:\n{string.Join("\n", found)}");
+    }
+
+    /// <summary>A colour that is the content's own, not the window's, so no look has a token for it.</summary>
+    private static bool ContentsColour(string path, string match) => (path, match) switch
+    {
+        // The colour being chosen in the colour picker, and the shades of it its square and slider show.
+        (_, _) when path.EndsWith("Xaml/ColourPicker.cs", StringComparison.Ordinal) => true,
+        // A colour written in the XAML being edited, which the editor shows beside it.
+        (_, _) when path.EndsWith("Xaml/XamlService.cs", StringComparison.Ordinal) => true,
+        // A named colour's swatch in XAML completion: the colour the name means.
+        (_, "Color.FromArgb" or "new SolidColorBrush(Color.") when path.EndsWith("CSharp/CodeAssist.cs", StringComparison.Ordinal) => true,
+        // A colour written in the CSS or HTML being edited, as its server reads it.
+        (_, "Color.FromArgb") when path.EndsWith("Web/WebDocument.cs", StringComparison.Ordinal) => true,
+        // A colour the program in the terminal names: xterm's 24-bit colours, its 256-colour cube and grey ramp.
+        (_, "Color.FromRgb" or "new SolidColorBrush(Color.") when path.EndsWith("TerminalView.cs", StringComparison.Ordinal) => true,
+        _ => false,
+    };
+
+    private static string UiSource() => string.Join("\n", UiFiles().Select(f => f.Text));
+
+    /// <summary>The C# and XAML of the projects that draw the window, less the theme files.</summary>
+    private static IEnumerable<(string Path, string Text)> UiFiles()
+    {
+        string root = Passenger.Tests.Debugging.Helpers.Debuggees.Root;
+        foreach (string project in (string[])["Passenger.App", "Passenger.Editor", "Passenger.Terminal", "Passenger.Profiler"])
+        {
+            string folder = Path.Combine(root, "src", project);
+            foreach (string file in Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+            {
+                string relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+                if ((file.EndsWith(".cs", StringComparison.Ordinal) || file.EndsWith(".axaml", StringComparison.Ordinal))
+                    && !relative.Contains("/Theme/", StringComparison.Ordinal) && !relative.Contains("/obj/", StringComparison.Ordinal) && !relative.Contains("/bin/", StringComparison.Ordinal))
+                {
+                    yield return (relative, File.ReadAllText(file));
+                }
+            }
+        }
     }
 
     /// <summary>Wears a theme for a test, Passenger's own put back after it, pass or fail.</summary>

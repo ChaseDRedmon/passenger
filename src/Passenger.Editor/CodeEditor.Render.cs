@@ -943,11 +943,13 @@ public sealed partial class CodeEditor
     }
 
 
-    /// <summary>Every brush the editor paints with, from the theme's <c>Passenger.Editor.*</c> and
-    /// <c>Passenger.Syntax.*</c> resources, or a dark default for one the theme leaves out; and the problem counts'
-    /// icons, the theme's <c>Icon.*</c> geometries, or none.</summary>
+    /// <summary>Every brush the editor paints with, from the look in force's <c>Passenger.Editor.*</c>,
+    /// <c>Passenger.Syntax.*</c> and other tokens, never a colour of its own, so the look always draws the editor (a token
+    /// the theme left out draws nothing, and UiRulesTests fails on it); and the problem counts' icons, the theme's
+    /// <c>Icon.*</c> geometries, or none. Read again as the editor joins a window.</summary>
     private sealed class Palette
     {
+        private static readonly IBrush None = Brushes.Transparent;
         private readonly Dictionary<TokenKind, IBrush> syntax = [];
         private readonly Dictionary<TokenKind, SyntaxStyle> styles = [];
 
@@ -956,62 +958,62 @@ public sealed partial class CodeEditor
 
         public static Palette Default { get; } = new();
 
-        public IBrush Background { get; private init; } = Brush("#1E1F22");
-        public IBrush Gutter { get; private init; } = Brush("#1E1F22");
-        public IBrush Text { get; private init; } = Brush("#BCBEC4");
-        public IBrush LineNumber { get; private init; } = Brush("#4B5059");
-        public IBrush LineNumberCurrent { get; private init; } = Brush("#A1A3AB");
-        public IBrush CurrentLine { get; private init; } = Brush("#26282E");
-        public IBrush Selection { get; private init; } = Brush("#214283");
-        public IBrush SelectionInactive { get; private init; } = Brush("#2C3341");
-        public IBrush Caret { get; private init; } = Brush("#CED0D6");
-        public IBrush Preedit { get; private init; } = Brush("#CED0D6");
-        public IBrush SearchMatch { get; private init; } = Brush("#2F4A36");
-        public IBrush Error { get; private init; } = Brush("#F75464");
-        public IBrush Warning { get; private init; } = Brush("#E5A336");
-        public IBrush Info { get; private init; } = Brush("#8A8F97");
-        public IBrush Faded { get; private init; } = new SolidColorBrush(Color.Parse("#1E1F22"), 0.5).ToImmutable();
-        public IBrush SearchCurrent { get; private init; } = Brush("#4F9A5F");
-        public IBrush Breakpoint { get; private init; } = Brush("#E55765");
-        public IBrush BreakpointLine { get; private init; } = Brush("#3A2627");
-        public IBrush ExecutionLine { get; private init; } = Brush("#253553");
-        public IBrush ExecutionPoint { get; private init; } = Brush("#5E9CF0");
-        public IBrush InlineValue { get; private init; } = Brush("#868A91");
-        public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
-        public IBrush BreakpointMuted { get; private init; } = Brush("#CED0D6");
-        public IBrush TestPassed { get; private init; } = Brush("#5FAD65");
-        public IBrush Bookmark { get; private init; } = Brush("#548AF7");
-        public IBrush DiffAdded { get; private init; } = Brush("#2B4234");
-        public IBrush DiffModified { get; private init; } = Brush("#2C3A55");
-        public IBrush DiffDeleted { get; private init; } = Brush("#3B3D42");
-        public IBrush DiffConflict { get; private init; } = Brush("#482D2E");
-        public IBrush WordAdded { get; private init; } = Brush("#3D6B4A");
-        public IBrush WordModified { get; private init; } = Brush("#405A8C");
-        public IBrush WordDeleted { get; private init; } = Brush("#55585E");
-        public IBrush WordConflict { get; private init; } = Brush("#6E3B3D");
-        public IBrush ChangeAdded { get; private init; } = Brush("#549159");
-        public IBrush ChangeModified { get; private init; } = Brush("#375FAD");
-        public IBrush ChangeDeleted { get; private init; } = Brush("#868A91");
-        public IBrush ChangeConflict { get; private init; } = Brush("#C75450");
-        public IBrush TestNotRun { get; private init; } = Brush("#5FAD65");
-        public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
-        public IBrush InlayHint { get; private init; } = Brush("#8F9298");
-        public IBrush InlayHintBack { get; private init; } = Brush("#2B2D30");
-        public IBrush UsageRead { get; private init; } = Brush("#373B39");
-        public IBrush UsageWrite { get; private init; } = Brush("#402F33");
-        public IBrush UsageReadMark { get; private init; } = Brush("#5B786A");
-        public IBrush UsageWriteMark { get; private init; } = Brush("#BA6387");
-        public IBrush MatchedBrace { get; private init; } = Brush("#43454A");
-        public IBrush Whitespace { get; private init; } = Brush("#686868");
-        public IBrush SoftWrapSign { get; private init; } = Brush("#787878");
-        public IBrush LinkUnderline { get; private init; } = Brush("#406AC2");
-        public IBrush PopupBorder { get; private init; } = Brush("#43454A");
+        public IBrush Background { get; private init; } = None;
+        public IBrush Gutter { get; private init; } = None;
+        public IBrush Text { get; private init; } = None;
+        public IBrush LineNumber { get; private init; } = None;
+        public IBrush LineNumberCurrent { get; private init; } = None;
+        public IBrush CurrentLine { get; private init; } = None;
+        public IBrush Selection { get; private init; } = None;
+        public IBrush SelectionInactive { get; private init; } = None;
+        public IBrush Caret { get; private init; } = None;
+        public IBrush Preedit { get; private init; } = None;
+        public IBrush SearchMatch { get; private init; } = None;
+        public IBrush Error { get; private init; } = None;
+        public IBrush Warning { get; private init; } = None;
+        public IBrush Info { get; private init; } = None;
+        public IBrush Faded { get; private init; } = None;
+        public IBrush SearchCurrent { get; private init; } = None;
+        public IBrush Breakpoint { get; private init; } = None;
+        public IBrush BreakpointLine { get; private init; } = None;
+        public IBrush ExecutionLine { get; private init; } = None;
+        public IBrush ExecutionPoint { get; private init; } = None;
+        public IBrush InlineValue { get; private init; } = None;
+        public IBrush Tracepoint { get; private init; } = None;
+        public IBrush BreakpointMuted { get; private init; } = None;
+        public IBrush TestPassed { get; private init; } = None;
+        public IBrush Bookmark { get; private init; } = None;
+        public IBrush DiffAdded { get; private init; } = None;
+        public IBrush DiffModified { get; private init; } = None;
+        public IBrush DiffDeleted { get; private init; } = None;
+        public IBrush DiffConflict { get; private init; } = None;
+        public IBrush WordAdded { get; private init; } = None;
+        public IBrush WordModified { get; private init; } = None;
+        public IBrush WordDeleted { get; private init; } = None;
+        public IBrush WordConflict { get; private init; } = None;
+        public IBrush ChangeAdded { get; private init; } = None;
+        public IBrush ChangeModified { get; private init; } = None;
+        public IBrush ChangeDeleted { get; private init; } = None;
+        public IBrush ChangeConflict { get; private init; } = None;
+        public IBrush TestNotRun { get; private init; } = None;
+        public IBrush ExceptionBack { get; private init; } = None;
+        public IBrush InlayHint { get; private init; } = None;
+        public IBrush InlayHintBack { get; private init; } = None;
+        public IBrush UsageRead { get; private init; } = None;
+        public IBrush UsageWrite { get; private init; } = None;
+        public IBrush UsageReadMark { get; private init; } = None;
+        public IBrush UsageWriteMark { get; private init; } = None;
+        public IBrush MatchedBrace { get; private init; } = None;
+        public IBrush Whitespace { get; private init; } = None;
+        public IBrush SoftWrapSign { get; private init; } = None;
+        public IBrush LinkUnderline { get; private init; } = None;
+        public IBrush PopupBorder { get; private init; } = None;
 
         /// <summary>The look's popup corners (the host's <c>Passenger.PopupRadius</c>), which the fold preview's card takes.</summary>
         public double PopupRadius { get; private init; } = 4;
-        public IBrush SmartStepTarget { get; private init; } = Brush("#53385E");
-        public IBrush SmartStepChosen { get; private init; } = Brush("#824991");
-        public IBrush SmartStepBorder { get; private init; } = Brush("#C76DC7");
+        public IBrush SmartStepTarget { get; private init; } = None;
+        public IBrush SmartStepChosen { get; private init; } = None;
+        public IBrush SmartStepBorder { get; private init; } = None;
         public Geometry? ErrorIcon { get; private init; }
         public Geometry? WarningIcon { get; private init; }
         public Geometry? PassedIcon { get; private init; }
@@ -1121,7 +1123,5 @@ public sealed partial class CodeEditor
 
         private static Geometry? Icon(Control control, string key) =>
             control.TryFindResource(key, control.ActualThemeVariant, out object? value) ? value as Geometry : null;
-
-        private static IBrush Brush(string colour) => new SolidColorBrush(Color.Parse(colour)).ToImmutable();
     }
 }

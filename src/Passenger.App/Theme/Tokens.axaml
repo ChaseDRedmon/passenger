@@ -4,7 +4,8 @@
          a theme may draw its own way. A control names a token, never a colour. Harbour (Harbour.axaml) gives every token
          again, laid over these when chosen, and Rider's colour scheme (RiderScheme.axaml) the code's over either (Themes).
          Passenger.Editor.*, Passenger.Syntax.* and Passenger.SyntaxStyle.* are read by the code editor by name; a syntax
-         kind left out draws as plain text.
+         kind left out draws as plain text. A theme gives tokens alone: Fluent's own keys are FluentKeys.axaml's, named once
+         as these tokens for every theme.
 
          The look: the app icon's blue as the window's own colour on cool blue-tinted neutrals, the icon's blue-to-teal
          ground across the title bar, and its amber dot wherever the window says "you are here" (the focus ring, the caret,
@@ -20,9 +21,6 @@
     <CornerRadius x:Key="Passenger.CardRadius">10</CornerRadius>
     <CornerRadius x:Key="Passenger.BadgeRadius">6</CornerRadius>
     <CornerRadius x:Key="Passenger.ChipRadius">10</CornerRadius>
-    <!-- Fluent's controls Passenger leaves as they are (check boxes, number boxes, menus) read Fluent's radii. -->
-    <CornerRadius x:Key="ControlCornerRadius">6</CornerRadius>
-    <CornerRadius x:Key="OverlayCornerRadius">10</CornerRadius>
     <x:Double x:Key="Passenger.TabStripHeight">38</x:Double>
     <Thickness x:Key="Passenger.TabMargin">2,5</Thickness>
     <Thickness x:Key="Passenger.TabPadding">10,0,6,0</Thickness>
@@ -91,9 +89,10 @@
             <SolidColorBrush x:Key="Passenger.ScrollThumb" Color="#59808080" />
             <SolidColorBrush x:Key="Passenger.ScrollThumbHover" Color="#8C808080" />
             <SolidColorBrush x:Key="Passenger.ScrollTrackHover" Color="#1A808080" />
-            <!-- A menu's chosen item, solid in the accent. -->
+            <!-- A menu's chosen item, solid in the accent, its words and keys white. -->
             <SolidColorBrush x:Key="Passenger.Menu.Selected" Color="#2F6BF2" />
             <SolidColorBrush x:Key="Passenger.Menu.SelectedText" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.Menu.SelectedKeys" Color="#FFFFFF" />
 
             <!-- The title bar, the toolbar on it: the icon's ground, blue into teal, with its own words, icons, hover,
                  press, rule, run, stop and Hot Reload, focus ring, and the project's initials on the icon's amber dot. -->
@@ -302,49 +301,6 @@
             <SolidColorBrush x:Key="Passenger.Syntax.LinkDestination" Color="#7EA7FF" />
             <x:String x:Key="Passenger.SyntaxStyle.Comment">Italic</x:String>
             <x:String x:Key="Passenger.SyntaxStyle.DocComment">Italic</x:String>
-
-            <!-- Fluent's own keys for its menus, read by every ContextMenu and MenuItem: the popup's ground and edge, a
-                 chosen item solid in the accent with white words, keys muted. -->
-            <StaticResource x:Key="MenuFlyoutPresenterBackground" ResourceKey="Passenger.Popup" />
-            <StaticResource x:Key="MenuFlyoutPresenterBorderBrush" ResourceKey="Passenger.PopupBorder" />
-            <StaticResource x:Key="MenuFlyoutItemForeground" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="MenuFlyoutItemForegroundPointerOver" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemForegroundPressed" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
-            <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="Passenger.Menu.Selected" />
-            <StaticResource x:Key="MenuFlyoutItemBackgroundPressed" ResourceKey="Passenger.Menu.Selected" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" ResourceKey="Passenger.TextMuted" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
-            <!-- Fluent's own keys for a tooltip, a drop-down's list and a field's ground, where Fluent's neutral greys
-                 showed under either theme: a tooltip and a drop-down's list on the popup's ground and edge in the window's
-                 words, the list's chosen row a list's, the one under the pointer washed; a text field and a drop-down on
-                 the field's ground whether or not they have the keys. -->
-            <StaticResource x:Key="ToolTipBackground" ResourceKey="Passenger.Popup" />
-            <StaticResource x:Key="ToolTipBorderBrush" ResourceKey="Passenger.PopupBorder" />
-            <StaticResource x:Key="ToolTipForeground" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="Passenger.Popup" />
-            <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="Passenger.PopupBorder" />
-            <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
-            <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="Passenger.Hover" />
-            <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="Passenger.Selected" />
-            <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="Passenger.RowSelected" />
-            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="Passenger.RowSelected" />
-            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="Passenger.RowSelected" />
-            <StaticResource x:Key="TextControlBackground" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackground" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackgroundPointerOver" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackgroundPressed" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackgroundUnfocused" ResourceKey="Passenger.Field" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <SolidColorBrush x:Key="Passenger.Frame" Color="#E2E7F0" />
@@ -393,6 +349,7 @@
             <SolidColorBrush x:Key="Passenger.ScrollTrackHover" Color="#1A808080" />
             <SolidColorBrush x:Key="Passenger.Menu.Selected" Color="#2F6BF2" />
             <SolidColorBrush x:Key="Passenger.Menu.SelectedText" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.Menu.SelectedKeys" Color="#FFFFFF" />
 
             <LinearGradientBrush x:Key="Passenger.TitleBar" StartPoint="0%,0%" EndPoint="100%,0%">
                 <GradientStop Offset="0" Color="#2C62E6" />
@@ -579,43 +536,6 @@
             <SolidColorBrush x:Key="Passenger.Syntax.LinkDestination" Color="#1F55D6" />
             <x:String x:Key="Passenger.SyntaxStyle.Comment">Italic</x:String>
             <x:String x:Key="Passenger.SyntaxStyle.DocComment">Italic</x:String>
-
-            <StaticResource x:Key="MenuFlyoutPresenterBackground" ResourceKey="Passenger.Popup" />
-            <StaticResource x:Key="MenuFlyoutPresenterBorderBrush" ResourceKey="Passenger.PopupBorder" />
-            <StaticResource x:Key="MenuFlyoutItemForeground" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="MenuFlyoutItemForegroundPointerOver" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemForegroundPressed" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
-            <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="Passenger.Menu.Selected" />
-            <StaticResource x:Key="MenuFlyoutItemBackgroundPressed" ResourceKey="Passenger.Menu.Selected" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" ResourceKey="Passenger.TextMuted" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed" ResourceKey="Passenger.Menu.SelectedText" />
-            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
-            <StaticResource x:Key="ToolTipBackground" ResourceKey="Passenger.Popup" />
-            <StaticResource x:Key="ToolTipBorderBrush" ResourceKey="Passenger.PopupBorder" />
-            <StaticResource x:Key="ToolTipForeground" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="Passenger.Popup" />
-            <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="Passenger.PopupBorder" />
-            <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="Passenger.Text" />
-            <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
-            <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="Passenger.Hover" />
-            <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="Passenger.Selected" />
-            <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="Passenger.RowSelected" />
-            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="Passenger.RowSelected" />
-            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="Passenger.RowSelected" />
-            <StaticResource x:Key="TextControlBackground" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackground" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackgroundPointerOver" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackgroundPressed" ResourceKey="Passenger.Field" />
-            <StaticResource x:Key="ComboBoxBackgroundUnfocused" ResourceKey="Passenger.Field" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

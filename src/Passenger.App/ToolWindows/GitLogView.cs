@@ -554,7 +554,7 @@ public sealed class GitLogView : DockPanel
         }
 
         private IBrush BrushFor(int lane) =>
-            this.TryFindResource($"Passenger.Graph.{lane % 6}", ActualThemeVariant, out object? found) && found is IBrush brush ? brush : Brushes.Gray;
+            this.TryFindResource($"Passenger.Graph.{lane % 6}", ActualThemeVariant, out object? found) && found is IBrush brush ? brush : Brushes.Transparent;
 
         private Pen PenFor(int lane) => new(BrushFor(lane), 1.6);
     }

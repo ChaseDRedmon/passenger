@@ -348,11 +348,11 @@ public sealed class DiffView : DockPanel
                     path.CubicBezierTo(new Point(width / 2, rightBottom), new Point(width / 2, leftBottom), new Point(0, leftBottom));
                     path.EndFigure(true);
                 }
-                context.DrawGeometry(Find(tint, Brushes.Gray), new Pen(Find(edge, Brushes.Gray), 1), band);
+                context.DrawGeometry(Find(tint, Brushes.Transparent), new Pen(Find(edge, Brushes.Transparent), 1), band);
                 if (view.IsEditable)
                 {
                     // Rider's ">>": the left side's lines over the right's.
-                    Pen arrow = new(Find(edge, Brushes.Gray), 1.6, lineCap: PenLineCap.Round);
+                    Pen arrow = new(Find(edge, Brushes.Transparent), 1.6, lineCap: PenLineCap.Round);
                     double y = leftTop + Math.Min(9, Math.Max(3, (leftBottom - leftTop) / 2));
                     for (int i = 0; i < 2; i++)
                     {

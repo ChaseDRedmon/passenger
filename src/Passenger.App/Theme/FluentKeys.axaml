@@ -1,0 +1,335 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Fluent's own keys, each named once as the Passenger token it is in every theme (FluentKeys, in the application's
+         resources): a control Passenger leaves to Fluent asks for its key and gets the token of the look in force, Dark or
+         Light, so a theme supplies only tokens and cannot leave one of Fluent's greys showing. Each entry is a Fluent key
+         and the token it reads. A key Fluent gives clear in both variants, and a control Passenger never shows, stay
+         Fluent's (FluentKeysTests holds the rest to this table, so a Fluent update that adds a key fails until it is here). -->
+
+    <!-- The corners of Fluent's controls Passenger leaves as they are (check boxes, number boxes, menus): the look's. -->
+    <x:String x:Key="ControlCornerRadius">Passenger.ControlRadius</x:String>
+    <x:String x:Key="OverlayCornerRadius">Passenger.PopupRadius</x:String>
+
+    <!-- A button as Shell.axaml draws it in every state: Rider's plain ground, its words, dimmed when it cannot be used. -->
+    <x:String x:Key="ButtonBackground">Passenger.Button</x:String>
+    <x:String x:Key="ButtonBackgroundPointerOver">Passenger.Button</x:String>
+    <x:String x:Key="ButtonBackgroundPressed">Passenger.Button</x:String>
+    <x:String x:Key="ButtonBackgroundDisabled">Passenger.Button</x:String>
+    <x:String x:Key="ButtonForeground">Passenger.Text</x:String>
+    <x:String x:Key="ButtonForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="ButtonForegroundPressed">Passenger.Text</x:String>
+    <x:String x:Key="ButtonForegroundDisabled">Passenger.TextDisabled</x:String>
+
+    <!-- A repeat button (a number box's arrows): a plain button's ground, washed under the pointer and pressed. -->
+    <x:String x:Key="RepeatButtonBackground">Passenger.Button</x:String>
+    <x:String x:Key="RepeatButtonBackgroundPointerOver">Passenger.Hover</x:String>
+    <x:String x:Key="RepeatButtonBackgroundPressed">Passenger.Selected</x:String>
+    <x:String x:Key="RepeatButtonBackgroundDisabled">Passenger.Button</x:String>
+    <x:String x:Key="RepeatButtonForeground">Passenger.Text</x:String>
+    <x:String x:Key="RepeatButtonForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="RepeatButtonForegroundPressed">Passenger.Text</x:String>
+    <x:String x:Key="RepeatButtonForegroundDisabled">Passenger.TextDisabled</x:String>
+
+    <!-- A toggle a class of Shell.axaml leaves a state of to Fluent: washed under the pointer and pressed, on the accent
+         with the accent's words while on. -->
+    <x:String x:Key="ToggleButtonBackground">Passenger.Button</x:String>
+    <x:String x:Key="ToggleButtonBackgroundPointerOver">Passenger.Hover</x:String>
+    <x:String x:Key="ToggleButtonBackgroundPressed">Passenger.Selected</x:String>
+    <x:String x:Key="ToggleButtonBackgroundDisabled">Passenger.Button</x:String>
+    <x:String x:Key="ToggleButtonBackgroundChecked">Passenger.Accent</x:String>
+    <x:String x:Key="ToggleButtonBackgroundCheckedPointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="ToggleButtonBackgroundCheckedPressed">Passenger.Accent</x:String>
+    <x:String x:Key="ToggleButtonBackgroundCheckedDisabled">Passenger.Button</x:String>
+    <x:String x:Key="ToggleButtonBackgroundIndeterminate">Passenger.Button</x:String>
+    <x:String x:Key="ToggleButtonBackgroundIndeterminatePointerOver">Passenger.Hover</x:String>
+    <x:String x:Key="ToggleButtonBackgroundIndeterminatePressed">Passenger.Selected</x:String>
+    <x:String x:Key="ToggleButtonBackgroundIndeterminateDisabled">Passenger.Button</x:String>
+    <x:String x:Key="ToggleButtonBorderBrushIndeterminatePointerOver">Passenger.FieldBorder</x:String>
+    <x:String x:Key="ToggleButtonForeground">Passenger.Text</x:String>
+    <x:String x:Key="ToggleButtonForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="ToggleButtonForegroundPressed">Passenger.Text</x:String>
+    <x:String x:Key="ToggleButtonForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="ToggleButtonForegroundChecked">Passenger.AccentText</x:String>
+    <x:String x:Key="ToggleButtonForegroundCheckedPointerOver">Passenger.AccentText</x:String>
+    <x:String x:Key="ToggleButtonForegroundCheckedPressed">Passenger.AccentText</x:String>
+    <x:String x:Key="ToggleButtonForegroundCheckedDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="ToggleButtonForegroundIndeterminate">Passenger.Text</x:String>
+    <x:String x:Key="ToggleButtonForegroundIndeterminatePointerOver">Passenger.Text</x:String>
+    <x:String x:Key="ToggleButtonForegroundIndeterminatePressed">Passenger.Text</x:String>
+    <x:String x:Key="ToggleButtonForegroundIndeterminateDisabled">Passenger.TextDisabled</x:String>
+
+    <!-- A check box: its box's edge its own token (Shell.axaml's), ticked on the accent with the accent's words for its
+         tick, which a light accent (Harbour's) needs dark; its words the window's. -->
+    <x:String x:Key="CheckBoxCheckBackgroundFillChecked">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillCheckedPressed">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillCheckedDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillIndeterminate">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillIndeterminatePointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillIndeterminatePressed">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillIndeterminateDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundFillUncheckedPressed">Passenger.Selected</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeUnchecked">Passenger.CheckBorder</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver">Passenger.CheckBorder</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed">Passenger.CheckBorder</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeUncheckedDisabled">Passenger.DisabledBorder</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeIndeterminate">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePressed">Passenger.Accent</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundChecked">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundCheckedPressed">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundCheckedDisabled">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundIndeterminate">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundIndeterminatePointerOver">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundIndeterminatePressed">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundIndeterminateDisabled">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundUnchecked">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundUncheckedPointerOver">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundUncheckedPressed">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxCheckGlyphForegroundUncheckedDisabled">Passenger.AccentText</x:String>
+    <x:String x:Key="CheckBoxForegroundChecked">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundCheckedPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundCheckedPressed">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundCheckedDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="CheckBoxForegroundIndeterminate">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundIndeterminatePointerOver">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundIndeterminatePressed">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundIndeterminateDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="CheckBoxForegroundUnchecked">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundUncheckedPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundUncheckedPressed">Passenger.Text</x:String>
+    <x:String x:Key="CheckBoxForegroundUncheckedDisabled">Passenger.TextDisabled</x:String>
+
+    <!-- A radio button as a check box: its ring a box's edge, chosen on the accent with the accent's words for its dot. -->
+    <x:String x:Key="RadioButtonForeground">Passenger.Text</x:String>
+    <x:String x:Key="RadioButtonForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="RadioButtonForegroundPressed">Passenger.Text</x:String>
+    <x:String x:Key="RadioButtonForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="RadioButtonCheckGlyphFill">Passenger.AccentText</x:String>
+    <x:String x:Key="RadioButtonCheckGlyphFillPointerOver">Passenger.AccentText</x:String>
+    <x:String x:Key="RadioButtonCheckGlyphFillPressed">Passenger.AccentText</x:String>
+    <x:String x:Key="RadioButtonCheckGlyphFillDisabled">Passenger.AccentText</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedFill">Passenger.Accent</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedFillPointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedFillPressed">Passenger.Accent</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedFillDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedStroke">Passenger.Accent</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedStrokePointerOver">Passenger.AccentHover</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedStrokePressed">Passenger.Accent</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseCheckedStrokeDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseFillPressed">Passenger.Selected</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseStroke">Passenger.CheckBorder</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseStrokePointerOver">Passenger.CheckBorder</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseStrokePressed">Passenger.CheckBorder</x:String>
+    <x:String x:Key="RadioButtonOuterEllipseStrokeDisabled">Passenger.DisabledBorder</x:String>
+
+    <!-- A text field on the field's ground whether or not it has the keys, framed as a field, the accent's edge while it
+         has them; disabled, on the page's ground; its hint muted; its buttons (a clear button) icons. -->
+    <x:String x:Key="TextControlBackground">Passenger.Field</x:String>
+    <x:String x:Key="TextControlBackgroundPointerOver">Passenger.Field</x:String>
+    <x:String x:Key="TextControlBackgroundFocused">Passenger.Field</x:String>
+    <x:String x:Key="TextControlBackgroundDisabled">Passenger.Panel</x:String>
+    <x:String x:Key="TextControlBorderBrush">Passenger.FieldBorder</x:String>
+    <x:String x:Key="TextControlBorderBrushPointerOver">Passenger.FieldBorder</x:String>
+    <x:String x:Key="TextControlBorderBrushFocused">Passenger.Accent</x:String>
+    <x:String x:Key="TextControlBorderBrushDisabled">Passenger.DisabledBorder</x:String>
+    <x:String x:Key="TextControlForeground">Passenger.Text</x:String>
+    <x:String x:Key="TextControlForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="TextControlForegroundFocused">Passenger.Text</x:String>
+    <x:String x:Key="TextControlForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="TextControlPlaceholderForeground">Passenger.TextMuted</x:String>
+    <x:String x:Key="TextControlPlaceholderForegroundPointerOver">Passenger.TextMuted</x:String>
+    <x:String x:Key="TextControlPlaceholderForegroundFocused">Passenger.TextMuted</x:String>
+    <x:String x:Key="TextControlPlaceholderForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="TextControlSelectionHighlightColor">Passenger.TextSelection</x:String>
+    <x:String x:Key="TextControlButtonBackgroundPressed">Passenger.Accent</x:String>
+    <x:String x:Key="TextControlButtonForeground">Passenger.Icon</x:String>
+    <x:String x:Key="TextControlButtonForegroundPointerOver">Passenger.Accent</x:String>
+    <x:String x:Key="TextControlButtonForegroundPressed">Passenger.AccentText</x:String>
+
+    <!-- A drop-down framed as a field and on its ground; its list the popup's ground and edge in the window's words, the
+         chosen row a list's, the one under the pointer washed. -->
+    <x:String x:Key="ComboBoxBackground">Passenger.Field</x:String>
+    <x:String x:Key="ComboBoxBackgroundPointerOver">Passenger.Field</x:String>
+    <x:String x:Key="ComboBoxBackgroundPressed">Passenger.Field</x:String>
+    <x:String x:Key="ComboBoxBackgroundUnfocused">Passenger.Field</x:String>
+    <x:String x:Key="ComboBoxBackgroundDisabled">Passenger.Panel</x:String>
+    <x:String x:Key="ComboBoxBackgroundBorderBrushUnfocused">Passenger.FieldBorder</x:String>
+    <x:String x:Key="ComboBoxBorderBrush">Passenger.FieldBorder</x:String>
+    <x:String x:Key="ComboBoxBorderBrushPointerOver">Passenger.FieldBorder</x:String>
+    <x:String x:Key="ComboBoxBorderBrushPressed">Passenger.FieldBorder</x:String>
+    <x:String x:Key="ComboBoxBorderBrushDisabled">Passenger.FieldBorder</x:String>
+    <x:String x:Key="ComboBoxForeground">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxForegroundFocused">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxForegroundFocusedPressed">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="ComboBoxPlaceHolderForeground">Passenger.TextMuted</x:String>
+    <x:String x:Key="ComboBoxPlaceHolderForegroundFocusedPressed">Passenger.TextMuted</x:String>
+    <x:String x:Key="ComboBoxDropDownGlyphForeground">Passenger.Icon</x:String>
+    <x:String x:Key="ComboBoxDropDownGlyphForegroundFocused">Passenger.Icon</x:String>
+    <x:String x:Key="ComboBoxDropDownGlyphForegroundFocusedPressed">Passenger.Icon</x:String>
+    <x:String x:Key="ComboBoxDropDownGlyphForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="ComboBoxDropDownBackground">Passenger.Popup</x:String>
+    <x:String x:Key="ComboBoxDropDownBorderBrush">Passenger.PopupBorder</x:String>
+    <x:String x:Key="ComboBoxItemForeground">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxItemForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxItemForegroundPressed">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxItemForegroundSelected">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxItemForegroundSelectedPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxItemForegroundSelectedPressed">Passenger.Text</x:String>
+    <x:String x:Key="ComboBoxItemForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="ComboBoxItemForegroundSelectedDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="ComboBoxItemBackgroundPointerOver">Passenger.Hover</x:String>
+    <x:String x:Key="ComboBoxItemBackgroundPressed">Passenger.Selected</x:String>
+    <x:String x:Key="ComboBoxItemBackgroundSelected">Passenger.RowSelected</x:String>
+    <x:String x:Key="ComboBoxItemBackgroundSelectedPointerOver">Passenger.RowSelected</x:String>
+    <x:String x:Key="ComboBoxItemBackgroundSelectedPressed">Passenger.RowSelected</x:String>
+
+    <!-- Every ContextMenu and MenuItem: the popup's ground and edge, a chosen item in the menu's own colours (solid in the
+         accent with white words in Passenger's theme), keys muted, a submenu's chevron an icon. -->
+    <x:String x:Key="MenuFlyoutPresenterBackground">Passenger.Popup</x:String>
+    <x:String x:Key="MenuFlyoutPresenterBorderBrush">Passenger.PopupBorder</x:String>
+    <x:String x:Key="MenuFlyoutItemForeground">Passenger.Text</x:String>
+    <x:String x:Key="MenuFlyoutItemForegroundPointerOver">Passenger.Menu.SelectedText</x:String>
+    <x:String x:Key="MenuFlyoutItemForegroundPressed">Passenger.Menu.SelectedText</x:String>
+    <x:String x:Key="MenuFlyoutItemForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="MenuFlyoutItemBackgroundPointerOver">Passenger.Menu.Selected</x:String>
+    <x:String x:Key="MenuFlyoutItemBackgroundPressed">Passenger.Menu.Selected</x:String>
+    <x:String x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground">Passenger.TextMuted</x:String>
+    <x:String x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver">Passenger.Menu.SelectedKeys</x:String>
+    <x:String x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed">Passenger.Menu.SelectedKeys</x:String>
+    <x:String x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="MenuFlyoutSubItemChevron">Passenger.Icon</x:String>
+    <x:String x:Key="MenuFlyoutSubItemChevronPointerOver">Passenger.Menu.SelectedText</x:String>
+    <x:String x:Key="MenuFlyoutSubItemChevronPressed">Passenger.Menu.SelectedText</x:String>
+    <x:String x:Key="MenuFlyoutSubItemChevronSubMenuOpened">Passenger.Menu.SelectedText</x:String>
+    <x:String x:Key="MenuFlyoutSubItemChevronDisabled">Passenger.TextDisabled</x:String>
+
+    <!-- A tooltip on the popup's ground and edge in the window's words. -->
+    <x:String x:Key="ToolTipBackground">Passenger.Popup</x:String>
+    <x:String x:Key="ToolTipBorderBrush">Passenger.PopupBorder</x:String>
+    <x:String x:Key="ToolTipForeground">Passenger.Text</x:String>
+
+    <!-- The corner where a scroll view's two bars meet, the track's own wash (ControlThemes.axaml's bars). -->
+    <x:String x:Key="ScrollViewerScrollBarsSeparatorBackground">Passenger.ScrollTrackHover</x:String>
+
+    <!-- A window's drawn title bar and its buttons where the system draws none: the frame's ground and the window's icons. -->
+    <x:String x:Key="TitleBarBackgroundBrush">Passenger.Frame</x:String>
+    <x:String x:Key="CaptionButtonBackground">Passenger.Frame</x:String>
+    <x:String x:Key="CaptionButtonBorderBrush">Passenger.WindowEdge</x:String>
+    <x:String x:Key="CaptionButtonForeground">Passenger.Icon</x:String>
+
+    <!-- Fluent's system brushes, which its templates for lists, progress bars, number boxes, separators and windows read:
+         by what each is in Fluent's palette, Alt being the ground and Base the ink. Grounds: the accent, the field and the
+         page, a plain button's, a popup's (Chrome), the hover and chosen washes (List). -->
+    <x:String x:Key="SystemControlBackgroundAccentBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlBackgroundAltHighBrush">Passenger.Field</x:String>
+    <x:String x:Key="SystemControlBackgroundAltMediumHighBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlBackgroundAltMediumBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlBackgroundAltMediumLowBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlBackgroundBaseHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlBackgroundBaseMediumHighBrush">Passenger.CheckBorder</x:String>
+    <x:String x:Key="SystemControlBackgroundBaseMediumBrush">Passenger.CheckBorder</x:String>
+    <x:String x:Key="SystemControlBackgroundBaseMediumLowBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlBackgroundBaseLowBrush">Passenger.Button</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeBlackHighBrush">Passenger.Frame</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeBlackMediumBrush">Passenger.Frame</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeBlackMediumLowBrush">Passenger.Frame</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeBlackLowBrush">Passenger.Frame</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeMediumBrush">Passenger.Popup</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeMediumLowBrush">Passenger.Popup</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeWhiteBrush">Passenger.AccentText</x:String>
+    <x:String x:Key="SystemControlBackgroundChromeWhiteRevealBorderBrush">Passenger.AccentText</x:String>
+    <x:String x:Key="SystemControlBackgroundListLowBrush">Passenger.Hover</x:String>
+    <x:String x:Key="SystemControlBackgroundListMediumBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlPageBackgroundAltHighBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlPageBackgroundAltMediumBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlPageBackgroundMediumAltMediumBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlPageBackgroundBaseLowBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlPageBackgroundBaseMediumBrush">Passenger.CheckBorder</x:String>
+    <x:String x:Key="SystemControlPageBackgroundChromeLowBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlPageBackgroundChromeMediumLowBrush">Passenger.Popup</x:String>
+    <x:String x:Key="SystemControlPageBackgroundListLowBrush">Passenger.Hover</x:String>
+    <x:String x:Key="SystemControlTransientBackgroundBrush">Passenger.Popup</x:String>
+    <x:String x:Key="SystemControlTransientBorderBrush">Passenger.PopupBorder</x:String>
+    <x:String x:Key="SystemRegionBrush">Passenger.Panel</x:String>
+    <!-- Words and marks: the window's words, quieter and dimmed (Base), the ground's own colour for a mark on the ink's
+         (Alt), the accent's words (Chrome white), an error's, a link's. -->
+    <x:String x:Key="SystemControlForegroundAccentBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlForegroundAltHighBrush">Passenger.Field</x:String>
+    <x:String x:Key="SystemControlForegroundAltMediumHighBrush">Passenger.Field</x:String>
+    <x:String x:Key="SystemControlForegroundBaseHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlForegroundBaseMediumHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlForegroundBaseMediumBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlForegroundBaseMediumLowBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlForegroundBaseLowBrush">Passenger.Separator</x:String>
+    <x:String x:Key="SystemControlForegroundChromeBlackHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlForegroundChromeBlackMediumBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlForegroundChromeBlackMediumLowBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlForegroundChromeDisabledLowBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlForegroundChromeGrayBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlForegroundChromeHighBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlForegroundChromeMediumBrush">Passenger.Separator</x:String>
+    <x:String x:Key="SystemControlForegroundChromeWhiteBrush">Passenger.AccentText</x:String>
+    <x:String x:Key="SystemControlForegroundListLowBrush">Passenger.Hover</x:String>
+    <x:String x:Key="SystemControlForegroundListMediumBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlDescriptionTextForegroundBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlPageTextBaseHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlPageTextBaseMediumBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlPageTextChromeBlackMediumLowBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlErrorTextForegroundBrush">Passenger.Error</x:String>
+    <x:String x:Key="SystemControlHyperlinkTextBrush">Passenger.Link</x:String>
+    <x:String x:Key="SystemControlHyperlinkBaseHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlHyperlinkBaseMediumHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlHyperlinkBaseMediumBrush">Passenger.TextMuted</x:String>
+    <!-- What cannot be used now: dimmed words and edges. -->
+    <x:String x:Key="SystemControlDisabledAccentBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlDisabledBaseHighBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlDisabledBaseMediumLowBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlDisabledBaseLowBrush">Passenger.DisabledBorder</x:String>
+    <x:String x:Key="SystemControlDisabledChromeDisabledHighBrush">Passenger.DisabledBorder</x:String>
+    <x:String x:Key="SystemControlDisabledChromeDisabledLowBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlDisabledChromeHighBrush">Passenger.DisabledBorder</x:String>
+    <x:String x:Key="SystemControlDisabledChromeMediumLowBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlDisabledListMediumBrush">Passenger.DisabledBorder</x:String>
+    <!-- What the pointer is over, what is pressed and what is chosen: the hover and chosen washes, a list's chosen row,
+         the accent, and the words on them. -->
+    <x:String x:Key="SystemControlHighlightAccentBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlHighlightAltAccentBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlHighlightAccentRevealBackgroundBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlHighlightAccent2RevealBackgroundBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlHighlightAccent3RevealBackgroundBrush">Passenger.Accent</x:String>
+    <x:String x:Key="SystemControlHighlightListAccentLowBrush">Passenger.RowSelected</x:String>
+    <x:String x:Key="SystemControlHighlightListAccentMediumBrush">Passenger.RowSelected</x:String>
+    <x:String x:Key="SystemControlHighlightListAccentHighBrush">Passenger.RowSelected</x:String>
+    <x:String x:Key="SystemControlHighlightAltListAccentLowBrush">Passenger.RowSelected</x:String>
+    <x:String x:Key="SystemControlHighlightAltListAccentMediumBrush">Passenger.RowSelected</x:String>
+    <x:String x:Key="SystemControlHighlightAltListAccentHighBrush">Passenger.RowSelected</x:String>
+    <x:String x:Key="SystemControlHighlightListLowBrush">Passenger.Hover</x:String>
+    <x:String x:Key="SystemControlHighlightListLowRevealBackgroundBrush">Passenger.Hover</x:String>
+    <x:String x:Key="SystemControlHighlightListMediumBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlHighlightListMediumRevealBackgroundBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlHighlightBaseHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlHighlightBaseMediumHighBrush">Passenger.CheckBorder</x:String>
+    <x:String x:Key="SystemControlHighlightBaseMediumBrush">Passenger.CheckBorder</x:String>
+    <x:String x:Key="SystemControlHighlightBaseMediumLowBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlHighlightBaseLowBrush">Passenger.Hover</x:String>
+    <x:String x:Key="SystemControlHighlightAltAltHighBrush">Passenger.Field</x:String>
+    <x:String x:Key="SystemControlHighlightAltAltMediumHighBrush">Passenger.Field</x:String>
+    <x:String x:Key="SystemControlHighlightAltBaseHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlHighlightAltBaseMediumHighBrush">Passenger.Text</x:String>
+    <x:String x:Key="SystemControlHighlightAltBaseMediumBrush">Passenger.TextMuted</x:String>
+    <x:String x:Key="SystemControlHighlightAltBaseMediumLowBrush">Passenger.TextDisabled</x:String>
+    <x:String x:Key="SystemControlHighlightAltBaseLowBrush">Passenger.Selected</x:String>
+    <x:String x:Key="SystemControlHighlightAltChromeWhiteBrush">Passenger.AccentText</x:String>
+    <x:String x:Key="SystemControlHighlightChromeAltLowBrush">Passenger.Popup</x:String>
+    <x:String x:Key="SystemControlHighlightChromeHighBrush">Passenger.CheckBorder</x:String>
+    <x:String x:Key="SystemControlHighlightChromeWhiteBrush">Passenger.AccentText</x:String>
+    <!-- The ring round what has the keys, where Fluent's is drawn rather than Passenger's (FocusRing). -->
+    <x:String x:Key="SystemControlFocusVisualPrimaryBrush">Passenger.Focus</x:String>
+    <x:String x:Key="SystemControlFocusVisualSecondaryBrush">Passenger.Panel</x:String>
+    <x:String x:Key="SystemControlRevealFocusVisualBrush">Passenger.Focus</x:String>
+</ResourceDictionary>

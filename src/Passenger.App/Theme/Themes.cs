@@ -24,8 +24,8 @@ public enum ColourScheme
 
 /// <summary>Puts a theme and a colour scheme in force for the process: Harbour's tokens (Harbour.axaml) laid over Passenger's
 /// in the application's resources, then Rider's scheme (RiderScheme.axaml) over either, so the last laid wins. A theme is
-/// resource dictionaries alone, its colours and the few shapes it draws differently, which the shared styles
-/// (Shell.axaml) read; Fluent's own accented parts take the theme's accent. UI thread only.</summary>
+/// tokens alone, its colours and the few shapes it draws differently, which the shared styles (Shell.axaml) and Fluent's
+/// own keys (FluentKeys) read; Fluent's palette takes the theme's accent. UI thread only.</summary>
 public static class Themes
 {
     private static readonly Uri Root = new("avares://Passenger/");

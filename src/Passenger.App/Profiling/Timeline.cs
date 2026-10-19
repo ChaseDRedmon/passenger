@@ -73,11 +73,11 @@ public sealed class Timeline : Control
             return;
         }
         double width = Math.Max(1, Bounds.Width - Label - 8);
-        IBrush text = Brush("Passenger.TextMuted", Brushes.Gray);
+        IBrush text = Brush("Passenger.TextMuted", Brushes.Transparent);
         Typeface face = new("Inter");
 
         // The collections, each as long as it paused the program (at least a hairline).
-        IBrush gc = Brush("Passenger.Graph.2", Brushes.Orange);
+        IBrush gc = Brush("Passenger.Graph.2", Brushes.Transparent);
         Draw(context, "GC", 0, face, text);
         foreach (Collection collection in whole.Collections)
         {
@@ -85,7 +85,7 @@ public sealed class Timeline : Control
             context.FillRectangle(gc, new Rect(x, 2, Math.Max(1.5, collection.PauseMs / (whole.EndMs - whole.StartMs) * width), CollectionsRow - 4));
         }
 
-        IBrush busy = Brush("Passenger.Graph.0", Brushes.SteelBlue);
+        IBrush busy = Brush("Passenger.Graph.0", Brushes.Transparent);
         double msPerPixel = (whole.EndMs - whole.StartMs) / width;
         IReadOnlyList<double[]> rows = Columns(width);
         double full = Math.Max(1, msPerPixel);
@@ -127,10 +127,10 @@ public sealed class Timeline : Control
             double to = X(stretch.To, width);
             using (context.PushOpacity(0.25))
             {
-                context.FillRectangle(Brush("Passenger.Accent", Brushes.SteelBlue), new Rect(from, 0, Math.Max(1, to - from), axisY));
+                context.FillRectangle(Brush("Passenger.Accent", Brushes.Transparent), new Rect(from, 0, Math.Max(1, to - from), axisY));
             }
-            context.DrawLine(new Pen(Brush("Passenger.Accent", Brushes.SteelBlue), 1), new Point(from, 0), new Point(from, axisY));
-            context.DrawLine(new Pen(Brush("Passenger.Accent", Brushes.SteelBlue), 1), new Point(to, 0), new Point(to, axisY));
+            context.DrawLine(new Pen(Brush("Passenger.Accent", Brushes.Transparent), 1), new Point(from, 0), new Point(from, axisY));
+            context.DrawLine(new Pen(Brush("Passenger.Accent", Brushes.Transparent), 1), new Point(to, 0), new Point(to, axisY));
         }
     }
 

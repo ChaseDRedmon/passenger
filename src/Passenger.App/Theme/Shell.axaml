@@ -61,8 +61,8 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextDisabled}" />
     </Style>
     <!-- A menu's chosen item on a rounded band inset from the menu's rounded frame, as Rider's are, where Fluent's runs
-         square to the frame's edges; a row as tall as every other row (Fluent's were 28). Its colours are Tokens.axaml's
-         aliases of Fluent's menu keys. -->
+         square to the frame's edges; a row as tall as every other row (Fluent's were 28). Its colours are Fluent's menu
+         keys, which FluentKeys.axaml gives as tokens. -->
     <Style Selector="MenuItem">
         <Setter Property="Margin" Value="4,0" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
@@ -114,8 +114,8 @@
         <Setter Property="Background" Value="{DynamicResource Passenger.PopupBorder}" />
     </Style>
     <!-- A drop-down's list as a menu's: each choice on a rounded band inset from the list's rounded frame, as tall as
-         every other row, where Fluent's ran square to the frame's edges. Its colours are Tokens.axaml's aliases of Fluent's
-         drop-down keys: the popup's ground, the chosen one a list's chosen row. -->
+         every other row, where Fluent's ran square to the frame's edges. Its colours are Fluent's drop-down keys, which
+         FluentKeys.axaml gives as tokens: the popup's ground, the chosen one a list's chosen row. -->
     <Style Selector="ComboBoxItem">
         <Setter Property="Margin" Value="4,0" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
