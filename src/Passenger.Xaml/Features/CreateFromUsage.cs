@@ -126,7 +126,12 @@ public static class CreateFromUsage
         if (toolkit)
         {
             usings.Add("CommunityToolkit.Mvvm.ComponentModel");
-            return new Planned($"[ObservableProperty]\nprivate {type} {field};", Placement.Field, usings, true, "[ObservableProperty]");
+            // Partial properties where the class has them (toolkit 8.4's, which flags a marked field, and Avalonia's template's).
+            List<ClrMember> marked = [.. types.SelfAndBases(owner).SelectMany(t => t.Members).Where(m => m.Has("ObservableProperty"))];
+            bool partialProperties = marked.Any(p => p.Kind == MemberKind.Property && !marked.Any(f => f.Kind == MemberKind.Field && f.Place == p.Place));
+            return partialProperties
+                ? new Planned($"[ObservableProperty]\npublic partial {type} {name} {{ get; set; }}", Placement.Property, usings, true, "[ObservableProperty]")
+                : new Planned($"[ObservableProperty]\nprivate {type} {field};", Placement.Field, usings, true, "[ObservableProperty]");
         }
         if (!types.IsA(owner, "System.ComponentModel.INotifyPropertyChanged"))
         {

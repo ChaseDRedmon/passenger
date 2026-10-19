@@ -241,6 +241,88 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void Create_property_in_a_view_model_of_the_toolkits_partial_properties_makes_another_after_them()
+    {
+        // The MVVM Toolkit stood in by its names, its view model written as Avalonia's MVVM template writes it (toolkit 8.4's
+        // partial properties), which flags a field marked [ObservableProperty] (MVVMTK0042).
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-toolkit-"));
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                AvaloniaApp.Create(folder, "Shop");
+                File.WriteAllText(Path.Combine(folder, "Mvvm.cs"), """
+                    namespace CommunityToolkit.Mvvm.ComponentModel
+                    {
+                        [System.AttributeUsage(System.AttributeTargets.Field | System.AttributeTargets.Property)]
+                        public sealed class ObservablePropertyAttribute : System.Attribute
+                        {
+                        }
+
+                        public class ObservableObject : System.ComponentModel.INotifyPropertyChanged
+                        {
+                            public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+                        }
+                    }
+
+                    """);
+                File.WriteAllText(Path.Combine(folder, "ShopViewModel.cs"), """
+                    using CommunityToolkit.Mvvm.ComponentModel;
+
+                    namespace Shop;
+
+                    public partial class ShopViewModel : ObservableObject
+                    {
+                        [ObservableProperty]
+                        public partial string Name { get; set; } = "Tea";
+
+                        public void Clear()
+                        {
+                        }
+                    }
+
+                    """);
+                File.WriteAllText(Path.Combine(folder, "MainWindow.axaml"), """
+                    <Window xmlns="https://github.com/avaloniaui"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:local="using:Shop"
+                            x:Class="Shop.MainWindow"
+                            x:DataType="local:ShopViewModel">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Name}" />
+                            <TextBlock Text="{Binding Price}" />
+                        </StackPanel>
+                    </Window>
+
+                    """);
+                Restore.Run(folder);
+            }, folder);
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(folder, "MainWindow.axaml"));
+            OpenDocument document = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Price'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
+            PlaceAfter(editor, "{Binding Pri");
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
+            Assert.Equal("Create property 'Price'", window.Assist.Offered[0]);
+            Ui.Press(window, "ENTER");
+            Ui.Settle();
+            string made = File.ReadAllText(Path.Combine(folder, "ShopViewModel.cs")).ReplaceLineEndings("\n");
+            Assert.True(made.Contains("    [ObservableProperty]\n    public partial string Name { get; set; } = \"Tea\";\n\n    [ObservableProperty]\n    public partial string? Price { get; set; }\n\n    public void Clear()", StringComparison.Ordinal),
+                $"Create property did not make a partial property after the view model's own, as its others are written:\n{made}");
+            Ui.WaitFor(() => document.Markers.Count == 0, "the binding resolved once the property is there");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void An_x_class_no_csharp_declares_is_marked_as_avalonias_compiler_refuses_it()
     {
         // Unlike WPF's MarkupCompile, Avalonia's compiler makes no class: it says "Unable to find type" (AVLN2000).
