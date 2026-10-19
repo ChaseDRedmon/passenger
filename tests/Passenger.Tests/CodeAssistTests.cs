@@ -85,6 +85,51 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void The_structure_window_shows_the_shown_files_outline_whenever_it_is_shown_and_once_the_server_has_the_file()
+    {
+        // Windows with servers of their own, started after the file opened, as a folder reopened with its files starts
+        // one: what the window asked of the file before its server had it found nothing.
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        ClickStripe(window, "structure");
+        window.OpenFolder(project.Folder);
+        window.OpenFile("Program.cs");
+        Ui.WaitFor(() => window.CSharpService?.IsReady == true, "the language server to load the project", TimeSpan.FromMinutes(2));
+        Ui.Settle();
+        Assert.True(window.StructureView.Rows.Select(r => r.Name).SequenceEqual(["Program", "Main()"]),
+            $"Structure, open as the folder opened, still showed [{string.Join(", ", window.StructureView.Rows.Select(r => r.Name))}] once the server had the file, not its members");
+        window.Close();
+
+        window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        window.OpenFile("Program.cs");
+        Ui.WaitFor(() => window.CSharpService?.IsReady == true, "the language server to load the project", TimeSpan.FromMinutes(2));
+        ClickStripe(window, "structure");
+        Assert.True(window.DockHost.IsShown("structure"));
+        Assert.True(window.StructureView.Rows.Select(r => r.Name).SequenceEqual(["Program", "Main()"]),
+            $"Structure opened from its stripe showed [{string.Join(", ", window.StructureView.Rows.Select(r => r.Name))}], not the file's members");
+
+        // Closed, another file shown, and opened again: the file shown now.
+        ClickStripe(window, "structure");
+        window.OpenFile("Helper.cs");
+        ClickStripe(window, "structure");
+        Assert.True(window.StructureView.Rows.FirstOrDefault()?.Name == "Helper",
+            $"Structure opened again showed [{string.Join(", ", window.StructureView.Rows.Select(r => r.Name))}], not Helper.cs's members");
+        window.Close();
+    }
+
+    /// <summary>Clicks a tool window's stripe button, as a person opens or closes it.</summary>
+    private static void ClickStripe(MainWindow window, string id)
+    {
+        Avalonia.Controls.Primitives.ToggleButton button = window.DockHost.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.ToggleButton>().First(b => Equals(b.Tag, id));
+        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+    }
+
+    [AvaloniaFact]
     public void Typing_after_a_dot_opens_completion_filtered_as_you_type_and_enter_commits_it()
     {
         MainWindow window = project.Open("Program.cs");

@@ -370,6 +370,7 @@ public partial class MainWindow
             service.StateChanged += (_, _) => status.ShowLanguage(LanguageLabel());
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
+            service.StateChanged += (_, _) => Structure.FollowServer();
             service.Stopped += (_, message) => status.Text = message;
             service.Said += (_, said) => status.Say(said.Text, said.Severity);
             WatchProblems(service);

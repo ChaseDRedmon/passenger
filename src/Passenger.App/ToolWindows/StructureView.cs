@@ -3,26 +3,32 @@ using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
-using Avalonia.Threading;
 using Passenger.App.Navigation;
+using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Text;
 
 namespace Passenger.App.ToolWindows;
 
 /// <summary>Rider's Structure window: the active file's types and members, indented, from the language server's
-/// outline, following the editor (a moment after typing stops) and choosing the member the caret is in. A click or
-/// Enter goes to a member.</summary>
+/// outline, asked as it is shown and, while it is, following the editor (a moment after typing stops) and choosing the
+/// member the caret is in. A click or Enter goes to a member.</summary>
 public sealed class StructureView : DockPanel
 {
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(600);
 
     private readonly ListBox list;
     private readonly TextBlock placeholder;
-    private readonly DispatcherTimer settle;
+    private readonly Debounce settle;
     private Func<(string Path, LspDocument? Lsp, int CaretLine)?>? source;
     private CancellationTokenSource? asking;
     private bool choosing;
+
+    /// <summary>The file whose outline the rows are, from its server; null while they are no file's.</summary>
+    private string? outlined;
+
+    /// <summary>In the visual tree, as a tool window's content is only while it is open in its place or its own window.</summary>
+    private bool shown;
 
     public StructureView()
     {
@@ -54,12 +60,7 @@ public sealed class StructureView : DockPanel
             }
         };
         placeholder = new TextBlock { Classes = { "muted" }, Text = "A C# file's members show here", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12) };
-        settle = new DispatcherTimer { Interval = Pause };
-        settle.Tick += (_, _) =>
-        {
-            settle.Stop();
-            _ = Refresh();
-        };
+        settle = new Debounce(Pause, Refresh);
         ListMenus.Attach(list, () => list.SelectedItem is not SymbolRow chosen ? [] :
         [
             ListMenus.Item("Go to", "F4", () => GoToRequested?.Invoke(this, chosen)),
@@ -83,32 +84,67 @@ public sealed class StructureView : DockPanel
     /// <summary>What the window shows: the active file, its language server document, the caret's line.</summary>
     public void Follow(Func<(string Path, LspDocument? Lsp, int CaretLine)?> active) => source = active;
 
-    /// <summary>The file changed, or another is active: the outline is asked again once things settle.</summary>
+    /// <summary>The file changed, or another is active: while the window is shown the outline is asked again once things
+    /// settle; a hidden one asks as it is shown.</summary>
     public void Invalidate()
     {
-        settle.Stop();
-        settle.Start();
+        if (shown)
+        {
+            settle.Restart();
+        }
+    }
+
+    /// <summary>The language server's state changed (the files connected, the projects loaded): a shown window without the
+    /// shown file's outline asks for it, since what it asked before the server had the file found nothing.</summary>
+    public void FollowServer()
+    {
+        if (shown && asking is null && source?.Invoke() is { Lsp: not null } now && outlined != now.Path)
+        {
+            _ = Refresh();
+        }
     }
 
     /// <summary>The caret moved: the member it is in is chosen, without going anywhere.</summary>
     public void FollowCaret()
     {
-        if (source?.Invoke() is { } now)
+        if (source?.Invoke() is { } now && now.Path == outlined)
         {
             Choose(now.CaretLine);
         }
     }
 
-    public async Task Refresh()
+    /// <summary>Shown (its stripe button, its action, a layout that has it open), or moved to another place: what Rider's
+    /// Structure shows then is the file shown now.</summary>
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        shown = true;
+        _ = Refresh();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        shown = false;
+        settle.Stop();
+        asking?.Cancel();
+        asking = null;
+    }
+
+    private async Task Refresh()
     {
         asking?.Cancel();
-        CancellationTokenSource mine = asking = new CancellationTokenSource();
+        asking = null;
         if (source?.Invoke() is not { Lsp: { } lsp } now)
         {
             list.ItemsSource = null;
+            outlined = null;
             placeholder.IsVisible = true;
             return;
         }
+        CancellationTokenSource mine = asking = new CancellationTokenSource();
+        // Held, so a screenshot or a test settles on the outline rather than on the window before it came.
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             IReadOnlyList<DocumentSymbol> outline = await lsp.OutlineAsync(mine.Token);
@@ -117,16 +153,24 @@ public sealed class StructureView : DockPanel
                 return;
             }
             list.ItemsSource = Flatten(outline, 0, now.Path, ServerLines.Of(lsp.Text.Snapshot));
+            outlined = now.Path;
             placeholder.IsVisible = Rows.Count == 0;
             Choose(now.CaretLine);
         }
         catch (OperationCanceledException)
         {
-            // Asked again since.
+            // Asked again since, or hidden.
         }
         catch (LanguageServerFailed)
         {
             // The outline shown stands; the next change, or a server started again, asks afresh.
+        }
+        finally
+        {
+            if (asking == mine)
+            {
+                asking = null;
+            }
         }
     }
 

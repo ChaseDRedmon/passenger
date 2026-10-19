@@ -501,15 +501,8 @@ public partial class MainWindow : Window
             },
             OpenAtFirst = true,
         });
-        Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom)
-        {
-            Action = AppActions.ShowStructure,
-            Activate = () =>
-            {
-                ShowToolWindow("structure");
-                _ = Structure.Refresh();
-            },
-        });
+        // Shown however it is (its action, its stripe button, a layout), it asks for the file shown then itself.
+        Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
         Dock.Add(new Docking.ToolWindow("run", "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun, ActionTitle = "Run Tool Window" });
         Dock.Add(new Docking.ToolWindow("debug", "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowDebug, ActionTitle = "Debug Tool Window" });
         Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft)
