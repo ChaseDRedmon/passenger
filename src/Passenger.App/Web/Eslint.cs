@@ -575,10 +575,10 @@ public sealed class EslintDocument : IDisposable
         CancellationTokenSource cancel = new();
         pulling = cancel;
         BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token);
+        _ = PullAsync(lsp, delay, cancel.Token, document.Checking());
     }
 
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel)
+    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel, IDisposable checking)
     {
         try
         {
@@ -602,7 +602,11 @@ public sealed class EslintDocument : IDisposable
         }
         finally
         {
-            Dispatcher.UIThread.Post(BackgroundWork.End);
+            Dispatcher.UIThread.Post(() =>
+            {
+                checking.Dispose();
+                BackgroundWork.End();
+            });
         }
     }
 

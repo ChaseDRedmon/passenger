@@ -492,6 +492,7 @@ public sealed class WebLanguages : IAsyncDisposable
         server.State = label;
         foreach (OpenDocument open in documents.Where(d => d.Value.Kind == server.Kind).Select(d => d.Key).ToList())
         {
+            documents[open].Unreached();
             Announce(open);
         }
         StateChanged?.Invoke(this, EventArgs.Empty);

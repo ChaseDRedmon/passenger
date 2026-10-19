@@ -30,7 +30,7 @@ public sealed class MSBuildDocument : IDisposable
     {
         this.service = service;
         Document = document;
-        inspecting = new Debounce(Settle, InspectAsync);
+        inspecting = new Debounce(Settle, InspectAsync, document.Checking);
         document.Text.Changed += OnChanged;
         First = InspectAsync();
     }
@@ -167,6 +167,7 @@ public sealed class MSBuildDocument : IDisposable
     private async Task InspectAsync()
     {
         using IDisposable held = BackgroundWork.Scope();
+        using IDisposable checking = Document.Checking();
         if (disposed || service.ProjectFor(Document.Path) is not { } project)
         {
             return;
@@ -205,6 +206,7 @@ public sealed class MSBuildDocument : IDisposable
     internal async Task AdoptAsync(MSBuildInsight insight, IReadOnlyDictionary<string, string> texts)
     {
         using IDisposable held = BackgroundWork.Scope();
+        using IDisposable checking = Document.Checking();
         int version = Document.Text.Version;
         bool same = Document.IsModified
             ? texts.TryGetValue(Document.Path, out string? read) && read == Document.Text.Snapshot.ToString()

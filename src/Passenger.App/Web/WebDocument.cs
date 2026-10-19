@@ -19,6 +19,9 @@ public sealed class WebDocument : IServerDocument, IDisposable
     private readonly OpenDocument document;
     private CancellationTokenSource? pulling;
     private LanguageSession? session;
+
+    /// <summary>The file's checks held while its server starts: until it is connected, or cannot start.</summary>
+    private IDisposable? waiting;
     private Diagnostic[] found = [];
     private TextRange[] ranges = [];
     private IReadOnlyList<Diagnostic>? placed = [];
@@ -36,6 +39,14 @@ public sealed class WebDocument : IServerDocument, IDisposable
         own = document.Markers;
         document.Text.Changed += OnChanged;
         document.Saved += OnSaved;
+        waiting = document.Checking();
+    }
+
+    /// <summary>The server cannot start (no Node.js, too old, missing): the file waits for no checks of its.</summary>
+    internal void Unreached()
+    {
+        waiting?.Dispose();
+        waiting = null;
     }
 
     public WebServerKind Kind { get; }
@@ -74,6 +85,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
         Lsp = started.Open(document.Path, document.Text, LanguageId);
         Lsp.DiagnosticsPushed += OnPushed;
         Refresh();
+        Unreached();
     }
 
     /// <summary>The diagnostics and colours asked for again (the server's refresh, a server started again).</summary>
@@ -82,6 +94,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
     public void Dispose()
     {
         pulling?.Cancel();
+        Unreached();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
         if (Lsp is { } lsp)
@@ -143,10 +156,10 @@ public sealed class WebDocument : IServerDocument, IDisposable
         CancellationTokenSource cancel = new();
         pulling = cancel;
         BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token);
+        _ = PullAsync(lsp, delay, cancel.Token, document.Checking());
     }
 
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel)
+    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel, IDisposable checking)
     {
         try
         {
@@ -181,7 +194,11 @@ public sealed class WebDocument : IServerDocument, IDisposable
         }
         finally
         {
-            Dispatcher.UIThread.Post(BackgroundWork.End);
+            Dispatcher.UIThread.Post(() =>
+            {
+                checking.Dispose();
+                BackgroundWork.End();
+            });
         }
     }
 

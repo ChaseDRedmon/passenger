@@ -117,8 +117,9 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         if (Document(path) is { Language.Name: not ("C#" or "Razor") } marked)
         {
-            // Its checks run as background work after it opens or changes, its markers set as they end.
-            await Until(() => BackgroundWork.Pending == 0, MarkersLimit, cancel);
+            // Its own checks run after it opens or changes, its markers set as they end; the rest of the IDE's work (a build,
+            // a test run, a busy console) is not waited for.
+            await Until(() => !marked.IsChecking, MarkersLimit, cancel);
             TextSnapshot text = marked.Text.Snapshot;
             return (IReadOnlyList<Finding>)[.. marked.Markers.Where(m => m.Kind is MarkerKind.Error or MarkerKind.Warning).Select(m =>
             {

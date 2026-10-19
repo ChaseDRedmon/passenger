@@ -31,7 +31,7 @@ public sealed class XamlDocument : IDisposable
         this.service = service;
         Document = document;
         Loading = loading;
-        analysing = new Debounce(Settle, AnalyseAsync);
+        analysing = new Debounce(Settle, AnalyseAsync, document.Checking);
         document.Text.Changed += OnChanged;
         _ = AnalyseAsync();
     }
@@ -101,6 +101,7 @@ public sealed class XamlDocument : IDisposable
     private async Task AnalyseAsync()
     {
         using IDisposable held = BackgroundWork.Scope();
+        using IDisposable checking = Document.Checking();
         int version = Document.Text.Version;
         XamlFile? file = await FileAsync();
         if (file is null || disposed)

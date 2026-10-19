@@ -117,6 +117,35 @@ public sealed class OpenDocument : Observable
         set => Set(ref markers, value);
     }
 
+    private int checks;
+
+    /// <summary>Whether the file's own checks are under way, or waiting for typing to pause or for their server to start
+    /// (XAML's, an MSBuild file's, a web language server's, ESLint's), which an agent's diagnostics waits out rather than
+    /// all of the IDE's work.</summary>
+    public bool IsChecking => checks > 0;
+
+    /// <summary>Holds <see cref="IsChecking"/> until the scope ends, on the UI thread.</summary>
+    public IDisposable Checking()
+    {
+        UiThread.Check();
+        checks++;
+        return new CheckHeld(this);
+    }
+
+    private sealed class CheckHeld(OpenDocument document) : IDisposable
+    {
+        private bool released;
+
+        public void Dispose()
+        {
+            if (!released)
+            {
+                released = true;
+                document.checks--;
+            }
+        }
+    }
+
     private string? notice;
 
     /// <summary>What the editor's banner says of the file beyond where it comes from: why its language server cannot run

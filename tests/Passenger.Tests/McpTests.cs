@@ -516,6 +516,55 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>An agent's diagnostics for a project file wait for that file's own checks alone: they waited for all of the
+    /// IDE's background work, so a build running meanwhile held the answer for the tool's 30 s.</summary>
+    [AvaloniaFact]
+    public void An_agents_diagnostics_for_a_project_file_come_from_its_own_checks_while_a_build_runs()
+    {
+        File.WriteAllText(Path.Combine(folder, "Directory.Build.targets"), """
+            <Project>
+              <Target Name="Slow" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('slow')">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; slow.pid; exec sleep 120" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path slow.pid -Value $PID; Start-Sleep -Seconds 120&quot;" />
+              </Target>
+            </Project>
+            """);
+        File.WriteAllText(Path.Combine(folder, "slow"), string.Empty);
+        MainWindow window = AgentsWindow(folder);
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        int step = 0;
+        try
+        {
+            Assert.True(window.Perform(AppActions.Build));
+            step = Processes.WrittenId(Path.Combine(folder, "slow.pid"), "the build's slow step to start");
+
+            // The person types an import that is not there into the project file, unsaved, as the build runs on.
+            window.OpenFile(Path.Combine(folder, "Sum.csproj"));
+            window.EditorArea.CodeEditor.GoTo(new Passenger.Text.TextPosition(6, 0));
+            window.KeyTextInput("<Import Project=\"Missing.props\" />");
+            Stopwatch asked = Stopwatch.StartNew();
+            Task<JsonElement> diagnostics = Task.Run(() => Call(client, "diagnostics", new() { ["path"] = "Sum.csproj" }));
+            Ui.PumpUntil(() => diagnostics.IsCompleted, "the project file's diagnostics", AgentLimit);
+            asked.Stop();
+            JsonElement missing = Assert.Single(diagnostics.GetAwaiter().GetResult().EnumerateArray());
+            Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.True(window.IsBuilding, "The build ended before the agent's diagnostics were answered");
+            Assert.True(asked.Elapsed < TimeSpan.FromSeconds(20), $"The project file's diagnostics took {asked.Elapsed.TotalSeconds:F0} s while a build ran");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Processes.Kill(step);
+            Ui.PumpUntil(() => !window.IsBuilding, "the build to stop", TimeSpan.FromMinutes(1));
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
     /// <summary>A fault of the IDE's met by an agent's call, stood in for by an action that fails as no action should.</summary>
     [AvaloniaFact]
     public void An_agents_call_that_meets_a_fault_of_the_IDEs_is_answered_with_it_and_logged()
