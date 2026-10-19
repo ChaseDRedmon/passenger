@@ -64,6 +64,7 @@ public partial class MainWindow
     {
         actions = new ActionRegistry(Context, () => keys.Keymap);
         Dock.Actions = actions;
+        Explorer.Actions = actions;
         AddEditing();
         Add(A.Open, "Open...", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
         actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 2, 0)] });

@@ -371,6 +371,36 @@ public sealed class SolutionViewTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_solution_and_project_menus_show_the_keys_of_the_actions_their_items_run()
+    {
+        MainWindow window = Open();
+        Keymap keymap = window.Actions.Keymap;
+        RightClick(window, Row(window, NodeKind.Solution, "Shop"));
+        Shortcut build = keymap.ShortcutsFor(AppActions.Build)[0];
+        KeyGesture? shown = MenuItemOf(window, "Build Solution").InputGesture;
+        window.ExplorerView.OpenMenu?.Close();
+        Assert.True(shown is not null && shown.Key == build.First.Key && shown.KeyModifiers == build.First.Modifiers,
+            $"The solution's Build Solution shows {shown?.ToString() ?? "no keys"}, not Build Solution's {build.Display()} as the main menu does");
+        Ui.Settle();
+
+        // A chord, as the main menu shows one.
+        RightClick(window, Row(window, NodeKind.Project, "Shop.Core"));
+        Shortcut chord = keymap.ShortcutsFor(AppActions.RunTests)[0];
+        string? keys = MenuItemOf(window, "Run Unit Tests").GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Name == "PART_InputGestureText")?.Text;
+        window.ExplorerView.OpenMenu?.Close();
+        Assert.True(keys == chord.Display(), $"A project's Run Unit Tests shows '{keys}' for its keys, not {chord.Display()} as the main menu does");
+        window.Close();
+    }
+
+    /// <summary>An item of the Explorer's open menu, by its title.</summary>
+    private static MenuItem MenuItemOf(MainWindow window, string header)
+    {
+        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException("No menu opened on the row");
+        return menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == header)
+            ?? throw new InvalidOperationException($"The menu has no {header}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

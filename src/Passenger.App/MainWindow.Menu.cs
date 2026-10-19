@@ -226,7 +226,7 @@ public partial class MainWindow
         }
         IdeAction action = actions![entry.Action!]!;
         MenuItem actionItem = new() { Header = action.TitleWhere(context), IsEnabled = action.CanRun(context) };
-        ShowKeys(actionItem, action.Id);
+        actions.ShowKeys(actionItem, action.Id);
         if (action.IsChecked is { } isChecked)
         {
             actionItem.ToggleType = MenuItemToggleType.CheckBox;
@@ -247,28 +247,6 @@ public partial class MainWindow
         item.Click += (_, _) => listed.Run();
         return item;
     }
-
-    /// <summary>An action's shortcut in an item's column of keys: its one keystroke as the item's gesture, a chord as its
-    /// text. The gesture is shown, not bound: the window's keymap runs the keys.</summary>
-    private void ShowKeys(MenuItem item, string action)
-    {
-        item.InputGesture = actions!.Gesture(action);
-        if (item.InputGesture is null && actions.Keymap.ShortcutsFor(action).FirstOrDefault() is { Second: not null } chord)
-        {
-            ShowChord(item, chord);
-        }
-    }
-
-    /// <summary>A chord in an item's shortcut column, as Rider's own menus show one ("⌘E, C"): a KeyGesture holds one
-    /// keystroke, so the text Fluent's item draws its gesture with is given the chord. macOS's menu bar gets none, since
-    /// a key equivalent there would take the chord's first key before the window could wait for its second.</summary>
-    private static void ShowChord(MenuItem item, Shortcut chord) => item.TemplateApplied += (_, e) =>
-    {
-        if (e.NameScope.Find<TextBlock>("PART_InputGestureText") is { } keys)
-        {
-            keys.Text = chord.Display();
-        }
-    };
 
     /// <summary>A menu item chosen: its action run where its keys would have gone, in the context its menu opened in when
     /// that is known. False when it cannot run there, which the status bar says.</summary>

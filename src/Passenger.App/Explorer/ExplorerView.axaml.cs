@@ -97,6 +97,9 @@ public partial class ExplorerView : UserControl
     /// <summary>A row's menu item or key: what to do, and to which row.</summary>
     public event EventHandler<(ExplorerAction Action, ExplorerNode Node)>? ActionRequested;
 
+    /// <summary>The window's actions, whose keymap gives the menu's items their shortcuts, as the main menu shows them.</summary>
+    public ActionRegistry? Actions { get; set; }
+
     /// <summary>Whether Git has a path's history (it is in the folder's working tree), for a row's Git items.</summary>
     public Func<string, bool> IsVersioned { get; set; } = _ => false;
 
@@ -188,27 +191,26 @@ public partial class ExplorerView : UserControl
             item.Click += (_, _) => ActionRequested?.Invoke(this, (action, node));
             return item;
         }
+        // An item that does what one of the window's actions does here shows that action's keys, as every menu does.
         MenuItem Action(string header, ExplorerAction action, string id)
         {
             MenuItem item = Item(header, action);
-            if (AppActions.Keymap().ShortcutsFor(id).FirstOrDefault(s => s.Second is null) is { } keys)
-            {
-                item.InputGesture = new KeyGesture(keys.First.Key, keys.First.Modifiers);
-            }
+            Actions?.ShowKeys(item, id);
             return item;
         }
         if (node.Kind is NodeKind.Solution or NodeKind.Project or NodeKind.SolutionFolder)
         {
-            string what = node.Kind == NodeKind.Solution ? "Solution" : "Selected Projects";
-            menu.Items.Add(Item($"Build {what}", ExplorerAction.Build));
-            menu.Items.Add(Item($"Rebuild {what}", ExplorerAction.Rebuild));
-            menu.Items.Add(Item($"Clean {what}", ExplorerAction.Clean));
+            bool solution = node.Kind == NodeKind.Solution;
+            string what = solution ? "Solution" : "Selected Projects";
+            menu.Items.Add(Action($"Build {what}", ExplorerAction.Build, solution ? AppActions.Build : AppActions.BuildSelected));
+            menu.Items.Add(Action($"Rebuild {what}", ExplorerAction.Rebuild, solution ? AppActions.RebuildSolution : AppActions.RebuildSelected));
+            menu.Items.Add(Action($"Clean {what}", ExplorerAction.Clean, solution ? AppActions.CleanSolution : AppActions.CleanSelected));
             menu.Items.Add(new Separator());
         }
         if (node.Kind is NodeKind.Project or NodeKind.SolutionFolder)
         {
-            menu.Items.Add(Item("Run Unit Tests", ExplorerAction.RunTests));
-            menu.Items.Add(Item("Debug Unit Tests", ExplorerAction.DebugTests));
+            menu.Items.Add(Action("Run Unit Tests", ExplorerAction.RunTests, AppActions.RunTests));
+            menu.Items.Add(Action("Debug Unit Tests", ExplorerAction.DebugTests, AppActions.DebugTests));
             menu.Items.Add(new Separator());
         }
         if (node.Kind == NodeKind.Project)
@@ -321,7 +323,7 @@ public partial class ExplorerView : UserControl
             // Rider's Show Local History, just before its Git submenu: a file's versions, or a folder's (a project's or the
             // solution's folder).
             menu.Items.Add(new Separator());
-            menu.Items.Add(Item("Show Local History", ExplorerAction.ShowLocalHistory));
+            menu.Items.Add(Action("Show Local History", ExplorerAction.ShowLocalHistory, AppActions.ShowLocalHistory));
         }
         if (node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is { } versioned && IsVersioned(versioned))
         {
@@ -329,10 +331,10 @@ public partial class ExplorerView : UserControl
             MenuItem git = new() { Header = "Git" };
             if (node.Kind == NodeKind.File)
             {
-                git.Items.Add(Item("Compare with Revision...", ExplorerAction.CompareWithRevision));
-                git.Items.Add(Item("Compare with Branch or Tag...", ExplorerAction.CompareWithBranch));
+                git.Items.Add(Action("Compare with Revision...", ExplorerAction.CompareWithRevision, AppActions.CompareWithRevision));
+                git.Items.Add(Action("Compare with Branch or Tag...", ExplorerAction.CompareWithBranch, AppActions.CompareWithBranch));
             }
-            git.Items.Add(Item("Show History", ExplorerAction.ShowHistory));
+            git.Items.Add(Action("Show History", ExplorerAction.ShowHistory, AppActions.ShowHistory));
             if (!histories)
             {
                 menu.Items.Add(new Separator());
