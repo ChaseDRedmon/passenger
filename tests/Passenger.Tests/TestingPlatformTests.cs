@@ -104,7 +104,7 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
         TestNode doubles = Method(window, "Doubles")!;
         TestNode sides = Method(window, "Has_sides")!;
 
-        Assert.Null(Ui.Await(window.Tests.RunAsync(window.Folder!, [doubles, sides]), "the theories' run", TimeSpan.FromSeconds(180)));
+        Ui.Launched(window, window.Tests.RunAsync(window.Folder!, [doubles, sides]), "the theories' run", TimeSpan.FromSeconds(180));
         Assert.Same(doubles, Method(window, "Doubles"));
         Assert.Equal(["Doubles(value: 1, twice: 2)", "Doubles(value: 2, twice: 4)"], doubles.Children.Select(r => r.Name).Order(StringComparer.Ordinal));
         Assert.All(doubles.Children, r => Assert.Equal(TestState.Passed, r.State));

@@ -48,7 +48,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     public void A_running_apps_misspelt_binding_shows_in_run_linked_to_its_line_and_in_problems_once_with_its_count_and_fix()
     {
         MainWindow window = Opened();
-        Assert.Null(Ui.Await(window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
         OutputView run = window.BottomPanel.Run;
         string line = WaitForLine(run, "the Run window to say the caption's binding failed");
 
@@ -103,7 +103,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     public void A_debugged_apps_misspelt_binding_shows_in_the_debug_console_linked_to_its_line_and_in_problems()
     {
         MainWindow window = Opened();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         window.BottomPanel.Debug.ShowTab(console: true);
         OutputView console = window.BottomPanel.Debug.Console;
         string line = WaitForLine(console, "the Debug window's console to say the caption's binding failed");
@@ -142,7 +142,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.True(store.BindingErrors.Enabled, "Its box did not turn XAML Binding Errors on");
 
         // The caption's binding fails as the app gives its window a view model: the stop is there, in the app's own code.
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         DebugStop stop = Stopped(window, "the stop where the window's view model makes the caption's binding fail");
         AssertAt(stop, app, LineIn(app, "DataContext = new MainViewModel()"));
         // Said where it is in the XAML, what it binds, its DataContext, the part of the path that failed and why.

@@ -118,7 +118,7 @@ public sealed class PathsTests : IDisposable
         // Build Selected Projects, nothing chosen in the Explorer: the open file's project.
         window.Perform(AppActions.BuildSelected);
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        Assert.Equal("Build succeeded", window.Status);
+        Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
         Assert.True(File.Exists(Path.Combine(folder, "src", "Shop", "bin", "Debug", "net10.0", "Shop.dll")), "Build Selected Projects did not build the open file's project");
 
         // New Class in a folder of it: the project's namespace, then the folder's.

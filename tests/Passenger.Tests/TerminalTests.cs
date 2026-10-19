@@ -624,7 +624,7 @@ public sealed class TerminalTests
     public void A_program_run_in_the_terminal_reads_a_key_and_a_line_typed_there_and_draws_in_colour_where_it_puts_the_cursor()
     {
         MainWindow window = RunWindow(TestFolders.Create("terminal-run-"), string.Empty);
-        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(3)));
+        Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(3));
         TerminalRun run = Assert.IsType<TerminalRun>(window.RunInTerminal);
         TerminalSession program = run.Session;
         Assert.Equal("Keys", window.TerminalPanel.ActiveTab?.Name);
@@ -660,7 +660,7 @@ public sealed class TerminalTests
     public void Stop_ends_a_program_running_in_the_terminal_and_what_it_started()
     {
         MainWindow window = RunWindow(TestFolders.Create("terminal-stop-"), "child");
-        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(3)));
+        Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(3));
         TerminalRun run = window.RunInTerminal!;
         long at = WaitForLine(run.Session, l => l.StartsWith("child ", StringComparison.Ordinal), "the id of the program's child");
         int child = int.Parse(run.Session.Screen.LineAt(at).Text()["child ".Length..], CultureInfo.InvariantCulture);

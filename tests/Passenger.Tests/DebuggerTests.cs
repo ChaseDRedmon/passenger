@@ -288,17 +288,17 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal("Sum: Seen", window.Configuration?.Name);
             string seen = $"seen [first|second word] yes, seen in {PathNames.Canonical(work)}";
 
-            Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
             string ran = window.BottomPanel.Run.Document.Snapshot.ToString();
             Assert.True(ran.Contains(seen, StringComparison.Ordinal), $"Run did not give the program what Debug and Profile give it, {seen}:\n{ran}");
 
-            Assert.Null(Ui.Await(window.DebugAsync(), "the debug session to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.DebugAsync(), "the debug session to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugged program to end");
             string debugged = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
             Assert.True(debugged.Contains(seen, StringComparison.Ordinal), $"Debug did not give the program what Run and Profile give it, {seen}:\n{debugged}");
 
-            Assert.Null(Ui.Await(window.ProfileAsync(), "the profiled run to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.ProfileAsync(), "the profiled run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the profiled program to end", TimeSpan.FromMinutes(2));
             string profiled = window.BottomPanel.Run.Document.Snapshot.ToString();
             Assert.True(profiled.Contains(seen, StringComparison.Ordinal), $"Profile did not give the program what Run and Debug give it, {seen}:\n{profiled}");
@@ -1643,7 +1643,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         try
         {
             // Not settled: the start holds the window's background work for as long as the debugger waits for the program.
-            Assert.True(window.Perform(AppActions.Debug), $"Debug did not start: {window.Status}");
+            Assert.True(window.Perform(AppActions.Debug), $"Debug did not start: {Ui.Said(window)}");
             Ui.PumpUntil(() => held.IsCompleted, "the build, then the program's runtime to come to the hold", TimeSpan.FromMinutes(3));
             program = held.Result;
             Assert.True(window.Debugger.Session is not null, $"The debugger waited for the program to start with no session for Stop to end: the status bar said \"{window.Status}\"");
@@ -1714,7 +1714,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     private static void StartDebugging(MainWindow window)
     {
         Ui.Run(window, AppActions.Debug);
-        Assert.True(window.Debugger.Session is not null, $"Debug did not start the program: {window.Status}");
+        Assert.True(window.Debugger.Session is not null, $"Debug did not start the program: {Ui.Said(window)}");
     }
 
     /// <summary>Waits as <see cref="Ui.WaitFor"/> does for what a program being debugged does; one that never comes says

@@ -86,8 +86,7 @@ public sealed class ProfilerTests : IDisposable
         }
 
         Task<string?> started = window.ProfileAsync();
-        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-        Assert.Null(started.Result);
+        Ui.Launched(window, started, "the build and the start", TimeSpan.FromMinutes(3));
         Assert.True(window.DockHost.IsShown("profiler"));
         Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
         Ui.Settle();
@@ -328,8 +327,7 @@ public sealed class ProfilerTests : IDisposable
         window.OpenFolder(project);
         Ui.Settle();
         Task<string?> started = window.ProfileAsync();
-        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-        Assert.Null(started.Result);
+        Ui.Launched(window, started, "the build and the start", TimeSpan.FromMinutes(3));
         Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
         Ui.PumpUntil(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("waiting", StringComparison.Ordinal), "the program to wait on its input");
 

@@ -231,7 +231,7 @@ public sealed partial class McpTests
         McpClient? client = null;
         try
         {
-            Assert.Null(Ui.Await(window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4)));
+            Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
             client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
             McpClient agent = client;
 

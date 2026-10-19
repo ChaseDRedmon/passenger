@@ -139,7 +139,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Delete"),
             $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
         return window;

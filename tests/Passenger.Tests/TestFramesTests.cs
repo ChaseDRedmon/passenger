@@ -252,7 +252,7 @@ public sealed class TestFramesTests(HeadlessTestsFolder project) : IClassFixture
         File.WriteAllText(project.Failing, "fail");
         MainWindow window = Open();
         TestNode box = Methods(window, "The_box_is_where_it_was_put").First(m => !m.ProjectPath!.Contains("VsTests", StringComparison.Ordinal));
-        Assert.Null(Ui.Await(window.Tests.RunAsync(window.Folder!, [box]), "the box test's run", TimeSpan.FromSeconds(240)));
+        Ui.Launched(window, window.Tests.RunAsync(window.Folder!, [box]), "the box test's run", TimeSpan.FromSeconds(240));
         Assert.True(box.State == TestState.Failed, $"The box test did not fail, so it shows no frame:\n{box.Details}");
         frames.AddRange(box.Frames.Select(f => f.Frame.Path));
         TestsView tests = window.BottomPanel.Tests;
@@ -287,7 +287,7 @@ public sealed class TestFramesTests(HeadlessTestsFolder project) : IClassFixture
 
         // Run again once the test passes: its frame goes with the run, and the strip with it.
         File.Delete(project.Failing);
-        Assert.Null(Ui.Await(window.Tests.RunAsync(window.Folder!, [box]), "the box test's second run", TimeSpan.FromSeconds(240)));
+        Ui.Launched(window, window.Tests.RunAsync(window.Folder!, [box]), "the box test's second run", TimeSpan.FromSeconds(240));
         Assert.Equal(TestState.Passed, box.State);
         Assert.Empty(box.Frames);
         Ui.Settle();

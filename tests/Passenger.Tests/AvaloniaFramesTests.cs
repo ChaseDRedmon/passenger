@@ -46,7 +46,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         MainWindow window = Opened();
         // Thirty slow layouts, then the app ends, and with it the run, whose snapshot shows.
         // 80 slow frames (2.4 s), so the panel leads the whole table even when the first layout shapes text slowly under load.
-        Assert.Null(Ui.Await(window.ProfileAsync("--frames 80"), "the app to build and start under the profiler", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.ProfileAsync("--frames 80"), "the app to build and start under the profiler", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, $"the app's end to show its snapshot ({window.ProfilerView.Status})", TimeSpan.FromMinutes(2));
         ProfilerView view = window.ProfilerView;
         view.ShowPage(ProfilerPage.Frames);
@@ -106,11 +106,11 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
     public void The_profiler_attached_to_a_debugged_avalonia_app_records_its_frames_and_its_overlays_toggle_from_the_debug_window()
     {
         MainWindow window = Opened();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveApp?.State == LiveAppState.Connected, $"the app's inspector to say hello ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
 
         // Attached, the profiler records the frames the app draws from then on; Get Snapshot leaves it running, debugged.
-        Assert.Null(Ui.Await(window.AttachProfilerAsync(), "the profiler to attach to the debugged app"));
+        Ui.Launched(window, window.AttachProfilerAsync(), "the profiler to attach to the debugged app");
         Assert.True(window.Profiling is { Attached: true }, "The profiler did not attach to the debugged app");
         OutputView console = window.BottomPanel.Debug.Console;
         Type(window, console, "slow 5");
@@ -153,7 +153,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         MainWindow window = Opened();
         OutputView run = window.BottomPanel.Run;
         Assert.False(run.Overlays.IsVisible, "The Run window offers overlays with no app running");
-        Assert.Null(Ui.Await(window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => run.Overlays.IsVisible, "the Run window's overlay toggle once the app's inspector says hello", TimeSpan.FromMinutes(2));
         LiveApp first = window.Session.RunApp!;
         Assert.Null(Shown(first));
@@ -176,7 +176,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Runner.IsRunning, "the app to stop");
         Ui.WaitFor(() => !run.Overlays.IsVisible, "the overlay toggle to go with the app");
-        Assert.Null(Ui.Await(window.RunAsync(), "the app to start again", TimeSpan.FromMinutes(2)));
+        Ui.Launched(window, window.RunAsync(), "the app to start again", TimeSpan.FromMinutes(2));
         Ui.WaitFor(() => window.Session.RunApp is { State: LiveAppState.Connected } again && again != first, "the app's inspector to say hello again", TimeSpan.FromMinutes(2));
         Ui.WaitFor(() => Shown(window.Session.RunApp!) is ["DirtyRects", "RenderTimeGraph"], "the app's window to show the overlays left from its launch");
         Ui.Run(window, AppActions.Stop);

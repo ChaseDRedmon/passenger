@@ -57,7 +57,7 @@ public sealed class SelfDebuggingTests : IDisposable
 
         string picture = Path.Combine(folder, "inner.png");
         Task<string?> launched = window.DebugAsync($"\"{folder}\" --screenshot \"{picture}\" --key F10 --key F10 --wait 600000");
-        Assert.Null(Ui.Await(launched, "Passenger to build and start under its debugger", TimeSpan.FromMinutes(5)));
+        Ui.Launched(window, launched, "Passenger to build and start under its debugger", TimeSpan.FromMinutes(5));
         DebugSession session = window.Debugger.Session!;
         Ui.WaitFor(() => session.State == DebugState.Paused || !window.Debugger.IsDebugging, "the inner Passenger to stop at the breakpoint in its key's action", TimeSpan.FromMinutes(3));
         Assert.True(session.State == DebugState.Paused, $"The inner Passenger ended without stopping: {window.Status}\n{Console(window)}");

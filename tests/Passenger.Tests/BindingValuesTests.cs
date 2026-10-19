@@ -52,7 +52,7 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
         window.Debugger.Breakpoints.Toggle(CodeBehind, Line(CodeBehind, "Console.WriteLine"));
         Assert.Null(window.OpenFile(Xaml));
         Ui.Settle();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Customer"),
             $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
         Say(window, "rename");

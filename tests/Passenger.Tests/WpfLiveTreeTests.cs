@@ -136,7 +136,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
         MainWindow window = Opened();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         window.BottomPanel.Debug.ShowTab(console: true);
         OutputView console = window.BottomPanel.Debug.Console;
         string line;
@@ -191,7 +191,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         DebugStop stop;
         try
         {
-            Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+            Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
             stop = Stopped(window, "the stop where the window's view model makes the caption's binding fail");
         }
         catch (TimeoutException waited)
@@ -295,7 +295,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
     private MainWindow Debugged()
     {
         MainWindow window = Opened();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         try
         {
             Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Delete"), "the Live Visual Tree to show the app's window", TimeSpan.FromMinutes(2));

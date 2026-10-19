@@ -74,7 +74,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Assert.Equal(["Hello", "Greeting"], Names(window));
         Assert.Equal("Greeting", window.Configuration?.Name);
 
-        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2)));
+        Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
         Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
         string ran = window.BottomPanel.Run.Document.Snapshot.ToString();
         Assert.True(ran.Contains($"Hi [one|two three] in {project}", StringComparison.Ordinal),
@@ -129,7 +129,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
             Assert.Equal(["Hello: Greet", "Hello: Greet (1)"], Names(window));
             Assert.Equal("--name Ada", window.Configurations[0].Arguments);
             Assert.Equal("Hello: Greet (1)", window.Configuration?.Name);
-            Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
             string ran = window.BottomPanel.Run.Document.Snapshot.ToString();
             Assert.True(ran.Contains("Hi [--name|Grace] in ", StringComparison.Ordinal), $"The copy did not run with its own arguments and the profile's variable:\n{ran}");
@@ -162,7 +162,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Assert.Equal(ConsoleKind.Internal, window.Configurations[0].Console);
         Assert.Equal(ConsoleKind.Terminal, window.Configuration?.Console);
 
-        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2)));
+        Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
         TerminalRun run = Assert.IsType<TerminalRun>(window.RunInTerminal);
         Assert.Equal("Hello in the terminal", window.TerminalPanel.ActiveTab?.Name);
         Ui.WaitFor(() => run.Ended.IsCompleted, "the run to end");
@@ -219,13 +219,13 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
             Assert.Equal("Hello: Serve (1)", window.Configuration?.Name);
             Assert.False(window.Configuration!.LaunchBrowser);
 
-            Assert.Null(Ui.Await(window.RunAsync(), "the copy's run to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.RunAsync(), "the copy's run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the copy's run to end");
             Assert.Contains("Listening", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
             Assert.Empty(window.Browsed);
 
             Assert.True(window.SelectConfiguration("Hello: Serve"));
-            Assert.Null(Ui.Await(window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the program listens", TimeSpan.FromSeconds(60));
             Assert.Equal([$"http://127.0.0.1:{port}/status"], window.Browsed.Select(u => u.AbsoluteUri));
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the profile's run to end");

@@ -663,6 +663,39 @@ public static class Ui
         return task.GetAwaiter().GetResult();
     }
 
+    /// <summary>Waits for a launch the window started (Run, Debug, Profile, a test run) as <see cref="Await"/> does, and
+    /// fails unless it started, with its refusal and the build's own errors (<see cref="BuildErrors"/>).</summary>
+    public static void Launched(Passenger.App.MainWindow window, Task<string?> launch, string what, TimeSpan? limit = null)
+    {
+        if (Await(launch, what, limit) is { } refused)
+        {
+            throw new Xunit.Sdk.XunitException($"Waiting for {what}, the window refused: {refused}{BuildErrors(window)}");
+        }
+    }
+
+    /// <summary>The status bar's words and the last build's own errors after them, for a failure message: of a build that
+    /// failed the status bar says only how many errors it had, and CI's runs keep only what the message says.</summary>
+    public static string Said(Passenger.App.MainWindow window) => $"{window.Status}{BuildErrors(window)}";
+
+    /// <summary>The last build's errors as MSBuild wrote them (place, code, text, a long one's first lines), each on a line
+    /// of its own after a line break; when the build failed with none read, the Build window's last lines; empty when it
+    /// had none.</summary>
+    public static string BuildErrors(Passenger.App.MainWindow window)
+    {
+        Passenger.App.Run.Problem[] errors = [.. window.BottomPanel.Problems.Problems.Where(p => p.Severity == Passenger.App.Run.ProblemSeverity.Error)];
+        if (errors.Length > 0)
+        {
+            return "\nThe build's errors:\n" + string.Join('\n', errors.Select(p =>
+                $"{p.Path ?? p.Project}({p.Position.Line + 1},{p.Position.Column + 1}): error {p.Code}: {string.Join("\n    ", p.Message.Split('\n').Take(4))}"));
+        }
+        if (window.Status?.Contains("failed", StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return string.Empty;
+        }
+        string[] lines = window.BottomPanel.Build.Document.Snapshot.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return lines.Length == 0 ? string.Empty : $"\nThe Build window ends:\n{string.Join('\n', lines.TakeLast(30))}";
+    }
+
     /// <summary>Lets the window's background work land, as a screenshot does, then finds what it shows, with no wait of
     /// the test's own: what that work brings (Git's answers, a search's) must be work the window counts.</summary>
     public static void Landed(Func<bool> shown, string what)

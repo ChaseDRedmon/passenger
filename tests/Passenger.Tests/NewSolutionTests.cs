@@ -82,7 +82,7 @@ public sealed class NewSolutionTests : IDisposable
 
         // It is built as it opens, ready to run.
         Ui.WaitFor(() => !window.IsBuilding, "the new solution's build", TimeSpan.FromMinutes(3));
-        Assert.True(File.Exists(Path.Combine(folder, "Greeter", "bin", "Debug", framework, "Greeter.dll")), $"The new solution was not built: {window.Status}");
+        Assert.True(File.Exists(Path.Combine(folder, "Greeter", "bin", "Debug", framework, "Greeter.dll")), $"The new solution was not built: {Ui.Said(window)}");
         Assert.Equal(["Greeter"], window.Configurations.Select(c => c.Name));
         Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the new console app to run to its end", TimeSpan.FromMinutes(2));
@@ -160,7 +160,7 @@ public sealed class NewSolutionTests : IDisposable
         // It builds as it opens, and runs: its window comes up.
         Ui.WaitFor(() => !window.IsBuilding, "the Avalonia app's build", TimeSpan.FromMinutes(4));
         Assert.True(File.Exists(Path.Combine(folder, "Gallery", "bin", "Debug", "net10.0", "Gallery.dll")),
-            $"The Avalonia app was not built: {window.Status}\n{window.BottomPanel.Build.Document.Snapshot}");
+            $"The Avalonia app was not built: {Ui.Said(window)}\n{window.BottomPanel.Build.Document.Snapshot}");
         Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the Avalonia app to run", TimeSpan.FromMinutes(3));
         Assert.Contains("Gallery is up, showing Welcome to Avalonia!", Output(window), StringComparison.Ordinal);

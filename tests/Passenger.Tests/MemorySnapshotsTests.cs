@@ -359,8 +359,7 @@ public sealed class MemorySnapshotsTests : IDisposable
         window.OpenFolder(project);
         Ui.Settle();
         Task<string?> started = window.ProfileAsync();
-        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-        Assert.Null(started.Result);
+        Ui.Launched(window, started, "the build and the start", TimeSpan.FromMinutes(3));
         Ui.PumpUntil(() => Console(window).Contains("ready", StringComparison.Ordinal), "the program to be ready");
         return window;
     }

@@ -340,7 +340,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         // Hello alone builds, though Tools has an error.
         window.Perform(AppActions.BuildSelected);
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        Assert.Equal("Build succeeded", window.Status);
+        Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
         Assert.True(File.Exists(hello), "Build Selected Projects did not build the chosen project");
         Assert.False(File.Exists(tools), "Build Selected Projects built a project that was not chosen");
 
@@ -391,7 +391,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.PumpUntil(() => !window.IsBuilding,
                 "the Build window to stop saying it is building once the build's dotnet command ended (a node MSBuild started holding its output open keeps it building)",
                 TimeSpan.FromSeconds(10));
-            Assert.Equal("Build succeeded", window.Status);
+            Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
             Assert.EndsWith("Process finished with exit code 0.\n", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
         }
         finally
@@ -417,7 +417,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         {
             window.Perform(AppActions.Build);
             Ui.WaitFor(() => !window.IsBuilding, "the first build", TimeSpan.FromMinutes(2));
-            Assert.Equal("Build succeeded", window.Status);
+            Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
 
             Write("Directory.Build.targets", """
                 <Project>
@@ -662,7 +662,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
         window.Perform(AppActions.Build);
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        Assert.Equal("Build succeeded", window.Status);
+        Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
         Assert.True(File.Exists(Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll")), "Build did not build the folder's project");
         Assert.Contains("Hello from the run", RunToEnd(window), StringComparison.Ordinal);
         window.Close();
@@ -687,7 +687,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Contains("Hi [--name|Ada Lovelace]", RunToEnd(window), StringComparison.Ordinal);
 
         // Arguments given for one run replace the profile's, and its environment stays.
-        Assert.Null(Ui.Await(window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2)));
+        Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
         Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
 
         Assert.True(window.SelectConfiguration("Hello: Docker"));
@@ -868,7 +868,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     private static void BuildToEnd(MainWindow window, string said)
     {
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        Assert.StartsWith(said, window.Status, StringComparison.Ordinal);
+        Assert.True(window.Status?.StartsWith(said, StringComparison.Ordinal) == true, $"The build did not end saying \"{said}\": {Ui.Said(window)}");
     }
 
     [AvaloniaFact]
@@ -908,7 +908,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         try
         {
             Assert.True(window.SelectConfiguration("Site: Browse"));
-            Assert.Null(Ui.Await(window.RunAsync(), "the site to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.RunAsync(), "the site to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => Output(window).Contains("Warming up", StringComparison.Ordinal), "the site to start", TimeSpan.FromMinutes(2));
             DateTime warming = DateTime.UtcNow.AddSeconds(2.5);
             Ui.WaitFor(() => window.Browsed.Count > 0 || DateTime.UtcNow > warming, "the site to warm up");
@@ -926,7 +926,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
             // A profile that does not ask for the browser opens none.
             Assert.True(window.SelectConfiguration("Site: Quiet"));
-            Assert.Null(Ui.Await(window.RunAsync(), "the quiet site to start", TimeSpan.FromMinutes(2)));
+            Ui.Launched(window, window.RunAsync(), "the quiet site to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => Output(window).Contains("Now listening on:", StringComparison.Ordinal), "the quiet site to listen", TimeSpan.FromMinutes(2));
             DateTime listening = DateTime.UtcNow.AddSeconds(1.5);
             Ui.WaitFor(() => DateTime.UtcNow > listening, "the quiet site to run a while");

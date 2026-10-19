@@ -84,7 +84,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("==2", store.In(Xaml).Single(b => b.Line == row).HitCondition);
 
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         // The window's Width, which XamlIl gives no code of its own: the stop is before it is set, its Title already set.
         DebugStop stop = Stopped(window, "the stop where the window's Width is set");
         AssertAt(stop, Xaml, top, Column(Xaml, top, "Width"));
@@ -121,7 +121,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     public void Break_when_value_changes_stops_in_the_code_the_style_or_the_binding_that_changed_that_controls_property()
     {
         MainWindow window = Opened();
-        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Save"),
             $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
         BreakpointStore store = window.Debugger.Breakpoints;

@@ -286,7 +286,7 @@ public sealed class SolutionFoldersTests : IDisposable
         window.ExplorerView.OpenMenu?.Close();
         Ui.Settle();
         Assert.False(window.IsBuilding);
-        Assert.True(File.Exists(Path.Combine(folder, "src", "Shop.Core", "bin", "Debug", "net10.0", "Shop.Core.dll")), $"The project in the solution folder was not built: {window.Status}");
+        Assert.True(File.Exists(Path.Combine(folder, "src", "Shop.Core", "bin", "Debug", "net10.0", "Shop.Core.dll")), $"The project in the solution folder was not built: {Ui.Said(window)}");
         Assert.False(File.Exists(Path.Combine(folder, "src", "Shop.Web", "bin", "Debug", "net10.0", "Shop.Web.dll")),
             "Building the solution folder's projects built Shop.Web, which is outside it, too");
         window.Close();

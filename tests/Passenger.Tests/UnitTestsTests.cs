@@ -208,7 +208,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         TestNode greets = Method(window, "The_profile_greets")!;
         Assert.True(greets.State == TestState.Passed, $"A test ran without its project's launch profile's variables, which Rider gives it:\n{greets.Details}");
 
-        Assert.Null(Ui.Await(window.Tests.RunAsync(window.Folder!, [greets], debug: true), "the test debugged", TimeSpan.FromSeconds(120)));
+        Ui.Launched(window, window.Tests.RunAsync(window.Folder!, [greets], debug: true), "the test debugged", TimeSpan.FromSeconds(120));
         Assert.True(greets.State == TestState.Passed, $"A test debugged ran without its project's launch profile's variables:\n{greets.Details}");
         window.Close();
     }
