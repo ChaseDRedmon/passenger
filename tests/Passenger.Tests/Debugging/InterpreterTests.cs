@@ -44,6 +44,26 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("5", Evaluate(host, frame, "myInt").Value);
     }
 
+    /// <summary>A multi-dimensional array's element read, set, and its member set where it lies, as a watch and Set Value
+    /// reach them; the runtime makes such an array's Get, Set and Address, which no metadata defines, and each had failed
+    /// with a TypeLoadException.</summary>
+    [Fact]
+    public async Task A_multi_dimensional_arrays_elements_evaluate_and_take_a_value_set()
+    {
+        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"interpreter\");");
+        using DebugSession _ = host;
+
+        Assert.Equal(("4", "int"), Evaluate(host, frame, "grid[1, 1]"));
+        Assert.Equal("11", Evaluate(host, frame, "grid[2, 0] + grid[2, 1]").Value);
+        SetExpressionResponse set = host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("grid[0, 1]", "40 + 2", frame));
+        Assert.Equal("42", set.Value);
+        Assert.Equal("42", Evaluate(host, frame, "grid[0, 1]").Value);
+        // A struct's member set in place, not on a copy of the element.
+        Assert.Equal("7", Evaluate(host, frame, "pairGrid[1, 0].Value = 7").Value);
+        Assert.Equal("7", Evaluate(host, frame, "pairGrid[1, 0].Value").Value);
+        Assert.Contains("IndexOutOfRange", Evaluate(host, frame, "grid[3, 0]").Value, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_constrained_call_on_a_struct_argument_changes_the_argument()
     {

@@ -212,6 +212,25 @@ internal sealed class EvaluationMetadataResolver(ManagedDebugger debugger, Metad
         throw new MissingMethodException(GetTypeName(declaringType), name);
     }
 
+    /// <summary>A call of a multi-dimensional array's Get, Set or Address (<c>grid[1, 2]</c>), which the runtime makes for
+    /// each such array type and no type defines: the method's name and the array's rank.</summary>
+    public bool TryResolveArrayAccessor(int token, out string name, out int rank)
+    {
+        EntityHandle handle = MetadataTokens.EntityHandle(token);
+        if (handle.Kind == HandleKind.MemberReference
+            && evaluationReader.GetMemberReference((MemberReferenceHandle)handle) is { Parent.Kind: HandleKind.TypeSpecification } member
+            && evaluationReader.GetString(member.Name) is "Get" or "Set" or "Address"
+            && ResolveTypeToken(MetadataTokens.GetToken(member.Parent)) is { ArrayRank: > 0, IsSzArray: false } array)
+        {
+            name = evaluationReader.GetString(member.Name);
+            rank = array.ArrayRank;
+            return true;
+        }
+        name = string.Empty;
+        rank = 0;
+        return false;
+    }
+
     public bool TryResolveEvaluationMethod(int token, out ResolvedEvaluationMethod result)
     {
         EntityHandle handle = MetadataTokens.EntityHandle(token);

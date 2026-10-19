@@ -603,6 +603,11 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             }
             return;
         }
+        if (resolver.TryResolveArrayAccessor(instruction.Token, out string accessor, out int rank))
+        {
+            await ArrayAccessorAsync(accessor, rank, stack, context, handles);
+            return;
+        }
         ResolvedRuntimeMethod method = resolver.ResolveMethod(instruction.Token);
         CilValue[] argumentValues = Pop(stack, method.Signature.ParameterTypes.Length);
         CilValue? receiverValue = method.IsStatic ? null : stack.Pop();
@@ -1116,6 +1121,40 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
     private static ICorDebugArrayValue GetArrayValue(CilValue value) =>
         value.CorValue?.UnwrapDebugValue() as ICorDebugArrayValue
         ?? throw new NullReferenceException("Array reference is null");
+
+    /// <summary>A multi-dimensional array's Get, Set or Address, on the element its indices name, as ldelem, stelem and
+    /// ldelema are on a vector's; an index outside its dimension throws as the program would.</summary>
+    private async Task ArrayAccessorAsync(string accessor, int rank, Stack<CilValue> stack, CompiledExpressionEvaluationContext context, EvaluationHandleScope handles)
+    {
+        CilValue? stored = accessor == "Set" ? stack.Pop() : null;
+        CilValue[] indices = Pop(stack, rank);
+        ICorDebugArrayValue array = GetArrayValue(stack.Pop());
+        uint[] dimensions = array.GetDimensions(rank);
+        uint[] lowest = array.HasBaseIndicies() ? array.GetBaseIndicies(rank) : new uint[rank];
+        uint[] at = new uint[rank];
+        for (int dimension = 0; dimension < rank; dimension++)
+        {
+            long index = indices[dimension].AsInt32();
+            if (index < (int)lowest[dimension] || index - (int)lowest[dimension] >= dimensions[dimension])
+            {
+                throw new IndexOutOfRangeException("Index was outside the bounds of the array.");
+            }
+            at[dimension] = unchecked((uint)index);
+        }
+        CorDebugLocation element = new(array.GetElement(rank, at));
+        switch (accessor)
+        {
+            case "Get":
+                stack.Push(handles.Root(element.Read()));
+                break;
+            case "Address":
+                stack.Push(CilValue.FromLocation(element));
+                break;
+            default:
+                element.Write(await MaterializeForStoreAsync(stored!, context, handles));
+                break;
+        }
+    }
 
     private static ICorDebugObjectValue GetFieldReceiver(CilValue receiver)
     {

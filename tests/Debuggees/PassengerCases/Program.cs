@@ -189,6 +189,8 @@ static class Interpreter
 		object boxedPair = pairOfInt;
 		Counter counter = new();
 		decimal price = 12.5m;
+		int[,] grid = { { 1, 2 }, { 3, 4 }, { 5, 6 } };
+		Pair<int>[,] pairGrid = new Pair<int>[2, 2];
 		Bumper.Work(new Bumped());
 		Console.WriteLine("interpreter");
 	}
