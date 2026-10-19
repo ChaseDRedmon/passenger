@@ -315,10 +315,12 @@ public sealed class LiveApp : IDisposable
         (await AskAsync(new Request(0, Wire.Values) { Xaml = read })).Values ?? throw new LiveAppException($"{Name} read no bindings");
 
     /// <summary>Input to the app, as a person gives it, answered once it has been handled and laid out.</summary>
-    public async Task<InputDone> InputAsync(InputAction input) =>
-        (await AskAsync(new Request(0, Wire.Input) { Input = input })).Done ?? throw new LiveAppException($"{Name} did not say what the input did");
+    public async Task<InputDone> InputAsync(InputAction input, CancellationToken giveUp = default) =>
+        (await AskAsync(new Request(0, Wire.Input) { Input = input }, giveUp)).Done ?? throw new LiveAppException($"{Name} did not say what the input did");
 
-    private async Task<Reply> AskAsync(Request request)
+    /// <summary>A request's answer; <paramref name=giveUp/> stops the wait for it (the app paused under the debugger
+    /// before it could answer), its answer then forgotten.</summary>
+    private async Task<Reply> AskAsync(Request request, CancellationToken giveUp = default)
     {
         if (State != LiveAppState.Connected || stream is not { } open)
         {
@@ -353,7 +355,12 @@ public sealed class LiveApp : IDisposable
         Reply reply;
         try
         {
-            reply = await answer.Task.WaitAsync(AnswerLimit);
+            reply = await answer.Task.WaitAsync(AnswerLimit, giveUp);
+        }
+        catch (OperationCanceledException) when (giveUp.IsCancellationRequested)
+        {
+            Drop(id, answer);
+            throw;
         }
         catch (TimeoutException)
         {

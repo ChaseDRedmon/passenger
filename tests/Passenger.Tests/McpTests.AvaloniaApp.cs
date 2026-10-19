@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -117,6 +118,29 @@ public sealed partial class McpTests
         }
         Assert.True(gone.IsError, "The tree of an app that has ended was answered");
         Assert.Contains("AgentApp has ended", Text(gone), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_agent_debugging_an_avalonia_app_that_clicks_into_a_breakpoint_is_told_at_once_where_it_stopped()
+    {
+        await using McpClient client = await Start(["--mcp", appFolder]);
+        await Call(client, "debug_start", new() { ["waitSeconds"] = 1 });
+        Assert.Single((await Call(client, "app_windows")).GetProperty("windows").EnumerateArray());
+
+        // Set while the app runs, the breakpoint in the button's handler is there for the click straight after it, and the
+        // click says where it stopped the app, whose paused UI could not say what the click did.
+        await Call(client, "breakpoint_set", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
+        Stopwatch asked = Stopwatch.StartNew();
+        string clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(8), $"The click that stopped at a breakpoint took {asked.Elapsed} to say so: {clicked}");
+        Assert.Contains("and that paused the program (breakpoint) at MainWindow.axaml.cs:23:", clicked, StringComparison.Ordinal);
+        Assert.Equal("paused", (await Call(client, "debug_state")).GetProperty("state").GetString());
+
+        // Let go, the click finishes.
+        await Call(client, "breakpoint_remove", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
+        await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
+        Assert.Contains("\"Clicked once\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
+        await Call(client, "stop");
     }
 
     [AvaloniaFact]

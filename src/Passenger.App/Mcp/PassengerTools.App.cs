@@ -127,7 +127,7 @@ public sealed partial class PassengerTools
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (LiveApp live, AppNode? element, AppNode target) = await Target(app, control, window, needsPoint: true, x, y, cancel);
-        InputDone done = await live.InputAsync(new InputAction(InputKinds.Click)
+        (InputDone? sent, string? paused) = await SendAsync(live, new InputAction(InputKinds.Click)
         {
             Window = target.Window.Id,
             Element = element?.Element.Id,
@@ -136,13 +136,17 @@ public sealed partial class PassengerTools
             Button = button,
             Count = count,
             Modifiers = Modifiers(modifiers),
-        });
+        }, cancel);
         string clicked = count switch
         {
             2 => "Double-clicked",
             >= 3 => "Triple-clicked",
             _ => button == "left" ? "Clicked" : $"{char.ToUpperInvariant(button[0])}{button[1..]}-clicked",
         };
+        if (sent is not { } done)
+        {
+            return $"{clicked} {Named(element)}, and {paused}";
+        }
         return $"{clicked} {Aimed(element, done)}{Took(element, done, "click")}{Said(done)}";
     });
 
@@ -159,13 +163,17 @@ public sealed partial class PassengerTools
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (LiveApp live, AppNode? element, AppNode target) = await Target(app, control, window, needsPoint: false, null, null, cancel);
-        InputDone done = await live.InputAsync(new InputAction(InputKinds.Type)
+        (InputDone? sent, string? paused) = await SendAsync(live, new InputAction(InputKinds.Type)
         {
             Window = target.Window.Id,
             Element = element?.Element.Id,
             Text = text,
             Replace = replace,
-        });
+        }, cancel);
+        if (sent is not { } done)
+        {
+            return $"Typed into {Named(element)}, and {paused}";
+        }
         return $"Typed {text.Length} character{(text.Length == 1 ? "" : "s")} into {done.TargetName ?? "the window, nothing having the focus"}{Said(done)}";
     });
 
@@ -183,12 +191,16 @@ public sealed partial class PassengerTools
     {
         IReadOnlyList<Chord> chords = Chords(keys);
         (LiveApp live, AppNode? element, AppNode target) = await Target(app, control, window, needsPoint: false, null, null, cancel);
-        InputDone done = await live.InputAsync(new InputAction(InputKinds.Key)
+        (InputDone? sent, string? paused) = await SendAsync(live, new InputAction(InputKinds.Key)
         {
             Window = target.Window.Id,
             Element = element?.Element.Id,
             Keys = chords,
-        });
+        }, cancel);
+        if (sent is not { } done)
+        {
+            return $"Pressed {keys.Trim()} in {Named(element)}, and {paused}";
+        }
         return $"Pressed {keys.Trim()} in {done.TargetName ?? "the window, nothing having the focus"}{Said(done)}";
     });
 
@@ -209,7 +221,7 @@ public sealed partial class PassengerTools
         (LiveApp live, AppNode? element, AppNode target) = await Target(app, control, window, needsPoint: true, x, y, cancel);
         double down = dy ?? (dx is null ? 3 : 0);
         double across = dx ?? 0;
-        InputDone done = await live.InputAsync(new InputAction(InputKinds.Scroll)
+        (InputDone? sent, string? paused) = await SendAsync(live, new InputAction(InputKinds.Scroll)
         {
             Window = target.Window.Id,
             Element = element?.Element.Id,
@@ -218,7 +230,11 @@ public sealed partial class PassengerTools
             DeltaX = across,
             DeltaY = down,
             Modifiers = Modifiers(modifiers),
-        });
+        }, cancel);
+        if (sent is not { } done)
+        {
+            return $"Scrolled over {Named(element)}, and {paused}";
+        }
         string turned = string.Join(" and ", new[] { Notches(down, "down", "up"), Notches(across, "right", "left") }.Where(n => n.Length > 0));
         string scrolled = $"Scrolled {turned} over {Aimed(element, done)}{Took(element, done, "wheel")}";
         return done.Shows is { } where ? $"{scrolled}: {where}" : $"{scrolled}, which no scroll viewer holds";
@@ -438,6 +454,39 @@ public sealed partial class PassengerTools
     private static string Titled(Element window) => window.Text is { Length: > 0 } title ? $"{AppQuery.Short(window)} \"{title}\"" : AppQuery.Short(window);
 
     /// <summary>Where a pointer input went, as its answer says it.</summary>
+    /// <summary>Input into the app, and what it did; or, when it ran the debugged app into a breakpoint, where that paused it,
+    /// said at once rather than the answer waited out, which the app's paused UI gives only once it runs again.</summary>
+    private async Task<(InputDone? Done, string? Paused)> SendAsync(LiveApp live, InputAction input, CancellationToken cancel)
+    {
+        if (live != Session.LiveApp)
+        {
+            return (await live.InputAsync(input), null);
+        }
+        using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        Task<InputDone> sent = live.InputAsync(input, giveUp.Token);
+        await Until(() => sent.IsCompleted || Session.Debug.Session is { State: DebugState.Paused }, LiveApp.AnswerLimit, cancel);
+        if (sent.IsCompleted || Session.Debug.Session is not { State: DebugState.Paused })
+        {
+            return (await sent, null);
+        }
+        giveUp.Cancel();
+        try
+        {
+            await sent;
+        }
+        catch (OperationCanceledException)
+        {
+            // Given up on: its answer comes once the program runs again, to no one.
+        }
+        await Until(() => Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
+        DebugSnapshot stop = await DebugSnapshotAsync();
+        return (null, $"that paused the program{(stop.Reason is { } why ? $" ({why})" : string.Empty)}{(stop.Location is { } at ? $" at {at}" : string.Empty)} before it was done: "
+            + "debug_state shows where, debug_continue lets it go on");
+    }
+
+    /// <summary>The element an input went to as the agent named it, or the window.</summary>
+    private static string Named(AppNode? element) => element is null ? "the window" : AppQuery.Short(element.Element);
+
     private static string Aimed(AppNode? element, InputDone done)
     {
         string at = done.X is double x && done.Y is double y ? string.Create(CultureInfo.InvariantCulture, $" at {x:0.#},{y:0.#}") : string.Empty;
