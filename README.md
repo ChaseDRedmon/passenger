@@ -1,6 +1,6 @@
 # Passenger
 
-An IDE for C# and modern .NET, written in C# with Avalonia and inspired by JetBrains Rider. Windows and macOS first,
+An IDE for C# and modern .NET, written in C# with Avalonia, free and open source under MIT. Windows and macOS first,
 with builds for Linux ([how to install them](https://passenger-ide.net/linux)).
 
 **[passenger-ide.net](https://passenger-ide.net)**: what it does, downloads, and how to connect a coding agent.
@@ -10,41 +10,84 @@ with builds for Linux ([how to install them](https://passenger-ide.net/linux)).
   <img src="site/images/editor-dark.webp" alt="Passenger's editor: a C# file with completion open after a dot, inlay hints, and the change bars of uncommitted lines">
 </picture>
 
-Passenger edits, builds, runs, tests, debugs and profiles C# and .NET, with an editor, a debugger and a profiler of its
-own. Three things set it apart:
+Passenger edits, builds, runs, tests, debugs and profiles C# and .NET. Much of what it includes usually takes a paid
+IDE or a paid add-on; in Passenger it is part of the IDE, free and open source under MIT, for work and personal
+projects alike:
 
+- **XAML tooling for Avalonia and WPF.** Completion and checks for both, a preview as you type (WPF's on Windows), the
+  running app's Live Visual Tree, failed bindings listed with fixes, and in Avalonia, binding values after the XAML's
+  lines and breakpoints in the XAML. More XAML tooling than you'll find in other .NET IDEs.
+- **Performance and memory profiling.** A timeline, call tree, hot spots and flame graph, from a program's start or
+  attached to one running; heap snapshots with retained sizes and paths to roots, compared to show new, dead and
+  survived objects. Usually a paid add-on.
+- **A debugger of its own, with Hot Reload.** The values methods returned, Smart Step Into, exception breakpoints, data
+  breakpoints on Windows x64, decompiled code for libraries without symbols, attaching on a Mac with nothing to set
+  up, and your edits put in the program while it is paused or running.
 - **An IDE your agent can drive.** Passenger is an MCP server. A coding agent asks it about the code, builds, tests,
   debugs and profiles through it, and tries out the Avalonia or WPF app it is building: pictures of its windows, its
   controls, clicks and typing. On your own window it asks you first.
-- **The Avalonia developer's IDE.** XAML completion, checks, refactorings and a preview as you type; while the app
-  runs, its Live Visual Tree, binding errors and values, and breakpoints in the XAML. WPF's XAML gets the same help.
-- **Rider's ways for C# and .NET.** Rider's Visual Studio keymaps (Visual Studio OSX on a Mac), its actions under their
-  names and its behaviours where they matter. The look is its own: Passenger's theme, or Harbour, each dark and light.
+- **The rest of a full IDE:** a three-way merge for Git's conflicts, Local History, NuGet with vulnerable versions
+  marked, four test frameworks and a terminal of its own.
 
 The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1) lists what is left before the first release. The
 pictures here are of a sample project committed to this repository, in your system's light or dark.
 
 ## What it does
 
-### The editor and C#
+### Avalonia and WPF
 
-A text control of its own over an immutable rope: multiple carets, folding, soft wrap, Extend Selection, live, postfix
-and surround templates, inlay hints, the symbol at the caret lit through the file, splits and tabs in windows of their
-own, and Rider's keymaps with their chords. A key costs what it changed, not the file's size.
+`.axaml` files get the help C# gets, from the project's own assemblies and Avalonia's own compiler and previewer:
+completion of controls, properties, values, resources, selectors and binding paths checked against `x:DataType`, the
+XAML compiler's errors on their lines, Go to Declaration into C#, rename of `x:Name`, Reformat Code, Extract Resource
+and Extract Style, and a missing property, command or converter made from where it is used. XAML Preview draws the
+file beside it, following each edit.
 
-C# comes from Roslyn: its parser colours as you type, then the language server gives diagnostics, completion, hovers,
-signature help, quick fixes and refactorings (Change Signature, Extract Interface, Move, Pull Members Up, Safe Delete
-and more), a rename that renames the type's file, Go to Declaration, Implementation and Base Symbols, Find Usages, call
-and type hierarchies and decompiled library sources. Problems lists the whole solution's without a build. Razor and
-Blazor files get C# and HTML help together.
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/xaml-light.webp">
+  <img src="site/images/xaml-dark.webp" alt="An Avalonia .axaml file with XAML completion open, and XAML Preview drawing it beside the editor">
+</picture>
+
+Debug an Avalonia app and the Live Visual Tree shows its controls as they are, each property with where its value came
+from and each style with why it applies or not, and the XAML shows each binding's value after its line. A failed
+binding is a console line linked to its XAML and a row in Problems with a fix where there is one, and can stop the
+debugger like an exception. Breakpoints go on an element, one of its attributes, or a property's next change. The
+profiler charts an Avalonia app's frames and their layout by control, and a failed Avalonia.Headless test (xUnit v3)
+carries a picture of each window as it was.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/live-tree-light.webp">
+  <img src="site/images/live-tree-dark.webp" alt="Debugging an Avalonia app: the Live Visual Tree with an element's details, and binding values after the XAML's lines">
+</picture>
+
+WPF projects get the same XAML help on every system, with binding paths checked against the design-time data context.
+On Windows, XAML Preview draws WPF files, and while a WPF app is debugged the Live Visual Tree shows where each value
+came from and which styles and triggers set it, Break When Value Changes stops on a property's next change, and failed
+bindings show and can stop the debugger. Elsewhere a WPF or Windows Forms project builds for its code help and says it
+runs only on Windows.
+
+### Profiling
+
+A sampling profiler over the runtime's EventPipe, from a program's first instruction or attached to one already
+running: its call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch of the
+timeline. A memory snapshot counts the heap by type, with each object's retained size, and shows the shortest paths
+that keep it alive; two snapshots compared say which objects are new, which died and which survived.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/profiler-light.webp">
+  <img src="site/images/profiler-dark.webp" alt="A profile of a run: its timeline above the call tree">
+</picture>
 
 ### Debugging
 
 Passenger's own debugger (started from SharpDbg and ICorDebugSharp, over ICorDebug): breakpoints with conditions, hit
 counts and log messages, exception breakpoints, stepping through async code, Smart Step Into, the values methods
 returned, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set, watches and
-evaluation, and the values each line used drawn after it, as Rider does. Edit the code while debugging and Hot Reload
-puts it in the program, paused or running. Data breakpoints work on Windows x64, where the runtime supports them.
+evaluation, and the values each line used drawn after it. A frame in a library without symbols shows its code,
+decompiled. Data breakpoints work on Windows x64, where the runtime supports them.
+
+Edit the code while debugging and Hot Reload puts it in the program, paused or running. An edit it can't apply is
+listed in Problems with why, and by default the program restarts to take it. Without the debugger, Hot Reload runs
+under `dotnet watch`.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="site/images/debugger-light.webp">
@@ -63,46 +106,21 @@ task port macOS guards, so a program you started in a terminal, one signed under
 itself attach as a program the debugger starts does. The program has to run as you, with your temporary folder
 (`TMPDIR`), and with its diagnostics on (`DOTNET_EnableDiagnostics` not set to 0).
 
-### Profiling
+### The editor and C#
 
-A sampling profiler over the runtime's EventPipe, from a program's first instruction or attached to one already
-running: its call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch of the
-timeline. A memory snapshot counts the heap by type and shows what keeps an object alive and how much it holds; two
-snapshots compared say which objects are new, which died and which survived.
+A text control of its own over an immutable rope: multiple carets, folding, soft wrap, Extend Selection, live, postfix
+and surround templates, inlay hints, the symbol at the caret lit through the file, and splits and tabs in windows of
+their own. A key costs what it changed, not the file's size. Coming from Rider? Passenger ships Rider's Visual Studio
+keymap (Visual Studio OSX on a Mac), chords included, and behaves as a Rider user expects.
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="site/images/profiler-light.webp">
-  <img src="site/images/profiler-dark.webp" alt="A profile of a run: its timeline above the call tree">
-</picture>
+C# comes from Roslyn: its parser colours as you type, then the language server gives diagnostics, completion, hovers,
+signature help, quick fixes and refactorings (Change Signature, Extract Interface, Move, Pull Members Up, Safe Delete
+and more), a rename that renames the type's file, Go to Declaration, Implementation and Base Symbols, Find Usages, call
+and type hierarchies and decompiled library sources. Problems lists the whole solution's without a build. Razor and
+Blazor files get C# and HTML help together.
 
-### Avalonia and WPF
-
-`.axaml` files get the help C# gets, from the project's own assemblies and Avalonia's own compiler and previewer:
-completion of controls, properties, values, resources, selectors and binding paths checked against `x:DataType`, the
-XAML compiler's errors on their lines, Go to Declaration into C#, rename of `x:Name`, Reformat Code, Extract Resource
-and Extract Style, and a missing property, command or converter made from where it is used. XAML Preview draws the
-file beside it, following each edit. None of it needs an Avalonia Accelerate licence.
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="site/images/xaml-light.webp">
-  <img src="site/images/xaml-dark.webp" alt="An Avalonia .axaml file with XAML completion open, and XAML Preview drawing it beside the editor">
-</picture>
-
-Debug an Avalonia app and the Live Visual Tree shows its controls as they are, each property with where its value came
-from and each style with why it applies or not, and the XAML shows each binding's value after its line. A failed
-binding is a console line linked to its XAML and a row in Problems, and can stop the debugger like an exception.
-Breakpoints go on an element, one of its attributes, or a property's next change. The profiler charts an Avalonia app's
-frames and their layout by control, and a failed Avalonia.Headless test (xUnit v3) carries a picture of each window as
-it was.
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="site/images/live-tree-light.webp">
-  <img src="site/images/live-tree-dark.webp" alt="Debugging an Avalonia app: the Live Visual Tree with an element's details, and binding values after the XAML's lines">
-</picture>
-
-WPF projects get the same XAML help on every system. On Windows, XAML Preview draws WPF files, and the Live Visual
-Tree and binding errors work while a WPF app is debugged; elsewhere a WPF or Windows Forms project builds for its code
-help and says it runs only on Windows.
+Two looks of its own, each dark and light: Passenger, the default, in the app icon's blue, and Harbour, warmer and
+rounder, the icon's teal on linen by day and a warm charcoal by night.
 
 ### Project files and the web languages
 
@@ -150,8 +168,7 @@ Locations, bookmarks and File Structure.
 ### And the rest
 
 - **Build and run:** a Solution view of the projects as MSBuild evaluates them, builds with their errors in Problems,
-  run configurations from your launch profiles, consoles whose stack frames link to their lines, and Hot Reload under
-  `dotnet watch`.
+  run configurations from your launch profiles, and consoles whose stack frames link to their lines.
 - **Unit tests:** xUnit, NUnit, MSTest and TUnit, through VSTest or Microsoft.Testing.Platform, found from the code
   before any build, with run marks in the gutter, grouping and filters, and any test debugged.
 - **NuGet:** the feeds your `nuget.config` names, packages installed, updated and removed per project, central package
