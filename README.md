@@ -203,6 +203,9 @@ There are two ways in, each a flag on Passenger's own executable:
 - **`--mcp FOLDER`** starts a Passenger of the agent's own with no window, over a folder or solution, for work it does
   alone.
 
+The quickest way in is Passenger's own Settings | MCP Server: it shows each agent's setup below with this copy's own
+path filled in, each with a Copy button, and lists the folders agents join unasked, each one to take back.
+
 Passenger is `/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac,
 `%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe` on Windows, and `~/.local/bin/passenger` on Linux
 (`/usr/local/bin/passenger` when installed for everyone). A repository's `.mcp.json` gives it to everyone who works

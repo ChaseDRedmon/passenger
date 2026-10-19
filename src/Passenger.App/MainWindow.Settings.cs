@@ -101,6 +101,7 @@ public partial class MainWindow
         session.Web?.UseNode(next.NodeInterpreter);
         session.Web?.UseTools();
         ListenForAgents(next.McpServer);
+        FollowAgentFolders(before, next);
         WatchUpdates(next.CheckForUpdates);
         FollowInDiscord();
     }
@@ -108,7 +109,7 @@ public partial class MainWindow
     /// <summary>Settings (Ctrl+Alt+S, Cmd+, on the Mac), over this window until OK or Cancel.</summary>
     public SettingsDialog ShowSettings()
     {
-        SettingsDialog dialog = new(settings, actions!, (from, to) => settingsStore.Apply(from, to));
+        SettingsDialog dialog = new(settings, actions!, (from, to) => settingsStore.Apply(from, to), Mcp.AgentSetup.Here(Folder));
         _ = dialog.ShowDialog(this);
         return dialog;
     }

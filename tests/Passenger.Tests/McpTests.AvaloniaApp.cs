@@ -48,8 +48,14 @@ public sealed partial class McpTests
         await using McpClient client = await Start(["--mcp", appFolder]);
         JsonElement built = await Call(client, "build");
         Assert.True(built.GetProperty("succeeded").GetBoolean(), $"The app did not build: {built}");
-        JsonElement ran = await Call(client, "run", new() { ["waitSeconds"] = 0 });
+        // A build that succeeded is answered in a few words: MSBuild's lines are for one that did not.
+        Assert.False(built.TryGetProperty("outputTail", out _), $"A build that succeeded was answered with MSBuild's output: {built}");
+        // An app never ends by itself: run waits for its UI rather than for the whole of waitSeconds, and says it is up.
+        long began = Stopwatch.GetTimestamp();
+        JsonElement ran = await Call(client, "run");
         Assert.True(ran.GetProperty("stillRunning").GetBoolean(), $"The app ended as it started: {ran}");
+        Assert.True(ran.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && Stopwatch.GetElapsedTime(began) < TimeSpan.FromSeconds(25),
+            $"run waited {Stopwatch.GetElapsedTime(began).TotalSeconds:0} s for an app that never ends, and said: {ran}");
 
         // Its one window, as the app has it: its title, its size in units.
         JsonElement windows = await Call(client, "app_windows");

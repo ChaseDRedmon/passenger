@@ -49,7 +49,8 @@ public sealed partial class PassengerTools
         "of its kind: true or false, a number, text (null for none), one of its choices by name, or for an object (xamlFormat, shortcuts) " +
         "the members to change. A number is brought into its range as Settings brings one, and the answer says so; a name Settings lacks, " +
         "a value of another kind or a choice it does not offer is refused, and then nothing changes. On a person's window the change is " +
-        "theirs, kept in settings.json and followed by their other windows at once; Enable MCP Server stays theirs alone to change. Returns " +
+        "theirs, kept in settings.json and followed by their other windows at once; Enable MCP Server and the folders agents join " +
+        "unasked (agentFolders) stay theirs alone to change. Returns " +
         "each setting named, as it was and as it is now in force.")]
     public Task<IReadOnlyList<SettingChange>> SetSettings(
         [Description("Each setting to change by its name, with its new value: {\"editorFontSize\": 15, \"theme\": \"Dark\"}")] Dictionary<string, JsonElement> changes,
@@ -71,6 +72,10 @@ public sealed partial class PassengerTools
             if (property.Name == nameof(AppSettings.McpServer))
             {
                 throw new InvalidOperationException("Enable MCP Server is the person's to change in Settings, never an agent's");
+            }
+            if (property.Name == nameof(AppSettings.AgentFolders))
+            {
+                throw new InvalidOperationException("The folders agents join unasked are the person's to change, by the window's question and in Settings, never an agent's");
             }
             next[name] = SettingValue(name, property, next[name], value);
             named.Add(name);
@@ -227,6 +232,79 @@ public sealed partial class PassengerTools
         string replaced = $"Replaced {found.Count} match{(found.Count == 1 ? "" : "es")} in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}";
         return said.Count == 0 ? replaced : $"{replaced}; {string.Join("; ", said)}";
     });
+
+    [McpServerTool(Name = "edit", Title = "Edit a file", Destructive = true), Description(
+        "Replaces text in one file as the editor does: oldText exactly as the file has it (case, spaces and indentation included; several " +
+        "lines with \\n between them), found once, or every time with all true, becomes newText (empty deletes it). The file is opened in " +
+        "the editor if it is not, the change is one step of its Undo and kept by Local History, and the file is saved. Returns where it " +
+        "changed and those lines as they are now, numbered as editor_text numbers them. Text that is not there, or is there more than " +
+        "once without all, changes nothing and says so. For a new file, write it on disk; for a symbol's every use, rename.")]
+    public Task<string> Edit(
+        [Description("Absolute, or the open folder's")] string path,
+        [Description("The text to replace, exactly as the file has it")] string oldText,
+        [Description("What takes its place")] string newText,
+        [Description("Replace every time oldText is there, rather than refusing when it is there more than once")] bool all = false,
+        CancellationToken cancel = default) => OnUi(cancel, () =>
+    {
+        if (string.IsNullOrEmpty(oldText))
+        {
+            throw new ArgumentException("Give oldText, the text to replace as the file has it; to add text, give the line before it as oldText and that line with the new text after it as newText");
+        }
+        OpenDocument document = Document(path);
+        TextSnapshot text = document.Text.Snapshot;
+        string eol = document.Text.LineEnding;
+        string needle = LineEndings.In(oldText, eol);
+        List<int> found = [.. text.Occurrences(needle)];
+        string name = Relative(document.Path);
+        if (found.Count == 0)
+        {
+            throw new InvalidOperationException($"{name} has no \"{Shorter(oldText)}\" as written (case, spaces and line breaks included), so nothing changed; editor_text shows the file as the editor has it");
+        }
+        if (found.Count > 1 && !all)
+        {
+            int[] lines = [.. found.Select(o => text.GetLineFromOffset(o) + 1).Distinct()];
+            throw new InvalidOperationException($"{name} has \"{Shorter(oldText)}\" {found.Count} times (lines {string.Join(", ", lines.Take(10))}{(lines.Length > 10 ? ", …" : "")}), so nothing changed: give more of the text around the one to change, or all true for every one");
+        }
+        string written = LineEndings.In(newText ?? string.Empty, eol);
+        List<TextEdit> edits = [.. found.Select(o => new TextEdit(o, needle.Length, written))];
+        document.Text.BreakUndoGroup();
+        document.Text.Edit(edits, document.Selections, TextEditing.MapThrough(document.Selections, edits));
+        document.Text.BreakUndoGroup();
+        string saved = Editors.Save(document) ? "saved" : FileText.IsReadOnly(document.Path) ? "not saved: the file is read-only" : "not saved: the system refused";
+        // Each edit's lines as they are now: offsets move by what the edits before it added.
+        TextSnapshot after = document.Text.Snapshot;
+        List<(int First, int Last)> spans = [];
+        int moved = 0;
+        foreach (TextEdit edit in edits)
+        {
+            int start = edit.Start + moved;
+            moved += written.Length - needle.Length;
+            int first = after.GetLineFromOffset(start);
+            int last = after.GetLineFromOffset(Math.Min(after.Length, start + written.Length));
+            spans.Add((first, last));
+        }
+        System.Text.StringBuilder said = new($"Changed {name} {(edits.Count == 1 ? $"at line {spans[0].First + 1}" : $"in {edits.Count} places")}, {saved}:");
+        int shown = 0;
+        int lastShown = -1;
+        foreach ((int first, int last) in spans)
+        {
+            for (int line = Math.Max(first, lastShown + 1); line <= last && shown < MostEditLines; line++, shown++)
+            {
+                said.Append('\n').Append($"{line + 1,6}\t{after.GetLineText(line)}");
+                lastShown = line;
+            }
+        }
+        if (shown >= MostEditLines)
+        {
+            said.Append("\n…");
+        }
+        return Task.FromResult(said.ToString());
+    });
+
+    /// <summary>How many changed lines edit shows back.</summary>
+    private const int MostEditLines = 40;
+
+    private static string Shorter(string text) => text.Length > 120 ? text[..120] + "…" : text;
 
     /// <summary>Find in Files' query and scope as an agent names them, refused as the popup refuses them.</summary>
     private (SearchQuery Query, SearchScope Scope) Search(string text, bool matchCase, bool wholeWords, bool regex, string scope, string? project, string? directory,

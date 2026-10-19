@@ -18,10 +18,6 @@ public partial class MainWindow
     private Mcp.AgentSocket? agentSocket;
     private int agents;
 
-    /// <summary>The folders this window was told to let agents into always, kept here too for a window that keeps no
-    /// state of its folders.</summary>
-    private readonly HashSet<string> alwaysLetIn = new(StringComparer.FromComparison(PathNames.Comparison));
-
     /// <summary>Whether Enable MCP Server was on when last followed, so turning it off shuts the agents out.</summary>
     private bool agentsLetIn;
 
@@ -56,8 +52,11 @@ public partial class MainWindow
     /// <summary>Whether an agent is let in without asking: Enable MCP Server, the folder's Always, or nobody at the window.</summary>
     public bool LetsAgentsIn => AgentsUnattended || settings.McpServer || AlwaysLetsAgentsIn;
 
-    /// <summary>Whether the open folder lets agents in always (Always for this folder).</summary>
-    public bool AlwaysLetsAgentsIn => Folder is { } folder && (alwaysLetIn.Contains(folder) || session.State?.Agents.Value.AlwaysAllowed == true);
+    /// <summary>Whether the open folder lets agents in always (Always for this folder): it is among Settings' folders agents
+    /// join unasked.</summary>
+    public bool AlwaysLetsAgentsIn => Folder is { } folder && LetsIn(settings, folder);
+
+    private static bool LetsIn(Settings.AppSettings with, string folder) => with.AgentFolders.Any(f => PathNames.Same(f, folder));
 
     private void AddAgents()
     {
@@ -108,9 +107,21 @@ public partial class MainWindow
             catch (Exception error) when (error is IOException or SocketException or ArgumentException or UnauthorizedAccessException)
             {
                 status.Text = $"Agents cannot reach this window: {error.Message}";
+                // Logged too: an agent waiting for the window learns why only from the log (a socket's path past 104 bytes on macOS).
+                IdeErrors.Write($"Agents: the window on {Folder ?? "no folder"} cannot listen for agents: {error.Message}");
             }
         }
         if (wasOn && !serverOn && !AgentsUnattended)
+        {
+            agentSocket?.ShutOut();
+        }
+    }
+
+    /// <summary>The window's folder taken off the folders agents join unasked (Settings' Remove) shuts out the agents on it
+    /// while Enable MCP Server is off: each is asked again at its next call.</summary>
+    private void FollowAgentFolders(Settings.AppSettings before, Settings.AppSettings next)
+    {
+        if (Folder is { } folder && !next.McpServer && !AgentsUnattended && LetsIn(before, folder) && !LetsIn(next, folder))
         {
             agentSocket?.ShutOut();
         }
@@ -131,10 +142,10 @@ public partial class MainWindow
         // The agent's call waits on the person, who may be in another window or program.
         PassengerApp.BringForward(this);
         Admission said = await dialog.ShowDialog<Admission?>(this) ?? Admission.NotAllowed;
-        if (said == Admission.Allowed && dialog.Always && folder is not null)
+        if (said == Admission.Allowed && dialog.Always && folder is not null && !LetsIn(settings, folder))
         {
-            alwaysLetIn.Add(folder);
-            session.State?.Agents.Set(new AgentsState { AlwaysAllowed = true });
+            // Settings' list, which every window over the folder follows and the person's settings keep.
+            ApplySettings(settings with { AgentFolders = [.. settings.AgentFolders, folder] });
         }
         IdeErrors.Write($"Agents: {agent} {(said switch
         {
@@ -189,22 +200,11 @@ public partial class MainWindow
     private static Control AgentArguments(IReadOnlyList<(string Name, string Value)> arguments)
     {
         const int Longest = 400;
-        TextBlock text = new()
-        {
-            Text = string.Join('\n', arguments.Select(a => $"{a.Name}: {(a.Value.Length > Longest ? a.Value[..Longest] + "…" : a.Value)}")),
-            FontFamily = new FontFamily("avares://Passenger.Editor/Fonts#JetBrains Mono"),
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(8, 6),
-        };
-        Border frame = new()
-        {
-            BorderThickness = new Thickness(1),
-            MaxHeight = 200,
-            Child = new ScrollViewer { Content = text, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled },
-        };
-        frame.Bind(Border.BorderBrushProperty, frame.GetResourceObservable("Passenger.Divider"));
-        frame.Bind(Border.BackgroundProperty, frame.GetResourceObservable("Passenger.Editor.Background"));
+        Border frame = CodeBlock.Of(string.Join('\n', arguments.Select(a => $"{a.Name}: {(a.Value.Length > Longest ? a.Value[..Longest] + "…" : a.Value)}")));
+        frame.MaxHeight = 200;
+        Control text = frame.Child!;
+        frame.Child = null;
+        frame.Child = new ScrollViewer { Content = text, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         return frame;
     }
 }

@@ -75,6 +75,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [Fact]
     public async Task An_agent_with_a_windowless_Passenger_finds_code_reads_its_warnings_and_debugs_it()
     {
+        // A name that has the one asked for in it, in a file the server reads before Helper.cs.
+        Write("Aaa.cs", "static class Aaa\n{\n    public static int TwiceMore(int value) => value;\n}\n");
         await using McpClient client = await Start(["--mcp", folder]);
         IList<McpClientTool> tools = await Exchange("Listing the tools", TimeSpan.FromMinutes(1), cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
         Assert.Contains(tools, t => t.Name == "debug_start");
@@ -83,9 +85,14 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.True(testsRun.Contains("Testing Platform", StringComparison.Ordinal) && testsRun.Contains("xUnit v3", StringComparison.Ordinal),
             $"tests_run tells an agent its tests run otherwise than they do: {testsRun}");
 
-        JsonElement symbol = Assert.Single((await Call(client, "find_symbol", new() { ["query"] = "Twice" })).EnumerateArray());
-        Assert.Equal("Helper.cs", symbol.GetProperty("path").GetString());
-        Assert.Equal(3, symbol.GetProperty("line").GetInt32());
+        // The symbol named as asked comes first, so a limit of one finds it rather than one with the name inside its own.
+        JsonElement symbol = Assert.Single((await Call(client, "find_symbol", new() { ["query"] = "Twice", ["limit"] = 1 })).EnumerateArray());
+        Assert.Equal(("Twice", "Helper.cs", 3), (symbol.GetProperty("name").GetString(), symbol.GetProperty("path").GetString(), symbol.GetProperty("line").GetInt32()));
+
+        // Code in an answer reads as written, its quotes and angle brackets as they are, not as \u0022s an agent pays for.
+        string found = Text(await Result(client, "find_in_files", new() { ["text"] = "total {total}" }));
+        Assert.True(found.Contains("Console.WriteLine($\\\"total {total}\\\");", StringComparison.Ordinal) && !found.Contains("\\u00", StringComparison.Ordinal),
+            $"find_in_files wrote a line of code as: {found}");
 
         JsonElement warning = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = "Helper.cs" })).EnumerateArray(),
             d => d.GetProperty("code").GetString() == "CS0219");
@@ -176,12 +183,18 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n  </PropertyGroup>\n"
             + "  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"3.2.2\" />\n  </ItemGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(tests, "SumTests.cs"),
-            "using Xunit;\n\nnamespace Sums;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four() => Assert.Equal(4, 2 + 2);\n}\n");
+            "using Xunit;\n\nnamespace Sums;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four() => Assert.Equal(4, 2 + 2);\n\n"
+            + "    [Fact]\n    public void Three_and_three_make_six() => Assert.Equal(6, 3 + 3);\n}\n");
         await using McpClient client = await Start(["--mcp", tests]);
-        JsonElement listed = await Call(client, "tests_list");
-        JsonElement test = Assert.Single(listed.EnumerateArray());
+        Assert.Equal(2, (await Call(client, "tests_list")).GetArrayLength());
+        // A solution's thousands of tests narrowed as tests_run narrows them, by part of the name, and by the last run's state.
+        JsonElement test = Assert.Single((await Call(client, "tests_list", new() { ["filter"] = "two_make_four" })).EnumerateArray());
         Assert.Equal(("Sums.SumTests.Two_and_two_make_four", "notrun", "SumTests.cs:8"),
             (test.GetProperty("test").GetString(), test.GetProperty("state").GetString(), test.GetProperty("location").GetString()));
+        Assert.Equal(1, (await Call(client, "tests_list", new() { ["limit"] = 1 })).GetArrayLength());
+        Assert.Equal(0, (await Call(client, "tests_list", new() { ["state"] = "failed" })).GetArrayLength());
+        CallToolResult wrong = await Result(client, "tests_list", new() { ["state"] = "broken" });
+        Assert.True(wrong.IsError == true && Text(wrong).Contains("there are passed, failed, skipped and notRun", StringComparison.Ordinal), $"tests_list in no state answered: {Text(wrong)}");
     }
 
     /// <summary>An agent's stop ends a debug session still starting, as Stop does: while debug_start waits for a program whose

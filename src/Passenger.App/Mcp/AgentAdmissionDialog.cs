@@ -1,14 +1,13 @@
-using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using Passenger.App.State;
 
 namespace Passenger.App.Mcp;
 
 /// <summary>The question a person's window asks when an agent's call reaches it while Enable MCP Server is off: "NAME
 /// wants to work in this window", Allow (the default) or Don't allow, as a question's answers stand, and Always for this
-/// folder at the footer's left, which keeps an Allow with the folder (never a no). Escape and closing answer no.</summary>
+/// folder at the footer's left, which puts the folder among Settings' folders agents join unasked (never a no). Escape and
+/// closing answer no.</summary>
 public sealed class AgentAdmissionDialog : Window
 {
     public const string Allow = "Allow";
@@ -41,7 +40,7 @@ public sealed class AgentAdmissionDialog : Window
                 {
                     Text = $"It asked through Passenger's MCP server. Allowed, it can read and search {where}, see the window, and build, run "
                         + "and debug; Passenger still asks before each kind of change it makes. Enable MCP Server in Settings lets agents in "
-                        + "without asking.",
+                        + "without asking, and Settings' MCP Server page lists the folders allowed always, each to take back.",
                     TextWrapping = TextWrapping.Wrap,
                 },
             },
@@ -50,15 +49,4 @@ public sealed class AgentAdmissionDialog : Window
 
     /// <summary>Whether Always for this folder is ticked, which keeps an Allow.</summary>
     public bool Always => always.IsChecked == true;
-}
-
-/// <summary>A folder's word on agents: Always for this folder, which lets every agent into its window without the
-/// question from then on, whatever Enable MCP Server says.</summary>
-public sealed record AgentsState : IStateDocument<AgentsState>
-{
-    public bool AlwaysAllowed { get; init; }
-
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
-
-    public AgentsState Clamped() => this;
 }

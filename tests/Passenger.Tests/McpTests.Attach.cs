@@ -7,6 +7,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Passenger.App;
 using Passenger.App.Mcp;
+using Passenger.App.Settings;
 using Passenger.Core;
 
 namespace Passenger.Tests;
@@ -33,7 +34,11 @@ public sealed partial class McpTests
         Assert.Equal(built, tools.Select(t => t.Name).Order(StringComparer.Ordinal));
         // Tools alone, as a window serves: no resources or prompts to ask for.
         Assert.True(client.ServerCapabilities.Resources is null && client.ServerCapabilities.Prompts is null, "The agent's session offers resources or prompts no window has");
-        Assert.Contains("the window asks them to let the agent in", client.ServerInstructions, StringComparison.Ordinal);
+        // The instructions say how to begin, that a first call may start Passenger where the person sees it, and what it asks.
+        foreach (string said in (string[])["Begin with workspace", "refactor with describe true", "in a window the person sees", "the window asks them to let the agent in"])
+        {
+            Assert.True(client.ServerInstructions?.Contains(said, StringComparison.Ordinal) == true, $"The server's instructions leave out \"{said}\": {client.ServerInstructions}");
+        }
         string sockets = Path.Combine(state, "mcp");
         Assert.False(Directory.Exists(sockets) && Directory.GetFiles(sockets, "*.sock").Length > 0, "Listing the tools started a Passenger");
 
@@ -116,6 +121,22 @@ public sealed partial class McpTests
             {
                 Gone(another);
             }
+
+            // Taken back in Settings: the folder leaves the list, and the agent on its window is asked again at its next call.
+            SettingsDialog taking = DialogButtonsTests.Check(third.ShowSettings());
+            taking.Page = SettingsDialog.McpPage;
+            Ui.Settle();
+            Assert.Equal([PathNames.Canonical(wanted)], taking.AgentFolderList.Items.OfType<string>());
+            Assert.False(taking.RemoveAgentFolderButton.IsEnabled, "Remove was offered with no folder chosen");
+            taking.AgentFolderList.SelectedIndex = 0;
+            taking.RemoveAgentFolderButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Assert.Empty(taking.AgentFolderList.Items.OfType<string>());
+            taking.Ok();
+            Ui.Settle();
+            Assert.False(third.AlwaysLetsAgentsIn, "The folder taken back still lets agents in unasked");
+            Task<CallToolResult> afterwards = Task.Run(() => Result(client, "workspace"));
+            Press(Admission(third, "the window to ask again once its folder was taken back"), AgentAdmissionDialog.DontAllow);
+            Assert.True(Await(afterwards, "the call after the folder was taken back").IsError, "A call after the folder was taken back went on unasked");
         }
         finally
         {
@@ -124,6 +145,60 @@ public sealed partial class McpTests
             {
                 window.Close();
             }
+        }
+    }
+
+    /// <summary>Settings' MCP Server page gives each agent its setup for this copy of Passenger, as the person pastes it: the
+    /// running program's own path in every command and configuration, Claude Desktop's with the window's folder after
+    /// --mcp-attach, the configurations JSON and TOML that read, and each Copy putting its text on the clipboard whole.</summary>
+    [AvaloniaFact]
+    public void Settings_gives_each_agent_its_setup_for_this_copy_and_copies_it_whole()
+    {
+        string project = Plain("mcp-setup-");
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        SettingsDialog dialog = DialogButtonsTests.Check(window.ShowSettings());
+        try
+        {
+            dialog.Query = "claude";
+            Ui.Settle();
+            Assert.Equal([SettingsDialog.McpPage], dialog.Pages);
+            dialog.Query = string.Empty;
+            dialog.Page = SettingsDialog.McpPage;
+            Ui.Settle();
+            Dictionary<string, string> setups = dialog.AgentSetups.ToDictionary(s => s.Heading, s => s.Text);
+            Assert.Equal(["Claude Code", "A repository's .mcp.json", "Codex", "Codex's config.toml", "Claude Desktop"], dialog.AgentSetups.Select(s => s.Heading));
+
+            // The commands name the program running, wherever it is, which an agent's session starts.
+            string claude = setups["Claude Code"];
+            Assert.StartsWith("claude mcp add passenger -- ", claude, StringComparison.Ordinal);
+            Assert.EndsWith(" --mcp-attach", claude, StringComparison.Ordinal);
+            string passenger = claude["claude mcp add passenger -- ".Length..^" --mcp-attach".Length];
+            Assert.True(File.Exists(passenger) && PathNames.Same(passenger, PathNames.Canonical(passenger)), $"Claude Code's command names no program: {claude}");
+            Assert.Equal($"codex mcp add passenger -- {passenger} --mcp-attach", setups["Codex"]);
+            Assert.Equal($"[mcp_servers.passenger]\ncommand = {JsonSerializer.Serialize(passenger)}\nargs = [\"--mcp-attach\"]", setups["Codex's config.toml"]);
+            foreach ((string heading, string[] arguments) in new (string, string[])[] { ("A repository's .mcp.json", ["--mcp-attach"]), ("Claude Desktop", ["--mcp-attach", PathNames.Canonical(project)]) })
+            {
+                JsonElement server = JsonDocument.Parse(setups[heading]).RootElement.GetProperty("mcpServers").GetProperty("passenger");
+                Assert.Equal(passenger, server.GetProperty("command").GetString());
+                Assert.Equal(arguments, server.GetProperty("args").EnumerateArray().Select(a => a.GetString()!));
+            }
+
+            // Copy puts the text on the clipboard whole, and says it did until another is copied.
+            Button copy = dialog.CopyButtons["Claude Desktop"];
+            copy.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.WaitFor(() => Ui.Clipboard(dialog) == setups["Claude Desktop"], "Claude Desktop's configuration on the clipboard");
+            Assert.Equal("Copied", copy.Content);
+            dialog.CopyButtons["Claude Code"].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.WaitFor(() => Ui.Clipboard(dialog) == claude, "Claude Code's command on the clipboard");
+            Assert.Equal(("Copy", "Copied"), (copy.Content, dialog.CopyButtons["Claude Code"].Content));
+        }
+        finally
+        {
+            dialog.Close();
+            window.Close();
         }
     }
 

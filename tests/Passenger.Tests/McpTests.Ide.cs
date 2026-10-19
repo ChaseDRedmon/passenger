@@ -89,6 +89,24 @@ public sealed partial class McpTests
         Assert.Equal("Replaced 1 match in 1 file: Helper.cs",
             (await Call(client, "replace_in_files", new() { ["text"] = "unused", ["replacement"] = "spare", ["scope"] = "currentFile" })).GetString());
         Assert.Equal(helper.Replace("unused", "spare", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+
+        // An edit as the editor makes one: found once as written, saved, and the lines it changed said back as they are now.
+        string edited = Text(await Call(client, "edit", new() { ["path"] = "Helper.cs", ["oldText"] = "return value * 2;", ["newText"] = "int twice = value * 2;\n        return twice;" }));
+        Assert.Equal("Changed Helper.cs at line 6, saved:\n     6\t        int twice = value * 2;\n     7\t        return twice;", edited);
+        string spare = helper.Replace("unused", "spare", StringComparison.Ordinal);
+        Assert.Equal(spare.Replace("return value * 2;", "int twice = value * 2;\n        return twice;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+        foreach ((Dictionary<string, object?> arguments, string said) in new (Dictionary<string, object?>, string)[]
+        {
+            (new() { ["path"] = "Helper.cs", ["oldText"] = "value * 3", ["newText"] = "x" }, "Helper.cs has no \"value * 3\" as written"),
+            (new() { ["path"] = "Helper.cs", ["oldText"] = "int ", ["newText"] = "long " }, "Helper.cs has \"int \" 4 times (lines 3, 5, 6), so nothing changed: give more of the text around the one to change, or all true"),
+        })
+        {
+            CallToolResult refused = await Result(client, "edit", arguments);
+            Assert.True(refused.IsError == true && Text(refused).Contains(said, StringComparison.Ordinal), $"edit {JsonSerializer.Serialize(arguments)} answered: {Text(refused)}");
+        }
+        Assert.Equal("Changed Helper.cs in 2 places, saved:\n     6\t        int doubled = value * 2;\n     7\t        return doubled;",
+            Text(await Call(client, "edit", new() { ["path"] = "Helper.cs", ["oldText"] = "twice", ["newText"] = "doubled", ["all"] = true })));
+        Assert.Equal(spare.Replace("return value * 2;", "int doubled = value * 2;\n        return doubled;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
     }
 
     /// <summary>An agent on the person's window reads their settings and changes them as Settings does: asked first, a number
@@ -138,6 +156,7 @@ public sealed partial class McpTests
                 (new() { ["showBuildResults"] = "Sometimes" }, "showBuildResults is one of Always, ForWarningsOrErrors, ForErrors, Never, not \"Sometimes\""),
                 (new() { ["editorFontSize"] = "large" }, "editorFontSize takes a number, not \"large\""),
                 (new() { ["mcpServer"] = false }, "Enable MCP Server is the person's to change"),
+                (new() { ["agentFolders"] = new[] { folder } }, "The folders agents join unasked are the person's to change"),
             })
             {
                 CallToolResult refused = Await(Task.Run(() => Result(client, "settings_set", new() { ["changes"] = changes })), "the refused settings change");

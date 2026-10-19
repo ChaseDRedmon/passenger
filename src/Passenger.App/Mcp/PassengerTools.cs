@@ -459,11 +459,22 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         RoslynSession session = await Server(cancel);
         IReadOnlyList<SymbolInformation> found = await session.SymbolsAsync(query);
+        // The server's order is not by how well a name matches: the query's own name first, so a limit never cuts it.
         return (IReadOnlyList<SymbolFound>)[.. found
             .Where(s => kind is null || SymbolKinds.Name(s.Kind).Equals(kind, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => NameMatch(s.Name, query))
             .Take(limit)
             .Select(s => new SymbolFound(s.Name, SymbolKinds.Name(s.Kind), s.ContainerName, Relative(DocumentUris.ToPath(s.Location.Uri)), s.Location.Range.Start.Line + 1, s.Location.Range.Start.Character + 1))];
     });
+
+    /// <summary>How well a symbol's name matches a query: the name itself, then in another letter case, then one that starts
+    /// with it, then one that has it, then Go to Symbol's other matches (initials, humps).</summary>
+    private static int NameMatch(string name, string query) =>
+        name == query ? 0
+        : name.Equals(query, StringComparison.OrdinalIgnoreCase) ? 1
+        : name.StartsWith(query, StringComparison.OrdinalIgnoreCase) ? 2
+        : name.Contains(query, StringComparison.OrdinalIgnoreCase) ? 3
+        : 4;
 
     [McpServerTool(Name = "outline", Title = "A file's structure", ReadOnly = true), Description(
         "A file's structure, indented, each part with its line: a C# file's types and their members, as the File Structure window shows " +
@@ -505,19 +516,21 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "build", Title = "Build", Destructive = true), Description(
         "Builds the solution (or the folder's project) as Build does, waiting for it, and returns whether it succeeded, how it ended " +
-        "(failed, stopped, refused while another build runs, unable to start) and every error and warning.")]
+        "(failed, stopped, refused while another build runs, unable to start) and every error and warning, with MSBuild's last lines " +
+        "(outputTail) when it did not succeed; build_output has them always.")]
     public Task<BuildResult> Build(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         // The build goes on without an agent that gives up on it, shown in the Build window.
         BuildOutcome built = await Builds.BuildAsync(BuildCause.Explicit, CancellationToken.None).WaitAsync(cancel);
         IReadOnlyList<Finding> problems = [.. built.Problems.Select(p => new Finding(
             p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
-        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, string.Join('\n', built.Output));
+        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems,
+            built.Succeeded ? null : string.Join('\n', built.Output));
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
         "Runs a run configuration (the chosen one if none is named) as Run does, building it first when it says so, and waits up to " +
-        "waitSeconds for it to end. Returns its output so far and its exit code once it has one; a run refused (one already running, " +
+        "waitSeconds for it to end, or for an Avalonia or WPF app's UI to be up. Returns its output so far and its exit code once it has one; a run refused (one already running, " +
         "nothing to run, a failed build) is an error. A configuration that uses the terminal runs in a tab of the Terminal window: " +
         "its output is what that tab shows, and terminal_run types into it while it is the tab shown.")]
     public Task<RunResult> Run(
@@ -536,17 +549,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             throw new InvalidOperationException(refused);
         }
         Task<int> ended = builds.RunEnd;
-        try
-        {
-            await ended.WaitAsync(TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
-        }
-        catch (TimeoutException)
-        {
-            // Still running when the wait is up: the answer says so, and the program goes on.
-        }
+        // An app with a window never ends by itself: the wait is over once its UI is up, which the app_ tools look at.
+        LiveTree.LiveApp? app = Session.RunApp;
+        await Until(() => ended.IsCompleted || app is { State: not LiveTree.LiveAppState.Waiting }, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
         int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
         string output = Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(Session.Runner.Shown(), 200);
-        return new RunResult(code is null, code, code is int exit ? BuildRunController.RunEnded(name, exit) : $"Running {name}", output);
+        string status = code is int exit ? BuildRunController.RunEnded(name, exit)
+            : app is { State: LiveTree.LiveAppState.Connected } ? $"Running {name}, its UI up: app_windows, app_screenshot and app_click look at it and use it"
+            : $"Running {name}";
+        return new RunResult(code is null, code, status, output);
     });
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
@@ -608,13 +619,23 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
-        "Every test the Unit Tests window shows (found in the test projects' code, and by the runner once built), each with its state from the " +
-        "last run: passed, failed, skipped, notRun.")]
-    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "The tests the Unit Tests window shows (found in the test projects' code, and by the runner once built), each with its full name, its " +
+        "state from the last run (passed, failed, skipped, notRun) and its file and line: every one, or those whose full name contains filter " +
+        "and whose state is state, at most limit (a large solution has thousands; tests_run takes the same filter).")]
+    public Task<IReadOnlyList<TestInfoRow>> TestsList(
+        [Description("Part of a test's full name (Namespace.Class.Method): a method, a class, a namespace")] string? filter = null,
+        [Description("Only the tests in this state: passed, failed, skipped or notRun")] string? state = null,
+        [Description("How many to return")] int limit = 200,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        Testing.TestState? only = state is null ? null
+            : Enum.TryParse(state, ignoreCase: true, out Testing.TestState parsed) && Enum.IsDefined(parsed) ? parsed
+            : throw new ArgumentException($"No state '{state}'; there are passed, failed, skipped and notRun");
         // Found from code as the folder opens: an agent's first look waits for that, as the window says it is looking.
         await Until(() => !Session.Tests.IsLooking, TestsLookLimit, cancel);
         return (IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
+            .Where(m => (filter is null || (m.FullName ?? m.Name).Contains(filter, StringComparison.Ordinal)) && (only is null || m.State == only))
+            .Take(Math.Max(1, limit))
             .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))];
     });
 
@@ -997,7 +1018,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "type", Title = "Type into the editor", Destructive = true), Description(
-        "Types text into the active editor at its caret, as the keyboard would (typing a closing bracket over one already there, and so on).")]
+        "Types text into the active editor at its caret (open_file puts it at a line and column: before that column's character), as " +
+        "the keyboard would (typing a closing bracket over one already there, and so on), leaving the file unsaved. To change or delete " +
+        "text, edit.")]
     public Task<string> Type(string text, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         if (Editors.Active is null)
@@ -1427,7 +1450,9 @@ public sealed record Place(string Path, int Line, int Column, string Text);
 
 public sealed record HierarchyEntry(string Name, string? Detail, string Path, int Line, int Column, string Text);
 
-public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string OutputTail);
+/// <summary>A build's answer: MSBuild's last lines only when it failed, since a build that succeeded has nothing in them
+/// an agent acts on (build_output has them).</summary>
+public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string? OutputTail);
 
 public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 

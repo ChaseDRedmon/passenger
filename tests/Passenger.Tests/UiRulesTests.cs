@@ -379,6 +379,9 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                     settings.Page = SettingsDialog.KeymapPage;
                     Ui.Settle();
                     Radii(settings, "Settings' Keymap page");
+                    settings.Page = SettingsDialog.McpPage;
+                    Ui.Settle();
+                    Radii(settings, "Settings' MCP Server page");
                 }
                 finally
                 {

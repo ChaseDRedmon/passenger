@@ -80,7 +80,8 @@ public sealed partial class SettingsDialog : Window
     /// <summary>What a page keeps above its options as they scroll (the Keymap page's toolbar).</summary>
     private readonly Decorator pageTop = new();
 
-    public SettingsDialog(AppSettings current, ActionRegistry actions, Action<AppSettings, AppSettings> apply)
+    /// <param name="agents">The agents' setup the MCP Server page shows: this copy's, and the window's folder.</param>
+    public SettingsDialog(AppSettings current, ActionRegistry actions, Action<AppSettings, AppSettings> apply, Mcp.AgentSetup? agents = null)
     {
         this.apply = apply;
         this.actions = actions;
@@ -93,7 +94,7 @@ public sealed partial class SettingsDialog : Window
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        AddOptions(actions.Keymap);
+        AddOptions(actions.Keymap, agents ?? Mcp.AgentSetup.Here(null));
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search settings", Margin = new Thickness(10, 10, 10, 6) };
         search.TextChanged += (_, _) => Filter();
         pages = new ListBox { Classes = { "tree", "pages" } };
@@ -210,7 +211,7 @@ public sealed partial class SettingsDialog : Window
         }
     }
 
-    private void AddOptions(Keymap keymap)
+    private void AddOptions(Keymap keymap, Mcp.AgentSetup agents)
     {
         // Each theme has a Dark and a Light, which the next row chooses between, or the system does, as Rider's Sync with OS.
         ComboBox look = new() { ItemsSource = LookChoices.Select(c => c.Name).ToArray(), SelectedIndex = Array.FindIndex(LookChoices, c => c.Look == Working.Look), Classes = { "form" } };
@@ -379,12 +380,7 @@ public sealed partial class SettingsDialog : Window
         path.TextChanged += (_, _) => Change(s => s with { TerminalShell = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim() });
         Add(TerminalPage, "Shell path", path, "shell zsh bash powershell program");
 
-        // What turning it on allows is said under it, as Rider's consent to its MCP server says.
-        Add(McpPage, "Enable MCP Server", Check(Working.McpServer, v => Change(s => s with { McpServer = v })),
-            "mcp model context protocol agents ai claude codex attach socket",
-            "Agents started with passenger --mcp-attach can use this window without asking to: read and change files, build, run and "
-            + "debug, use Git, NuGet and the terminal. Off, the window asks before letting each agent in. Either way, each agent asks "
-            + "before its first use of a tool that changes something.");
+        AddAgents(agents);
 
         // The JetBrains Discord plugins' options at their defaults (AppSettings says whose), changed only while it is on.
         ComboBox shows = new() { ItemsSource = DiscordChoices, SelectedIndex = (int)Working.DiscordShows, Classes = { "form" }, IsEnabled = Working.ShowInDiscord };
@@ -445,7 +441,7 @@ public sealed partial class SettingsDialog : Window
         double firstLine = editor switch
         {
             TextBox { AcceptsReturn: true } => 5,
-            StackPanel { Orientation: Orientation.Vertical, Children: [RadioButton, ..] } => 6,
+            StackPanel { Orientation: Orientation.Vertical, Children: [RadioButton or Border { Classes: ["framed"] }, ..] } => 6,
             _ => -1,
         };
         TextBlock name = new()

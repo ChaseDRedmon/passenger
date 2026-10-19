@@ -224,6 +224,14 @@
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
         <Setter Property="Background" Value="{DynamicResource Passenger.List}" />
     </Style>
+    <!-- Code to read and copy (CodeBlock): framed as a field is, on the editor's ground. -->
+    <Style Selector="Border.code">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Editor.Background}" />
+        <Setter Property="Padding" Value="8,6" />
+    </Style>
     <!-- Selected text as the editor shows it, readable in both themes: Fluent's is the system's saturated blue, under
          black text in light. -->
     <Style Selector="TextBox">

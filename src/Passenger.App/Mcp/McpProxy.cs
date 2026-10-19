@@ -63,7 +63,7 @@ public sealed class McpProxy
         foreach (MethodInfo method in McpHost.ToolMethods())
         {
             // Never called: each call goes on to the window's own tool of the name.
-            tools.Add(new ForwardedTool(McpServerTool.Create(method, _ => throw new InvalidOperationException("The proxy runs no tool itself")), proxy));
+            tools.Add(new ForwardedTool(McpServerTool.Create(method, _ => throw new InvalidOperationException("The proxy runs no tool itself"), McpHost.ToolCreateOptions()), proxy));
         }
         McpServerOptions options = new()
         {

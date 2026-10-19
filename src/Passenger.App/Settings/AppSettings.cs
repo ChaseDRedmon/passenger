@@ -229,6 +229,11 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// the IDE's permissions; off, the window asks the person before each agent's first call goes on.</summary>
     public bool McpServer { get; init; }
 
+    /// <summary>The folders whose window lets agents in without asking (the question's Always for this folder), whatever
+    /// <see cref="McpServer"/> says; Settings' MCP Server page lists them, each taken back by Remove. The person's alone:
+    /// settings_set refuses it, as it refuses <see cref="McpServer"/>.</summary>
+    public IReadOnlyList<string> AgentFolders { get; init; } = [];
+
     /// <summary>Show activity in Discord: the Discord app on this computer shows "Playing Passenger" with Passenger's icon
     /// and what <see cref="DiscordShows"/> names to whoever can see the person's activity, as the JetBrains IDEs' Discord
     /// plugins do. On at first, naming nothing of the work; off, Discord is told nothing at all.</summary>
@@ -318,6 +323,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             PrettierFiles = string.IsNullOrWhiteSpace(PrettierFiles) ? defaults.PrettierFiles : PrettierFiles.Trim(),
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
             XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
+            AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.FromComparison(Passenger.Core.PathNames.Comparison))],
         };
     }
 

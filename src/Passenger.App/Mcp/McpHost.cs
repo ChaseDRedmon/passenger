@@ -1,7 +1,10 @@
 using System.Reflection;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Threading;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Passenger.App.State;
@@ -26,21 +29,32 @@ public static class McpHost
     /// only its user can reach.</summary>
     public static string SocketFolder => Path.Combine(StateStore.DefaultRoot, "mcp");
 
+    /// <summary>What an agent is told as it connects: how to begin and find its way, and what a person's window asks.</summary>
     internal const string Instructions =
-        "Passenger is a C# IDE. These tools act on its open workspace as its user would: open a folder or solution, ask the C# " +
-        "language server about code (diagnostics, symbol_info, definition, usages, rename, code_actions), make the refactorings that change " +
-        "code across the solution as the IDE's dialogs do (refactor: Change Signature with every call updated, Move, Safe Delete, Extract " +
-        "Interface, Pull Members Up, Push Members Down, Introduce Field or Parameter, Encapsulate Field, Optimize Imports and Code Cleanup " +
-        "over a file, project or solution; each undone whole by the IDE's Undo) rather than editing each file by hand, search the folder's files " +
-        "(find_in_files, replace_in_files), build, run, and debug (breakpoint_set, debug_start or debug_attach, debug_step, debug_evaluate, " +
-        "debug_variables), read what Problems and Local History keep (problems, local_history), read and change the settings (settings, " +
-        "settings_set), see or drive the window (screenshot, ide_action), and look at and drive the Avalonia or WPF app it runs or debugs as a person tests it (app_screenshot, app_tree, app_click, " +
-        "app_type, app_key, app_scroll, app_binding_errors). Lines and columns count from 1; relative paths are the open folder's. Debugging " +
-        "tools wait for the program to stop and say where it is, with the top frame's locals. Attached to a person's Passenger " +
-        "(--mcp-attach), the first call joins the window open on the agent's folder, opening it or starting Passenger when none is; " +
-        "unless the person has turned on Enable MCP Server, the window asks them to let the agent in, and the call waits for their " +
-        "answer. A call they refuse says so, and a later one asks again; the person is also asked before the agent first uses each " +
-        "tool that changes something, and before it opens another folder in their window.";
+        "Passenger is a C# IDE (with XAML, MSBuild files and the web languages). These tools act on its open workspace as its user would. " +
+        "Lines and columns count from 1; relative paths are the open folder's.\n\n" +
+        "Begin with workspace: the folder and solution open, their projects, run configurations and open files (open opens another folder, " +
+        "solution or file). Find your way by meaning rather than by text: find_symbol finds a type or member by name, outline lists a file's " +
+        "types and members with their lines, and symbol_info, definition, usages, implementations and hierarchy follow the symbol at a line " +
+        "and column; find_in_files searches text. editor_text reads a file with its lines numbered; edit changes one as the editor does " +
+        "(an open file the editor has not changed also takes what is written on disk); diagnostics checks it.\n\n" +
+        "Change code across the solution as the IDE's refactorings do rather than file by file: rename a symbol everywhere, and refactor for " +
+        "Change Signature (every call updated), Move, Safe Delete, Extract Interface, Pull Members Up, Push Members Down, Introduce Field or " +
+        "Parameter, Encapsulate Field, Optimize Imports and Code Cleanup; refactor with describe true answers what its dialog offers and the " +
+        "options to send back, changing nothing. Each change is one step of the IDE's Undo.\n\n" +
+        "build, run, tests_list and tests_run build, run and test. To debug: breakpoint_set, then debug_start (or debug_attach), debug_step, " +
+        "debug_evaluate, debug_variables and debug_continue, each waiting for the program to stop and saying where, with the top frame's " +
+        "locals. An Avalonia or WPF app that run or debug_start starts is looked at and used as a person tests it: app_windows, app_tree, " +
+        "app_screenshot, app_click, app_type, app_key, app_scroll, app_binding_errors. Also version control (vcs_status, vcs_diff, " +
+        "vcs_commit), NuGet (nuget_search, nuget_install), Problems and Local History (problems, local_history), the settings (settings, " +
+        "settings_set) and the window itself (screenshot, ide_action).\n\n" +
+        "Attached to a person's Passenger (--mcp-attach), the first call joins the Passenger window open on the agent's folder (the folder " +
+        "after --mcp-attach, else the agent's working folder). With none open, it has the running Passenger open that folder, or starts " +
+        "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
+        "into that folder always, the window asks them to let the agent in, and the call waits for their answer (2 minutes at most); a call " +
+        "they refuse or leave unanswered says so, and a later one asks again. The person is also asked before the agent first uses each tool " +
+        "that changes something (edit, rename, build, run, debug_start, vcs_commit and the like; reading never asks), and before it opens " +
+        "another folder in their window. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
 
     /// <summary>The server as an agent sees it, whichever way it is reached.</summary>
     internal static Implementation ServerInfo => new()
@@ -55,6 +69,14 @@ public static class McpHost
     internal static IEnumerable<MethodInfo> ToolMethods() =>
         typeof(PassengerTools).GetMethods(BindingFlags.Public | BindingFlags.Instance).Where(m => m.GetCustomAttribute<McpServerToolAttribute>() is not null);
 
+    /// <summary>How a tool's answer is written as JSON: its text as written, quotes, angle brackets and the rest left as
+    /// they are rather than as \u0022s, so code in an answer reads as code and costs an agent no more than it should.</summary>
+    private static readonly JsonSerializerOptions AnswerJson = new(McpJsonUtilities.DefaultOptions) { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>How every connection and <c>--mcp-attach</c> create a tool of the build's: its answer as <see cref="AnswerJson"/>
+    /// writes it, its schema the same in both.</summary>
+    internal static McpServerToolCreateOptions ToolCreateOptions() => new() { SerializerOptions = AnswerJson };
+
     /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>).</summary>
     public static McpServerOptions Options(MainWindow window, AgentConnection connection)
     {
@@ -62,7 +84,7 @@ public static class McpHost
         McpServerPrimitiveCollection<McpServerTool> collection = [];
         foreach (MethodInfo method in ToolMethods())
         {
-            collection.Add(new ConnectedTool(McpServerTool.Create(method, tools), window, connection));
+            collection.Add(new ConnectedTool(McpServerTool.Create(method, tools, ToolCreateOptions()), window, connection));
         }
         return new McpServerOptions
         {
