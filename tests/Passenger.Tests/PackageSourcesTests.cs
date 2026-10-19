@@ -234,11 +234,14 @@ public sealed class PackageSourcesTests : IDisposable
         }
         File.WriteAllText(config, Config(withCredentials: false));
         feed.Accept("provided", "from-provider");
-        string plugin = Path.Combine(folder, "nuget-plugin-passenger-tests");
+        // On PATH, where restore finds a provider that is a program of its own (NUGET_NETCORE_PLUGIN_PATHS names assemblies,
+        // which restore runs with dotnet), so the restore of the folder's project is given the credentials too.
+        string plugins = Directory.CreateDirectory(Path.Combine(folder, "plugins")).FullName;
+        string plugin = Path.Combine(plugins, "nuget-plugin-passenger-tests");
         File.WriteAllText(plugin, Provider("provided", "from-provider"));
         File.SetUnixFileMode(plugin, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        string? was = Environment.GetEnvironmentVariable("NUGET_NETCORE_PLUGIN_PATHS");
-        Environment.SetEnvironmentVariable("NUGET_NETCORE_PLUGIN_PATHS", plugin);
+        string? was = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", plugins + Path.PathSeparator + was);
         try
         {
             MainWindow window = Open();
@@ -253,13 +256,14 @@ public sealed class PackageSourcesTests : IDisposable
         }
         finally
         {
-            Environment.SetEnvironmentVariable("NUGET_NETCORE_PLUGIN_PATHS", was);
+            Environment.SetEnvironmentVariable("PATH", was);
         }
     }
 
     /// <summary>A credential provider as NuGet's plugin protocol has one: a JSON message a line on its input, each
-    /// request answered by its id; it says it authenticates and gives the feed's user and password.</summary>
-    private static string Provider(string user, string password) => $$"""
+    /// request answered by its id; it says it authenticates and gives the feed's user and password. Without its own
+    /// handshake, the restore of the folder's project waited for it and then for the feed's 401s, 45 s on CI.</summary>
+    private static string Provider(string user, string password) => $$$"""
         #!/bin/sh
         while IFS= read -r line; do
           id=$(printf '%s' "$line" | sed -n 's/.*"RequestId":"\([^"]*\)".*/\1/p')
@@ -269,11 +273,15 @@ public sealed class PackageSourcesTests : IDisposable
           case "$method" in
             Handshake) payload='{"ResponseCode":"Success","ProtocolVersion":"2.0.0"}' ;;
             GetOperationClaims) payload='{"ResponseCode":"Success","Claims":["Authentication"]}' ;;
-            GetAuthenticationCredentials) payload='{"ResponseCode":"Success","Username":"{{user}}","Password":"{{password}}","AuthenticationTypes":["Basic"]}' ;;
+            GetAuthenticationCredentials) payload='{"ResponseCode":"Success","Username":"{{{user}}}","Password":"{{{password}}}","AuthenticationTypes":["Basic"]}' ;;
             Close) exit 0 ;;
             *) payload='{"ResponseCode":"Success"}' ;;
           esac
           printf '{"RequestId":"%s","Type":"Response","Method":"%s","Payload":%s}\n' "$id" "$method" "$payload"
+          # The handshake goes both ways: restore waits for the provider's own, which Passenger answers as NuGet does.
+          if [ "$method" = "Handshake" ]; then
+            printf '{"RequestId":"handshake","Type":"Request","Method":"Handshake","Payload":{"ProtocolVersion":"2.0.0","MinimumProtocolVersion":"1.0.0"}}\n'
+          fi
         done
 
         """;
