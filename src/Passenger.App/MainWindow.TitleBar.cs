@@ -19,7 +19,7 @@ namespace Passenger.App;
 /// set for the taskbar, Alt+Tab and Mission Control; the bar draws none.</summary>
 public partial class MainWindow
 {
-    /// <summary>Room at the bar's left for macOS's traffic lights.</summary>
+    /// <summary>Room at the bar's left for macOS's traffic lights (<see cref="TrafficLights"/>).</summary>
     private const double MacWindowButtons = 72;
 
     /// <summary>Linux's edge round a window that draws its own frame, inside the resize grips' width.</summary>
@@ -62,19 +62,34 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Whether macOS's traffic lights stand on the bar: but in full screen, where macOS hides them.</summary>
+    private bool ShowsTrafficLights => TitleBarMerged && OperatingSystem.IsMacOS() && WindowState != WindowState.FullScreen;
+
     /// <summary>The bar as the window stands: the traffic lights' room but in full screen, where macOS hides them; the
     /// window's buttons but in full screen; the restore glyph while maximized; Linux's edge while the window has a frame.</summary>
     private void LayOutTitleBar()
     {
         bool fullScreen = WindowState == WindowState.FullScreen;
-        bool trafficLights = TitleBarMerged && OperatingSystem.IsMacOS() && !fullScreen;
         WindowButtons.IsVisible = TitleBarMerged && !OperatingSystem.IsMacOS() && !fullScreen;
-        ToolbarContent.Margin = new Thickness(trafficLights ? MacWindowButtons : 8, 0, WindowButtons.IsVisible ? 0 : 8, 0);
+        ToolbarContent.Margin = new Thickness(ShowsTrafficLights ? MacWindowButtons : 8, 0, WindowButtons.IsVisible ? 0 : 8, 0);
         bool maximized = WindowState == WindowState.Maximized;
         MaximizeGlyph.Data = Geometry.Parse(maximized ? "M0.5,2.5 H7.5 V9.5 H0.5 Z M2.5,2.5 V0.5 H9.5 V7.5 H7.5" : "M0.5,0.5 H9.5 V9.5 H0.5 Z");
         AutomationProperties.SetName(MaximizeButton, maximized ? "Restore" : "Maximize");
         bool framed = TitleBarMerged && TitleBars.Offered && !maximized && !fullScreen;
         Root.Margin = new Thickness(framed ? LinuxEdge : 0);
+    }
+
+    /// <summary>macOS's traffic lights drawn into the window where macOS draws them, for a screenshot
+    /// (<c>--window-buttons</c>), since the headless platform draws no system chrome; false where there are none to draw:
+    /// Windows' and Linux's are the bar's own, and full screen hides macOS's.</summary>
+    public bool DrawTrafficLights()
+    {
+        if (!ShowsTrafficLights)
+        {
+            return false;
+        }
+        Root.Children.Add(new TrafficLights());
+        return true;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)

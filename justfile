@@ -25,7 +25,8 @@ test-times +runs:
 run *args:
     dotnet run --project {{app}} -- {{args}}
 
-# Draw the main window off-screen to a PNG: just screenshot out.png [--size 1600x1000] [--scale 2] [--theme light]
+# --window-buttons draws in macOS's traffic lights, which the off-screen window lacks (Windows' and Linux's are the bar's).
+# Draw the main window off-screen to a PNG: just screenshot out.png [--size 1600x1000] [--scale 2] [--theme light] [--window-buttons]
 screenshot path *args:
     dotnet run --project {{app}} -- --screenshot {{path}} {{args}}
 

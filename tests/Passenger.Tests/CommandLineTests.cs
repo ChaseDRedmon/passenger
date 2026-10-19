@@ -1,8 +1,10 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
+using Avalonia;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.Core;
+using SkiaSharp;
 
 namespace Passenger.Tests;
 
@@ -49,6 +51,7 @@ public sealed class CommandLineTests : IDisposable
     [InlineData("--no-mcp --screenshot out.png", "--no-mcp stops a window listening for agents, and --screenshot's never does")]
     [InlineData("--mcp --no-mcp", "--no-mcp stops a window listening for agents, and --mcp's never does")]
     [InlineData("--mcp --size 1600x1000", "--size is for a --screenshot, and none is asked for")]
+    [InlineData(". --window-buttons", "--window-buttons is for a --screenshot, and none is asked for")]
     [InlineData("--mcp --mcp-attach", "--mcp starts a Passenger of its own and --mcp-attach joins a running one; give one of them")]
     [InlineData("--mcp-attach notes.txt", "--mcp-attach finds the window by its folder, and 'notes.txt' is a file")]
     [InlineData("--mcp-attach missing", "'missing' is neither a folder nor a file")]
@@ -84,6 +87,45 @@ public sealed class CommandLineTests : IDisposable
         Assert.True(code == 2 && error.Contains("screenshot: --click-name Nothing: no control named Nothing is shown in the window", StringComparison.Ordinal)
             && !File.Exists(Path.Combine(folder, "nothing.png")),
             $"A click on a name no control has was to end the screenshot with exit code 2 saying so; it exited {code} and wrote:\n{error}");
+    }
+
+    /// <summary>The headless capture has none of the system's chrome, so on macOS the traffic lights are missing unless
+    /// --window-buttons draws them, where macOS puts them on the merged bar, at any scale. Windows and Linux draw the bar's
+    /// own buttons, so there the flag changes nothing. The places and colours are AppKit's own drawing of an active Dark
+    /// Aqua window made as Avalonia makes Passenger's, measured in points from its top-left and in sRGB.</summary>
+    [Fact]
+    public async Task A_screenshot_with_window_buttons_shows_the_traffic_lights_a_person_sees_on_macOS_and_changes_nothing_elsewhere()
+    {
+        (string Name, Point At, SKColor Centre)[] buttons =
+        [
+            ("close", new Point(16, 16), new SKColor(0xF3, 0x5B, 0x50)),
+            ("minimise", new Point(39, 16), new SKColor(0xFD, 0xBE, 0x00)),
+            ("zoom", new Point(62, 16), new SKColor(0x26, 0xC0, 0x00)),
+        ];
+        (int code, string error) = await Run(". --size 800x500 --scale 1 --crop 0,0,80,40 --theme dark --screenshot plain.png");
+        Assert.True(code == 0, $"The screenshot without the window's buttons was not taken: exit code {code}\n{error}");
+        using SKBitmap plain = SKBitmap.Decode(Path.Combine(folder, "plain.png"));
+        foreach (int scale in (int[])[1, 2])
+        {
+            (code, error) = await Run($". --size 800x500 --scale {scale} --crop 0,0,80,40 --theme dark --window-buttons --screenshot buttons.png");
+            Assert.True(code == 0, $"The screenshot with the window's buttons at scale {scale} was not taken: exit code {code}\n{error}");
+            using SKBitmap shot = SKBitmap.Decode(Path.Combine(folder, "buttons.png"));
+            if (!OperatingSystem.IsMacOS())
+            {
+                Assert.True(shot.Pixels.SequenceEqual(plain.Pixels), "On Windows and Linux the bar draws its own window buttons, yet --window-buttons changed the picture");
+                return;
+            }
+            foreach ((string name, Point at, SKColor centre) in buttons)
+            {
+                SKColor seen = shot.GetPixel((int)(at.X * scale), (int)(at.Y * scale));
+                Assert.True(Near(seen, centre),
+                    $"At scale {scale} the {name} button's centre was to be macOS's {centre}, as a person sees it on an active window; the picture has {seen} there");
+                SKColor without = plain.GetPixel((int)at.X, (int)at.Y);
+                Assert.False(Near(without, centre), $"Without --window-buttons the {name} button's place was to be the bar's, as the headless capture draws no system chrome; it has {without}");
+            }
+        }
+
+        static bool Near(SKColor a, SKColor b) => Math.Abs(a.Red - b.Red) <= 24 && Math.Abs(a.Green - b.Green) <= 24 && Math.Abs(a.Blue - b.Blue) <= 24;
     }
 
     [AvaloniaFact]

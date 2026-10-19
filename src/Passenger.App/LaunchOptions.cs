@@ -18,7 +18,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
 
     /// <summary>What only a screenshot takes: its window, its picture and the steps before it.</summary>
-    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
+    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--window-buttons", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
 
     /// <summary>A screenshot's longest side in pixels: a frame 16384 pixels square is already a gigabyte, and the headless
     /// window draws none at 24000.</summary>
@@ -63,6 +63,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         double scale = 2;
         Rect? crop = null;
         string? cropText = null;
+        bool windowButtons = false;
         List<ScriptStep> steps = [];
         List<(string Flag, string Text, Point At)> points = [];
         McpMode mcp = McpMode.None;
@@ -154,6 +155,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     }
                     crop = new Rect(box[0], box[1], box[2], box[3]);
                     break;
+                case "--window-buttons":
+                    windowButtons = true;
+                    break;
                 case "--type":
                     steps.Add(new ScriptStep.Type(Value(args, ref i, flag)));
                     break;
@@ -212,7 +216,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         {
             throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
-        ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop), cropText, points);
+        ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop) { WindowButtons = windowButtons }, cropText, points);
         return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen, Look = look, Scheme = scheme };
     }
 
@@ -403,7 +407,12 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
 
 /// <summary>A screenshot of the main window: its logical size, pixels per logical unit, the steps to
 /// take first and the part of the window to keep (logical units), or all of it.</summary>
-public sealed record ScreenshotOptions(string Path, LogicalSize Size, double Scale, IReadOnlyList<ScriptStep> Steps, Rect? Crop);
+public sealed record ScreenshotOptions(string Path, LogicalSize Size, double Scale, IReadOnlyList<ScriptStep> Steps, Rect? Crop)
+{
+    /// <summary>Whether macOS's window buttons, which the headless capture has none of, are drawn in as a person sees
+    /// them (<c>--window-buttons</c>); where Windows and Linux are pictured the bar's own are there already.</summary>
+    public bool WindowButtons { get; init; }
+}
 
 public readonly record struct LogicalSize(double Width, double Height);
 

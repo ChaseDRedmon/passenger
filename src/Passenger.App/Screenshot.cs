@@ -14,7 +14,8 @@ namespace Passenger.App;
 /// the command line names and taking its steps. It runs on Avalonia's headless platform with real Skia
 /// drawing, so nothing appears on screen and nothing takes the focus. The picture is the compositor's
 /// own frame, the path the desktop draws through, not a re-render into a bitmap (which once drew text
-/// differently), so it shows what a person would see minus the system's window chrome.</summary>
+/// differently), so it shows what a person would see minus the system's window chrome; <c>--window-buttons</c> draws
+/// macOS's traffic lights back in (<see cref="TrafficLights"/>).</summary>
 public static class Screenshot
 {
     /// <summary>How long to wait for background work (colouring, indexing) before capturing anyway.</summary>
@@ -50,6 +51,10 @@ public static class Screenshot
         if (front != window)
         {
             front.SetRenderScaling(options.Scale);
+            settled &= Settle();
+        }
+        else if (options.WindowButtons && window.DrawTrafficLights())
+        {
             settled &= Settle();
         }
         WriteableBitmap frame = front.CaptureRenderedFrame()
