@@ -22,7 +22,7 @@ public sealed partial class PassengerTools
     public Task<HotReloadInfo> HotReload(
         [Description("Restart the program when an edit needs it (true) or leave it running the code it has (false); by default as Settings' " +
             "Always restart for a rude edit says")] bool? restart = null,
-        [Description("After a restart, how long to wait for the new session to stop at a breakpoint")] int waitSeconds = 30,
+        [Description("After a restart, how long to wait for the new session to stop at a breakpoint (an app with a window: for its UI to be up)")] int waitSeconds = 30,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugController debugger = Session.Debug;
@@ -58,7 +58,7 @@ public sealed partial class PassengerTools
             needed, restarted);
         if (restarted && Session.Debug.Session != before)
         {
-            return answer with { Debugger = await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel) };
+            return answer with { Debugger = await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel) };
         }
         return answer;
 

@@ -845,7 +845,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration", Destructive = true), Description(
         "Builds and launches a run configuration (the chosen one if none is named) under the debugger, as Debug (Alt+F5) does, then " +
-        "waits up to waitSeconds for it to stop at a breakpoint or exception, or end. Returns where it is.")]
+        "waits up to waitSeconds for it to stop at a breakpoint or exception, or end, or for an Avalonia or WPF app's UI to be up. " +
+        "Returns where it is.")]
     public Task<DebugSnapshot> DebugStart(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -856,8 +857,33 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException(problem);
         }
-        return await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel);
+        return await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
+
+    /// <summary>How long a launched app whose UI is up is watched for a stop in its first layout.</summary>
+    private static readonly TimeSpan LaunchSettle = TimeSpan.FromSeconds(2);
+
+    private static TimeSpan Min(TimeSpan one, TimeSpan other) => one < other ? one : other;
+
+    /// <summary>Where a program just launched under the debugger is once it stops or ends, or, for an app with a window,
+    /// which runs until it is closed, once its UI is up, saying so: an agent waits for no more than it needs.</summary>
+    private async Task<DebugSnapshot> AfterLaunch(TimeSpan limit, CancellationToken cancel)
+    {
+        LiveTree.LiveApp? app = Session.LiveApp;
+        DateTime until = DateTime.UtcNow + limit;
+        Func<bool> going = () => Session.Debug.Session is { State: DebugState.Running or DebugState.Starting };
+        await Until(() => !going() || app is { State: not LiveTree.LiveAppState.Waiting }, limit, cancel);
+        if (going() && app is { State: LiveTree.LiveAppState.Connected })
+        {
+            // The inspector says hello as the app's dispatcher first runs, a moment before the first layout, where a breakpoint
+            // or a failed binding may stop it: that stop is waited for too.
+            await Until(() => !going(), Min(LaunchSettle, until - DateTime.UtcNow), cancel);
+        }
+        DebugSnapshot started = await AfterResume(TimeSpan.Zero, cancel);
+        return started.State == "running" && app is { State: LiveTree.LiveAppState.Connected }
+            ? started with { Status = $"{started.Status}, its UI up: app_windows, app_screenshot and app_click look at it and use it" }
+            : started;
+    }
 
     [McpServerTool(Name = "debug_processes", Title = "The .NET programs to attach to", ReadOnly = true), Description(
         "The .NET programs running on this machine that the debugger can attach to, as Run | Attach to Process lists them: each one's process id, " +
@@ -1130,7 +1156,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             "paused",
             session.StopReason,
             top?.Source?.Path is { } path ? $"{Relative(path)}:{top.Line}:{top.Column}" : null,
-            [.. frames.Take(20).Select((f, i) => $"{i}: {f.Name}{(f.Source?.Path is { } p ? $" at {Relative(p)}:{f.Line}" : "")}")],
+            Frames(frames),
             locals,
             null,
             debugger.Summary,
@@ -1138,6 +1164,39 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             BindingValues = await BindingValuesShownAsync(),
         };
+    }
+
+    /// <summary>A stop's frames as an agent reads them, each by its index (which debug_evaluate's frame takes): the folder's
+    /// own code by its place, and a run of any other (a framework's, with or without source: an Avalonia click is some 25
+    /// of them under the handler, and Passenger's inspector's) as one line of their indexes and modules, at most 20 lines.</summary>
+    private IReadOnlyList<string> Frames(IReadOnlyList<DapStackFrame> frames)
+    {
+        string? folder = Session.Folder;
+        bool Own(DapStackFrame frame) => frame.Source?.Path is { } path && (folder is null || PathNames.IsUnder(path, folder));
+        List<string> lines = [];
+        for (int i = 0; i < frames.Count && lines.Count < 20; i++)
+        {
+            if (Own(frames[i]))
+            {
+                lines.Add($"{i}: {frames[i].Name} at {Relative(frames[i].Source!.Path!)}:{frames[i].Line}");
+                continue;
+            }
+            int last = i;
+            while (last + 1 < frames.Count && !Own(frames[last + 1]))
+            {
+                last++;
+            }
+            if (last == i)
+            {
+                lines.Add($"{i}: {frames[i].Name}{(frames[i].Source?.Path is { } path ? $" at {path}:{frames[i].Line}" : "")}");
+                continue;
+            }
+            string[] modules = [.. frames.Skip(i).Take(last - i + 1).Select(f => f.Name.IndexOf('!', StringComparison.Ordinal) is > 0 and int bang ? f.Name[..bang] : null)
+                .OfType<string>().Distinct()];
+            lines.Add($"{i}-{last}: {last - i + 1} frames outside the folder's code{(modules.Length > 0 ? $" ({string.Join(", ", modules.Take(4))}{(modules.Length > 4 ? ", …" : "")})" : "")}");
+            i = last;
+        }
+        return lines;
     }
 
     /// <summary>How long a stop's answer waits for the binding values of the .axaml files shown to be read.</summary>
@@ -1285,6 +1344,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string full = Resolve(path);
         if (Editors.Documents.FirstOrDefault(d => d.Path == full) is { } open)
         {
+            // An agent's own file tools write to disk and ask about the file at once, before the folder's watcher has told
+            // the editor: an open file it has not changed takes the disk's text first, so no answer is about the text before.
+            if (!open.IsModified)
+            {
+                open.Reload();
+            }
             return open;
         }
         if (window.OpenFile(full) is { } problem)

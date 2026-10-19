@@ -107,6 +107,11 @@ public sealed partial class McpTests
         Assert.Equal("Changed Helper.cs in 2 places, saved:\n     6\t        int doubled = value * 2;\n     7\t        return doubled;",
             Text(await Call(client, "edit", new() { ["path"] = "Helper.cs", ["oldText"] = "twice", ["newText"] = "doubled", ["all"] = true })));
         Assert.Equal(spare.Replace("return value * 2;", "int doubled = value * 2;\n        return doubled;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+
+        // An agent's own file tools write to disk and ask at once: the open file answers with the disk's text, not the text before.
+        File.WriteAllText(Path.Combine(folder, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 3;\n}\n");
+        Assert.EndsWith("\t    public static int Twice(int value) => value * 3;",
+            (await Call(client, "editor_text", new() { ["path"] = "Helper.cs", ["from"] = 3, ["to"] = 3 })).GetString(), StringComparison.Ordinal);
     }
 
     /// <summary>An agent on the person's window reads their settings and changes them as Settings does: asked first, a number

@@ -130,7 +130,11 @@ public sealed partial class McpTests
     public async Task An_agent_debugging_an_avalonia_app_that_clicks_into_a_breakpoint_is_told_at_once_where_it_stopped()
     {
         await using McpClient client = await Start(["--mcp", appFolder]);
-        await Call(client, "debug_start", new() { ["waitSeconds"] = 1 });
+        // An app never stops by itself: debug_start comes back once its UI is up, not after the whole of waitSeconds.
+        Stopwatch launching = Stopwatch.StartNew();
+        JsonElement started = await Call(client, "debug_start");
+        Assert.True(started.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && launching.Elapsed < TimeSpan.FromSeconds(50),
+            $"debug_start waited {launching.Elapsed.TotalSeconds:0} s for an app that never stops, and said: {started}");
         Assert.Single((await Call(client, "app_windows")).GetProperty("windows").EnumerateArray());
 
         // Set while the app runs, the breakpoint in the button's handler is there for the click straight after it, and the
@@ -140,7 +144,13 @@ public sealed partial class McpTests
         string clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
         Assert.True(asked.Elapsed < TimeSpan.FromSeconds(8), $"The click that stopped at a breakpoint took {asked.Elapsed} to say so: {clicked}");
         Assert.Contains("and that paused the program (breakpoint) at MainWindow.axaml.cs:23:", clicked, StringComparison.Ordinal);
-        Assert.Equal("paused", (await Call(client, "debug_state")).GetProperty("state").GetString());
+        JsonElement stopped = await Call(client, "debug_state");
+        Assert.Equal("paused", stopped.GetProperty("state").GetString());
+        // Avalonia's and the inspector's frames under the handler are one line of their modules, not a line each.
+        string[] frames = [.. stopped.GetProperty("frames").EnumerateArray().Select(f => f.GetString()!)];
+        Assert.True(frames[0].Contains("MainWindow.axaml.cs:23", StringComparison.Ordinal) && frames.Length < 8
+            && frames.Any(f => f.Contains(" frames outside the folder's code (", StringComparison.Ordinal) && f.Contains("Avalonia.", StringComparison.Ordinal)),
+            $"The stop's frames, for an agent:\n{string.Join('\n', frames)}");
 
         // Let go, the click finishes.
         await Call(client, "breakpoint_remove", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
