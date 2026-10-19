@@ -257,6 +257,24 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
     }
 
     [AvaloniaFact]
+    public void Safe_delete_in_a_file_not_open_whose_lines_end_in_carriage_returns_keeps_them()
+    {
+        string halve = project.Write("Halve.cs", "static class Halve\r{\r    public static int Of(int value) => value / 2;\r\r    public static int Two() => 1;\r}\r");
+        project.Write("Halves.cs", "static class Halves\n{\n    public static int Four() => Halve.Of(8);\n}\n");
+        MainWindow window = project.Open("Halves.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "Halve.O");
+        editor.Focus();
+        Ui.Run(window, AppActions.SafeDelete);
+        Click(Asked(window), "Delete Anyway");
+        Ui.WaitFor(() => !File.ReadAllText(halve).Contains("Of(int", StringComparison.Ordinal), "Of deleted from Halve.cs, which is not open");
+        string after = File.ReadAllText(halve);
+        Assert.True(!after.Contains('\n', StringComparison.Ordinal) && after.StartsWith("static class Halve\r{\r", StringComparison.Ordinal) && after.EndsWith("    public static int Two() => 1;\r}\r", StringComparison.Ordinal),
+            $"Safe Delete wrote Halve.cs, whose lines end in carriage returns, with other line breaks: {after.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Introduce_field_makes_a_constant_a_field_of_the_type_and_says_why_not_for_anything_else()
     {
         MainWindow window = project.Open("Scale.cs");
