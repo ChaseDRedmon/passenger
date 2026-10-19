@@ -49,22 +49,29 @@ public partial class MainWindow
         ("changes applied", "Hot Reload: dotnet watch applied the changes"),
         ("No managed code changes to apply", "Hot Reload: no managed code changes to apply"),
         ("Restart is needed to apply the changes", "Hot Reload: dotnet watch is restarting the application to apply the changes"),
+        ("Attempted to invoke a deleted method implementation",
+            "Hot Reload: the program called a method as it was before the edit changed its signature: dotnet watch is restarting the application to apply the changes"),
         ("Restarting application", "Hot Reload: dotnet watch is restarting the application to apply the changes"),
         ("Unable to apply changes due to compilation errors", "Hot Reload: dotnet watch could not apply the changes: the code does not compile"),
     ];
 
+    /// <summary>How long dotnet watch's later words are followed once it has said what it made of a save: changes it applied
+    /// can still end in a restart, when the program calls a method the update deleted (one whose signature changed).</summary>
+    private static readonly TimeSpan WatchSaysLater = TimeSpan.FromSeconds(10);
+
     /// <summary>A program under dotnet watch takes edits as their files are saved: they are saved, and what dotnet watch
-    /// says of them (in the Run window) is said in the status bar.</summary>
+    /// says of them (in the Run window) is said in the status bar, its last word standing.</summary>
     private async Task SaveForWatchAsync()
     {
-        TaskCompletionSource<string> said = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource said = new(TaskCreationOptions.RunContinuationsAsynchronously);
         EventHandler<string> heard = (_, text) =>
         {
             foreach ((string words, string meaning) in WatchSays)
             {
                 if (text.Contains(words, StringComparison.Ordinal))
                 {
-                    said.TrySetResult(meaning);
+                    status.Text = meaning;
+                    said.TrySetResult();
                     return;
                 }
             }
@@ -76,7 +83,7 @@ public partial class MainWindow
             status.Text = "Hot Reload: saved for dotnet watch to apply";
             if (await Task.WhenAny(said.Task, Task.Delay(TimeSpan.FromSeconds(30))) == said.Task)
             {
-                status.Text = said.Task.Result;
+                await Task.Delay(WatchSaysLater);
             }
         }
         finally

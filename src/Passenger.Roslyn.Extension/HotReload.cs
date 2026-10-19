@@ -102,6 +102,12 @@ internal static class HotReload
             session.Committed = results.Solution ?? solution;
             return new HotReloadEmitted(null, "none", [], problems, changed);
         }
+        if (results.ModuleUpdates.Status == ModuleUpdateStatus.Ready)
+        {
+            // A signature changed under callers left as they were would have them call a deleted body: that waits for a restart.
+            problems.AddRange(await StaleCallers.FindAsync(session.Committed, results.Solution ?? solution, [.. message.Modules, .. message.Locked.Select(l => l.Module)], cancel)
+                .ConfigureAwait(false));
+        }
         if (results.ModuleUpdates.Status == ModuleUpdateStatus.Blocked || problems.Any(p => p.Error))
         {
             if (results.ModuleUpdates.Status == ModuleUpdateStatus.Ready)

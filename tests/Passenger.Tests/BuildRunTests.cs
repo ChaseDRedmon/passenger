@@ -180,6 +180,38 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
+    /// <summary>A parameter added with a default leaves the callers as they were, calling the method the update deletes: dotnet
+    /// watch applies it, the program's next call fails, and dotnet watch restarts it, which the status bar says last.</summary>
+    [AvaloniaFact]
+    public void With_hot_reload_a_signature_change_its_callers_still_call_as_it_was_is_said_as_the_restart_dotnet_watch_makes()
+    {
+        Write("src/Hello/Program.cs", "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"talking\";\n}\n");
+        MainWindow window = Open();
+        window.ApplySettings(window.Settings with { HotReload = true });
+        try
+        {
+            window.OpenFile(Path.Combine(folder, "src", "Hello", "Program.cs"));
+            Ui.Settle();
+            window.Perform(AppActions.RunProgram);
+            Ui.WaitFor(() => Output(window).Contains("talking", StringComparison.Ordinal) && Output(window).Contains("Waiting for changes", StringComparison.Ordinal),
+                "the program to run under dotnet watch", TimeSpan.FromMinutes(2));
+
+            Passenger.App.Workspace.OpenDocument program = window.EditorArea.Active!;
+            int at = program.Text.Snapshot.ToString().IndexOf("Say() =>", StringComparison.Ordinal);
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "Say() =>".Length, "Say(int times = 1) =>")]);
+            window.Perform(AppActions.ApplyHotReloadChanges);
+            Ui.WaitFor(() => window.Status?.Contains("dotnet watch is restarting the application", StringComparison.Ordinal) == true,
+                $"the status bar to say dotnet watch restarts the program, whose callers still called the method as it was ({window.Status}):\n{Output(window)}", TimeSpan.FromMinutes(1));
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "the program to stop");
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
+        }
+    }
+
     private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
     [AvaloniaFact]

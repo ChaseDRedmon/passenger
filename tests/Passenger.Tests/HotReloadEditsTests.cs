@@ -87,6 +87,9 @@ public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDispo
         ["a property added to a record"] = ([("    public string Describe() => $\"pet {Name}\";", "    public int Age { get; init; } = 3;\n\n    public string Describe() => $\"pet {Name} aged {Age}\";")], "aged 3"),
         ["a generic method's body"] = ([("static T Echo<T>(T value) => value;", "static T Echo<T>(T value) { Console.WriteLine(\"generic edited\"); return value; }")], "generic edited"),
         ["a method's signature"] = ([("$\"tick {i}\"", "Word(i, \"signature\")"), ("    public static void Tick(int i)", "    static string Word(int i, string what) => $\"{what} {i}\";\n\n    public static void Tick(int i)")], "signature"),
+        ["a parameter added with its callers"] = ([("    public int Next() => 1;", "    public int Next(int by) => by;"), ("counter.Next()", "counter.Next(7)")], "counter 7"),
+        // Program.cs still calls Tick(int), whose body the update would leave throwing: only a restart runs the edit.
+        ["a parameter added with a default its callers leave out"] = ([("    public static void Tick(int i)", "    public static void Tick(int i, int times = 1)")], null),
         ["a field's type"] = ([("    static readonly Counter counter = new();", "    static readonly Counter counter = new();\n    static int ticks;")], null),
     };
 
@@ -120,6 +123,9 @@ public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDispo
             {
                 Assert.True(outcome.Result == HotReloadResult.RestartNeeded, $"Changing {kind} should need a restart: {outcome.Said}");
                 Assert.Contains(outcome.Problems, p => p.Path == DemoPath && p.Code?.StartsWith("ENC", StringComparison.Ordinal) == true);
+                // Nothing was applied: the program goes on ticking as built, never into a body the update left throwing.
+                Ui.WaitFor(() => Output(window)[before..].Contains("generic", StringComparison.Ordinal), $"the program to tick on as it was ({Output(window)[before..]})");
+                Assert.True(window.Debugger.Session?.State == DebugState.Running, $"The program stopped after an edit that was not applied: {Output(window)[before..]}");
                 return;
             }
             Assert.True(outcome.Result == HotReloadResult.Applied, $"Changing {kind} should apply: {outcome.Said}");
