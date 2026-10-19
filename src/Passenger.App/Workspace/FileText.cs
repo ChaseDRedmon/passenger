@@ -136,8 +136,9 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     public static bool IsSaving(string path) => path.EndsWith(SaveSuffix, StringComparison.Ordinal);
 
     /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
-    /// where the old one was; a symlink is written through to its target, the file keeps its permissions, and one
-    /// deleted since it was opened is written anew. A text the encoding cannot hold is written as UTF-8 instead, never
+    /// where the old one was; a symlink is written through to its target, the file keeps its permissions (and on macOS
+    /// its extended attributes, Finder's tags among them, its ACL and creation date), and one deleted since it was opened
+    /// is written anew. A text the encoding cannot hold is written as UTF-8 instead, never
     /// with a question mark for each such character; the result is how it was written, with why when it changed. A CR
     /// file (<paramref name="crBreaks"/>) has each of the text's breaks written as '\r'.</summary>
     public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false)
@@ -147,7 +148,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         Writing?.Invoke(path);
         byte[] preamble = written.HasBom ? Preamble(written.Encoding) : [];
         byte[] body = written.Encoding.GetBytes(crBreaks ? LineEndings.In(text, "\r") : text);
-        Write(path, preamble, body);
+        Write(path, preamble, body, written.Encoding);
         return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {FileEncoding.Of(encoding, bom).Name} cannot hold '{unheld}'");
     }
 
@@ -156,10 +157,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     public static void Restore(string path, byte[] bytes)
     {
         Writing?.Invoke(path);
-        Write(path, [], bytes);
+        Write(path, [], bytes, null);
     }
 
-    private static void Write(string path, byte[] preamble, byte[] body)
+    /// <param name="encoding">What the text was written in; null for bytes put back as a file had them.</param>
+    private static void Write(string path, byte[] preamble, byte[] body, Encoding? encoding)
     {
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
@@ -180,6 +182,10 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             if (!OperatingSystem.IsWindows() && File.Exists(target))
             {
                 File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
+                if (OperatingSystem.IsMacOS())
+                {
+                    MacFileMetadata.Copy(target, temporary, encoding);
+                }
             }
             Replace(temporary, target, preamble, body);
         }

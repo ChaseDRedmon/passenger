@@ -189,6 +189,44 @@ public sealed class FileTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_save_on_macOS_keeps_the_files_Finder_tags_its_access_control_list_and_its_creation_date()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "Finder's tags, macOS's ACLs and a creation date a program may set are macOS's");
+        string path = Path.Combine(folder, "Tagged.cs");
+        File.WriteAllText(path, "class Tagged { }\n");
+        Run("xattr", "-w", "com.apple.metadata:_kMDItemUserTags", "Red", path);
+        Run("xattr", "-w", "com.apple.TextEncoding", "utf-8;134217984", path);
+        Run("chmod", "+a", "everyone allow read", path);
+        DateTime created = new(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetCreationTimeUtc(path, created);
+        MainWindow window = Open();
+        Edit(window, "Tagged.cs", "public ");
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+
+        Assert.Equal("public class Tagged { }\n", File.ReadAllText(path));
+        Assert.True(Run("xattr", "-p", "com.apple.metadata:_kMDItemUserTags", path).Trim() == "Red", "The save took the file's Finder tag away");
+        Assert.Equal("utf-8;134217984", Run("xattr", "-p", "com.apple.TextEncoding", path).Trim());
+        Assert.Contains("everyone allow read", Run("ls", "-le", path), StringComparison.Ordinal);
+        Assert.True(File.GetCreationTimeUtc(path) == created, $"The save made the file anew: created {File.GetCreationTimeUtc(path):u}, not {created:u}");
+        window.Close();
+    }
+
+    /// <summary>What a program of the system says, failing when it fails.</summary>
+    private static string Run(string program, params string[] arguments)
+    {
+        using System.Diagnostics.Process process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program, arguments)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        })!;
+        string output = process.StandardOutput.ReadToEnd();
+        string error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"{program} {string.Join(' ', arguments)} failed: {error}");
+        return output;
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
