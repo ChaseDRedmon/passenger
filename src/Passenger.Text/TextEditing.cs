@@ -921,6 +921,10 @@ public static class TextEditing
     /// unless <paramref name="afterInsertions"/>.</summary>
     private static int Map(IReadOnlyList<TextEdit> edits, int offset, bool afterInsertions)
     {
+        if (edits is SortedEdits sorted)
+        {
+            return sorted.Map(offset, afterInsertions);
+        }
         int shift = 0;
         // By index: an enumerator of the list would be made for every offset carried, every fold and marker every key.
         for (int i = 0; i < edits.Count; i++)

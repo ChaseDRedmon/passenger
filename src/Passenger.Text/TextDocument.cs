@@ -268,7 +268,7 @@ public sealed class TextDocument
     {
         Snapshot = after;
         Version++;
-        Changed?.Invoke(this, new DocumentChangedEventArgs(before, after, edits, Version, reason));
+        Changed?.Invoke(this, new DocumentChangedEventArgs(before, after, SortedEdits.Of(edits), Version, reason));
     }
 
     private sealed class UndoEntry(EditKind kind, SelectionSet selectionsBefore, SelectionSet selectionsAfter, long time, List<Step> steps)

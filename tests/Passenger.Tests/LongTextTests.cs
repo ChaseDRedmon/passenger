@@ -120,6 +120,59 @@ public sealed class LongTextTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A key with a thousand carets costs the UI thread what the carets cost, not the file's length: the
+    /// document's carets and fold regions, carried through the key's thousand edits, each find their place among them by
+    /// halving rather than by walking every edit before it, so eight thousand methods type as quickly as a thousand.</summary>
+    [AvaloniaFact]
+    public void A_key_with_a_thousand_carets_costs_the_same_in_eight_thousand_methods_as_in_a_thousand()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        double few = CaretKeys(window, "Few.cs", 1000);
+        double many = CaretKeys(window, "Many.cs", 8000);
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key with 1,000 carets: {few:F1} ms in 1,000 methods, {many:F1} ms in 8,000");
+        Assert.True(many <= (2 * few) + 5, $"A key with 1,000 carets took the UI thread {many:F1} ms in a file of 8,000 methods, against {few:F1} ms in one of 1,000");
+        window.Close();
+    }
+
+    /// <summary>The median time a key takes the UI thread, to its frame, with a caret in each of a file's first thousand
+    /// methods.</summary>
+    private double CaretKeys(MainWindow window, string name, int methods)
+    {
+        StringBuilder text = new("namespace Wide;\n\npublic sealed class Wide\n{\n");
+        for (int i = 0; i < methods; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    /// <summary>Method {i}.</summary>\n    public int Method{i}(int count)\n    {{\n        int label = count;\n        return label + {i};\n    }}\n\n");
+        }
+        string path = Path.Combine(folder, name);
+        File.WriteAllText(path, text.Append("}\n").ToString());
+        Assert.Null(window.OpenFile(path));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string written = editor.Document.Snapshot.ToString();
+        List<Selection> carets = [];
+        for (int at = written.IndexOf("int label", StringComparison.Ordinal); at >= 0 && carets.Count < SelectionSet.MaxCount; at = written.IndexOf("int label", at + 1, StringComparison.Ordinal))
+        {
+            carets.Add(Selection.At(at + "int label".Length));
+        }
+        editor.Selections = SelectionSet.Create(carets, 0);
+        editor.Focus();
+        Ui.Settle();
+        List<double> times = [];
+        for (int i = 0; i < 12; i++)
+        {
+            long began = Stopwatch.GetTimestamp();
+            window.KeyTextInput(i % 2 == 0 ? "x" : "y");
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            times.Add(Stopwatch.GetElapsedTime(began).TotalMilliseconds);
+            Ui.Settle();
+        }
+        Assert.Equal(SelectionSet.MaxCount, editor.Document.Snapshot.ToString().Split('\n').Count(l => l.StartsWith("        int labelxyxyxyxyxyxy = count;", StringComparison.Ordinal)));
+        return Median(times);
+    }
+
     /// <summary>Twelve keys at an offset, each timed; what they had formatted and coloured, a key.</summary>
     private static (long Formatted, long Coloured) Keys(EditorRig rig, int offset, List<double> times)
     {
