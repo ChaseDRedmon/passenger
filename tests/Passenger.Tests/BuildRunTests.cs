@@ -583,12 +583,11 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
-    /// <summary>An Avalonia app built the moment it opens, while the project host's design-time build of it is writing its
-    /// resources: Avalonia's GenerateAvaloniaResources runs before CoreCompile, so in a design-time build too, and both
-    /// write obj/…/Avalonia/resources, which on Windows failed the build (MSB4018, "The process cannot access the file",
-    /// CI's NewSolutionTests). The build waits for the design-time build, as a WPF app's does. Here the design-time build
-    /// holds the resources as the task does while it writes them, until the test lets it go; a build's begun meanwhile
-    /// says so.</summary>
+    /// <summary>An Avalonia app built as it opens, while the host's design-time build of it writes its resources: Avalonia's
+    /// GenerateAvaloniaResources runs before CoreCompile, so in a design-time build too, and on Windows both writing
+    /// obj/…/Avalonia/resources failed the build (MSB4018, CI's NewSolutionTests). The build waits, as a WPF app's does. Here
+    /// the design-time build holds the resources open until the test lets it go, then deletes the empty file it held (taken
+    /// as up to date, it was embedded: AVLN9999) for the task to write; a build begun meanwhile says so.</summary>
     [AvaloniaFact]
     public void A_build_begun_while_an_avalonia_apps_design_time_build_writes_its_resources_waits_for_it_and_succeeds()
     {
@@ -608,7 +607,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
                     <Project>
                       <Target Name="Hold" BeforeTargets="GenerateAvaloniaResources" Condition="'$(DesignTimeBuild)' == 'true' And !Exists('release')">
                         <MakeDir Directories="$(IntermediateOutputPath)Avalonia" />
-                        <Exec Condition="'$(OS)' == 'Windows_NT'" Timeout="120000" Command="powershell -NoProfile -Command &quot;$held = [IO.File]::Open('$(IntermediateOutputPath)Avalonia\resources', 'OpenOrCreate', 'Write', 'Read'); Set-Content -Path held -Value held; while (-not (Test-Path release)) { Start-Sleep -Milliseconds 100 }; $held.Dispose()&quot;" />
+                        <Exec Condition="'$(OS)' == 'Windows_NT'" Timeout="120000" Command="powershell -NoProfile -Command &quot;$held = [IO.File]::Open('$(IntermediateOutputPath)Avalonia\resources', 'OpenOrCreate', 'Write', 'Read'); Set-Content -Path held -Value held; while (-not (Test-Path release)) { Start-Sleep -Milliseconds 100 }; $held.Dispose(); Remove-Item '$(IntermediateOutputPath)Avalonia\resources'&quot;" />
                         <Exec Condition="'$(OS)' != 'Windows_NT'" Timeout="120000" Command="echo held &gt; held; while [ ! -f release ]; do sleep 0.1; done" />
                       </Target>
                       <Target Name="Overlap" BeforeTargets="GenerateAvaloniaResources" Condition="'$(DesignTimeBuild)' != 'true' And Exists('held') And !Exists('release')">
