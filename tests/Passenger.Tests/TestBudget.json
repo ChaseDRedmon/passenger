@@ -2,7 +2,8 @@
   "shardMinutes": 22,
   "classSeconds": 60,
   "classes": {
-    "CodeAssistTests": 570,
+    "CodeAssistTests": 480,
+    "LongFileAssistTests": 150,
     "DebuggerTests": 420,
     "HotReloadTests": 180,
     "HotReloadEditsTests": 240,
