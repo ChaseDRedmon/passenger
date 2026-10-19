@@ -647,7 +647,7 @@ public sealed class CSharpService : IAsyncDisposable
         int more = batch.Distinct().Count() - 1;
         string kind = first.Severity == ProblemSeverity.Error ? "Error" : "Warning";
         string rest = more == 0 ? string.Empty : $"{(first.Message.EndsWith('.') ? " " : "; ")}Problems lists {more} more";
-        Said?.Invoke(this, new ServerSaid($"{kind} while loading {Shown(first.Project)}: {first.Message}{rest}", first.Severity));
+        Said?.Invoke(this, new ServerSaid($"{kind} while loading {Shown(first.Project)}: {first.Message}{rest}", first.Severity, first));
     }
 
     /// <summary>A project as the status bar names it: its path from the open folder, else its file's name.</summary>

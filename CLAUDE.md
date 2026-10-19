@@ -547,6 +547,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   `CloseAsync` with the window. The window builds `BuildRunController`, `ProfilerCommands`, `Navigator`, `PopupHost`
   and `StatusBar` over it, each a file of its own given an explicit parts record; a handler hung on a session acts only
   while that session is the window's (`Bind`).
+- `src/Passenger.App/StatusBar.cs`: what the status bar says, its whole text its tooltip, and a `StatusPlace` a click on
+  it goes to, held only while those words stand (a link then, `Button.statusMessage.place`): a load problem's row in
+  Problems' Toolset, Environment, a build's problems in Build, Hot Reload's edits, a binding error stopped at in
+  Bindings, Unit Tests, IDE Internal Errors, a `.bad` file, Show Log (`MainWindow.StatusPlaces.cs`). A controller says
+  through a `StatusSay`; the window's `Say` keeps a place when the same words come again (a failed build's, from Run).
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`

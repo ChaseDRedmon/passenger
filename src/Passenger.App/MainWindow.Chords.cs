@@ -14,7 +14,7 @@ public partial class MainWindow
 
     private readonly DispatcherTimer chordWait = new() { Interval = ChordWait };
     private string? chordMessage;
-    private string? beforeChord;
+    private (string? Text, Run.ProblemSeverity? Severity, StatusPlace? Place) beforeChord;
 
     private void AddChords()
     {
@@ -31,7 +31,7 @@ public partial class MainWindow
         chordWait.Stop();
         if (keys.Pending is { } first)
         {
-            beforeChord = status.Text;
+            beforeChord = status.Said;
             chordMessage = ChordMessage(first);
             status.Text = chordMessage;
             chordWait.Start();
@@ -39,7 +39,7 @@ public partial class MainWindow
         }
         if (chordMessage is not null && status.Text == chordMessage)
         {
-            status.Text = beforeChord;
+            status.SayAgain(beforeChord);
         }
         chordMessage = null;
     }

@@ -82,7 +82,8 @@ public partial class MainWindow
             {
                 if (text.Contains(words, StringComparison.Ordinal))
                 {
-                    status.Text = meaning;
+                    // dotnet watch writes the compiler's errors in the Run window.
+                    Say(meaning, result == HotReloadResult.Errors ? StatusPlace.Window(Dock, "run") : null);
                     last = new HotReloadOutcome(result, meaning);
                     said.TrySetResult();
                     return;
@@ -140,6 +141,11 @@ public partial class MainWindow
                 if (outcome.Problems.Any(p => p.Severity == Run.ProblemSeverity.Error))
                 {
                     Dock.Show("problems");
+                }
+                // The debugger has said it; its edits that could not apply, or warned, are where to see more.
+                if (outcome.Problems.Count > 0)
+                {
+                    Say(outcome.Said, HotReloadPlace);
                 }
             }
         };
@@ -200,7 +206,10 @@ public partial class MainWindow
         {
             Bottom.Debug.Console.Append($"{rude.Path}({rude.Position.Line + 1},{rude.Position.Column + 1}): {(rude.Severity == Run.ProblemSeverity.Error ? "error" : "warning")} {rude.Code}: {rude.Message}\n");
         }
-        status.Text = said;
+        Say(said, outcome.Problems.Count > 0 ? HotReloadPlace : null);
         return true;
     }
+
+    /// <summary>Problems' Hot Reload tab, the first edit it lists chosen.</summary>
+    private StatusPlace HotReloadPlace => StatusPlace.Problems(Dock, Bottom.Problems, ProblemsTab.HotReload, _ => true);
 }

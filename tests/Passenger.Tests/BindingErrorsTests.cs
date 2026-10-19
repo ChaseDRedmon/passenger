@@ -149,6 +149,12 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.Equal((Xaml, Misspelt), (stop.Binding?.Problem.Path, stop.Binding?.Problem.Position));
         Says(window, $"paused on a binding error at MainWindow.axaml:{Misspelt.Line + 1}: TextBlock#Caption.Text to Nmae (DataContext MainViewModel): "
             + "Could not find a matching property accessor for 'Nmae' on 'BindingErrorsApp.MainViewModel'");
+        // Which the status bar's words go to see in Problems' Bindings.
+        window.ShowToolWindow("debug");
+        Click(window, window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
+        Assert.True(window.DockHost.IsShown("problems") && window.BottomPanel.Problems.Shown == ProblemsTab.Bindings,
+            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown("problems") ? $"Problems' {window.BottomPanel.Problems.Shown} tab" : "nothing")}, not Problems' Bindings");
+        window.ShowToolWindow("debug");
         Assert.Contains(window.EditorArea.CodeEditor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception && a.Text.StartsWith("Binding error at MainWindow.axaml", StringComparison.Ordinal));
         // $bindingError above the frame's values, as $exception is, opening into the failure.
         Assert.Equal("\"Nmae\"", Member(window, "$bindingError", "Path"));

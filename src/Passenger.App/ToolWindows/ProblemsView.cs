@@ -161,6 +161,32 @@ public sealed class ProblemsView : DockPanel
         Refresh();
     }
 
+    /// <summary>A tab's title, without its count.</summary>
+    public static string TitleOf(ProblemsTab tab) => tab switch
+    {
+        ProblemsTab.File => "File",
+        ProblemsTab.Solution => "Solution",
+        ProblemsTab.Toolset => "Toolset, Environment",
+        ProblemsTab.Bindings => "Bindings",
+        ProblemsTab.HotReload => "Hot Reload",
+        _ => "Build",
+    };
+
+    /// <summary>The problem row chosen, if one is.</summary>
+    public Problem? Selected => (list.SelectedItem as ProblemRow)?.Problem;
+
+    /// <summary>A tab shown, the first of its problems <paramref name="which"/> picks chosen and scrolled to, as the status
+    /// bar's link to it goes there.</summary>
+    public void Reveal(ProblemsTab tab, Func<Problem, bool>? which = null)
+    {
+        Shown = tab;
+        if (which is not null && rows.FirstOrDefault(r => r.Problem is { } problem && which(problem)) is { } row)
+        {
+            list.SelectedItem = row;
+            list.ScrollIntoView(row);
+        }
+    }
+
     /// <summary>The tab shown.</summary>
     public ProblemsTab Shown
     {
@@ -273,13 +299,13 @@ public sealed class ProblemsView : DockPanel
     /// <summary>Each tab's title with its count, the one shown pressed.</summary>
     private void Titles()
     {
-        tabs[ProblemsTab.File].Content = Titled(fileName is null ? "File" : $"File: {fileName}", file.Count);
-        tabs[ProblemsTab.Solution].Content = Titled("Solution", solution?.Count ?? 0);
+        tabs[ProblemsTab.File].Content = Titled(fileName is null ? TitleOf(ProblemsTab.File) : $"File: {fileName}", file.Count);
+        tabs[ProblemsTab.Solution].Content = Titled(TitleOf(ProblemsTab.Solution), solution?.Count ?? 0);
         tabs[ProblemsTab.Solution].IsVisible = solution is not null;
-        tabs[ProblemsTab.Toolset].Content = Titled("Toolset, Environment", toolset.Count);
-        tabs[ProblemsTab.Build].Content = Titled("Build", Problems.Count);
-        tabs[ProblemsTab.Bindings].Content = Titled("Bindings", bindings.Count);
-        tabs[ProblemsTab.HotReload].Content = Titled("Hot Reload", hotReload?.Count ?? 0);
+        tabs[ProblemsTab.Toolset].Content = Titled(TitleOf(ProblemsTab.Toolset), toolset.Count);
+        tabs[ProblemsTab.Build].Content = Titled(TitleOf(ProblemsTab.Build), Problems.Count);
+        tabs[ProblemsTab.Bindings].Content = Titled(TitleOf(ProblemsTab.Bindings), bindings.Count);
+        tabs[ProblemsTab.HotReload].Content = Titled(TitleOf(ProblemsTab.HotReload), hotReload?.Count ?? 0);
         tabs[ProblemsTab.HotReload].IsVisible = hotReload is not null;
         foreach ((ProblemsTab tab, ToggleButton button) in tabs)
         {
@@ -401,12 +427,13 @@ public sealed class ProblemsView : DockPanel
         };
         panel.DetachedFromVisualTree += (_, _) => row.PropertyChanged -= OnMoved;
         panel.Children.Add(icon);
-        // A message of several lines (a compiler's stack trace) shows its first in the row and all of them on hover.
+        // A message shows its first line (of a compiler's stack trace) in the row, where a long one is cut, and all of it on
+        // hover, as the status bar's link here promises.
         string label = row.Label;
+        ToolTip.SetTip(panel, row.Label);
         if (label.IndexOf('\n') is int lineEnd and >= 0)
         {
             label = label[..lineEnd].TrimEnd('\r');
-            ToolTip.SetTip(panel, row.Label);
         }
         // A rule's name the message ends with is its link (an ESLint problem's), else the address where the message has it.
         int at = problem.Link is not { } named ? -1

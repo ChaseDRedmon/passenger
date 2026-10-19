@@ -58,7 +58,7 @@ public partial class MainWindow : Window
         UiThread.Own();
         InitializeComponent();
         session = ProjectSession.None(Setup());
-        status = new StatusBar(StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
+        status = new StatusBar(StatusMessage, StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
         popups = new PopupHost(Overlay, OverlayHost, Editors, () => session.Debug.Breakpoints);
         navigator = new Navigation.Navigator(new Navigation.NavigatorParts(Editors, () => session, popups, status, path => OpenFile(path), TextOf));
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
@@ -589,7 +589,7 @@ public partial class MainWindow : Window
     {
         if (State.StateFile.TakeUnsaid(StateFolder) is { Count: > 0 } said)
         {
-            status.Text = string.Join("; ", said);
+            Say(string.Join("; ", said.Select(s => s.Said)), SetAsidePlace(said[0].Kept));
         }
     }
 

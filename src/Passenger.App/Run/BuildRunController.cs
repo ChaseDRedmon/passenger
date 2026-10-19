@@ -22,7 +22,7 @@ public sealed record BuildRunParts(
     EditorArea Editors,
     DockHost Dock,
     Func<AppSettings> Settings,
-    Action<string> Say,
+    StatusSay Say,
     Func<string, ProcessStartInfo, Task<TerminalRun>> InTerminal,
     Action<LaunchPlan, Task> OpenBrowser,
     Func<string> StateFolder);
@@ -91,7 +91,7 @@ public sealed class BuildRunController
         {
             parts.Views.Run.SetRunning(false);
             RunningChanged?.Invoke(this, EventArgs.Empty);
-            parts.Say(RunEnded(ran, code));
+            parts.Say(RunEnded(ran, code), StatusPlace.Window(parts.Dock, "run"));
         };
     }
 
@@ -293,7 +293,7 @@ public sealed class BuildRunController
         parts.Views.Build.SetRunning(false);
         ShowProblems();
         session.Xaml.Built(session.Problems);
-        parts.Say(outcome.Message);
+        parts.Say(outcome.Message, Place(outcome));
         if (ShowsBuildResults(outcome))
         {
             parts.Dock.Show("build");
@@ -308,6 +308,13 @@ public sealed class BuildRunController
             held?.TrySetResult();
         }
     }
+
+    /// <summary>Where a build's end has more to see: its problems in Problems' Build, the first chosen, or the Build window's
+    /// output when it failed with none read; nowhere for a build that succeeded cleanly, was stopped or never started.</summary>
+    private StatusPlace? Place(BuildOutcome ended) =>
+        ended.Problems.Count > 0 ? StatusPlace.Problems(parts.Dock, parts.Views.Problems, ProblemsTab.Build, _ => true)
+        : ended.Status == BuildStatus.Failed ? StatusPlace.Window(parts.Dock, "build")
+        : null;
 
     /// <summary>The last build's problems in the Problems window, its title counting them.</summary>
     public void ShowProblems()
@@ -498,7 +505,7 @@ public sealed class BuildRunController
             RunningChanged?.Invoke(this, EventArgs.Empty);
             if (session.InTerminal == run)
             {
-                parts.Say(RunEnded(name, code));
+                parts.Say(RunEnded(name, code), StatusPlace.Window(parts.Dock, "terminal"));
             }
         }
     }

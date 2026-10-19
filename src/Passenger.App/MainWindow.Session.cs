@@ -45,7 +45,7 @@ public partial class MainWindow
         cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings);
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
-    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => status.Text = text, ShowInTerminal,
+    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
         OpenBrowserOnceListening, () => StateFolder);
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
@@ -246,7 +246,7 @@ public partial class MainWindow
             {
                 if (session == next)
                 {
-                    status.Text = message;
+                    Say(message, StatusPlace.Log);
                 }
             };
             web.Message += (_, message) =>
@@ -343,7 +343,8 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                status.Text = message;
+                // A stop at a binding error says it, and Problems' Bindings lists it.
+                Say(message, debugger.BindingStop is { } stop && message == debugger.Summary ? BindingPlace(stop.Problem.Problem) : null);
             }
         };
         debugger.Navigate += (_, target) =>
@@ -371,8 +372,9 @@ public partial class MainWindow
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
             service.StateChanged += (_, _) => Structure.FollowServer();
-            service.Stopped += (_, message) => status.Text = message;
-            service.Said += (_, said) => status.Say(said.Text, said.Severity);
+            // Each stop is logged with why: the log is where to see more.
+            service.Stopped += (_, message) => Say(message, StatusPlace.Log);
+            service.Said += (_, said) => status.Say(said.Text, said.Severity, said.Problem is { } problem ? LoadProblemPlace(problem) : null);
             WatchProblems(service);
             service.FollowIndent(Editors.Active);
         }

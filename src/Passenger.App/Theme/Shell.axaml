@@ -627,6 +627,30 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <!-- What the status bar says: words as wide as they are (cut where the widgets begin), out of the keys' way, until it
+         has a place to go (StatusBar.Say's), when it is a link: the hand, a key's reach, and the link's colour underlined
+         under the pointer. Its whole text shows above it, where the words it was cut from stay in sight. -->
+    <Style Selector="Button.statusMessage">
+        <Setter Property="ToolTip.Placement" Value="Top" />
+        <!-- Clear of the bar: a tooltip's offset (Avalonia's 20) is downwards, for one under the pointer. -->
+        <Setter Property="ToolTip.VerticalOffset" Value="-6" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Focusable" Value="False" />
+    </Style>
+    <Style Selector="Button.statusMessage.place">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="True" />
+    </Style>
+    <Style Selector="Button.statusMessage.place:pointerover TextBlock.status">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Link}" />
+        <Setter Property="TextDecorations" Value="Underline" />
+    </Style>
     <Style Selector="PathIcon.small">
         <Setter Property="Width" Value="10" />
         <Setter Property="Height" Value="10" />

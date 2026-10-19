@@ -485,6 +485,64 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         }
     }
 
+    /// <summary>The status bar's words are a link while they have a place to go (an internal error's, IDE Internal Errors):
+    /// the hand, a key's reach, and the link's colour underlined under the pointer, from the shared style in every look;
+    /// words that go nowhere stay the bar's muted words under the pointer, and the keys pass them by.</summary>
+    [AvaloniaFact]
+    public void The_status_bars_words_are_a_link_under_the_pointer_only_while_they_have_a_place_to_go()
+    {
+        MainWindow window = Open(1200, 800);
+        try
+        {
+            UnderEachLook(window, () =>
+            {
+                Button said = Named<Button>(window, "StatusMessage");
+                TextBlock words = Named<TextBlock>(window, "StatusText");
+                Ui.Press(window, Ui.Shortcut(AppActions.ApplyHotReloadChanges));
+                Hover(window, said);
+                Assert.True(window.StatusPlace is null && !said.Focusable && said.Cursor is null && Colour(words) == Brush(window, "Passenger.TextMuted") && !Underlined(words),
+                    $"\"{window.Status}\", which goes nowhere, is drawn in {Colour(words)} {(Underlined(words) ? "underlined" : "")} under the pointer with the cursor {said.Cursor}, "
+                    + "where the status bar's words that go nowhere stay its muted words");
+
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => throw new InvalidOperationException("A status bar link's own error"));
+                try
+                {
+                    Ui.Settle();
+                    Assert.True(window.Status == "IDE error: A status bar link's own error" && window.StatusPlace is not null, $"The status bar says \"{window.Status}\" with no place, not the IDE error going to IDE Internal Errors");
+                    window.MouseMove(new Point(1, 1));
+                    Hover(window, said);
+                    Assert.True(said.Focusable && said.Cursor?.ToString() == "Hand" && Colour(words) == Brush(window, "Passenger.Link") && Underlined(words),
+                        $"\"{window.Status}\", which goes to IDE Internal Errors, is drawn in {Colour(words)} {(Underlined(words) ? "underlined" : "not underlined")} under the pointer "
+                        + $"with the cursor {said.Cursor}, {(said.Focusable ? "" : "out of the keys' reach, ")}not a link in the link's colour ({Brush(window, "Passenger.Link")}) underlined, with the hand");
+                    said.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                    Ui.Settle();
+                    Assert.True(window.Popup is ErrorsPopup, $"A click on \"{window.Status}\" showed {window.Popup?.GetType().Name ?? "nothing"}, not IDE Internal Errors");
+                    Ui.Press(window, "ESCAPE");
+                    window.MouseMove(new Point(1, 1));
+                }
+                finally
+                {
+                    // Thrown on purpose: the check that fails a test over a caught error is not to see it.
+                    IdeErrors.Clear();
+                }
+            });
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static void Hover(MainWindow window, Control control)
+        {
+            window.MouseMove(control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value);
+            Ui.Settle();
+        }
+
+        static Color? Colour(TextBlock words) => (words.Foreground as ISolidColorBrush)?.Color;
+
+        static bool Underlined(TextBlock words) => words.TextDecorations?.Any(d => d.Location == TextDecorationLocation.Underline) == true;
+    }
+
     /// <summary>What of a control is drawn: its place cut to each ancestor that clips what it holds.</summary>
     private static Rect Visible(Visual window, Visual control)
     {

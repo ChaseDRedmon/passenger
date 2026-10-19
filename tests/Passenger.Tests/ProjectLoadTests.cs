@@ -1,5 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.VisualTree;
@@ -69,13 +72,20 @@ public sealed class ProjectLoadTests : IDisposable
             $"the status bar to name the vulnerable package and its severity (it says \"{window.Status}\")");
         Assert.Equal($"Warning while loading {Path.Combine("Web", "Web.csproj")}: {Warned}", window.Status);
         Assert.True(window.StatusSeverity == ProblemSeverity.Warning, $"The status bar's load warning is marked as {window.StatusSeverity?.ToString() ?? "nothing"}, not a warning");
+        string? tip = ToolTip.GetTip(StatusMessage(window)) as string;
+        Assert.True(tip?.StartsWith(window.Status!, StringComparison.Ordinal) == true && tip.EndsWith("Click to see it in Problems, Toolset, Environment", StringComparison.Ordinal),
+            $"Hovering the status bar's load warning, which the bar cuts, shows \"{tip}\", not its whole text and where a click on it goes");
 
-        // Problems' Toolset, Environment: under the project, with the advisory's link, which opens in the browser.
+        // A click on it shows it in Problems' Toolset, Environment: under the project, with the advisory's link, which opens
+        // in the browser.
         ProblemsView problems = window.BottomPanel.Problems;
-        window.Perform(AppActions.ShowProblems);
-        problems.Shown = ProblemsTab.Toolset;
-        Ui.Settle();
+        window.DockHost.Hide("problems");
+        problems.Shown = ProblemsTab.File;
+        ClickStatus(window);
+        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Toolset,
+            $"A click on the status bar's load warning showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
         Problem warning = Assert.Single(problems.ToolsetProblems);
+        Assert.True(problems.Selected == warning, $"A click on the status bar's load warning chose {problems.Selected?.Message ?? "nothing"} in Problems, not the warning");
         Assert.True(warning is { Severity: ProblemSeverity.Warning, Project: "Web", Message: Warned } && warning.Link == new Uri(Advisory),
             $"Problems lists the load's warning as {warning.Severity} \"{warning.Message}\" under {warning.Project}, its link {warning.Link}");
         Assert.Equal(["Web", Warned], problems.Rows.Select(r => r.Label));
@@ -143,16 +153,35 @@ public sealed class ProjectLoadTests : IDisposable
             $"The status bar says \"{window.Status}\" once the projects loaded, not that Bad.csproj did not load and why");
         Assert.True(window.StatusSeverity == ProblemSeverity.Error, $"The status bar's load error is marked as {window.StatusSeverity?.ToString() ?? "nothing"}, not an error");
 
+        // A click on it shows it under the project in Problems' Toolset, Environment.
         ProblemsView problems = window.BottomPanel.Problems;
-        window.Perform(AppActions.ShowProblems);
-        problems.Shown = ProblemsTab.Toolset;
-        Ui.Settle();
+        window.DockHost.Hide("problems");
+        problems.Shown = ProblemsTab.File;
+        ClickStatus(window);
+        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Toolset,
+            $"A click on the status bar's load error showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
         Problem error = Assert.Single(problems.ToolsetProblems);
         Assert.True(error is { Severity: ProblemSeverity.Error, Project: "Bad", Message: Reason, Link: null },
             $"Problems lists the load's error as {error.Severity} \"{error.Message}\" under {error.Project}");
         Assert.Equal(["Bad", Reason], problems.Rows.Select(r => r.Label));
+        Assert.True(problems.Selected == error, $"A click on the status bar's load error chose {problems.Selected?.Message ?? "nothing"} in Problems, not the error");
 
-        // Going to it opens the project file.
+        // What is said next takes the error's place away: its words go nowhere, look like none, and a click does nothing.
+        window.DockHost.Hide("problems");
+        problems.Shown = ProblemsTab.File;
+        Ui.Press(window, Ui.Shortcut(AppActions.ApplyHotReloadChanges));
+        Assert.StartsWith("Nothing runs", window.Status, StringComparison.Ordinal);
+        Button said = StatusMessage(window);
+        Assert.True(window.StatusPlace is null && !said.Focusable && said.Cursor is null && ToolTip.GetTip(said) as string == window.Status,
+            $"The status bar's next words, which go nowhere, still look like a link (place '{window.StatusPlace?.Name}', cursor {said.Cursor}, tooltip \"{ToolTip.GetTip(said)}\")");
+        ClickStatus(window);
+        Assert.True(!window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.File,
+            "A click on status bar words that go nowhere showed Problems, as the load error said before them did");
+
+        // Going to the error opens the project file.
+        window.Perform(AppActions.ShowProblems);
+        problems.Shown = ProblemsTab.Toolset;
+        Ui.Settle();
         ListBox list = Descendants<ListBox>(problems).First();
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Go to");
@@ -174,6 +203,19 @@ public sealed class ProjectLoadTests : IDisposable
     }
 
     private static IEnumerable<T> Descendants<T>(Control parent) => parent.GetVisualDescendants().OfType<T>();
+
+    /// <summary>The status bar's words, a link while they have a place to go.</summary>
+    private static Button StatusMessage(MainWindow window) => Descendants<Button>(window).Single(b => b.Name == "StatusMessage");
+
+    /// <summary>A click on the status bar's words, as the pointer makes one.</summary>
+    private static void ClickStatus(MainWindow window)
+    {
+        Button said = StatusMessage(window);
+        Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+    }
 
     private static IEnumerable<Button> Links(Control parent) => Descendants<Button>(parent).Where(b => b.Classes.Contains("link"));
 

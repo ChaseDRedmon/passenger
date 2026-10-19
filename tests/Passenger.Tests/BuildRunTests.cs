@@ -85,6 +85,20 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal(ProblemSeverity.Error, problem.Severity);
         Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), problem.Path);
         Assert.Equal(1, problem.Position.Line);
+
+        // The status bar's word that it failed is a link to its errors in Problems' Build, the first chosen.
+        Assert.StartsWith("Build failed: 1 error", window.Status, StringComparison.Ordinal);
+        ProblemsView problems = window.BottomPanel.Problems;
+        window.ShowToolWindow("build");
+        problems.Shown = ProblemsTab.File;
+        Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
+        Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Build && problems.Selected == problem,
+            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab, {problems.Selected?.Code ?? "nothing"} chosen" : "nothing")}, "
+            + "not the build's error in Problems' Build");
         window.Close();
     }
 

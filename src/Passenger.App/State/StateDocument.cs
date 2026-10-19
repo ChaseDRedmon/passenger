@@ -316,21 +316,22 @@ internal static class StateFile
     public static bool DoesNotRead(Exception error) =>
         error is JsonException or InvalidOperationException or ArgumentException or NotSupportedException or FormatException;
 
-    /// <summary>The files set aside that no window has said yet, each with what a window says of it.</summary>
-    private static readonly List<(string File, string Said)> Unsaid = [];
+    /// <summary>The files set aside that no window has said yet, each with what a window says of it and where it is kept.</summary>
+    private static readonly List<(string File, string Said, string Kept)> Unsaid = [];
 
     /// <summary>Raised on any thread once a file is set aside, for a window keeping its state there to say so.</summary>
     public static event Action? SetAsideNow;
 
     /// <summary>What a window keeping its state in a folder says of the files set aside there that no window has said
-    /// yet, which are then said: the person's settings in a .bad file, the defaults standing, are never news only to the log.</summary>
-    public static IReadOnlyList<string> TakeUnsaid(string root)
+    /// yet, which are then said, with the .bad file each is kept as: the person's settings in a .bad file, the defaults
+    /// standing, are never news only to the log.</summary>
+    public static IReadOnlyList<(string Said, string Kept)> TakeUnsaid(string root)
     {
         lock (Unsaid)
         {
-            List<(string File, string Said)> taken = [.. Unsaid.Where(u => PathNames.IsUnder(u.File, Path.GetFullPath(root)))];
+            List<(string File, string Said, string Kept)> taken = [.. Unsaid.Where(u => PathNames.IsUnder(u.File, Path.GetFullPath(root)))];
             Unsaid.RemoveAll(taken.Contains);
-            return [.. taken.Select(t => t.Said)];
+            return [.. taken.Select(t => (t.Said, t.Kept))];
         }
     }
 
@@ -349,7 +350,7 @@ internal static class StateFile
             Log($"{file} did not read ({reason}): set aside as {Path.GetFileName(bad)}, and the defaults stand");
             lock (Unsaid)
             {
-                Unsaid.Add((Path.GetFullPath(file), $"{Path.GetFileName(file)} did not read, so its defaults stand: what it held is kept as {bad}"));
+                Unsaid.Add((Path.GetFullPath(file), $"{Path.GetFileName(file)} did not read, so its defaults stand: what it held is kept as {bad}", bad));
             }
             SetAsideNow?.Invoke();
             return true;

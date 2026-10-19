@@ -1,18 +1,43 @@
 using Avalonia.Controls;
+using Passenger.App.Docking;
 using Passenger.App.Run;
+using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App;
 
+/// <summary>Where what the status bar says has more to see, and the way there: a click on the words goes, while they are
+/// said. <see cref="Name"/> is what the click does, as the tooltip words it after "Click to".</summary>
+public sealed record StatusPlace(string Name, Action Go)
+{
+    /// <summary>A tool window, shown in its place.</summary>
+    public static StatusPlace Window(DockHost dock, string id) => new($"open the {dock[id]?.Title ?? id} window", () => dock.Show(id));
+
+    /// <summary>Problems on one of its tabs, the first problem <paramref name="which"/> picks chosen.</summary>
+    public static StatusPlace Problems(DockHost dock, ProblemsView problems, ProblemsTab tab, Func<Problem, bool>? which = null) =>
+        new($"see it in Problems, {ProblemsView.TitleOf(tab)}", () =>
+        {
+            dock.Show("problems");
+            problems.Reveal(tab, which);
+        });
+
+    /// <summary>Help, Show Log: the log chosen in the file manager.</summary>
+    public static StatusPlace Log { get; } = new($"show the log in {Core.ChildProcesses.FileManager}", ErrorsPopup.ShowLog);
+}
+
+/// <summary>Says something in the window's status bar, with where a click on it shows more (none when null).</summary>
+public delegate void StatusSay(string said, StatusPlace? more = null);
+
 /// <summary>The window's status bar, as Rider's: what the last action came to (an error's or a warning's marked with its
-/// icon, as Rider's status bar shows a notification's, until something else is said), and the file shown's place (its
-/// path while nothing is said), caret, line separator, encoding, indent and language with the language server's state. It
-/// says what it is told; what an operation came to is the operation's own answer, never read back from here. A UI-thread
-/// object of the window.</summary>
+/// icon, as Rider's status bar shows a notification's, until something else is said, and a link to where it has more to
+/// see while it has a place, its whole text on hover), and the file shown's place (its path while nothing is said), caret,
+/// line separator, encoding, indent and language with the language server's state. It says what it is told; what an
+/// operation came to is the operation's own answer, never read back from here. A UI-thread object of the window.</summary>
 public sealed class StatusBar
 {
+    private readonly Button message;
     private readonly TextBlock text;
     private readonly PathIcon icon;
     private readonly TextBlock caret;
@@ -23,12 +48,14 @@ public sealed class StatusBar
     private readonly Button encoding;
     private readonly TextBlock encodingText;
 
-    /// <summary>What was said with an error's or a warning's icon; anything else said takes the icon away.</summary>
-    private string? marked;
+    /// <summary>What was said through <see cref="Say(string, ProblemSeverity?, StatusPlace?)"/>, with its mark and place;
+    /// anything else said takes the icon and the place away.</summary>
+    private (string Text, StatusPlace? Place)? standing;
 
-    public StatusBar(TextBlock text, PathIcon icon, TextBlock caret, TextBlock indent, TextBlock language, Button lineSeparator, TextBlock lineEnding,
-        Button encoding, TextBlock encodingText)
+    public StatusBar(Button message, TextBlock text, PathIcon icon, TextBlock caret, TextBlock indent, TextBlock language, Button lineSeparator,
+        TextBlock lineEnding, Button encoding, TextBlock encodingText)
     {
+        this.message = message;
         this.text = text;
         this.icon = icon;
         this.caret = caret;
@@ -40,12 +67,18 @@ public sealed class StatusBar
         this.encodingText = encodingText;
         text.PropertyChanged += (_, e) =>
         {
-            if (e.Property == TextBlock.TextProperty && text.Text != marked)
+            if (e.Property != TextBlock.TextProperty)
             {
-                marked = null;
+                return;
+            }
+            if (text.Text != standing?.Text)
+            {
+                standing = null;
                 icon.IsVisible = false;
             }
+            Placed();
         };
+        message.Click += (_, _) => Place?.Go();
     }
 
     /// <summary>What the status bar says now, for the person: told by whatever finished last.</summary>
@@ -58,11 +91,15 @@ public sealed class StatusBar
     /// <summary>Whether what it says is an error, a warning or neither, as its icon shows it.</summary>
     public ProblemSeverity? Severity => icon.IsVisible ? (ProblemSeverity?)icon.Tag : null;
 
-    /// <summary>Says something, an error or a warning with its icon.</summary>
-    public void Say(string said, ProblemSeverity? severity)
+    /// <summary>Where a click on what it says goes, while it says it; null when it goes nowhere.</summary>
+    public StatusPlace? Place => standing?.Place;
+
+    /// <summary>Says something, an error or a warning with its icon, and where a click on it shows more.</summary>
+    public void Say(string said, ProblemSeverity? severity, StatusPlace? more = null)
     {
-        marked = severity is null ? null : said;
+        standing = (said, more);
         text.Text = said;
+        Placed();
         if (severity is not { } kind)
         {
             icon.IsVisible = false;
@@ -73,6 +110,30 @@ public sealed class StatusBar
         icon.Bind(PathIcon.ForegroundProperty, icon.GetResourceObservable(error ? "Passenger.Error" : "Passenger.Warning"));
         icon.Tag = kind;
         icon.IsVisible = true;
+    }
+
+    /// <summary>What it says now, with its mark and place, for what covers it a while and puts it back (a chord's prompt).</summary>
+    public (string? Text, ProblemSeverity? Severity, StatusPlace? Place) Said => (Text, Severity, Place);
+
+    /// <summary>Puts back what <see cref="Said"/> gave.</summary>
+    public void SayAgain((string? Text, ProblemSeverity? Severity, StatusPlace? Place) said)
+    {
+        if (said.Text is not { } words)
+        {
+            Text = null;
+            return;
+        }
+        Say(words, said.Severity, said.Place);
+    }
+
+    /// <summary>The words a link while they have a place (the hand, the link's look under the pointer, a key's reach), and
+    /// their whole on hover, which a narrow bar cuts.</summary>
+    private void Placed()
+    {
+        StatusPlace? place = Place;
+        message.Classes.Set("place", place is not null);
+        string? said = text.Text;
+        ToolTip.SetTip(message, string.IsNullOrEmpty(said) ? null : place is null ? said : $"{said}\n\nClick to {place.Name}");
     }
 
     /// <summary>The file shown, or none: with none the message line names the folder (or says there is no solution); with

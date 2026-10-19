@@ -60,7 +60,8 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                status.Text = message;
+                // Said in the Unit Tests window too, over the run's results, which is where to see more.
+                Say(message, StatusPlace.Window(Dock, "tests"));
                 Bottom.Tests.Status = message;
             }
         };
@@ -123,7 +124,7 @@ public partial class MainWindow
         {
             if (await run() is { } problem)
             {
-                status.Text = problem;
+                Say(problem, StatusPlace.Window(Dock, "tests"));
                 Bottom.Tests.Status = problem;
             }
         }

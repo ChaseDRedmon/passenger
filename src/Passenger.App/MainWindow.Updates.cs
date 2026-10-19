@@ -366,7 +366,7 @@ public partial class MainWindow
         }
         else
         {
-            status.Text = $"Passenger {installing} did not install: Help, Show Log says why";
+            Say($"Passenger {installing} did not install: Help, Show Log says why", StatusPlace.Log);
             IdeErrors.Write($"Updates: Passenger {installing} was to install as the last session ended, but this is {Product.Version}");
         }
     }
