@@ -8,6 +8,9 @@ namespace Passenger.App.Debugging;
 /// result. One with a reference opens into its children, asked of the debugger the first time.</summary>
 public sealed class VariableNode(string name, string value, string? type, int reference, int depth, VariableRole role) : Observable
 {
+    /// <summary>The names the debugger gives its ranges of elements, <see cref="IsRange"/>.</summary>
+    private static readonly System.Text.RegularExpressions.Regex RangeName = new(@"^\[(\d+, )*(\d+\.\.\d+|\.\.\.)\]$");
+
     private bool isExpanded;
     private bool isEditing;
 
@@ -43,16 +46,29 @@ public sealed class VariableNode(string name, string value, string? type, int re
             {
                 return EvaluateName ?? Name;
             }
-            // The raw view lists the members of the object above it.
-            string? owner = Parent.Name switch
+            if (IsRange)
             {
-                "Static members" or "Results" => null,
-                "Raw View" => Parent.Parent?.Expression,
-                _ => Parent.Expression,
-            };
+                return null;
+            }
+            string? owner = Parent.Reach;
             return owner is null ? null : Name.StartsWith('[') ? $"{owner}{Name}" : $"{owner}.{Name}";
         }
     }
+
+    /// <summary>What the rows under this one reach their values from: its own expression, or for a row that only groups
+    /// others the one above it's (the raw view lists the members of the object above it, a range the elements of the array
+    /// above it, each by its whole index); null where no expression reaches them.</summary>
+    private string? Reach => Name switch
+    {
+        "Static members" or "Results" => null,
+        "Raw View" => Parent?.Reach,
+        _ when IsRange => Parent?.Reach,
+        _ => Expression,
+    };
+
+    /// <summary>One of the debugger's rows of an array's elements a hundred at a time ("[100..199]") or of a
+    /// multi-dimensional array's row ("[1, ...]").</summary>
+    private bool IsRange => Parent is not null && RangeName.IsMatch(Name);
 
     /// <summary>Its value is being typed over, in its row (Set Value, F2).</summary>
     public bool IsEditing

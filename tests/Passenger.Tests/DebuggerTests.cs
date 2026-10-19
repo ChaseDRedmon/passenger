@@ -812,6 +812,56 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.Close();
     }
 
+    /// <summary>An element listed under a range (an array longer than a hundred, a row of a two-dimensional one) takes a
+    /// value set in its row as any element does: the range's row is no step of the expression that reaches it.</summary>
+    [AvaloniaFact]
+    public void A_value_set_on_an_element_listed_under_a_range_is_the_one_the_program_goes_on_with()
+    {
+        Write("Program.cs", "int[] numbers = new int[250];\nint[,] grid = new int[2, 2];\nConsole.WriteLine($\"set {numbers[150]} {grid[1, 0]}\");\n");
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => Row(window, "grid") is not null, "the stop before the line that writes them");
+
+        SetElement(window, "numbers", "[100..199]", "[150]", "7");
+        SetElement(window, "grid", "[1, ...]", "[1, 0]", "5");
+        Assert.True(window.Status?.StartsWith("Could not set", StringComparison.Ordinal) != true, $"Set Value was refused: {window.Status}");
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains("set ", StringComparison.Ordinal),
+            "the program to write the values");
+        Assert.Contains("set 7 5", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+
+        static void SetElement(MainWindow window, string local, string range, string element, string value)
+        {
+            Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+            VariableNode Child(VariableNode parent, string name)
+            {
+                Task opened = view.Tree.Expand(parent);
+                Ui.WaitFor(() => opened.IsCompleted, $"{parent.Name}'s rows");
+                return parent.Children?.FirstOrDefault(c => c.Name == name)
+                    ?? throw new InvalidOperationException($"{parent.Name} has no row {name}: {string.Join(", ", (parent.Children ?? []).Select(c => c.Name))}");
+            }
+            VariableNode top = Row(window, local)!;
+            VariableNode row = Child(Child(top, range), element);
+            // Click the row, F2, type over the value, Enter: Rider's Set Value.
+            ListBox list = view.VariablesList;
+            list.ScrollIntoView(row);
+            Ui.Settle();
+            Control shown = list.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Variables view does not show {element}");
+            Point middle = shown.TranslatePoint(new Point(shown.Bounds.Width / 2, shown.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(middle, MouseButton.Left);
+            window.MouseUp(middle, MouseButton.Left);
+            Ui.Press(window, "F2");
+            Assert.True(row.IsEditing, $"F2 on {local}'s {element} did not open its value for editing");
+            window.KeyTextInput(value);
+            Ui.Press(window, "Enter");
+            Ui.WaitFor(() => Row(window, local) is { } again && again != top, "the variables shown again once the value was set");
+        }
+    }
+
     [AvaloniaFact]
     public void An_evaluation_that_could_not_be_stopped_leaves_the_program_paused_and_a_step_goes_on_once_it_returns()
     {
