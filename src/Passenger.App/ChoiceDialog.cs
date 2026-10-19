@@ -35,7 +35,7 @@ public sealed class ChoiceDialog : Window
             button.Classes.Add("primary");
         }
         StackPanel buttons = DialogFooter.Listed([.. answers]);
-        Content = new StackPanel
+        Content = DialogFooter.Page(new StackPanel
         {
             Margin = new Thickness(20),
             Spacing = 16,
@@ -43,8 +43,7 @@ public sealed class ChoiceDialog : Window
             {
                 new TextBlock { Text = title, FontWeight = FontWeight.SemiBold },
                 new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap },
-                buttons,
             },
-        };
+        }, DialogFooter.Bar(buttons));
     }
 }

@@ -53,26 +53,18 @@ public sealed class KeyboardShortcutDialog : Window
         });
         conflictsPanel = conflicts;
 
-        Content = new StackPanel
+        Content = DialogFooter.Page(new StackPanel
         {
-            Margin = new Thickness(16, 14, 16, 14),
+            Margin = new Thickness(16, 14, 16, 16),
             Spacing = 10,
             Children =
             {
                 Named(action, where),
                 Keys,
                 conflictsPanel,
-                Footer(),
             },
-        };
+        }, DialogFooter.Bar(DialogFooter.Of(OkButton, cancel)));
         Opened += (_, _) => Dispatcher.UIThread.Post(() => Keys.First.Focus(), DispatcherPriority.Loaded);
-
-        StackPanel Footer()
-        {
-            StackPanel footer = DialogFooter.Of(OkButton, cancel);
-            footer.Margin = new Thickness(0, 6, 0, 0);
-            return footer;
-        }
     }
 
     /// <summary>The first and second keystrokes' fields and the box between them.</summary>

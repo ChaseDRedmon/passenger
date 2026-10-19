@@ -64,7 +64,7 @@ public sealed class FeedDialog : Window
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         ok.Click += (_, _) => Accept();
         cancel.Click += (_, _) => Close(false);
-        Content = new StackPanel
+        Content = DialogFooter.Page(new StackPanel
         {
             Margin = new Thickness(20),
             Spacing = 14,
@@ -74,9 +74,8 @@ public sealed class FeedDialog : Window
                 fields,
                 saved,
                 problem,
-                DialogFooter.Of(ok, cancel),
             },
-        };
+        }, DialogFooter.Bar(DialogFooter.Of(ok, cancel)));
         Opened += (_, _) => Dispatcher.UIThread.Post(() => (feed is null ? url : name).Focus(), DispatcherPriority.Loaded);
     }
 

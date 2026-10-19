@@ -33,7 +33,8 @@ public sealed class OpenProjectDialog : Window
         apart.Click += (_, _) => Choose(OpenTarget.NewWindow);
 
         StackPanel choices = DialogFooter.Answers(here, apart, cancel);
-        Content = new StackPanel
+        // Don't ask again at the footer's left, beside the buttons, where every dialog of Passenger's has it.
+        Content =DialogFooter.Page(new StackPanel
         {
             Margin = new Thickness(20),
             Spacing = 16,
@@ -41,10 +42,8 @@ public sealed class OpenProjectDialog : Window
             {
                 new TextBlock { Text = Title, FontWeight = FontWeight.SemiBold },
                 new TextBlock { Text = Question, TextWrapping = TextWrapping.Wrap },
-                // Don't ask again at the footer's left, beside the buttons, where every dialog of Passenger's has it.
-                DialogFooter.Row(choices, remember),
             },
-        };
+        }, DialogFooter.Bar(choices, remember));
     }
 
     /// <summary>What it asks.</summary>

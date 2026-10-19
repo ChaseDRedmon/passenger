@@ -62,9 +62,6 @@ public sealed class AddReferenceDialog : Window
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         ok.Click += (_, _) => Accept();
         cancel.Click += (_, _) => Close(null);
-        StackPanel buttons = DialogFooter.Of(ok, cancel);
-        buttons.Margin = new Thickness(0, 12, 0, 0);
-        DockPanel.SetDock(buttons, Dock.Bottom);
         TextBlock heading = new()
         {
             [DockPanel.DockProperty] = Dock.Top,
@@ -72,7 +69,7 @@ public sealed class AddReferenceDialog : Window
             FontWeight = FontWeight.SemiBold,
             Margin = new Thickness(0, 0, 0, 10),
         };
-        Content = new DockPanel { Margin = new Thickness(16), Children = { heading, buttons, rows } };
+        Content = DialogFooter.Page(new DockPanel { Margin = new Thickness(16), Children = { heading, rows } }, DialogFooter.Bar(DialogFooter.Of(ok, cancel)));
         Opened += (_, _) => Dispatcher.UIThread.Post(FocusChosen, DispatcherPriority.Loaded);
     }
 

@@ -64,7 +64,7 @@ public sealed partial class CloneDialog : Window
         Add(fields, where, 1, 1);
         Add(fields, into, 2, 1);
 
-        Content = new StackPanel
+        Content = DialogFooter.Page(new StackPanel
         {
             Margin = new Thickness(20),
             Spacing = 16,
@@ -74,9 +74,8 @@ public sealed partial class CloneDialog : Window
                 fields,
                 working,
                 problem,
-                DialogFooter.Of(clone, cancel),
             },
-        };
+        }, DialogFooter.Bar(DialogFooter.Of(clone, cancel)));
         ShowDestination();
         Opened += (_, _) => Dispatcher.UIThread.Post(() => url.Focus(), DispatcherPriority.Loaded);
     }

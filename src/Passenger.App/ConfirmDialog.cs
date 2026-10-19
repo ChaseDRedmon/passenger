@@ -38,7 +38,6 @@ public sealed class ConfirmDialog : Window
         {
             body.Children.Add(detail);
         }
-        body.Children.Add(DialogFooter.Of(confirm, cancel));
-        Content = body;
+        Content = DialogFooter.Page(body, DialogFooter.Bar(DialogFooter.Of(confirm, cancel)));
     }
 }

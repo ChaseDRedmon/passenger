@@ -98,14 +98,7 @@ public sealed class ConflictsDialog : Window
         };
         Button close = new() { Content = "Close", IsCancel = true };
         close.Click += (_, _) => Close();
-        StackPanel bottom = new()
-        {
-            [DockPanel.DockProperty] = Avalonia.Controls.Dock.Bottom,
-            Classes = { "footer" },
-            Margin = new Thickness(0, 12, 0, 0),
-            Children = { close },
-        };
-        Content = new DockPanel { Margin = new Thickness(16), Children = { description, bottom, actions, table } };
+        Content = DialogFooter.Page(new DockPanel { Margin = new Thickness(16), Children = { description, actions, table } }, DialogFooter.Bar(DialogFooter.Listed(close)));
 
         EventHandler changed = (_, _) => Fill();
         EventHandler busy = (_, _) => UpdateButtons();

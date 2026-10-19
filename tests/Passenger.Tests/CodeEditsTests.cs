@@ -438,7 +438,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
     private static ConfirmDialog Asked(MainWindow window)
     {
         Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), "Safe Delete to list the usages");
-        return window.OwnedWindows.OfType<ConfirmDialog>().Single();
+        return DialogButtonsTests.Check(window.OwnedWindows.OfType<ConfirmDialog>().Single());
     }
 
     private static void Click(ConfirmDialog dialog, string button)

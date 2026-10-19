@@ -94,10 +94,7 @@ public sealed class AttachToProcessDialog : Window
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         attach.Click += (_, _) => Attach();
         cancel.Click += (_, _) => Close(null);
-        StackPanel buttons = DialogFooter.Of(attach, cancel);
-        buttons.Margin = new Thickness(0, 12, 0, 0);
-        DockPanel.SetDock(buttons, Dock.Bottom);
-        Content = new DockPanel { Margin = new Thickness(16), Children = { top, buttons, table } };
+        Content = DialogFooter.Page(new DockPanel { Margin = new Thickness(16), Children = { top, table } }, DialogFooter.Bar(DialogFooter.Of(attach, cancel)));
         Opened += (_, _) => Dispatcher.UIThread.Post(() =>
         {
             Search.Focus();

@@ -150,6 +150,12 @@ public sealed class DialogButtonsTests : IDisposable
         // table framed in it stands on the list's ground (Border.framed), white in light as the editor is.
         Assert.True(dialog.Background is ISolidColorBrush page && page.Color == Token(dialog, "Passenger.Panel"),
             $"{title}'s page is not a tool window's ground, as every dialog's page is");
+        // A dialog's buttons stand on its footer's bar, never straight on its page.
+        foreach (StackPanel footer in dialog.GetVisualDescendants().OfType<StackPanel>().Where(s => s.Classes.Contains("footer") && s.IsEffectivelyVisible))
+        {
+            Assert.True(footer.GetVisualAncestors().OfType<Border>().Any(b => b.Classes.Contains("footerBar")),
+                $"{title}'s buttons ({string.Join(", ", footer.Children.OfType<Button>().Select(Name))}) stand on its page, not on the footer's bar every dialog has");
+        }
         // The footer stands on the frame's ground, told from the page by shade, with no rule between them.
         foreach (Border bar in dialog.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("footerBar") && b.IsEffectivelyVisible))
         {

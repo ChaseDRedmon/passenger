@@ -44,6 +44,13 @@ public static class DialogFooter
     /// <summary>The bar under a dialog's page that its footer's row stands in (Shell.axaml's <c>Border.footerBar</c>).</summary>
     public static Border Bar(StackPanel buttons, Control? left = null) => new() { Classes = { "footerBar" }, Child = Row(buttons, left) };
 
+    /// <summary>A dialog's whole content: its page, and under it the footer's bar across the window.</summary>
+    public static DockPanel Page(Control page, Border bar)
+    {
+        DockPanel.SetDock(bar, Dock.Bottom);
+        return new DockPanel { Children = { bar, page } };
+    }
+
     private static StackPanel Buttons(IEnumerable<Button> buttons)
     {
         StackPanel footer = new() { Classes = { "footer" } };

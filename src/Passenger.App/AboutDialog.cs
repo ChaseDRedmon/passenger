@@ -57,31 +57,23 @@ public sealed class AboutDialog : Window
         };
         close.Click += (_, _) => Close();
 
-        Content = new StackPanel
+        Content = DialogFooter.Page(new StackPanel
         {
-            Margin = new Thickness(24, 22, 20, 16),
+            Margin = new Thickness(24, 22, 20, 20),
+            Orientation = Orientation.Horizontal,
             Spacing = 20,
             Children =
             {
-                new StackPanel
+                new Image
                 {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 20,
-                    Children =
-                    {
-                        new Image
-                        {
-                            Source = new Bitmap(AssetLoader.Open(new Uri("avares://Passenger/Assets/passenger.png"))),
-                            Width = 64,
-                            Height = 64,
-                            VerticalAlignment = VerticalAlignment.Top,
-                        },
-                        facts,
-                    },
+                    Source = new Bitmap(AssetLoader.Open(new Uri("avares://Passenger/Assets/passenger.png"))),
+                    Width = 64,
+                    Height = 64,
+                    VerticalAlignment = VerticalAlignment.Top,
                 },
-                DialogFooter.Of(close, null, copy),
+                facts,
             },
-        };
+        }, DialogFooter.Bar(DialogFooter.Of(close, null, copy)));
 
         Button Link(string words, string path)
         {
