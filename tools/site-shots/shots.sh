@@ -3,7 +3,8 @@
 # just site-shots [SCENE...] (every scene when none is named). Build first (just build): it runs the Debug build's
 # --screenshot. The sample is copied to a folder of its own under TMPDIR and given a git history there; its restore and
 # its builds' NuGet stay under artifacts/site-shots and Passenger's state beside the copy, never the person's.
-# SITE_SHOTS_FLAGS (empty by default) is added to every capture's command line; SITE_SHOTS_REUSE=1 takes the pictures in
+# SITE_SHOTS_FLAGS (--window-buttons by default, so macOS's are in every main-window picture) is added to every
+# capture's command line; SITE_SHOTS_REUSE=1 takes the pictures in
 # the copy the last run made, without making it again, and SITE_SHOTS_THEMES=dark (or light) takes one theme's.
 # A step's point is in the window's logical units: half the picture's pixels.
 set -euo pipefail
@@ -16,7 +17,7 @@ images="$repo/site/images"
 # bytes when a busy one would take more.
 quality=82
 most=150000
-read -r -a extra <<< "${SITE_SHOTS_FLAGS:-}"
+read -r -a extra <<< "${SITE_SHOTS_FLAGS---window-buttons}"
 
 if [[ ! -x "$passenger" ]]; then
     echo "site-shots: $passenger is not there; run just build first" >&2

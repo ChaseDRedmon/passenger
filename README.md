@@ -162,11 +162,6 @@ Locations, bookmarks and File Structure.
 
 ## Your coding agent, using the IDE as you do
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="site/images/agent-light.webp">
-  <img src="site/images/agent-dark.webp" alt="An agent driving the Avalonia app it is building, through Passenger">
-</picture>
-
 Connect a coding agent such as Claude Code or Codex to Passenger and it works through the IDE, not just your files. It
 finds where things are declared and used, reads the warnings, and renames, fixes and formats code as the IDE does, in
 C#, Razor, XAML, the web languages and project files alike. It builds, runs and tests, sets breakpoints, steps, reads
