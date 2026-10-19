@@ -188,8 +188,9 @@ public sealed partial class McpTests
             // Passenger's own window, the person's: its run configurations' menu opened by name, and closed by a key, asked for
             // first, the menu keeping the keys though the question came between.
             TextBlock project = window.FindControl<TextBlock>("ProjectName")!;
-            Assert.Contains($"TextBlock#ProjectName \"{project.Text}\"", Text(Await(Task.Run(() => Call(agent, "app_tree", new() { ["app"] = "ide", ["filter"] = "#ProjectName" })), "Passenger's tree")),
-                StringComparison.Ordinal);
+            // The tree names an element by its type, #name, any .classes, then its text.
+            Assert.Matches($"TextBlock#ProjectName(\\.[\\w-]+)* \"{System.Text.RegularExpressions.Regex.Escape(project.Text!)}\"",
+                Text(Await(Task.Run(() => Call(agent, "app_tree", new() { ["app"] = "ide", ["filter"] = "#ProjectName" })), "Passenger's tree")));
             Await(Task.Run(() => Call(agent, "app_click", new() { ["app"] = "ide", ["control"] = "#RunConfigButton" })), "the click on Passenger's run configurations");
             Dictionary<string, object?> menu = new() { ["app"] = "ide", ["filter"] = "MenuItem \"AgentApp\"" };
             Assert.Contains("MenuItem \"AgentApp\"", Text(Await(Task.Run(() => Call(agent, "app_tree", menu)), "the run configurations' menu")), StringComparison.Ordinal);
