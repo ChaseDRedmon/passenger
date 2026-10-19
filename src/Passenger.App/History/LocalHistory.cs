@@ -427,26 +427,9 @@ public sealed class LocalHistory
 
     private void Load()
     {
-        List<HistoryEvent> read = [];
-        int bad = 0;
-        if (File.Exists(log))
-        {
-            foreach (string line in File.ReadLines(log))
-            {
-                if (line.Length == 0)
-                {
-                    continue;
-                }
-                if (Parse(line) is { } kept)
-                {
-                    read.Add(kept);
-                }
-                else
-                {
-                    bad++;
-                }
-            }
-        }
+        List<(string Line, HistoryEvent? Event)> logged = Logged();
+        List<HistoryEvent> read = [.. logged.Select(l => l.Event).OfType<HistoryEvent>()];
+        int bad = logged.Count - read.Count;
         if (bad > 0)
         {
             IdeErrors.Write($"Local History: {bad} lines of {log} did not read and were passed over");
@@ -462,6 +445,27 @@ public sealed class LocalHistory
             changed = read.Count > 0;
         }
         Prune();
+    }
+
+    /// <summary>The log's lines as they are on disk, each with its event, or null for one this build does not read (a
+    /// later build's kind, a line cut short by a crash); read sharing writes, as another Passenger may be appending.</summary>
+    private List<(string Line, HistoryEvent? Event)> Logged()
+    {
+        List<(string Line, HistoryEvent? Event)> logged = [];
+        if (!File.Exists(log))
+        {
+            return logged;
+        }
+        using FileStream stream = new(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using StreamReader reader = new(stream, Encoding.UTF8);
+        while (reader.ReadLine() is { } line)
+        {
+            if (line.Length > 0)
+            {
+                logged.Add((line, Parse(line)));
+            }
+        }
+        return logged;
     }
 
     private void RecordWrite(string path, byte[]? before, byte[] after, long set, string? name, DateTimeOffset time)
@@ -707,17 +711,24 @@ public sealed class LocalHistory
     /// <summary>Rider's purge, as the store opens and once a day: the change sets older than <see cref="HistoryKeeping.Days"/>
     /// of activity go, counting back from the newest, a pause of 12 hours or more counted as nothing; then the oldest go
     /// until what is left needs no more content than <see cref="HistoryKeeping.Bytes"/>. The log is written again
-    /// without them, and the content nothing names any longer is deleted.</summary>
+    /// without them, and the content nothing names any longer is deleted. What it weighs is the log as it is on disk, not
+    /// only what this store recorded: another Passenger on the folder with the same state (an agent's, over --mcp) appends
+    /// lines of its own, which a rewrite from this store's alone erased, their content with them.</summary>
     private void Prune()
     {
         DateTimeOffset now = Keeping.Clock();
         prunedOn = DateOnly.FromDateTime(now.LocalDateTime);
         sincePrune = 0;
-        List<HistoryEvent> all;
+        List<(string Line, HistoryEvent? Event)> logged = Logged();
+        List<HistoryEvent> all = [.. logged.Select(l => l.Event).OfType<HistoryEvent>()];
+        HashSet<string> onDisk = new(all.Select(Key), StringComparer.FromComparison(PathNames.Comparison));
+        List<HistoryEvent> unlogged;
         lock (gate)
         {
-            all = [.. events];
+            // What this store recorded that the log lacks (an append the disk refused) is weighed and written too.
+            unlogged = [.. events.Where(e => !onDisk.Contains(Key(e)))];
         }
+        all.AddRange(unlogged);
         List<(long Set, DateTimeOffset Time, bool Active)> sets = [.. all.GroupBy(e => e.Set)
             .Select(g => (g.Key, g.Min(e => e.Time), g.Any(e => e.Kind != HistoryKind.Seen))).OrderByDescending(s => s.Item2)];
         // Only changes are activity: a file opened is not, though what was seen of it goes with the changes around it.
@@ -765,14 +776,16 @@ public sealed class LocalHistory
         }
         if (dropped.Count > 0)
         {
-            List<HistoryEvent> left = [.. all.Where(e => !dropped.Contains(e.Set))];
+            // Each line kept as it was read, one this build does not read too (a later build's).
+            IEnumerable<string> left = logged.Where(l => l.Event is not { } read || !dropped.Contains(read.Set)).Select(l => l.Line)
+                .Concat(unlogged.Where(e => !dropped.Contains(e.Set)).Select(Line));
             lock (gate)
             {
                 events.RemoveAll(e => dropped.Contains(e.Set));
                 changed = true;
             }
             string temporary = $"{log}.{Environment.ProcessId}.tmp";
-            File.WriteAllText(temporary, string.Concat(left.Select(e => Line(e) + "\n")));
+            File.WriteAllText(temporary, string.Concat(left.Select(line => line + "\n")));
             File.Move(temporary, log, overwrite: true);
         }
         DateTime old = DateTime.UtcNow - Orphaned;
@@ -785,6 +798,10 @@ public sealed class LocalHistory
             }
         }
     }
+
+    /// <summary>An event as it is told apart from the others whether read from the log or held since it was recorded,
+    /// whose times differ in their precision.</summary>
+    private static string Key(HistoryEvent kept) => $"{kept.Set}|{kept.Kind}|{kept.Before}|{kept.After}|{kept.Path}|{kept.To}";
 
     /// <summary>Counts an event's content in or out; the hashes no longer named by any.</summary>
     private static List<string> Refer(Dictionary<string, int> references, HistoryEvent kept, int step)

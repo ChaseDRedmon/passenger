@@ -483,6 +483,86 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>An agent's windowless Passenger over the person's folder keeps its Local History in the person's store, as
+    /// the repository's own .mcp.json has it: the person's window pruning a day's turn rewrote the history from its own
+    /// records alone, and what the agent's Passenger kept (a file as it was before the agent changed it) was gone.</summary>
+    [AvaloniaFact]
+    public void What_an_agents_own_passenger_keeps_in_local_history_outlasts_the_persons_window_pruning_the_history()
+    {
+        string notes = Path.Combine(folder, "Notes.txt");
+        File.WriteAllText(notes, "first draft\n");
+        long[] clock = [new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero).UtcTicks];
+        DateTimeOffset Now() => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero);
+        void Later(TimeSpan by) => Interlocked.Add(ref clock[0], by.Ticks);
+        global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = Now };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, HistoryKeeping = day };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine(folder, "Helper.cs"));
+        Ui.Settle();
+        void SaveEdit(string comment)
+        {
+            window.EditorArea.CodeEditor.Focus();
+            window.EditorArea.CodeEditor.ApplyEdits([new global::Passenger.Text.TextEdit(0, 0, $"// {comment}\n")]);
+            Ui.Settle();
+            Ui.Run(window, AppActions.Save);
+        }
+        // A day and a half of the person's saves.
+        for (int save = 1; save <= 6; save++)
+        {
+            Later(TimeSpan.FromHours(6));
+            SaveEdit($"save {save}");
+        }
+
+        // The agent's Passenger, on the same folder and state, changes a file the person never opened.
+        McpClient client = Await(Task.Run(() => Start(["--mcp", folder])), "the agent's Passenger starting");
+        try
+        {
+            Await(Task.Run(() => Call(client, "open_file", new() { ["path"] = "Notes.txt" })), "the agent opening Notes.txt");
+            Await(Task.Run(() => Call(client, "type", new() { ["text"] = "second " })), "the agent typing");
+            Await(Task.Run(() => Call(client, "save_all")), "the agent saving");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+        }
+        Process agents;
+        lock (passengers)
+        {
+            agents = passengers[^1];
+        }
+        WaitFor(() => agents.HasExited, "the agent's Passenger to end");
+        Ui.WaitFor(() => File.ReadAllText(notes) == "second first draft\n", "the person's window to see the agent's change");
+
+        // The next day the person saves again, and the window prunes the oldest of its history.
+        Later(TimeSpan.FromHours(25));
+        SaveEdit("the next day");
+        Ui.Settle();
+        window.Close();
+
+        MainWindow again = new() { Width = 1200, Height = 800, StateFolder = settings, HistoryKeeping = day };
+        again.Show();
+        again.OpenFolder(folder);
+        Ui.Settle();
+        try
+        {
+            global::Passenger.App.History.LocalHistory history = again.LocalHistory!;
+            string kept = PathNames.Canonical(notes);
+            bool Drafted() => history.Snapshot().Events.Any(e => PathNames.Same(e.Path ?? string.Empty, kept)
+                && new[] { e.Before, e.After }.OfType<string>().Any(hash => history.Content(hash) is { } bytes && System.Text.Encoding.UTF8.GetString(bytes) == "first draft\n"));
+            Ui.WaitFor(Drafted, "Local History to have Notes.txt as it was before the agent changed it: the person's window pruning its history erased what the agent's Passenger kept",
+                TimeSpan.FromSeconds(20));
+        }
+        finally
+        {
+            again.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void An_agents_action_no_action_has_or_one_that_cannot_run_here_is_an_error_saying_why()
     {
