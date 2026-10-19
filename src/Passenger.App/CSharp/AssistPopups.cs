@@ -192,7 +192,7 @@ internal sealed class CompletionPopup : Border
                 {
                     Width = 16,
                     Height = 16,
-                    CornerRadius = new CornerRadius(3),
+                    Classes = { "kindBadge" },
                     Background = row.Badge,
                     Margin = new Thickness(0, 0, 8, 0),
                     VerticalAlignment = VerticalAlignment.Center,

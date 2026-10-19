@@ -161,6 +161,18 @@
         <Setter Property="Margin" Value="6,0" />
         <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Rule}" />
     </Style>
+    <!-- A symbol kind's letter on its colour (Go to, completion), and a tag or chip of words (a Git ref, a filter), on
+         the look's badge radius; a box drawn round part of a pane or popup (a fragment, a diff's text, a drop zone, a key)
+         on the controls' radius. -->
+    <Style Selector="Border.kindBadge">
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />
+    </Style>
+    <Style Selector="Border.tag">
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />
+    </Style>
+    <Style Selector="Border.box">
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+    </Style>
     <!-- The project widget's initials on a badge: the icon's amber dot in Passenger's theme. -->
     <Style Selector="Border.projectBadge">
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />

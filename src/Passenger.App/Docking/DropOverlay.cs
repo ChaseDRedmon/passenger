@@ -9,7 +9,7 @@ namespace Passenger.App.Docking;
 /// and stands above the hairline dividers, which stand above the panes.</summary>
 public sealed class DropOverlay : Canvas
 {
-    private readonly Border zone = new() { BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(4) };
+    private readonly Border zone = new() { BorderThickness = new Thickness(2), Classes = { "box" } };
     private readonly TextBlock label = new() { FontWeight = FontWeight.SemiBold, Margin = new Thickness(10, 8) };
 
     public DropOverlay()

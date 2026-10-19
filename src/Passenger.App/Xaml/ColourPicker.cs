@@ -38,8 +38,10 @@ internal sealed class ColourPicker : Border
         hue = new HueBar(this) { Height = 14 };
         alpha = new AlphaBar(this) { Height = 14 };
         // The swatches as tall as the field and buttons beside them, rounded as they are.
-        Border before = new() { Width = 28, Height = 28, CornerRadius = new CornerRadius(4, 0, 0, 4), Background = new SolidColorBrush(ToColor(start)) };
-        after = new Border { Width = 28, Height = 28, CornerRadius = new CornerRadius(0, 4, 4, 0) };
+        Border before = new() { Width = 28, Height = 28, Background = new SolidColorBrush(ToColor(start)) };
+        after = new Border { Width = 28, Height = 28 };
+        before.Bind(Border.CornerRadiusProperty, before.GetResourceObservable("Passenger.ControlRadius", r => r is CornerRadius c ? new CornerRadius(c.TopLeft, 0, 0, c.BottomLeft) : default(CornerRadius)));
+        after.Bind(Border.CornerRadiusProperty, after.GetResourceObservable("Passenger.ControlRadius", r => r is CornerRadius c ? new CornerRadius(0, c.TopRight, c.BottomRight, 0) : default(CornerRadius)));
         // The field takes what the swatches and buttons leave: a fixed width crowded them at the buttons' own width.
         hex = new TextBox { Classes = { "search" }, FontFamily = new FontFamily("avares://Passenger.Editor/Fonts#JetBrains Mono") };
         Button choose = new() { Content = "Choose", Classes = { "primary" }, IsDefault = true };

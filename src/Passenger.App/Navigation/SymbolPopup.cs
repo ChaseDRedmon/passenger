@@ -256,7 +256,7 @@ public sealed class SymbolPopup : UserControl
     {
         Width = 16,
         Height = 16,
-        CornerRadius = new CornerRadius(3),
+        Classes = { "kindBadge" },
         Background = InfoCard.Brush(brush),
         VerticalAlignment = VerticalAlignment.Center,
         Child = new TextBlock

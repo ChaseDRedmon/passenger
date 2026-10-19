@@ -130,7 +130,7 @@ public sealed class GitLogView : DockPanel
         branchFilter = new Border
         {
             IsVisible = false,
-            CornerRadius = new CornerRadius(4),
+            Classes = { "tag" },
             Padding = new Thickness(8, 2, 4, 2),
             Margin = new Thickness(0, 0, 8, 0),
             VerticalAlignment = VerticalAlignment.Center,
@@ -434,7 +434,7 @@ public sealed class GitLogView : DockPanel
             TextBlock text = new() { Text = label, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
             text.Bind(TextBlock.ForegroundProperty, text.GetResourceObservable("Passenger.Vcs.RefText"));
             ToolTip.SetTip(text, label);
-            Border tag = new() { [DockProperty] = Dock.Left, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 1), Margin = new Thickness(0, 0, 6, 0), Child = text, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 160 };
+            Border tag = new() { [DockProperty] = Dock.Left, Classes = { "tag" }, Padding = new Thickness(5, 1), Margin = new Thickness(0, 0, 6, 0), Child = text, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 160 };
             tag.Bind(Border.BackgroundProperty, tag.GetResourceObservable("Passenger.Vcs.Ref"));
             subject.Children.Add(tag);
         }

@@ -1006,6 +1006,9 @@ public sealed partial class CodeEditor
         public IBrush SoftWrapSign { get; private init; } = Brush("#787878");
         public IBrush LinkUnderline { get; private init; } = Brush("#406AC2");
         public IBrush PopupBorder { get; private init; } = Brush("#43454A");
+
+        /// <summary>The look's popup corners (the host's <c>Passenger.PopupRadius</c>), which the fold preview's card takes.</summary>
+        public double PopupRadius { get; private init; } = 4;
         public IBrush SmartStepTarget { get; private init; } = Brush("#53385E");
         public IBrush SmartStepChosen { get; private init; } = Brush("#824991");
         public IBrush SmartStepBorder { get; private init; } = Brush("#C76DC7");
@@ -1080,6 +1083,8 @@ public sealed partial class CodeEditor
                 SoftWrapSign = F("Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
                 LinkUnderline = F("Passenger.Editor.LinkUnderline") ?? defaults.LinkUnderline,
                 PopupBorder = F("Passenger.Editor.PopupBorder") ?? defaults.PopupBorder,
+                PopupRadius = control.TryFindResource("Passenger.PopupRadius", control.ActualThemeVariant, out object? radius) && radius is CornerRadius corners
+                    ? corners.TopLeft : defaults.PopupRadius,
                 SmartStepTarget = F("Passenger.Editor.SmartStepTarget") ?? defaults.SmartStepTarget,
                 SmartStepChosen = F("Passenger.Editor.SmartStepChosen") ?? defaults.SmartStepChosen,
                 SmartStepBorder = F("Passenger.Editor.SmartStepBorder") ?? defaults.SmartStepBorder,

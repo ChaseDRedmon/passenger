@@ -224,7 +224,7 @@ public sealed class RecentLocationsPopup : UserControl
         DockPanel.SetDock(numbers, Dock.Left);
         fragment.Children.Add(numbers);
         fragment.Children.Add(code);
-        Border frame = new() { Child = fragment, CornerRadius = new CornerRadius(4), ClipToBounds = true, Padding = new Thickness(0, 4) };
+        Border frame = new() { Child = fragment, Classes = { "box" }, ClipToBounds = true, Padding = new Thickness(0, 4) };
         frame.Bind(Border.BackgroundProperty, frame.GetResourceObservable("Passenger.Editor.Background"));
         // A closed row lets go of the colours it was shown with, whose changes would otherwise still reach it.
         code.DetachedFromVisualTree += (_, _) => code.Highlighter = null;

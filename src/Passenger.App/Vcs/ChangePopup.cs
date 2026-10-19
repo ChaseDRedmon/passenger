@@ -50,7 +50,7 @@ public sealed class ChangePopup : UserControl
         {
             old = new TextBlock { FontFamily = CSharp.Fonts.Mono, FontSize = 12, Padding = new Thickness(8, 6) };
             ShowText();
-            Border text = new() { CornerRadius = new CornerRadius(4), Child = new ScrollViewer { MaxHeight = 260, MaxWidth = 640, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, Content = old } };
+            Border text = new() { Classes = { "box" }, Child = new ScrollViewer { MaxHeight = 260, MaxWidth = 640, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, Content = old } };
             text.Bind(Border.BackgroundProperty, text.GetResourceObservable("Passenger.Diff.Modified"));
             content.Children.Add(text);
         }

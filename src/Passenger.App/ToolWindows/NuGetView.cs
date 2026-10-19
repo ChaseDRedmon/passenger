@@ -676,7 +676,7 @@ public sealed class NuGetView : DockPanel
         Border block = new()
         {
             Name = "Vulnerability",
-            CornerRadius = new CornerRadius(4),
+            Classes = { "box" },
             Padding = new Thickness(10, 8),
             Child = new DockPanel { Children = { warning, said } },
         };

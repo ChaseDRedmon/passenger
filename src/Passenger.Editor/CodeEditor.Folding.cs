@@ -387,7 +387,7 @@ public sealed partial class CodeEditor
             return;
         }
         (double across, double down) = PreviewPadding;
-        context.DrawRectangle(palette.Background, new Pen(palette.PopupBorder, 1), shown.Card.Deflate(0.5), 4, 4);
+        context.DrawRectangle(palette.Background, new Pen(palette.PopupBorder, 1), shown.Card.Deflate(0.5), palette.PopupRadius, palette.PopupRadius);
         using (context.PushClip(shown.Card.Deflate(1)))
         {
             for (int i = 0; i < shown.Lines.Length; i++)

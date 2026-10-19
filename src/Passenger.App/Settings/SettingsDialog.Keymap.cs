@@ -23,7 +23,7 @@ public sealed partial class SettingsDialog
     private readonly ShortcutPanel filterKeys = new("Second stroke");
     private readonly Popup findPopup = new() { Placement = PlacementMode.BottomEdgeAlignedRight, IsLightDismissEnabled = true };
     private readonly TextBlock filterText = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-    private readonly Border filterChip = new() { IsVisible = false, CornerRadius = new CornerRadius(4), Padding = new Thickness(8, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center };
+    private readonly Border filterChip = new() { IsVisible = false, Classes = { "tag" }, Padding = new Thickness(8, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center };
     private Keymap? defaults;
     private Shortcut? shortcutFilter;
 
@@ -287,7 +287,7 @@ public sealed partial class SettingsDialog
                 row.Keys.Children.Clear();
                 foreach (string keys in shown)
                 {
-                    Border box = new() { CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 1), Margin = new Thickness(0, 2, 4, 2), Child = new TextBlock { Text = keys, FontSize = 12 } };
+                    Border box = new() { Classes = { "box" }, Padding = new Thickness(6, 1), Margin = new Thickness(0, 2, 4, 2), Child = new TextBlock { Text = keys, FontSize = 12 } };
                     box.Bind(Border.BackgroundProperty, box.GetResourceObservable("Passenger.Selected"));
                     row.Keys.Children.Add(box);
                 }

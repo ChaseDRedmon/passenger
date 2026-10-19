@@ -347,6 +347,54 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
+    /// <summary>Every corner Passenger rounds is one of the look's radii (Shell.axaml's kindBadge, tag and box on them), so
+    /// either look's reach it: a Git log's ref tags and the Keymap page's keystroke boxes had 3 and 4 written in.</summary>
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Every_rounded_corner_is_one_of_the_looks_radii(Look look)
+    {
+        using IDisposable worn = Wearing(look);
+        TestGit.Run(folder, "tag", "v1.0");
+        MainWindow window = Open(1200, 800);
+        SettingsDialog? settings = null;
+        try
+        {
+            Assert.True(window.Perform(AppActions.ShowGit), "Git did not show");
+            Ui.WaitFor(() => window.DockHost.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.EndsWith("v1.0", StringComparison.Ordinal) == true && t.IsEffectivelyVisible), "the Git log's v1.0 tag");
+            Radii(window, "the window with the Git log");
+            settings = window.ShowSettings();
+            settings.Page = SettingsDialog.KeymapPage;
+            Ui.Settle();
+            Radii(settings, "Settings' Keymap page");
+        }
+        finally
+        {
+            settings?.Close();
+            window.Close();
+        }
+    }
+
+    /// <summary>Holds every Border Passenger made in a window (not a control template's) to the look's radii.</summary>
+    private static void Radii(Window window, string what)
+    {
+        HashSet<double> radii = [0];
+        foreach (string key in (string[])["ControlRadius", "ToolRadius", "PopupRadius", "CardRadius", "BadgeRadius", "ChipRadius", "TabRadius"])
+        {
+            if (window.TryFindResource($"Passenger.{key}", window.ActualThemeVariant, out object? found) && found is CornerRadius corners)
+            {
+                radii.UnionWith([corners.TopLeft, corners.TopRight, corners.BottomRight, corners.BottomLeft]);
+            }
+        }
+        foreach (Border border in window.GetVisualDescendants().OfType<Border>().Where(b => b.IsEffectivelyVisible && b.TemplatedParent is null))
+        {
+            CornerRadius r = border.CornerRadius;
+            Assert.True(((double[])[r.TopLeft, r.TopRight, r.BottomRight, r.BottomLeft]).All(radii.Contains),
+                $"In {what}, a {string.Join(".", ["Border", .. border.Classes.Where(c => !c.StartsWith(':'))])} round '{(border.Child as TextBlock)?.Text ?? border.Child?.GetType().Name}' "
+                + $"has corners of {r}, none of the look's radii ({string.Join(", ", radii.Order())})");
+        }
+    }
+
     [AvaloniaFact]
     public void At_the_smallest_width_the_status_bars_path_never_draws_under_its_widgets()
     {
