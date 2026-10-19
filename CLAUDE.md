@@ -65,7 +65,12 @@ clicks the visible control of that x:Name at its centre (a name none has ends it
 running program time. `--window-buttons` draws macOS's traffic lights into a main-window capture (`Theme/TrafficLights`:
 Passenger's own drawing, measured from AppKit's of an active window made as Avalonia makes Passenger's, Dark Aqua under
 the Dark theme and Aqua under the Light); Windows' and Linux's merged bars draw their own, so there it changes nothing,
-and it draws none in full screen or when a dialog is captured.
+and it draws none in full screen or when a dialog is captured. `--agent COMMAND` is a step that runs an agent in the
+Terminal window's Agent tab and waits for it to end with exit code 0 (else exit code 2, no picture): the capture's window
+opens its agent socket in its state folder whatever Enable MCP Server says and lets that agent use every tool unasked
+(`MainWindow.AgentsUnattended`, set only by a screenshot), and the agent joins with `$PASSENGER --mcp-attach
+$PASSENGER_PID`. macOS opens no socket path over 103 bytes, so its `PASSENGER_SETTINGS` stays short (the site's agent
+scene, `tools/site-shots/agent.py`, uses `$TMPDIR/pss-agent-<theme>`).
 
 Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire inside a running dispatcher frame: a wait
 that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests). One that has come due also fires while
