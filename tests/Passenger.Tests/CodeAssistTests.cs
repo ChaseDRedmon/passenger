@@ -2204,8 +2204,16 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             int far = source.LastIndexOf("value98 * 3", StringComparison.Ordinal);
             Ui.WaitFor(() => KindAt(far) == TokenKind.Local, "the server's colours on the file's last local");
             Ui.Settle();
-            Passenger.Lsp.LanguageServer.Trace = (_, message) =>
+            // Every colour request and refresh, as the wire had them: what a failure says, since CI keeps no protocol trace.
+            System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+            System.Collections.Concurrent.ConcurrentQueue<string> wire = new();
+            Passenger.Lsp.LanguageServer.Trace = (server, message) =>
             {
+                if (System.Text.RegularExpressions.Regex.Match(message, "\"method\":\"([^\"]*semanticTokens[^\"]*)\"") is { Success: true } method)
+                {
+                    string file = System.Text.RegularExpressions.Regex.Match(message, "\"uri\":\"[^\"]*/([^\"/]+)\"") is { Success: true } uri ? $" {uri.Groups[1].Value}" : "";
+                    wire.Enqueue($"{clock.ElapsedMilliseconds} ms, server {server}: {message[..3]} {method.Groups[1].Value}{file}");
+                }
                 if (message.StartsWith("-->", StringComparison.Ordinal) && message.Contains("\"textDocument/semanticTokens/full\"", StringComparison.Ordinal))
                 {
                     Interlocked.Increment(ref whole);
@@ -2234,14 +2242,14 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 Screenshot.Pump(TimeSpan.FromMilliseconds(300));
             }
             Assert.True(screens > 0, "The screen's colours were never asked for as the statements were typed");
-            Assert.True(whole == 0, $"The whole file's colours were asked for {whole} times while typing went on with pauses");
+            Assert.True(whole == 0, $"The whole file's colours were asked for {whole} times while typing went on with pauses:\n{string.Join('\n', wire)}");
 
             // Once typing stops, the whole file's, once.
             Ui.PumpUntil(() => Volatile.Read(ref whole) > 0, "the whole file's colours once typing stopped");
             Ui.Settle();
             int refreshes = Volatile.Read(ref refreshedSince);
             Assert.True(whole <= 1 + refreshes,
-                $"Once typing stopped the whole file's colours were asked for {whole} times, with {refreshes} word from the server since that they moved");
+                $"Once typing stopped the whole file's colours were asked for {whole} times, with {refreshes} word from the server since that they moved:\n{string.Join('\n', wire)}");
             Assert.Equal(TokenKind.Local, KindAt(far + 4 * " int freshN = value0;".Length));
         }
         finally

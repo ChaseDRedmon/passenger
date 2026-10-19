@@ -29,6 +29,7 @@ public sealed class LanguageServer : IAsyncDisposable
 
     private readonly Process process;
     private readonly JsonRpc rpc;
+    private readonly CountedMessages messages;
     private readonly ClientTarget client;
     private readonly ServerLog log;
     private readonly Dictionary<long, (string Method, long Since)> waiting = [];
@@ -53,8 +54,9 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>What makes an edit the server asks for (<c>workspace/applyEdit</c>); null refuses every one.</summary>
     private readonly Func<JsonElement, Task<string?>>? applyEdit;
 
-    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ServerLog log, string logFolder, IReadOnlyDictionary<string, object?>? options,
-        Func<string?, object?>? configure = null, Func<string, CancellationToken, Task<string>>? content = null, Func<JsonElement, Task<string?>>? applyEdit = null)
+    private LanguageServer(Process process, JsonRpc rpc, CountedMessages messages, ClientTarget client, ServerLog log, string logFolder,
+        IReadOnlyDictionary<string, object?>? options, Func<string?, object?>? configure = null, Func<string, CancellationToken, Task<string>>? content = null,
+        Func<JsonElement, Task<string?>>? applyEdit = null)
     {
         this.configure = configure;
         this.content = content;
@@ -62,6 +64,7 @@ public sealed class LanguageServer : IAsyncDisposable
         this.options = new Dictionary<string, object?>(options ?? new Dictionary<string, object?>(), StringComparer.Ordinal);
         this.process = process;
         this.rpc = rpc;
+        this.messages = messages;
         this.client = client;
         this.log = log;
         LogFolder = logFolder;
@@ -114,11 +117,10 @@ public sealed class LanguageServer : IAsyncDisposable
     /// semantic tokens should be asked for again. Raised on any thread.</summary>
     public event EventHandler? ColoursRefreshRequested;
 
-    /// <summary>How many times so far the server has said its colours moved, counted as each word arrives, before
-    /// <see cref="ColoursRefreshRequested"/>: a request sent once a word had arrived answers with what it told of.</summary>
-    public int ColourRefreshes => Volatile.Read(ref colourRefreshes);
-
-    private int colourRefreshes;
+    /// <summary>How many times so far the server has said its colours moved, counted as each word is read off the
+    /// connection, before it waits its turn to be handled (<see cref="ColoursRefreshRequested"/>): a request sent once a
+    /// word had arrived answers with what it told of.</summary>
+    public int ColourRefreshes => messages.ColourRefreshes;
 
     /// <summary>The server's diagnostics moved in a way only it knows: they should be pulled again, and only they, since
     /// asking a long file's colours again costs the server a second. Raised on any thread.</summary>
@@ -330,13 +332,13 @@ public sealed class LanguageServer : IAsyncDisposable
         process.BeginErrorReadLine();
 
         SystemTextJsonFormatter formatter = new() { JsonSerializerOptions = Json.Options };
-        HeaderDelimitedMessageHandler handler = new(input, output, formatter);
+        CountedMessages handler = new(input, output, formatter);
         ClientTarget client = new();
         // What the server sends is handled in the order it came, one at a time, rather than on the thread pool as it comes:
         // a progress report handled after its end would leave the load showing, an error logged after its toast unread.
         JsonRpc rpc = new(handler) { SynchronizationContext = new Microsoft.VisualStudio.Threading.NonConcurrentSynchronizationContext(sticky: false) };
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
-        LanguageServer server2 = new(process, rpc, client, log, logFolder, options, configure, content, applyEdit);
+        LanguageServer server2 = new(process, rpc, handler, client, log, logFolder, options, configure, content, applyEdit);
         client.Owner = server2;
         rpc.StartListening();
 
@@ -1004,10 +1006,7 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("workspace/semanticTokens/refresh")]
         public object? RefreshTokens(JsonElement? request = null)
         {
-            if (Owner is { } owner)
-            {
-                Interlocked.Increment(ref owner.colourRefreshes);
-            }
+            // Counted as it was read (CountedMessages), perhaps well before now: what came before it was handled first.
             Owner?.ColoursRefreshRequested?.Invoke(Owner, EventArgs.Empty);
             return null;
         }
