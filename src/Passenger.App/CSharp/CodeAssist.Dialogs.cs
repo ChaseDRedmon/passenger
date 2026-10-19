@@ -134,39 +134,42 @@ public sealed partial class CodeAssist
     /// <summary>Change Signature on the method or constructor at an offset of a file, given its new name, return type and
     /// parameters (each the one it was, or new with the value every call passes): the declaration, its family's and every
     /// call changed, as one command.</summary>
-    public Task<RefactorOutcome> ChangeSignatureAsync(OpenDocument document, int offset, Signature signature, string method, string returnType, IReadOnlyList<ParameterChange> parameters) =>
+    public Task<RefactorOutcome> ChangeSignatureAsync(OpenDocument document, int offset, Signature signature, string method, string returnType, IReadOnlyList<ParameterChange> parameters,
+        Patience? patience = null) =>
         MakeAsync("Change Signature", document,
             lsp => lsp.ExtensionAsync<Refactored>(Handlers.ChangeSignature, new SignatureChange(lsp.PlaceOf(offset), method, returnType, parameters)),
-            files => $"Changed the signature of {signature.Container}{(signature.Kind == "method" ? "." + method : string.Empty)} in {Count(files, "file")}");
+            files => $"Changed the signature of {signature.Container}{(signature.Kind == "method" ? "." + method : string.Empty)} in {Count(files, "file")}", patience);
 
     /// <summary>Extract Interface from the type at an offset: an interface of this name, in a new file of this name beside
     /// the type's, of the members chosen by their ids, which the type then implements.</summary>
-    public Task<RefactorOutcome> ExtractInterfaceAsync(OpenDocument document, int offset, InterfaceSource source, string name, string file, IReadOnlyList<string> members) =>
+    public Task<RefactorOutcome> ExtractInterfaceAsync(OpenDocument document, int offset, InterfaceSource source, string name, string file, IReadOnlyList<string> members,
+        Patience? patience = null) =>
         MakeAsync("Extract Interface", document,
             lsp => lsp.ExtensionAsync<Refactored>(Handlers.ExtractInterface, new InterfaceExtraction(lsp.PlaceOf(offset), name, file, members)),
-            _ => $"Extracted the interface {name} from {source.Type} to {file}");
+            _ => $"Extracted the interface {name} from {source.Type} to {file}", patience);
 
     /// <summary>Move to Another File: the type at an offset into a new file of this name beside its own.</summary>
-    public Task<RefactorOutcome> MoveTypeToFileAsync(OpenDocument document, int offset, TypeSource type, string file) =>
+    public Task<RefactorOutcome> MoveTypeToFileAsync(OpenDocument document, int offset, TypeSource type, string file, Patience? patience = null) =>
         MakeAsync("Move to Another File", document,
             lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToFile, new TypeToFile(lsp.PlaceOf(offset), file)),
-            _ => $"Moved {type.Kind} {type.Name} to {file}");
+            _ => $"Moved {type.Kind} {type.Name} to {file}", patience);
 
     /// <summary>Move to Namespace: the type at an offset into this namespace, the files that use it following.</summary>
-    public Task<RefactorOutcome> MoveTypeToNamespaceAsync(OpenDocument document, int offset, TypeSource type, string space) =>
+    public Task<RefactorOutcome> MoveTypeToNamespaceAsync(OpenDocument document, int offset, TypeSource type, string space, Patience? patience = null) =>
         MakeAsync("Move to Namespace", document,
             lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToNamespace, new TypeToNamespace(lsp.PlaceOf(offset), space)),
-            files => $"Moved {type.Kind} {type.Name} to namespace {space} in {Count(files, "file")}");
+            files => $"Moved {type.Kind} {type.Name} to namespace {space} in {Count(files, "file")}", patience);
 
     /// <summary>Pull Members Up (into the base type whose id is the target) or Push Members Down (into each derived class
     /// whose id is a line of it): the members chosen by their ids, those listed as made abstract left abstract where they
     /// stay.</summary>
-    public Task<RefactorOutcome> MoveMembersAsync(OpenDocument document, int offset, Hierarchy hierarchy, bool up, string target, IReadOnlyList<string> members, IReadOnlyList<string> made) =>
+    public Task<RefactorOutcome> MoveMembersAsync(OpenDocument document, int offset, Hierarchy hierarchy, bool up, string target, IReadOnlyList<string> members, IReadOnlyList<string> made,
+        Patience? patience = null) =>
         MakeAsync(up ? "Pull Members Up" : "Push Members Down", document,
             lsp => lsp.ExtensionAsync<Refactored>(up ? Handlers.PullMembersUp : Handlers.PushMembersDown, new MembersMove(lsp.PlaceOf(offset), target, members, made)),
             files => up
                 ? $"Pulled {Count(members.Count, "member")} of {hierarchy.Type} up to {hierarchy.Bases.FirstOrDefault(b => b.Id == target)?.Text ?? target}"
-                : $"Pushed {Count(members.Count, "member")} of {hierarchy.Type} down to {Count(target.Split('\n').Length, "class", "classes")}");
+                : $"Pushed {Count(members.Count, "member")} of {hierarchy.Type} down to {Count(target.Split('\n').Length, "class", "classes")}", patience);
 
     /// <summary>What Passenger's extension says is at the caret for a refactoring, with the file and the caret followed from
     /// now; null, said in the status bar, when the server cannot be asked.</summary>
@@ -216,8 +219,8 @@ public sealed partial class CodeAssist
 
     /// <summary>A refactoring computed by Passenger's extension for a file and applied as one command, which Undo takes back
     /// whole: every file it changes, open or not, and every file it makes. What it came to: the files it changed and what
-    /// to say of it, or why it was not made.</summary>
-    private async Task<RefactorOutcome> MakeAsync(string name, OpenDocument document, Func<LspDocument, Task<Refactored>> ask, Func<int, string> done)
+    /// to say of it, or why it was not made (for an agent's call, told its <paramref name="patience"/>).</summary>
+    private async Task<RefactorOutcome> MakeAsync(string name, OpenDocument document, Func<LspDocument, Task<Refactored>> ask, Func<int, string> done, Patience? patience)
     {
         try
         {
@@ -233,7 +236,7 @@ public sealed partial class CodeAssist
                 return new RefactorOutcome($"{name} changed nothing", null, [], []);
             }
             System.Text.Json.JsonElement edit = RoslynExtension.WorkspaceEdit(made);
-            if (await WorkspaceEdits.StaleAsync(editors, lsp, edit, asked.Since) is { } stale)
+            if (await WorkspaceEdits.StaleAsync(editors, lsp, edit, asked.Since, patience) is { } stale)
             {
                 return RefactorOutcome.Refused($"{name} was not applied: {stale}");
             }

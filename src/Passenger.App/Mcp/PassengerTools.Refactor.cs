@@ -40,7 +40,7 @@ public sealed partial class PassengerTools
         "names, the project a .csproj names, or the solution when path is left out; code_cleanup on XAML reformats it.\n" +
         "Without options, change_signature, move, extract_interface, pull_members_up and push_members_down answer what their dialog would " +
         "show (dialog), with its defaults as options to change and send back; with describe true any kind answers so and changes nothing. " +
-        "Applied, it answers each file it created, changed, moved or deleted with the lines its edits start on, and what it left alone.")]
+        "Applied, it answers each file it created, changed, moved or deleted with the lines its edits start on, and what it left alone. " + WaitsForWrites)]
     public Task<RefactorAnswer> Refactor(
         [Description("change_signature, safe_delete, move, extract_interface, pull_members_up, push_members_down, introduce_field, introduce_parameter, encapsulate_field, optimize_imports or code_cleanup")] string kind,
         [Description("The file, absolute or the open folder's; for a project or solution scope a .csproj, or left out for the solution")] string? path = null,
@@ -50,7 +50,7 @@ public sealed partial class PassengerTools
         int? endColumn = null,
         [Description("The kind's options as one JSON object, as the description says; left out, a kind with a dialog describes it")] JsonElement? options = null,
         [Description("Answer what the refactoring would show and offer, changing nothing")] bool describe = false,
-        CancellationToken cancel = default) => OnUi(cancel, async () =>
+        CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
     {
         string named = kind.Trim().ToLowerInvariant().Replace(' ', '_').Replace('-', '_');
         JsonElement? given = Options(options);
@@ -73,20 +73,20 @@ public sealed partial class PassengerTools
         bool describing = describe || (given is null && named is "change_signature" or "move" or "extract_interface" or "pull_members_up" or "push_members_down");
         RefactorAnswer answer = named switch
         {
-            "change_signature" => await ChangeSignatureAsync(document, lsp, offset, given, describing),
-            "extract_interface" => await ExtractInterfaceAsync(document, lsp, offset, given, describing),
-            "move" => await MoveAsync(document, lsp, offset, given, describing),
-            "pull_members_up" => await MembersAsync(document, lsp, offset, given, describing, up: true),
-            "push_members_down" => await MembersAsync(document, lsp, offset, given, describing, up: false),
+            "change_signature" => await ChangeSignatureAsync(document, lsp, offset, given, describing, patience),
+            "extract_interface" => await ExtractInterfaceAsync(document, lsp, offset, given, describing, patience),
+            "move" => await MoveAsync(document, lsp, offset, given, describing, patience),
+            "pull_members_up" => await MembersAsync(document, lsp, offset, given, describing, up: true, patience),
+            "push_members_down" => await MembersAsync(document, lsp, offset, given, describing, up: false, patience),
             "safe_delete" => await SafeDeleteAsync(lsp, offset, given, describing, cancel),
-            _ => await ServerRefactorAsync(named, document, lsp, offset, endLine, endColumn, given, describing),
+            _ => await ServerRefactorAsync(named, document, lsp, offset, endLine, endColumn, given, describing, patience),
         };
         if (answer.Files.Count > 0)
         {
             Editors.SaveAll();
         }
         return answer;
-    });
+    }, cancel));
 
     /// <summary>The file a refactoring works on, which only C# files have: any other language is told what it has instead.</summary>
     private async Task<(OpenDocument Document, LspDocument Lsp)> CSharpOnly(string path, string kind, CancellationToken cancel)
@@ -104,7 +104,7 @@ public sealed partial class PassengerTools
 
     private static string Titled(string kind) => string.Join(' ', kind.Split('_').Select(w => w.Length == 0 ? w : char.ToUpperInvariant(w[0]) + w[1..]));
 
-    private async Task<RefactorAnswer> ChangeSignatureAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing)
+    private async Task<RefactorAnswer> ChangeSignatureAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing, Patience patience)
     {
         Signature signature = await CodeAssist.DescribeAtAsync<Signature>(lsp, offset, Handlers.DescribeSignature);
         if (signature.Problem is { } problem)
@@ -171,10 +171,10 @@ public sealed partial class PassengerTools
                 }
             }
         }
-        return Applied("change_signature", await window.Assist.ChangeSignatureAsync(document, offset, signature, name, returnType, parameters));
+        return Applied("change_signature", await window.Assist.ChangeSignatureAsync(document, offset, signature, name, returnType, parameters, patience));
     }
 
-    private async Task<RefactorAnswer> ExtractInterfaceAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing)
+    private async Task<RefactorAnswer> ExtractInterfaceAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing, Patience patience)
     {
         InterfaceSource source = await CodeAssist.DescribeAtAsync<InterfaceSource>(lsp, offset, Handlers.DescribeInterface);
         if (source.Problem is { } problem)
@@ -196,10 +196,10 @@ public sealed partial class PassengerTools
         // The file follows the name until it is given, as the dialog's does until it is typed in.
         string file = Text(given, "file") ?? (Text(given, "name") is { } typed ? $"{typed.Trim()}.cs" : source.FileName);
         IReadOnlyList<string> members = Texts(given, "members") is { } chosen ? [.. chosen.Select(m => MemberId(source.Members, m, $"members {source.Type} can give an interface"))] : [.. source.Members.Select(m => m.Id)];
-        return Applied("extract_interface", await window.Assist.ExtractInterfaceAsync(document, offset, source, name, file, members));
+        return Applied("extract_interface", await window.Assist.ExtractInterfaceAsync(document, offset, source, name, file, members, patience));
     }
 
-    private async Task<RefactorAnswer> MoveAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing)
+    private async Task<RefactorAnswer> MoveAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing, Patience patience)
     {
         TypeSource type = await CodeAssist.DescribeAtAsync<TypeSource>(lsp, offset, Handlers.DescribeType);
         if (type.Problem is { } problem)
@@ -225,12 +225,12 @@ public sealed partial class PassengerTools
         {
             (null, null) => throw new ArgumentException("move takes file (a new file beside the type's) or namespace, as the window's Move to Another File and Move to Namespace do"),
             ({ }, { }) => throw new ArgumentException("move takes file or namespace, one at a time, as the window's Move does: move it to the namespace, then to the file, in two calls"),
-            ({ } toFile, null) => Applied("move", await window.Assist.MoveTypeToFileAsync(document, offset, type, toFile)),
-            _ => Applied("move", await window.Assist.MoveTypeToNamespaceAsync(document, offset, type, space!)),
+            ({ } toFile, null) => Applied("move", await window.Assist.MoveTypeToFileAsync(document, offset, type, toFile, patience)),
+            _ => Applied("move", await window.Assist.MoveTypeToNamespaceAsync(document, offset, type, space!, patience)),
         };
     }
 
-    private async Task<RefactorAnswer> MembersAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing, bool up)
+    private async Task<RefactorAnswer> MembersAsync(OpenDocument document, LspDocument lsp, int offset, JsonElement? options, bool describing, bool up, Patience patience)
     {
         string kind = up ? "pull_members_up" : "push_members_down";
         Hierarchy hierarchy = await CodeAssist.DescribeAtAsync<Hierarchy>(lsp, offset, Handlers.DescribeHierarchy);
@@ -262,7 +262,7 @@ public sealed partial class PassengerTools
         {
             throw new ArgumentException($"{hierarchy.Members.First(m => m.Id == stays).Text} is made abstract only as it moves: list it in members too");
         }
-        return Applied(kind, await window.Assist.MoveMembersAsync(document, offset, hierarchy, up, target, members, made));
+        return Applied(kind, await window.Assist.MoveMembersAsync(document, offset, hierarchy, up, target, members, made, patience));
     }
 
     private async Task<RefactorAnswer> SafeDeleteAsync(LspDocument lsp, int offset, JsonElement? options, bool describing, CancellationToken cancel)
@@ -293,7 +293,7 @@ public sealed partial class PassengerTools
 
     /// <summary>Introduce Field, Introduce Parameter or Encapsulate Field: the server's own action of that kind over the
     /// selection, the one named where it offers several, then the choice named of those nested under it.</summary>
-    private async Task<RefactorAnswer> ServerRefactorAsync(string kind, OpenDocument document, LspDocument lsp, int offset, int? endLine, int? endColumn, JsonElement? options, bool describing)
+    private async Task<RefactorAnswer> ServerRefactorAsync(string kind, OpenDocument document, LspDocument lsp, int offset, int? endLine, int? endColumn, JsonElement? options, bool describing, Patience patience)
     {
         CodeAssist.ServerRefactoring refactoring = kind switch
         {
@@ -336,7 +336,7 @@ public sealed partial class PassengerTools
                 : choices.FirstOrDefault(c => c.Text == choice) ?? throw new ArgumentException($"'{action.Title}' offers no choice '{choice}'; it offers {string.Join("; ", choices.Select(c => c.Text))}");
             (chosen, scope) = (taken.Action, taken.Scope);
         }
-        (RefactorOutcome made, _) = await window.Assist.ApplyAsync(document, chosen, scope, refactoring.Name, asked);
+        (RefactorOutcome made, _) = await window.Assist.ApplyAsync(document, chosen, scope, refactoring.Name, asked, patience);
         return Applied(kind, made.Said.Length > 0 || made.Problem is not null ? made : made with { Said = $"{refactoring.Name} done" });
     }
 

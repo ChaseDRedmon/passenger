@@ -207,6 +207,36 @@ public sealed partial class McpTests
         }
     }
 
+    [Fact]
+    public async Task An_agent_that_writes_a_file_and_at_once_changes_a_signature_or_renames_what_it_calls_has_the_change_made_in_what_it_wrote()
+    {
+        Shop(("Calc.cs", Calc), ("Till.cs", Till), ("Report.cs", Report));
+        await using McpClient client = await Start(["--mcp", folder]);
+        // Described first, so the server has read the files as the agent found them.
+        await Call(client, "refactor", Place("change_signature", "Calc.cs", Calc, "int Sca"));
+
+        // The agent's own edit tool writes Report.cs, its call two lines further down and a second one beside it, and at once
+        // has factor go first: the language server has yet to read the file again as the change is worked out.
+        string written = "// Written by the agent\n// a moment ago\n"
+            + Report.Replace("Calc.Scale(1, 1, 1)", "Calc.Scale(1, 1, 1) * Calc.Scale(7, 8, 9)", StringComparison.Ordinal);
+        File.WriteAllText(PathOf("Report.cs"), written);
+        CallToolResult changing = await Result(client, "refactor", Place("change_signature", "Calc.cs", Calc, "int Sca", new
+        {
+            parameters = new object[] { new { from = "factor" }, new { from = "value" }, new { from = "unused" } },
+        }));
+        Assert.True(changing.IsError != true, $"Change Signature right after the agent wrote Report.cs answered: {Text(changing)}");
+        Assert.Equal(written.Replace("Calc.Scale(7, 8, 9)", "Calc.Scale(8, 7, 9)", StringComparison.Ordinal), File.ReadAllText(PathOf("Report.cs")));
+
+        // So with a rename: written again, a line more at its top, and Scale renamed at once.
+        string rewritten = "// And again\n" + File.ReadAllText(PathOf("Report.cs"));
+        File.WriteAllText(PathOf("Report.cs"), rewritten);
+        (int line, int column) = LineColumn(Calc, "Scale", Calc.IndexOf("Scale", StringComparison.Ordinal));
+        CallToolResult renaming = await Result(client, "rename", new() { ["path"] = "Calc.cs", ["line"] = line, ["column"] = column, ["newName"] = "Times" });
+        Assert.True(renaming.IsError != true, $"A rename right after the agent wrote Report.cs answered: {Text(renaming)}");
+        Assert.Equal(rewritten.Replace("Calc.Scale(", "Calc.Times(", StringComparison.Ordinal), File.ReadAllText(PathOf("Report.cs")));
+        Assert.DoesNotContain("Scale", File.ReadAllText(PathOf("Till.cs")), StringComparison.Ordinal);
+    }
+
     [AvaloniaFact]
     public void An_agent_optimizes_imports_and_cleans_up_a_file_a_project_and_the_solution_and_hears_what_other_files_have()
     {

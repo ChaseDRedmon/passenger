@@ -1239,8 +1239,9 @@ public sealed partial class CodeAssist
 
     /// <summary>A code action's change made, as <see cref="Apply"/> makes it, for the status bar or an agent: why not, else
     /// the files it changed, those left as edited meanwhile, and what to say beyond its being done (a command it carries
-    /// that Passenger cannot run, or that it changed nothing); and whether every file took it.</summary>
-    public async Task<(RefactorOutcome Outcome, bool Applied)> ApplyAsync(OpenDocument document, CodeAction action, string? scope, string what, Asked? listed)
+    /// that Passenger cannot run, or that it changed nothing); and whether every file took it. An agent's call's refusal for
+    /// files the server had yet to read is told its <paramref name="patience"/>.</summary>
+    public async Task<(RefactorOutcome Outcome, bool Applied)> ApplyAsync(OpenDocument document, CodeAction action, string? scope, string what, Asked? listed, Patience? patience = null)
     {
         bool resolve = (action.Edit is null && action.Data is not null) || scope is not null;
         // An answer resolved now is for the text as it is now, and carried through what is typed while it comes.
@@ -1255,7 +1256,7 @@ public sealed partial class CodeAssist
             return (RefactorOutcome.Refused($"{what} was not applied: {failed.Reason}"), false);
         }
         Asked? asked = resolving ?? listed;
-        if (chosen.Edit is { } changes && await StaleAsync(document, changes, asked) is { } stale)
+        if (chosen.Edit is { } changes && await StaleAsync(document, changes, asked, patience) is { } stale)
         {
             return (RefactorOutcome.Refused($"{what} was not applied: {stale}"), false);
         }
@@ -1270,8 +1271,8 @@ public sealed partial class CodeAssist
 
     /// <summary>Why a server's edit must not be applied to the files not open it changes (<see cref="WorkspaceEdits.StaleAsync"/>):
     /// the C# server is asked what it holds of them; another server's files are judged by when they changed alone.</summary>
-    private Task<string?> StaleAsync(OpenDocument document, System.Text.Json.JsonElement edit, Asked? asked) =>
-        WorkspaceEdits.StaleAsync(editors, service()?.For(document)?.Lsp, edit, asked?.Since);
+    private Task<string?> StaleAsync(OpenDocument document, System.Text.Json.JsonElement edit, Asked? asked, Patience? patience = null) =>
+        WorkspaceEdits.StaleAsync(editors, service()?.For(document)?.Lsp, edit, asked?.Since, patience);
 
     /// <summary>What the status bar says of a command left unrun: Roslyn's own are run, and it registers no other.</summary>
     private static string NotRun(string what, LspCommand command) => $"{what} needs {command.Command}, which Passenger cannot run";

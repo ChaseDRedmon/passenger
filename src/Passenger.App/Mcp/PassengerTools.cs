@@ -28,6 +28,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 {
     private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
 
+    /// <summary>What the tools that apply a server's edit across files say of files the agent has just written.</summary>
+    private const string WaitsForWrites = "A file written a moment before (by the agent's own edits) is waited for, up to 10 s, until the language " +
+        "server has read it, so the change is made in what was written: there is no need to wait or try again.";
+
     /// <summary>How long a file's markers are waited for: its checks are quick once its project is read.</summary>
     private static readonly TimeSpan MarkersLimit = TimeSpan.FromSeconds(30);
 
@@ -266,10 +270,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "files named after it (Foo.cs, Foo.Designer.cs) take its new name too, unless renameFiles is false. In XAML it renames an " +
         "element's name (x:Name or Name) in its file and where its code-behind uses the field. In the web languages, their language " +
         "server's rename; in JSON, whose server has none, a property's name, and in a package.json's scripts every npm run of a script with it. " +
-        "MSBuild files have none, and say so.")]
+        "MSBuild files have none, and say so. " + WaitsForWrites)]
     public Task<string> Rename(string path, int line, int column, [Description("The new name")] string newName,
         [Description("Whether a type's files named after it are renamed with it, as Rider's Also rename files to reflect this change")] bool renameFiles = true,
-        CancellationToken cancel = default) => OnUi(cancel, async () =>
+        CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
     {
         Served served = await Serve(path, cancel);
         int offset = Offset(served.Document, line, column);
@@ -291,7 +295,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return "This can't be renamed";
         }
-        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked) is { } stale)
+        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked, patience) is { } stale)
         {
             throw new InvalidOperationException($"Nothing was renamed: {stale}");
         }
@@ -301,7 +305,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         Editors.SaveAll();
         string renamed = moves.Count > 0 ? $"; renamed {string.Join(", ", moves.Select(m => $"{Relative(m.From)} to {Relative(m.To)}"))}" : string.Empty;
         return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}{renamed}";
-    });
+    }, cancel));
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
         "The fixes and refactorings offered at a position (Alt+Enter), or over a selection from there to endLine:endColumn (where " +
@@ -330,11 +334,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Applies the fix or refactoring with this title at a position (or over the selection to endLine:endColumn), as choosing it from " +
         "Alt+Enter does, and saves the files. One that offers choices takes the one named as choice, as code_actions lists them. XAML's " +
         "Extract Resource and Extract Style take name as the new resource's key or style's name (else the one their dialog suggests), " +
-        "replace every use of the value, and extract the element's properties that are not bindings.")]
+        "replace every use of the value, and extract the element's properties that are not bindings. " + WaitsForWrites)]
     public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
         [Description("For an action that offers choices, the one to take")] string? choice = null,
         [Description("For XAML's Extract Resource and Extract Style, the new resource's key or style's name")] string? name = null,
-        CancellationToken cancel = default) => OnUi(cancel, async () =>
+        CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
     {
         Served served = await Serve(path, cancel);
         switch (served)
@@ -375,14 +379,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return $"{what} changes nothing it can apply{unrun}";
         }
-        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked) is { } stale)
+        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked, patience) is { } stale)
         {
             throw new InvalidOperationException($"{what} was not applied: {stale}");
         }
         int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title);
         Editors.SaveAll();
         return $"Applied {what} to {files} file{(files == 1 ? "" : "s")}{unrun}";
-    });
+    }, cancel));
 
     /// <summary>A code action as code_actions lists it: its title, its kind, and the choices it offers.</summary>
     private static string Described(CodeAction action)
