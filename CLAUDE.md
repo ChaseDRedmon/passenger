@@ -319,7 +319,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`), with the debugger's decompiled
+  configurations, Find in Files' scope, whether agents are let in unasked (`agents.json`), `localHistory/`, the
+  profiler's `snapshots/`), with the debugger's decompiled
   symbols in `cache/symbols/` at the root. A Passenger that Run, Debug or
   Profile launch (Passenger.App, or any program named Passenger) keeps its state in the launcher's `sandbox/`
   (`LaunchPlan.SandboxedState`, as IntelliJ's DevKit sandbox), unless its configuration sets `PASSENGER_SETTINGS`. A
@@ -606,11 +607,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `build_output` the Build
   console, and `profile` takes `attach`. The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
-  window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them
-  three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
-  folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
-  (standard input and output joined to the window over the agent's folder). On a person's window a tool neither
-  `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`).
+  window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
+  agent joins), a window's own socket under the state folder (`AgentSocket`, open from the window's start but for
+  `--no-mcp` and a screenshot without `--agent`), and `--mcp-attach [PID] [FOLDER]` (`McpProxy`: the agent's server for
+  its whole session, answering initialize and tools/list from `McpHost.ToolMethods` and joining, at a tool call, only a
+  window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
+  through the process's `PID.open` socket (`AppSocket`, `PassengerApp.OpenProject`), else starts Passenger (`open -a` on
+  the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Every call on a
+  window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder's
+  Always for this folder (`agents.json`), else the person's answer to `AgentAdmissionDialog` within
+  `MainWindow.AgentAnswerLimit`; turning the setting off ends the connections (`AgentSocket.ShutOut`). On a person's
+  window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`),
+  and `open` asks before it replaces their folder.
 - Attach to Process: `MainWindow.Attach.cs` (`Debugging/AttachToProcessDialog`, Reattach, the recently attached);
   `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
   on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows). An attached session is
@@ -813,8 +821,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **Every program Passenger starts goes through `ChildProcesses`** (`Command` or `DotnetCommand`, then `Start` or
   `RunAsync`; `Kill` ends it with all it started), so none outlives the IDE. Only the terminal's shell (Porta.Pty's,
   ended by its pseudo-terminal's hangup), vstest.console (VSTest's, which watches the IDE) and, on Windows, Velopack's
-  Update.exe (started as Passenger closes with an update ready, since it must outlive Passenger to replace it) start
-  elsewhere. macOS's update runs nothing after Passenger: it swaps the app in as the process ends and starts the new
+  Update.exe (started as Passenger closes with an update ready, since it must outlive Passenger to replace it), and
+  the person's Passenger that an agent's `--mcp-attach` starts outside an app bundle (`ChildProcesses.StartApart`, a
+  session of its own that outlives the agent; in a bundle on macOS through LaunchServices' `open`, through ChildProcesses)
+  start elsewhere. macOS's update runs nothing after Passenger: it swaps the app in as the process ends and starts the new
   one through LaunchServices (`open`, through ChildProcesses). A program a run configuration runs in the terminal is
   started by Porta.Pty and then `ChildProcesses.Adopt`ed: its process group goes on Lifeline's watchdog (macOS, Linux),
   and Porta.Pty's job ends it on Windows.
@@ -883,7 +893,9 @@ the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux) and `PAS
 sets that server's `SlowRequest`/`ResponseLimit`, never the run's, since a check Roslyn answers late under load would end
 a server that was only slow. Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
-log, history or Git signing and hooks. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
+log, history or Git signing and hooks. Nor does a test start the person's Passenger: the run sets `PASSENGER_START=headless`, so an agent's
+`--mcp-attach` with no window to join starts this build with `--headless` (a person's window on the headless platform,
+ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
 an update gives its window the updater of a copy installed in a test folder, and no other window has one. After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
