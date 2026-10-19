@@ -457,29 +457,30 @@ SOFTWARE.
 file of Visual Studio Code's own extensions (https://github.com/microsoft/vscode, MIT, Copyright (c) 2015 - present
 Microsoft Corporation), unchanged, from the project its header names:
 
-- `xml.tmLanguage.json` (VS Code 1.140.0, `extensions/xml`): from atom/language-xml
+- `xml.tmLanguage.json` (VS Code 1.142.0, `extensions/xml`): from atom/language-xml
   (https://github.com/atom/language-xml), MIT, Copyright (c) 2014 GitHub Inc., which was converted from the TextMate
   bundle textmate/xml.tmbundle, under the TextMate bundle licence below.
-- `JSON.tmLanguage.json` (VS Code 1.140.0, `extensions/json`): from microsoft/vscode-JSON.tmLanguage
+- `JSON.tmLanguage.json` (VS Code 1.142.0, `extensions/json`): from microsoft/vscode-JSON.tmLanguage
   (https://github.com/microsoft/vscode-JSON.tmLanguage), MIT, Copyright (c) 2015 simonzack, zertosh, benvie.
 - `yaml.tmLanguage.json` (VS Code 1.85.0, `extensions/yaml`): the YAML syntax of textmate/yaml.tmbundle
   (https://github.com/textmate/yaml.tmbundle), MIT, Copyright (c) 2015 FichteFoll, as its `Syntaxes/YAML-license.txt`
-  says.
-- `markdown.tmLanguage.json` (VS Code 1.140.0, `extensions/markdown-basics`): from microsoft/vscode-markdown-tm-grammar
+  says. It stays at 1.85.0: VS Code's own since is RedCMD/YAML-Syntax-Highlighter's (a grammar per YAML version),
+  which TextMateSharp did not read rightly when these grammars came in; its 2.0.4 is still its newest.
+- `markdown.tmLanguage.json` (VS Code 1.142.0, `extensions/markdown-basics`): from microsoft/vscode-markdown-tm-grammar
   (https://github.com/microsoft/vscode-markdown-tm-grammar), MIT, Copyright (c) Microsoft 2018, derived from
   textmate/markdown.tmbundle, under the TextMate bundle licence below.
-- `html.tmLanguage.json` (VS Code 1.140.0, `extensions/html`): converted from textmate/html.tmbundle
+- `html.tmLanguage.json` (VS Code 1.142.0, `extensions/html`): converted from textmate/html.tmbundle
   (https://github.com/textmate/html.tmbundle), under the TextMate bundle licence below.
-- `css.tmLanguage.json` (VS Code 1.140.0, `extensions/css`): from microsoft/vscode-css
+- `css.tmLanguage.json` (VS Code 1.142.0, `extensions/css`): from microsoft/vscode-css
   (https://github.com/microsoft/vscode-css), MIT, Copyright (c) Microsoft Corporation, derived from atom/language-css
   and the TextMate bundle textmate/css.tmbundle, under the TextMate bundle licence below.
-- `JavaScript.tmLanguage.json` (VS Code 1.140.0, `extensions/javascript`) and `TypeScript.tmLanguage.json` (VS Code
-  1.140.0, `extensions/typescript-basics`): from microsoft/TypeScript-TmLanguage
+- `JavaScript.tmLanguage.json` (VS Code 1.142.0, `extensions/javascript`) and `TypeScript.tmLanguage.json` (VS Code
+  1.142.0, `extensions/typescript-basics`): from microsoft/TypeScript-TmLanguage
   (https://github.com/microsoft/TypeScript-TmLanguage), MIT, Copyright (c) Microsoft Corporation; VS Code names
   textmate/javascript.tmbundle, under the TextMate bundle licence below, among the JavaScript grammar's sources too.
-- `shell-unix-bash.tmLanguage.json` (VS Code 1.140.0, `extensions/shellscript`): from jeff-hykin/better-shell-syntax
+- `shell-unix-bash.tmLanguage.json` (VS Code 1.142.0, `extensions/shellscript`): from jeff-hykin/better-shell-syntax
   (https://github.com/jeff-hykin/better-shell-syntax), MIT, Copyright (c) 2019 Jeff Hykin.
-- `docker.tmLanguage.json` (VS Code 1.140.0, `extensions/docker`): from moby/moby's
+- `docker.tmLanguage.json` (VS Code 1.142.0, `extensions/docker`): from moby/moby's
   `contrib/syntax/textmate/Docker.tmbundle` (https://github.com/moby/moby), under the Apache License 2.0 below, with
   Docker's NOTICE.
 
@@ -634,7 +635,7 @@ limitations under the License.
 ## SchemaStore's JSON schemas
 
 `src/Passenger.Lsp/WebServers/schemas/` holds JSON schemas of the JSON Schema Store
-(https://github.com/SchemaStore/schemastore, `src/schemas/json/` at commit 8ae3e0c8), unchanged, carried under
+(https://github.com/SchemaStore/schemastore, `src/schemas/json/` at commit 5661ee1b), unchanged, carried under
 `web/schemas/`: those the JSON language server checks and completes package.json, tsconfig.json, jsconfig.json,
 appsettings.json, launchSettings.json and global.json by (`package.json`, `tsconfig.json`, `jsconfig.json`,
 `appsettings.json`, `launchsettings.json`, `global.json`), and those they refer to (`eslintrc.json`, `prettierrc.json`,
