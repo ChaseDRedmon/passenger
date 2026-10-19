@@ -554,7 +554,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   for XAML of either dialect, a `WebDocument`'s server for the web languages (ESLint's fixes first, the project's
   Prettier for `format`), `MSBuildDocument` for project files; a command a language lacks is refused naming what it has
   (`Lacks`), and where a tool and a window command answer the same question they share one method in `CodeAssist`
-  (`XamlPlaceAsync`, `XamlUsesAsync`, `XamlRenameAsync`, `JsonDeclarationAsync`, `PrettifyAsync`). The tools reach the
+  (`XamlPlaceAsync`, `XamlUsesAsync`, `XamlRenameAsync`, `JsonDeclarationAsync`, `PrettifyAsync`). `app_details` is the
+  Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` and
+  `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
+  `LiveTreeController.Watching`; `debug_state` carries `bindingValues`; `hot_reload` is Apply Hot Reload Changes
+  (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word); the headless `--mcp` IDE
+  keeps the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `McpTests.Actions`
+  holds `ide_actions` to every `AppActions` id. The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them
   three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
