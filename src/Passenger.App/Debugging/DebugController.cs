@@ -204,6 +204,7 @@ public sealed class DebugController : IDisposable
     /// <summary>Why Apply Changes cannot run: nothing debugged, a session without Hot Reload, or one that stopped taking
     /// changes.</summary>
     public string? WhyNotApply() => !IsDebugging ? NothingDebugged
+        : Session!.State == DebugState.Starting ? StillStarting
         : hotReload is null ? (Session!.Attached
             ? "Hot Reload applies changes to a program the debugger launched, not to one it attached to"
             : "This program was launched with Hot Reload when debugging off (Settings, Hot Reload)")
@@ -307,7 +308,7 @@ public sealed class DebugController : IDisposable
             ? arguments => run(plan.Name, arguments)
             : null;
         bool hotReloadOn = HotReloadOn();
-        return OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn), plan.Name,
+        return OpenAsync((built, log, output, starting) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn, starting), plan.Name,
             launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn);
     }
 
@@ -327,12 +328,14 @@ public sealed class DebugController : IDisposable
     /// <summary>Attaches the debugger to a running .NET process, as Attach to Process does: what it writes goes where it
     /// always went, as Rider's Console says. Null once the session is open, else why it could not.</summary>
     public Task<string?> AttachAsync(int processId, string name) =>
-        OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf), name, launched: false);
+        OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting), name, launched: false);
 
     /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
-    /// Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the terminal's).</summary>
-    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched, bool inTerminal = false,
-        bool hotReloadOn = false)
+    /// Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the terminal's). The
+    /// session is <see cref="Session"/> from its first moment, as Rider's Stop is there as soon as a session begins: its
+    /// start waits for the program's runtime as long as that takes. A start that failed leaves none.</summary>
+    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Action<DebugSession>, Task<DebugSession>> open, string name, bool launched,
+        bool inTerminal = false, bool hotReloadOn = false)
     {
         UiThread.Check();
         if (IsDebugging)
@@ -367,6 +370,7 @@ public sealed class DebugController : IDisposable
             view.Console.Append("Console output is not available when the debugger is attached to a running process\n");
         }
         Message?.Invoke(this, $"Debugging {name}");
+        DebugSession? starting = null;
         try
         {
             ConsoleSink console = view.Console.Sink;
@@ -383,6 +387,12 @@ public sealed class DebugController : IDisposable
                 {
                     console.Write(output.Output, into);
                 }
+            }, made =>
+            {
+                starting = made;
+                Session = made;
+                // The toolbar's Stop shows, and Stop runs, while the debugger waits for the program.
+                StateChanged?.Invoke(this, EventArgs.Empty);
             });
             Session = session;
             hotReload = hotReloadOn ? new HotReload(session, Server) : null;
@@ -397,27 +407,55 @@ public sealed class DebugController : IDisposable
         }
         catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
         {
+            bool stopped = starting is not null && starting == stoppedStarting;
+            string failed = stopped
+                ? launched ? $"Debugging {name} was stopped as it started" : $"Debugging {name} was stopped as the debugger attached, and it runs on"
+                : $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}";
+            if (starting is not null && Session != starting)
+            {
+                // Another session began meanwhile (Debug again): this one's end is not shown over it.
+                return failed;
+            }
+            Session = null;
             lines = null;
+            if (stopped)
+            {
+                view.Console.Append($"{failed}\n");
+            }
             view.Console.Flush();
             view.SetState(DebugState.Ended);
-            string failed = $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}";
             Message?.Invoke(this, failed);
             StateChanged?.Invoke(this, EventArgs.Empty);
             return failed;
         }
     }
 
+    /// <summary>The session Stop ended while it started, whose failed start is said as stopped rather than as a failure.</summary>
+    private DebugSession? stoppedStarting;
+
     /// <summary>Input for the program, which a session that has ended, or an adapter gone, may never take: its end says so.</summary>
     private static void Send(Task sending) =>
         _ = sending.ContinueWith(static sent => sent.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
+    /// <summary>Stop: the program the debugger started ends, at once while the debugger still waits for its runtime; one it
+    /// is still attaching to is let go, running on, as nothing of the session has reached it.</summary>
     public async Task StopAsync()
     {
         UiThread.Check();
-        if (Session is { } session)
+        if (Session is not { } session)
         {
-            await session.StopAsync();
+            return;
         }
+        if (session.State == DebugState.Starting)
+        {
+            stoppedStarting = session;
+            if (session.Attached)
+            {
+                await session.DetachAsync();
+                return;
+            }
+        }
+        await session.StopAsync();
     }
 
     /// <summary>Rider's Detach: the debugger lets go of the program it attached to, which runs on. Null once it has, else why
@@ -437,8 +475,11 @@ public sealed class DebugController : IDisposable
     /// its session (its input and output are the adapter's).</summary>
     private string? WhyNotDetach() => !IsDebugging ? NothingDebugged
         : !Session!.Attached ? "The debugger started this program: Stop ends it, and Detach lets go only of a program attached to"
-        : Session.State == DebugState.Starting ? "The debugger is still taking hold of the program"
+        : Session.State == DebugState.Starting ? StillStarting
         : null;
+
+    /// <summary>Why what needs the debugger's hold of the program cannot run while it starts (Stop can).</summary>
+    private const string StillStarting = "The debugger is still taking hold of the program";
 
     /// <summary>Ends the session's program and adapter as the IDE closes (<see cref="DebugSession.CloseAsync"/>).</summary>
     public Task CloseAsync()
@@ -484,7 +525,12 @@ public sealed class DebugController : IDisposable
             _ = d.ResumeAsync(session => session.ContinueAsync(), "resume");
         }, (d, c) => d.IsDebugging ? d.NotPaused() : actions.WhyNot(AppActions.Debug, c), new("Run", 1, 0));
         Add(AppActions.Pause, "Pause Program", (d, c) => _ = d.Session!.PauseAsync(),
-            (d, _) => !d.IsDebugging ? NothingDebugged : d.Session!.State == DebugState.Paused ? "The program is paused already" : null, new("Run", 1, 1));
+            (d, _) => !d.IsDebugging ? NothingDebugged : d.Session!.State switch
+            {
+                DebugState.Paused => "The program is paused already",
+                DebugState.Starting => StillStarting,
+                _ => null,
+            }, new("Run", 1, 1));
         Add(AppActions.StepOver, "Step Over", (d, c) => _ = d.ResumeAsync(session => session.StepOverAsync(), "step over"), (d, _) => d.NotPaused(), new("Run", 1, 2));
         Add(AppActions.StepInto, "Step Into", (d, c) => _ = d.ResumeAsync(session => session.StepIntoAsync(), "step into"), (d, _) => d.NotPaused(), new("Run", 1, 3));
         Add(AppActions.SmartStepInto, "Smart Step Into", (d, c) => _ = d.SmartStepIntoAsync(), (d, _) => d.NotPaused(), new("Run", 1, 4));

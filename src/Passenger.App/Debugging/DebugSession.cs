@@ -74,6 +74,12 @@ public sealed class DebugSession
     /// <summary>The adapter's one disconnect, once asked: nothing more is asked of it, since it may go before answering.</summary>
     private Task? disconnected;
 
+    /// <summary>Done once the disconnect is asked, which ends a start's waits.</summary>
+    private readonly TaskCompletionSource ending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Why a start failed that was stopped (Stop, Detach, the window's close) before it was done.</summary>
+    public const string StoppedStarting = "the session was stopped as it started";
+
     private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns)
     {
         this.breakpoints = breakpoints;
@@ -209,9 +215,11 @@ public sealed class DebugSession
     /// executable), with the breakpoints the store has, its exception breakpoints among them (Rider's "Any exception" stops
     /// on what the user's code leaves unhandled). What the program writes, and the debugger's own words ("console"), go to
     /// <paramref name="output"/> on the connection's thread, in order. With <paramref name="runInTerminal"/> the program
-    /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.</summary>
+    /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.
+    /// <paramref name="starting"/> is handed the session as it begins, so Stop can end it while it starts.</summary>
     public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false) =>
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false,
+        Action<DebugSession>? starting = null) =>
         StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
             Program = plan.Program,
@@ -222,16 +230,19 @@ public sealed class DebugSession
             JustMyCode = true,
             StopAtEntry = false,
             HotReload = hotReload,
-        }, breakpoints, lines, log, output, runInTerminal, columns);
+        }, breakpoints, lines, log, output, runInTerminal, columns, starting);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (one Attach to Process chose, or a test host
-    /// VSTest started), with the store's breakpoints.</summary>
+    /// VSTest started), with the store's breakpoints; <paramref name="starting"/> is handed the session as it begins.</summary>
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<LineBreakpoint, int?>? columns = null) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null, columns);
+        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null) =>
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null, columns, starting);
 
+    /// <summary>Opens the session: the adapter told what to start, the breakpoints sent, then configurationDone, whose answer
+    /// waits for the program's runtime however long it takes. A session stopped meanwhile ends the start at once, failing it
+    /// with <see cref="StoppedStarting"/>.</summary>
     private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns)
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting)
     {
         UiThread.Check();
         DebugSession session = new(breakpoints, lines, log, output, columns) { Program = program, Attached = request == "attach" };
@@ -247,6 +258,7 @@ public sealed class DebugSession
             }));
         }
         session.connection.Start();
+        starting?.Invoke(session);
         try
         {
             DapCapabilities capabilities = await session.connection.RequestAsync<DapCapabilities>("initialize", new InitializeArguments
@@ -263,7 +275,8 @@ public sealed class DebugSession
             session.DataBreakpointsUnavailable = capabilities.SupportsDataBreakpoints == true ? null
                 : capabilities.DataBreakpointsUnavailable ?? "The debugger sets no data breakpoints";
             await session.connection.RequestAsync(request, arguments);
-            await session.initialized.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Task.WhenAny(session.initialized.Task, session.ending.Task).WaitAsync(TimeSpan.FromSeconds(30));
+            session.GoingOn();
             foreach (string path in breakpoints.Files)
             {
                 await session.SendBreakpointsAsync(path);
@@ -273,6 +286,8 @@ public sealed class DebugSession
             {
                 await session.SendFunctionBreakpointsAsync();
             }
+            // Never asked of an adapter already told to go: it would start the program as it went.
+            session.GoingOn();
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
             // A stop told before this answer stands, as one before a resume's does (Passenger's adapter tells none until it is written).
             if (session.State == DebugState.Starting)
@@ -285,6 +300,15 @@ public sealed class DebugSession
         {
             await session.StopAsync();
             throw;
+        }
+    }
+
+    /// <summary>A start goes on only while nothing has stopped it.</summary>
+    private void GoingOn()
+    {
+        if (disconnected is not null)
+        {
+            throw new InvalidOperationException(StoppedStarting);
         }
     }
 
@@ -419,6 +443,7 @@ public sealed class DebugSession
     {
         // Not held: the window's end waits for these with no UI thread to come back to (MainWindow.Ended).
         Task asked = disconnected ??= Task.Run(() => DisconnectAsync(terminate));
+        ending.TrySetResult();
         return Task.Run(async () =>
         {
             await Task.WhenAny(asked, Task.Delay(answer));

@@ -38,6 +38,9 @@ public sealed class ProfilerCommands
 
     private readonly ProfilerParts parts;
     private string profilingName = string.Empty;
+
+    /// <summary>Ends the start under way, which waits for the program to reach the profiler: Kill while it starts.</summary>
+    private CancellationTokenSource? starting;
     private Task<SnapshotRead>? snapshotting;
 
     /// <summary>The process the snapshot shown came from, none for one opened from its file.</summary>
@@ -64,7 +67,17 @@ public sealed class ProfilerCommands
             Menus = [new MenuPlace("Run", 3, 0)],
         });
         View.StopRequested += (_, _) => _ = SnapshotAsync();
-        View.KillRequested += (_, _) => Session.Profiling?.Kill();
+        View.KillRequested += (_, _) =>
+        {
+            if (starting is { } start)
+            {
+                start.Cancel();
+            }
+            else
+            {
+                Session.Profiling?.Kill();
+            }
+        };
         View.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
         View.FramesPage.ControlOpened += (_, control) => OpenControl(control);
         View.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
@@ -140,18 +153,23 @@ public sealed class ProfilerCommands
         // An Avalonia app is profiled with the inspector in it, which records its frames into the run's trace.
         LaunchPlan launched = profiled.InspectedProfile(plan!);
         LiveApp? inspected = profiled.ProfiledApp;
+        using CancellationTokenSource stop = new();
         try
         {
             ProfileTarget target = new(launched.Program, launched.Arguments, launched.WorkingDirectory, launched.Environment);
             run.Clear();
             ConsoleSink console = run.Sink;
             ProfilingSession running;
+            // Kill is there while the program starts, as Stop is while the debugger waits for one.
+            starting = stop;
+            View.Starting(chosen.Name);
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
             using (BackgroundWork.Scope())
             {
                 running = await ProfilingSession.StartAsync(target, SnapshotFolder,
-                    (text, error) => console.Write(text, error ? ConsoleStream.Error : ConsoleStream.Output));
+                    (text, error) => console.Write(text, error ? ConsoleStream.Error : ConsoleStream.Output), stop.Token);
             }
+            starting = null;
             profiled.Profiling = running;
             if (profiled.IsEnded)
             {
@@ -181,6 +199,16 @@ public sealed class ProfilerCommands
             }), TaskScheduler.Default);
             return null;
         }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            // Killed as it started: the start ended the program and its port.
+            inspected?.Dispose();
+            profiled.Profiling = null;
+            string stopped = $"Profiling {chosen.Name} was stopped as it started";
+            View.Stopped(stopped);
+            parts.Say(stopped);
+            return stopped;
+        }
         catch (Exception error) when (error is ProfilingException or InvalidOperationException or IOException or UnauthorizedAccessException
             or TimeoutException or System.ComponentModel.Win32Exception or DiagnosticsClientException)
         {
@@ -188,6 +216,13 @@ public sealed class ProfilerCommands
             profiled.Profiling = null;
             View.Stopped(error.Message);
             return error.Message;
+        }
+        finally
+        {
+            if (starting == stop)
+            {
+                starting = null;
+            }
         }
     }
 

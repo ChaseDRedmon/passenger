@@ -1519,6 +1519,64 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.Close();
     }
 
+    /// <summary>A debug session is Stop's from its first moment, as Rider's is: one whose program's runtime is slow to start
+    /// (here held at its start, a diagnostic port of the test's own) shows Stop on the toolbar and in the Debug window while
+    /// the debugger waits, and Stop ends it at once, the program and the debugger with it, the Debug window and the status
+    /// bar saying it was stopped.</summary>
+    [AvaloniaFact]
+    public void Stop_ends_a_debug_session_whose_program_is_still_starting_and_the_program_with_it()
+    {
+        using Debugging.Helpers.StartHold hold = new();
+        MainWindow window = Open();
+        window.SetConfigurations([new Passenger.App.Run.RunConfiguration
+        {
+            Name = "Sum held",
+            Project = Path.Combine(PathNames.Canonical(folder), "Sum.csproj"),
+            Environment = new Dictionary<string, string>(hold.Environment),
+        }], "Sum held");
+        Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
+        int program = 0;
+        int adapter = 0;
+        try
+        {
+            // Not settled: the start holds the window's background work for as long as the debugger waits for the program.
+            Assert.True(window.Perform(AppActions.Debug), $"Debug did not start: {window.Status}");
+            Ui.PumpUntil(() => held.IsCompleted, "the build, then the program's runtime to come to the hold", TimeSpan.FromMinutes(3));
+            program = held.Result;
+            Assert.True(window.Debugger.Session is not null, $"The debugger waited for the program to start with no session for Stop to end: the status bar said \"{window.Status}\"");
+            DebugSession starting = window.Debugger.Session!;
+            adapter = starting.AdapterProcessId;
+            Assert.Equal(DebugState.Starting, starting.State);
+            Assert.True(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar had no Stop while the debugger waited for the program to start");
+            Button stop = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
+            Assert.True(stop.IsEnabled, "The Debug window's Stop was greyed while the debugger waited for the program to start");
+
+            // Clicked as Click does, not settled: without Stop the start would hold the background work for good.
+            Point at = stop.TranslatePoint(new Point(stop.Bounds.Width / 2, stop.Bounds.Height / 2), window) ?? throw new InvalidOperationException("The Debug window's Stop is not in the window");
+            window.MouseDown(at, MouseButton.Left);
+            window.MouseUp(at, MouseButton.Left);
+            try
+            {
+                Ui.PumpUntil(() => window.Debugger.Session is null && !Processes.IsRunning(program), "Stop to end the starting session and its program", TimeSpan.FromSeconds(15));
+            }
+            catch (TimeoutException waited)
+            {
+                throw new TimeoutException($"{waited.Message}. {Debugged(window)}", waited);
+            }
+            Assert.True(Processes.Gone(adapter), $"Stop left the debugger running: {Processes.Describe(adapter)}");
+            Assert.Equal("Debugging Sum held was stopped as it started", window.Status);
+            Assert.Contains("Debugging Sum held was stopped as it started", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Assert.False(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the session ended");
+            Assert.False(stop.IsEnabled, "The Debug window's Stop stayed once the session ended");
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+            Processes.Kill(adapter);
+        }
+    }
+
     /// <summary>The window over the folder, its configuration "Sum in the terminal" debugging Sum in the terminal with these
     /// arguments, and chosen.</summary>
     private MainWindow InTerminal(string arguments)

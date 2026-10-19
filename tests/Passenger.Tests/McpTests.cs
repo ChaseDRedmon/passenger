@@ -164,6 +164,47 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             (test.GetProperty("test").GetString(), test.GetProperty("state").GetString(), test.GetProperty("location").GetString()));
     }
 
+    /// <summary>An agent's stop ends a debug session still starting, as Stop does: while debug_start waits for a program whose
+    /// runtime is held at its start (a launch profile's diagnostic port, the test's own), stop ends the session and the
+    /// program at once, and debug_start answers that it was stopped.</summary>
+    [Fact]
+    public async Task An_agents_stop_ends_a_debug_session_whose_program_is_still_starting()
+    {
+        using Debugging.Helpers.StartHold hold = new();
+        Directory.CreateDirectory(Path.Combine(folder, "Properties"));
+        File.WriteAllText(Path.Combine(folder, "Properties", "launchSettings.json"), JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["profiles"] = new Dictionary<string, object> { ["Held"] = new Dictionary<string, object> { ["commandName"] = "Project", ["environmentVariables"] = hold.Environment } },
+        }));
+        await using McpClient client = await Start(["--mcp", folder]);
+        Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
+        Task<CallToolResult> debugging = Result(client, "debug_start", new() { ["configuration"] = "Sum: Held" });
+        int program = 0;
+        try
+        {
+            if (await Task.WhenAny(held, debugging) == debugging)
+            {
+                Assert.Fail($"debug_start answered before the program came to the hold: {Words(await debugging)}{Said()}");
+            }
+            program = await held;
+
+            Assert.Equal("Stopped", (await Call(client, "stop")).GetString());
+            Assert.True(await Task.WhenAny(debugging, Task.Delay(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken)) == debugging,
+                $"debug_start still waited for the program 15 s after the agent's stop{Said()}");
+            CallToolResult stopped = await debugging;
+            Assert.True(stopped.IsError == true && Words(stopped).Contains("Debugging Sum: Held was stopped as it started", StringComparison.Ordinal),
+                $"debug_start, stopped as it started, answered: {Words(stopped)}");
+            Assert.True(Processes.Gone(program), $"The agent's stop left the program running: {Processes.Describe(program)}");
+            Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
+        }
+        finally
+        {
+            Processes.Kill(program);
+        }
+
+        static string Words(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
+    }
+
     [Fact]
     public async Task An_agent_attaches_to_a_program_already_running_stops_it_at_a_breakpoint_and_detaches_leaving_it_running()
     {

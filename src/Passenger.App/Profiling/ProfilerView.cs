@@ -331,6 +331,15 @@ public sealed class ProfilerView : DockPanel
 
     public string Status => status.Text ?? string.Empty;
 
+    /// <summary>A run is starting, its program not yet at the profiler: Kill ends it, and nothing is recorded to snapshot.</summary>
+    public void Starting(string name)
+    {
+        stop.IsVisible = false;
+        heap.IsVisible = false;
+        kill.IsVisible = true;
+        status.Text = $"Starting {name} under the profiler…";
+    }
+
     /// <summary>A run has begun; one attached to a program already running has no Kill, the program being another's.</summary>
     public void Running(string name, Func<TimeSpan> clock, bool attached = false)
     {

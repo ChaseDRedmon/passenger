@@ -183,6 +183,49 @@ public sealed class ProfilerTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Kill is there while a profiled program starts, as Stop is while the debugger waits for one: a program that
+    /// never reaches the profiler (its diagnostics turned off, so it runs on without ever coming to the profiler's port) is
+    /// ended at once, rather than when the profiler gives up on it 30 s later, and the profiler window says so.</summary>
+    [AvaloniaFact]
+    public void Kill_ends_a_profiled_program_that_has_not_reached_the_profiler_at_once()
+    {
+        string written = Path.Combine(folder, "unreached.pid");
+        string project = Project("Unreached", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.ReadLine();\n");
+        Directory.CreateDirectory(Path.Combine(project, "Properties"));
+        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
+            "{ \"profiles\": { \"Undiagnosed\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_EnableDiagnostics\": \"0\" } } } }");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<string> before = Ports();
+        Task<string?> started = window.ProfileAsync();
+        int program = 0;
+        try
+        {
+            program = Processes.WrittenId(written, "the program to run as the profiler waits for it");
+            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+            Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
+                .Single(b => b.Content as string == "Kill");
+            Assert.False(started.IsCompleted, $"The profiler gave up on the program before it was killed: {(started.IsCompleted ? started.Result : null)}");
+            Assert.True(kill.IsVisible, "The profiler window had no Kill while the program it started had not reached it");
+
+            kill.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.PumpUntil(() => started.IsCompleted, "Kill to end the profile's start", TimeSpan.FromSeconds(10));
+            Assert.Equal("Profiling Unreached: Undiagnosed was stopped as it started", started.Result);
+            Assert.True(Processes.Gone(program), $"Kill left the program running: {Processes.Describe(program)}");
+            Assert.Null(window.Profiling);
+            Assert.Equal(started.Result, view.Status);
+            Assert.False(kill.IsVisible, "Kill stayed once the start was ended");
+            Assert.Equal(before, Ports());
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+        }
+    }
+
     [AvaloniaFact]
     public void A_memory_snapshot_of_a_program_being_profiled_counts_its_heap_by_type_and_it_runs_on()
     {
