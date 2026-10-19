@@ -99,12 +99,18 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         stop = await Call(client, "debug_continue");
         Assert.Equal("2", Local(stop, "i"));
 
+        // An edit made while it is paused runs once it goes on, as the window's Resume applies one: Twice(2) and Twice(3)
+        // add one each.
+        await Call(client, "open_file", new() { ["path"] = "Helper.cs", ["line"] = 6, ["column"] = 25 });
+        await Call(client, "type", new() { ["text"] = " + 1" });
+
         // With the breakpoint gone the program runs to its unhandled exception, which is named.
         await Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 4 });
         stop = await Call(client, "debug_continue");
         Assert.Equal("exception", stop.GetProperty("reason").GetString());
         Assert.StartsWith("System.InvalidOperationException: the end", stop.GetProperty("exception").GetString(), StringComparison.Ordinal);
-        Assert.Contains("total 12", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
+        string output = (await Call(client, "debug_output")).GetString()!;
+        Assert.True(output.Contains("total 14", StringComparison.Ordinal), $"The edit made while paused did not run once the program went on:\n{output}");
 
         CallToolResult picture = await Result(client, "screenshot");
         ImageContentBlock image = Assert.IsType<ImageContentBlock>(Assert.Single(picture.Content));

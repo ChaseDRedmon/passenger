@@ -628,11 +628,8 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "debug_run_to", Title = "Run to a line", Destructive = false), Description(
         "Runs on to a line, as Run to Cursor does, stopping sooner at a breakpoint, and waits up to waitSeconds for the stop.")]
-    public Task<DebugSnapshot> DebugRunTo(string path, int line, int waitSeconds = 30, CancellationToken cancel = default) => OnUi(cancel, async () =>
-    {
-        await Paused().RunToCursorAsync(Resolve(path), line - 1);
-        return await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel);
-    });
+    public Task<DebugSnapshot> DebugRunTo(string path, int line, int waitSeconds = 30, CancellationToken cancel = default) =>
+        Resume(session => session.RunToCursorAsync(Resolve(path), line - 1), waitSeconds, cancel);
 
     [McpServerTool(Name = "debug_set_next_statement", Title = "Set Next Statement", Destructive = false), Description(
         "Moves where the paused program goes on from to another line of the method it is paused in, as Rider's Set Next Statement: "
@@ -761,9 +758,14 @@ public sealed partial class PassengerTools(MainWindow window)
         }
     }
 
+    /// <summary>Sets the paused program going as the window's keys do, the edits made while it was paused applied first.</summary>
     private Task<DebugSnapshot> Resume(Func<DebugSession, Task> resume, int waitSeconds, CancellationToken cancel) => OnUi(cancel, async () =>
     {
-        await resume(Paused());
+        DebugSession paused = Paused();
+        if (await Session.Debug.ApplyBeforeResumingAsync(paused))
+        {
+            await resume(paused);
+        }
         return await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
 

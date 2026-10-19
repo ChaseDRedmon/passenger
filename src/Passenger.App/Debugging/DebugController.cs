@@ -524,6 +524,24 @@ public sealed class DebugController : IDisposable
             ? XamlBreakpoints.AttributeAt(file.Text.Snapshot, file.Text.Snapshot.GetOffset(context.Caret))
             : null;
 
+    /// <summary>The edits made while the program was paused, applied before it steps or resumes, by the window's keys and an
+    /// agent's tools alike: false when the program restarted for them, or is no longer paused, and so is not to be set going.</summary>
+    public async Task<bool> ApplyBeforeResumingAsync(DebugSession session)
+    {
+        if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
+        {
+            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome))
+            {
+                return false;
+            }
+            if (session != Session || session.State != DebugState.Paused)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// <summary>Why a step cannot go now: nothing is being debugged, or the program runs.</summary>
     private string? NotPaused() => !IsDebugging ? NothingDebugged : Session!.State != DebugState.Paused ? "The program is not paused" : null;
 
@@ -533,20 +551,9 @@ public sealed class DebugController : IDisposable
     /// Settings says); one that does not compile is left, and the program goes on in the code it has, never stranded.</summary>
     private async Task ResumeAsync(Func<DebugSession, Task> resume, string action)
     {
-        if (Session is not { } session)
+        if (Session is not { } session || !await ApplyBeforeResumingAsync(session))
         {
             return;
-        }
-        if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
-        {
-            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome))
-            {
-                return;
-            }
-            if (session != Session || session.State != DebugState.Paused)
-            {
-                return;
-            }
         }
         try
         {
