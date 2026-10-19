@@ -170,6 +170,21 @@ public sealed class EditingBehaviourTests
         Assert.Equal("    Run();\n    Stop();", rig.Text);
     }
 
+    /// <summary>A block comment can hold what reads as another one's start (a path's "/*"), from which a caret after it
+    /// finds the comment, by the same end as a caret before it does: the two carets take the comment's ends off once.</summary>
+    [AvaloniaFact]
+    public void Block_comment_at_carets_in_one_comment_holding_another_start_takes_its_ends_off_once()
+    {
+        const string text = "/* copies src/*.cs and docs/*.md */\nint x;\n";
+        EditorRig rig = new(text);
+        rig.PlaceCaret(text.IndexOf("copies", StringComparison.Ordinal));
+        rig.AddCaret(text.IndexOf(".md", StringComparison.Ordinal));
+        rig.Press("control meta SLASH");
+        Assert.True(rig.Text == "copies src/*.cs and docs/*.md\nint x;\n",
+            $"Block Comment at two carets in one comment left \"{rig.Text}\", not the comment's text without its ends");
+        Assert.Equal(2, rig.Editor.Selections.Count);
+    }
+
     [AvaloniaFact]
     public void Copy_with_nothing_selected_takes_the_line_and_paste_puts_it_back_above()
     {

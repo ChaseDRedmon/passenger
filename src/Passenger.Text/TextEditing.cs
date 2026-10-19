@@ -458,29 +458,46 @@ public static class TextEditing
         HashSet<int> uncommented = [];
         foreach (Selection s in selections.Items)
         {
-            if (Enclosing(all, s, start, end) is { } comment)
+            TextEdit[] own;
+            TextRange? comment = Enclosing(all, s, start, end);
+            if (comment is { } enclosing)
             {
-                if (uncommented.Add(comment.Start))
+                if (uncommented.Contains(enclosing.Start))
                 {
-                    int opened = comment.Start + start.Length;
-                    int closed = comment.End - end.Length;
-                    int afterStart = opened < closed && all[opened] == ' ' ? 1 : 0;
-                    int beforeEnd = closed - 1 > opened && all[closed - 1] == ' ' ? 1 : 0;
-                    edits.Add(new TextEdit(comment.Start, start.Length + afterStart, string.Empty));
-                    edits.Add(new TextEdit(closed - beforeEnd, end.Length + beforeEnd, string.Empty));
+                    continue;
                 }
+                int opened = enclosing.Start + start.Length;
+                int closed = enclosing.End - end.Length;
+                int afterStart = opened < closed && all[opened] == ' ' ? 1 : 0;
+                int beforeEnd = closed - 1 > opened && all[closed - 1] == ' ' ? 1 : 0;
+                own = [new TextEdit(enclosing.Start, start.Length + afterStart, string.Empty), new TextEdit(closed - beforeEnd, end.Length + beforeEnd, string.Empty)];
             }
             else if (s.IsEmpty)
             {
-                if (emptied.Add(s.Caret))
+                if (emptied.Contains(s.Caret))
                 {
-                    edits.Add(new TextEdit(s.Caret, 0, start + end));
+                    continue;
                 }
+                own = [new TextEdit(s.Caret, 0, start + end)];
             }
             else
             {
-                edits.Add(new TextEdit(s.Start, 0, start));
-                edits.Add(new TextEdit(s.End, 0, end));
+                own = [new TextEdit(s.Start, 0, start), new TextEdit(s.End, 0, end)];
+            }
+            // Carets in one comment that holds another start (a path's "/*.cs") find it from different starts but by the
+            // same end, which only the first takes off: a selection's edits that would meet another's go, whole.
+            if (own.Any(e => edits.Any(made => Meet(made, e))))
+            {
+                continue;
+            }
+            edits.AddRange(own);
+            if (comment is { } taken)
+            {
+                uncommented.Add(taken.Start);
+            }
+            else if (s.IsEmpty)
+            {
+                emptied.Add(s.Caret);
             }
         }
         if (edits.Count == 0)
@@ -493,6 +510,10 @@ public static class TextEditing
             ? Selection.At(Map(sorted, s.Caret, true) - end.Length)
             : Carried(sorted, s)), EditKind.Other);
     }
+
+    /// <summary>Whether an edit overlaps one made before it, as <see cref="TextDocument.Edit"/> refuses them once sorted
+    /// (the one made first goes first of two at one place).</summary>
+    private static bool Meet(TextEdit made, TextEdit edit) => made.Start <= edit.Start ? edit.Start < made.End : made.Start < edit.End;
 
     /// <summary>The block comment a selection is, or lies in: the nearest start at or before it with no end between, and
     /// the first end at or after it.</summary>
