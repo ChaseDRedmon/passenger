@@ -16,7 +16,7 @@ namespace Passenger.Tests;
 /// says its evaluated value and where it was set; Go to Declaration goes where a property, target or import is defined,
 /// the SDK's own targets read-only; the evaluation's errors and a vulnerable package are marked on their lines and listed in
 /// Problems; and a project file saved has the Solution view show what it says now.</summary>
-public sealed class ProjectFileHelpTests : IDisposable
+public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Shop>
 {
     private const string Advisory = "https://github.com/advisories/GHSA-pass-0000-test";
 
@@ -54,47 +54,14 @@ public sealed class ProjectFileHelpTests : IDisposable
 
         """;
 
-    private readonly string folder = PathNames.Canonical(TestFolders.Create("projectfiles-"));
-    private readonly StandInFeed feed = new();
+    private readonly Shop shop;
+    private readonly string folder;
 
-    public ProjectFileHelpTests()
+    public ProjectFileHelpTests(Shop shop)
     {
-        feed.Add("Passenger.Vulnerable", "1.0.0");
-        feed.Add("Passenger.Vulnerable", "1.0.1");
-        feed.Add("Passenger.Vulnerable", "1.1.0");
-        feed.Add("Passenger.Sample", "2.0.0");
-        feed.Add("Passenger.Other", "3.0.0");
-        feed.Advise("Passenger.Vulnerable", 1, Advisory, "[1.0.0, 1.0.1)");
-        // Only the stand-in, for packages and for the audit, and restores kept out of the person's package cache.
-        Write("nuget.config", $"""
-            <?xml version="1.0" encoding="utf-8"?>
-            <configuration>
-              <packageSources>
-                <clear />
-                <add key="stand-in" value="{feed.Index}" protocolVersion="3" allowInsecureConnections="true" />
-              </packageSources>
-              <auditSources>
-                <clear />
-                <add key="stand-in" value="{feed.Index}" allowInsecureConnections="true" />
-              </auditSources>
-              <config>
-                <add key="globalPackagesFolder" value="packages" />
-              </config>
-            </configuration>
-            """);
-        Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Core/Core.csproj\" />\n</Solution>\n");
-        Write("Directory.Build.props", BuildProps);
-        Write("App/App.csproj", Project);
-        Write("App/Shared.targets", "<Project>\n  <Target Name=\"Greet\" BeforeTargets=\"Build\" />\n</Project>\n");
-        Write("App/Program.cs", "System.Console.WriteLine(\"Shop\");\n");
-        Write("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n");
-        Write("Core/Store.cs", "class Store\n{\n}\n");
-    }
-
-    public void Dispose()
-    {
-        feed.Dispose();
-        TestFolders.Delete(folder);
+        this.shop = shop;
+        shop.Reset();
+        folder = PathNames.Canonical(shop.Folder);
     }
 
     [AvaloniaFact]
@@ -371,9 +338,10 @@ public sealed class ProjectFileHelpTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A window on the solution, on the server the class's last window left.</summary>
     private MainWindow Open(string file, bool autosaves = false)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves, WarmServer = shop.Server };
         window.Show();
         window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
         window.OpenFile(Path.Combine(folder, file));
@@ -405,10 +373,61 @@ public sealed class ProjectFileHelpTests : IDisposable
 
     private static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch) => XamlTests.MarkerOn(editor, document, stretch);
 
-    private void Write(string relative, string text)
+    private void Write(string relative, string text) => shop.Write(relative, text);
+
+    /// <summary>The solution of App and Core over Directory.Build.props, its packages from a stand-in feed on loopback (for
+    /// the audit too) into a package folder of its own, restored once for every test, and the warm server they share on it.</summary>
+    public sealed class Shop : SharedProject
     {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
+        private readonly StandInFeed feed = new();
+
+        public Shop()
+            : base("projectfiles-")
+        {
+            feed.Add("Passenger.Vulnerable", "1.0.0");
+            feed.Add("Passenger.Vulnerable", "1.0.1");
+            feed.Add("Passenger.Vulnerable", "1.1.0");
+            feed.Add("Passenger.Sample", "2.0.0");
+            feed.Add("Passenger.Other", "3.0.0");
+            feed.Advise("Passenger.Vulnerable", 1, Advisory, "[1.0.0, 1.0.1)");
+            // Only the stand-in, for packages and for the audit, and restores kept out of the person's package cache.
+            Put("nuget.config", $"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <configuration>
+                  <packageSources>
+                    <clear />
+                    <add key="stand-in" value="{feed.Index}" protocolVersion="3" allowInsecureConnections="true" />
+                  </packageSources>
+                  <auditSources>
+                    <clear />
+                    <add key="stand-in" value="{feed.Index}" allowInsecureConnections="true" />
+                  </auditSources>
+                  <config>
+                    <add key="globalPackagesFolder" value="packages" />
+                  </config>
+                </configuration>
+                """);
+            Put("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Core/Core.csproj\" />\n</Solution>\n");
+            Put("Directory.Build.props", BuildProps);
+            Put("App/App.csproj", Project);
+            Put("App/Shared.targets", "<Project>\n  <Target Name=\"Greet\" BeforeTargets=\"Build\" />\n</Project>\n");
+            Put("App/Program.cs", "System.Console.WriteLine(\"Shop\");\n");
+            Put("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n");
+            Put("Core/Store.cs", "class Store\n{\n}\n");
+            Prepare();
+        }
+
+        public override void Dispose()
+        {
+            base.Dispose();
+            feed.Dispose();
+        }
+
+        private void Put(string relative, string text)
+        {
+            string path = PathOf(relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
+        }
     }
 }

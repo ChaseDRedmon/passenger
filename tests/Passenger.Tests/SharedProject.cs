@@ -110,7 +110,8 @@ public abstract class SharedProject : IDisposable
         }
     }
 
-    public void Dispose()
+    /// <summary>Ends the shared server and removes the project; a fixture that holds more (a stand-in feed) ends it too.</summary>
+    public virtual void Dispose()
     {
         Drop();
         TestFolders.Delete(Folder);
