@@ -46,6 +46,18 @@ foreach (string arg in args)
     }
 }
 
+// How long an evaluation may run before it is stopped, shortened for the tests' run; a value that is no whole number of
+// milliseconds above 0 is fatal, as a flag's is.
+if (Environment.GetEnvironmentVariable(Passenger.Debugger.Extensions.EvaluationTimeoutVariable) is { Length: > 0 } timeout)
+{
+    if (!int.TryParse(timeout, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) || milliseconds <= 0)
+    {
+        Console.Error.WriteLine($"{Passenger.Debugger.Extensions.EvaluationTimeoutVariable} must be a whole number of milliseconds above 0, not '{timeout}'");
+        return 2;
+    }
+    Passenger.Debugger.Extensions.EvaluationTimeout = TimeSpan.FromMilliseconds(milliseconds);
+}
+
 StreamWriter? logWriter = null;
 if (logPath is not null)
 {

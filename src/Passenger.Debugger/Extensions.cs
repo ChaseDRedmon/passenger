@@ -215,8 +215,18 @@ public static class Extensions
 
     /// <summary>How long code the debugger runs in the program (a getter, a watch's call) may take before
     /// it is stopped, so one that never returns cannot hang the debugger (upstream #30). A static of the adapter's
-    /// process, one per debug session whichever window started it.</summary>
+    /// process, one per debug session whichever window started it; the adapter takes PASSENGER_EVAL_TIMEOUT_MS
+    /// (the tests' run gives 1 s), and the waits for an abort to take scale with it.</summary>
     public static TimeSpan EvaluationTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The variable that gives <see cref="EvaluationTimeout"/> in milliseconds.</summary>
+    public const string EvaluationTimeoutVariable = "PASSENGER_EVAL_TIMEOUT_MS";
+
+    /// <summary>How long an abort may take before a rude abort is tried: 2 s of the 5 s.</summary>
+    private static TimeSpan AbortWait => EvaluationTimeout * 0.4;
+
+    /// <summary>How long a rude abort may take before the evaluation is left to run on: 5 s of the 5 s.</summary>
+    private static TimeSpan RudeAbortWait => EvaluationTimeout;
 
     private static async Task<ICorDebugValue?> RunEvalAsync(ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, bool throwOnException, Action startEval, Func<EvalCompleteCorDebugManagedCallbackEventArgs, ICorDebugValue?> onComplete)
     {
@@ -257,11 +267,11 @@ public static class Extensions
                 // Abort, then a rude abort if that does not take; either way the runtime still ends the
                 // evaluation with its callback, which is waited for so no other request reads it.
                 eval.TryAbort();
-                if (await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(2))) != waiting && eval is ICorDebugEval2 rude)
+                if (await Task.WhenAny(waiting, Task.Delay(AbortWait)) != waiting && eval is ICorDebugEval2 rude)
                 {
                     rude.TryRudeAbort();
                 }
-                bool stopped = await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(5))) == waiting || await GiveUp(waiting) is not null;
+                bool stopped = await Task.WhenAny(waiting, Task.Delay(RudeAbortWait)) == waiting || await GiveUp(waiting) is not null;
                 if (stopped && eval.TryGetResult(out ICorDebugValue? partial) is Cor.S_OK && partial is ICorDebugHandleValue handle)
                 {
                     handle.TryDispose();
@@ -273,10 +283,10 @@ public static class Extensions
                     process.Stop(0);
                     evalStatus.Abandoned[thread.Id] = eval;
                 }
-                evalStatus.ImplicitOff = $"Implicit evaluation is disabled: an evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s. It is enabled again once the program runs on";
+                evalStatus.ImplicitOff = $"Implicit evaluation is disabled: an evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s. It is enabled again once the program runs on";
                 throw new ManagedDebugger.EvalException(stopped
-                    ? $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped: it may wait on another thread, which stays paused while it runs"
-                    : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and could not be stopped: it runs on in the program until it returns, the program paused meanwhile");
+                    ? $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s and was stopped: it may wait on another thread, which stays paused while it runs"
+                    : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s and could not be stopped: it runs on in the program until it returns, the program paused meanwhile");
             }
             CorDebugManagedCallbackEventArgs evalEvent = await waiting;
             if (evalEvent is EvalCompleteCorDebugManagedCallbackEventArgs completeEvent)

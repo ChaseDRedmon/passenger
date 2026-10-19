@@ -902,24 +902,31 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     public void An_evaluation_that_could_not_be_stopped_leaves_the_program_paused_and_a_step_goes_on_once_it_returns()
     {
         // A getter that reads input the program has not been given: an evaluation of it cannot be stopped, and runs on.
-        Write("Program.cs", "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n\n"
-            + "static class Waits\n{\n    public static string Input => Console.ReadLine() ?? \"none\";\n}\n");
+        Write("Program.cs", "Counted counted = new();\nint total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total} {counted.Count}\");\n\n"
+            + "static class Waits\n{\n    public static string Input => Console.ReadLine() ?? \"none\";\n}\n\n"
+            + "sealed class Counted\n{\n    public int Count => 1;\n}\n");
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(3, 4));
+        editor.GoTo(new TextPosition(4, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => Value(window, "i") == "1", "the stop in the loop");
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
 
-        Ui.Run(window, AppActions.Evaluate);
-        window.KeyTextInput("Waits.Input");
-        Ui.Press(window, "Enter");
+        Evaluate(window, "Waits.Input");
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "Waits.Input" && r.Value.Contains("could not be stopped", StringComparison.Ordinal)),
             "the debugger to give up on the evaluation");
         Assert.True(window.Debugger.Session?.State == DebugState.Paused, "The program was left running while the IDE showed it paused");
-        Assert.Contains(new LineMark(3, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineMark(4, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Assert.NotEmpty(view.Frames);
+        // The locals read after it are the stop's: the evaluation's frames, left on its thread above them, are not.
+        Assert.True(Value(window, "i") == "1", $"After the evaluation Variables showed {string.Join(", ", view.Tree.Rows.Select(r => $"{r.Name} = {r.Value}"))}: the evaluation's frames were taken for the stop's");
+        // No getter runs while it does, as in Rider and Visual Studio, though what needs no code run in the program evaluates.
+        Assert.True(Member(window, "counted", "Count").StartsWith("Implicit evaluation is disabled", StringComparison.Ordinal),
+            "A getter ran while an evaluation that could not be stopped still ran");
+        Evaluate(window, "i + 1");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "i + 1"), "the sum evaluated");
+        Assert.Equal("2", view.Tree.Rows.First(r => r.Name == "i + 1").Value);
 
         // The step is taken, and ends at the loop body's closing brace once the read the evaluation waits on has its line.
         Ui.Run(window, AppActions.StepOver);
@@ -927,12 +934,30 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             "the step to be taken");
         Assert.True(window.Debugger.Session?.State == DebugState.Running, $"The step was refused: {window.Status}");
         _ = window.Debugger.Session!.InputAsync("typed\n");
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && editor.LineMarks.Contains(new LineMark(4, LineMarkKind.ExecutionPoint)),
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && editor.LineMarks.Contains(new LineMark(5, LineMarkKind.ExecutionPoint)),
             "the step to end at the next line");
         Ui.WaitFor(() => Value(window, "total") == "1", "the stop's locals");
+        // The program has gone on since, so getters run again.
+        Assert.Equal("1", Member(window, "counted", "Count"));
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
+
+        static void Evaluate(MainWindow window, string expression)
+        {
+            Ui.Run(window, AppActions.Evaluate);
+            window.KeyTextInput(expression);
+            Ui.Press(window, "Enter");
+        }
+
+        static string Member(MainWindow window, string local, string member)
+        {
+            VariableNode row = Row(window, local) ?? throw new InvalidOperationException($"Variables shows no {local}");
+            Task opened = window.BottomPanel.Debug.Tree.Expand(row);
+            Ui.WaitFor(() => opened.IsCompleted, $"{local}'s members");
+            return row.Children?.FirstOrDefault(c => c.Name == member)?.Value
+                ?? throw new InvalidOperationException($"{local} has no member {member}: {string.Join(", ", (row.Children ?? []).Select(c => c.Name))}");
+        }
     }
 
     [AvaloniaFact]

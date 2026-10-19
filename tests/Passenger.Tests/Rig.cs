@@ -99,6 +99,9 @@ public sealed class TestRun : IDisposable
         // Nor the person's application data: a Testing Platform test app the IDE runs writes its first-run notice's
         // sentinel there (Microsoft/TestingPlatform) unless telemetry is opted out.
         Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
+        // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
+        // debugger gives up on an evaluation after 1 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable).
+        Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "1000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }

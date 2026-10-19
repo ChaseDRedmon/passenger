@@ -157,7 +157,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         {
             if (Stopwatch.GetTimestamp() > run.Deadline)
             {
-                throw new ManagedDebugger.EvalException($"{TookTooLong}: it was stopped after {Extensions.EvaluationTimeout.TotalSeconds:0} s");
+                throw new ManagedDebugger.EvalException($"{TookTooLong}: it was stopped after {Extensions.EvaluationTimeout.TotalSeconds:0.#} s");
             }
             CilInstruction instruction = instructions[index++];
             try
