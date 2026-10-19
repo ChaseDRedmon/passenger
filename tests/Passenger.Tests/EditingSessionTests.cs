@@ -326,8 +326,8 @@ public sealed class EditingSessionTests
 
         public int[] Type(IReadOnlyList<int> carets, char c) => AtEachCaret(carets, (at, _) => at, _ => c.ToString());
 
-        /// <summary>Enter at every caret: a line break and the line's indentation up to the caret, the spaces after the
-        /// caret going, up to the next caret.</summary>
+        /// <summary>Enter at every caret: a line break and the line's whole indentation (from inside it too, so the text
+        /// moved down keeps it), the spaces after the caret going, up to the next caret.</summary>
         public int[] Enter(IReadOnlyList<int> carets) => AtEachCaret(
             carets,
             (at, next) =>
@@ -339,7 +339,7 @@ public sealed class EditingSessionTests
                 }
                 return end;
             },
-            at => "\n" + new string(' ', Math.Min(IndentAt(LineStartOf(at)), at - LineStartOf(at))));
+            at => "\n" + new string(' ', IndentAt(LineStartOf(at))));
 
         /// <summary>Join Lines at every caret: its line and the next become one. In a run of joined lines the blank ones
         /// go and the others meet with one space, the first keeping its indentation and the last its trailing spaces; a

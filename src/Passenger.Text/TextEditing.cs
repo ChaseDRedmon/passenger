@@ -154,7 +154,8 @@ public static class TextEditing
 
     /// <summary>Enter: a line break carrying the line's indentation, one level more after an opening
     /// bracket, and the closer pushed to its own line when the caret sat between a pair. Spaces right
-    /// after the caret go, up to the next caret, so the new line starts at its indentation.</summary>
+    /// after the caret go, up to the next caret, so the new line starts at its indentation; from inside the
+    /// indentation, that is the whole line's, which the text moved down keeps.</summary>
     public static EditPlan NewLine(TextSnapshot text, SelectionSet selections, string eol, IndentOptions indent)
     {
         List<Replacement> replacements = [];
@@ -162,7 +163,7 @@ public static class TextEditing
         {
             Selection s = selections.Items[i];
             LineSpan line = text.GetLine(text.GetLineFromOffset(s.Start));
-            string lineIndent = text.GetText(line.Start, Math.Min(TextNavigation.IndentEnd(text, line), s.Start) - line.Start);
+            string lineIndent = text.GetText(line.Start, TextNavigation.IndentEnd(text, line) - line.Start);
 
             LineSpan endLine = text.GetLine(text.GetLineFromOffset(s.End));
             // A later caret in these spaces breaks the line itself, so this one's spaces, and any pair, stop at it.

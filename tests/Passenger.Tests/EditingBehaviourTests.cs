@@ -45,6 +45,22 @@ public sealed class EditingBehaviourTests
     }
 
     [AvaloniaFact]
+    public void Enter_at_the_start_of_an_indented_line_moves_the_line_down_with_its_indentation()
+    {
+        EditorRig rig = new("{\n    first();\n    second();\n}");
+        rig.PlaceCaret("{\n    first();\n".Length);
+        rig.Press("ENTER");
+        Assert.True(rig.Text == "{\n    first();\n\n    second();\n}", $"Enter at the line's start took its indentation away:\n{rig.Text}");
+        Assert.Equal(new TextPosition(3, 4), rig.Editor.CaretPosition);
+
+        // From the middle of the indentation the line keeps it all too.
+        rig.PlaceCaret("{\n    first();\n\n  ".Length);
+        rig.Press("ENTER");
+        Assert.True(rig.Text == "{\n    first();\n\n  \n    second();\n}", $"Enter inside the line's indentation took part of it away:\n{rig.Text}");
+        Assert.Equal(new TextPosition(4, 4), rig.Editor.CaretPosition);
+    }
+
+    [AvaloniaFact]
     public void Backspace_in_indentation_removes_a_whole_level()
     {
         EditorRig rig = new("        x");
