@@ -19,11 +19,18 @@ namespace Passenger.Tests;
 /// gone from disk is marked and refused with why. Clone Repository clones and opens, says why it could not, and stops
 /// when canceled; File, Recent Solutions opens one with its recent files. File, Open takes the solution or project chosen
 /// as the workspace, of a folder's several, kept and reopened as itself, and refuses anything else with why.</summary>
-public sealed class WelcomeTests : IDisposable
+public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisposable
 {
+    private readonly Workspaces workspaces;
     private readonly string settings = TestFolders.Create("settings-");
     private readonly string alpha = TestFolders.Create("alpha-");
     private readonly string beta = TestFolders.Create("beta-");
+
+    public WelcomeTests(Workspaces workspaces)
+    {
+        this.workspaces = workspaces;
+        workspaces.Reset();
+    }
 
     public void Dispose()
     {
@@ -165,7 +172,7 @@ public sealed class WelcomeTests : IDisposable
         string folder = Solutions();
         string a = PathNames.Canonical(Path.Combine(folder, "A.sln"));
         string b = PathNames.Canonical(Path.Combine(folder, "B.slnx"));
-        MainWindow window = Started(LaunchOptions.Empty);
+        MainWindow window = Started(LaunchOptions.Empty, workspaces.Server);
 
         // Named for its folder, A.sln is what the folder opens as on its own: only the choice makes B the workspace.
         Assert.Null(window.Open(folder));
@@ -187,7 +194,7 @@ public sealed class WelcomeTests : IDisposable
         OpenedAs(window, b, "B", ["AppB"]);
         window.Close();
 
-        MainWindow next = Started(LaunchOptions.Empty);
+        MainWindow next = Started(LaunchOptions.Empty, workspaces.Server);
         OpenedAs(next, b, "B", ["AppB"]);
         next.Close();
     }
@@ -197,7 +204,7 @@ public sealed class WelcomeTests : IDisposable
     {
         using IDisposable theme = TestsTheme();
         string tool = PathNames.Canonical(Path.Combine(Solutions(), "Tool.csproj"));
-        MainWindow window = Started(LaunchOptions.Empty);
+        MainWindow window = Started(LaunchOptions.Empty, workspaces.Server);
 
         Assert.Null(window.Open(tool));
         Ui.Settle();
@@ -208,7 +215,7 @@ public sealed class WelcomeTests : IDisposable
         Assert.Equal(("Tool", tool), (window.RecentSolutions[0].Name, window.RecentSolutions[0].Path));
         window.Close();
 
-        MainWindow next = Started(LaunchOptions.Empty);
+        MainWindow next = Started(LaunchOptions.Empty, workspaces.Server);
         OpenedAs(next, tool, "Tool", ["Tool"]);
         next.Close();
     }
@@ -429,10 +436,10 @@ public sealed class WelcomeTests : IDisposable
         Ui.Submenu(window.MenuBar, menu).Items.OfType<NativeMenuItem>().Single(i => i.Header == title);
 
     /// <summary>The window a person starts, as the app makes it: its layout and settings kept in the test's state folder,
-    /// then the command line taken.</summary>
-    private MainWindow Started(LaunchOptions options)
+    /// then the command line taken; on a warm server when given one, which it takes up only for what it opens.</summary>
+    private MainWindow Started(LaunchOptions options, Passenger.App.CSharp.WarmServer? warm = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, WarmServer = warm };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
@@ -453,22 +460,31 @@ public sealed class WelcomeTests : IDisposable
         Ui.Settle();
     }
 
-    /// <summary>A folder named A holding A.sln (AppA), B.slnx (AppB) and, beside them, the project Tool.csproj.</summary>
-    private string Solutions()
+    /// <summary>The class's folder named A holding A.sln (AppA), B.slnx (AppB) and, beside them, the project Tool.csproj.</summary>
+    private string Solutions() => PathNames.Canonical(workspaces.PathOf("A"));
+
+    /// <summary>A folder of several workspaces, the class's own, restored once for the tests that open them, which only
+    /// read it; and the warm server their windows share. All.slnx, beside A, is only what restores its three projects.</summary>
+    public sealed class Workspaces : SharedProject
     {
-        string folder = Path.Combine(alpha, "A");
-        string project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
-        Directory.CreateDirectory(Path.Combine(folder, "AppA"));
-        Directory.CreateDirectory(Path.Combine(folder, "AppB"));
-        File.WriteAllText(Path.Combine(folder, "AppA", "AppA.csproj"), project);
-        File.WriteAllText(Path.Combine(folder, "AppB", "AppB.csproj"), project);
-        File.WriteAllText(Path.Combine(folder, "Tool.csproj"), project);
-        File.WriteAllText(Path.Combine(folder, "Tool.cs"), "class Tool { }\n");
-        File.WriteAllText(Path.Combine(folder, "A.sln"),
-            "Microsoft Visual Studio Solution File, Format Version 12.00\n" +
-            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"AppA\", \"AppA\\AppA.csproj\", \"{0F7C6F3B-9D31-4B0B-8B9C-3E2B1D3F0A11}\"\nEndProject\n");
-        File.WriteAllText(Path.Combine(folder, "B.slnx"), "<Solution>\n  <Project Path=\"AppB/AppB.csproj\" />\n</Solution>\n");
-        return PathNames.Canonical(folder);
+        public Workspaces()
+            : base("solutions-")
+        {
+            string folder = PathOf("A");
+            string project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+            Directory.CreateDirectory(Path.Combine(folder, "AppA"));
+            Directory.CreateDirectory(Path.Combine(folder, "AppB"));
+            File.WriteAllText(Path.Combine(folder, "AppA", "AppA.csproj"), project);
+            File.WriteAllText(Path.Combine(folder, "AppB", "AppB.csproj"), project);
+            File.WriteAllText(Path.Combine(folder, "Tool.csproj"), project);
+            File.WriteAllText(Path.Combine(folder, "Tool.cs"), "class Tool { }\n");
+            File.WriteAllText(Path.Combine(folder, "A.sln"),
+                "Microsoft Visual Studio Solution File, Format Version 12.00\n" +
+                "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"AppA\", \"AppA\\AppA.csproj\", \"{0F7C6F3B-9D31-4B0B-8B9C-3E2B1D3F0A11}\"\nEndProject\n");
+            File.WriteAllText(Path.Combine(folder, "B.slnx"), "<Solution>\n  <Project Path=\"AppB/AppB.csproj\" />\n</Solution>\n");
+            File.WriteAllText(PathOf("All.slnx"), "<Solution>\n  <Project Path=\"A/AppA/AppA.csproj\" />\n  <Project Path=\"A/AppB/AppB.csproj\" />\n  <Project Path=\"A/Tool.csproj\" />\n</Solution>\n");
+            Prepare();
+        }
     }
 
     /// <summary>That the window has a solution or project as its workspace, as a person sees it and the language server
