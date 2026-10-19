@@ -11,25 +11,18 @@ namespace Passenger.Tests;
 /// <summary>Which everyday edits Hot Reload applies to a program debugged on .NET 10, each made in the editor while the
 /// program runs (or, for a method on the stack, while it is paused in it) and applied with Apply Hot Reload Changes: the
 /// program then prints what the edited code prints, or, for an edit the runtime cannot take, Hot Reload names it at its line
-/// and applies nothing. Debugged, so run alone.</summary>
+/// and applies nothing. Each edit is a debug session of its own on one project the rows share, restored once, its build
+/// and its language server carried from row to row while the files on disk stay as written. Debugged, so run alone.</summary>
 [Collection(Alone.Name)]
-public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDisposable
+public sealed class HotReloadEditsTests : IClassFixture<HotReloadEditsTests.Ticks>
 {
-    private readonly string folder;
+    private readonly Ticks project;
 
-    public HotReloadEditsTests(RestoredFolders folders)
+    public HotReloadEditsTests(Ticks project)
     {
-        folder = folders.Take("hotreload-edits-", made =>
-        {
-            File.WriteAllText(Path.Combine(made, "Ticks.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
-            File.WriteAllText(Path.Combine(made, "Program.cs"), "for (int i = 1; ; i++)\n{\n    Demo.Tick(i);\n    Thread.Sleep(100);\n}\n");
-            File.WriteAllText(Path.Combine(made, "Demo.cs"), Demo);
-            return made;
-        });
+        this.project = project;
+        project.Reset();
     }
-
-    public void Dispose() => TestFolders.Delete(folder);
 
     /// <summary>A static class, a class with an instance, a lambda, an async method, a record and a generic method, each
     /// printing a line every tick.</summary>
@@ -103,7 +96,7 @@ public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDispo
         if (kind == "a field's type")
         {
             // The field exists in the build; its type is what the edit changes.
-            File.WriteAllText(DemoPath, Demo.Replace("    static readonly Counter counter = new();", "    static readonly Counter counter = new();\n    static int ticks;", StringComparison.Ordinal));
+            project.Write("Demo.cs", Demo.Replace("    static readonly Counter counter = new();", "    static readonly Counter counter = new();\n    static int ticks;", StringComparison.Ordinal));
             edits = [("    static int ticks;", "    static long ticks;")];
         }
         MainWindow window = Open();
@@ -164,7 +157,7 @@ public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDispo
         }
     }
 
-    private string DemoPath => Path.Combine(PathNames.Canonical(folder), "Demo.cs");
+    private string DemoPath => Path.Combine(PathNames.Canonical(project.Folder), "Demo.cs");
 
     private static string Output(MainWindow window) => window.Debugger.Output().ToString();
 
@@ -183,11 +176,13 @@ public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDispo
 
     private static string Squeezed(string text) => string.Concat(text.Where(c => !char.IsWhiteSpace(c)));
 
+    /// <summary>A window on the project, on the server the last row's left, which never saves what its row typed: what is
+    /// on disk stays what the build was made from.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = project.Server };
         window.Show();
-        window.OpenFolder(folder);
+        window.OpenFolder(project.Folder);
         Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
         return window;
     }
@@ -200,5 +195,19 @@ public sealed class HotReloadEditsTests : IClassFixture<RestoredFolders>, IDispo
             Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         }
         window.Close();
+    }
+
+    /// <summary>A program that ticks for ever, each tick printing a line from each kind of code an edit is made to.</summary>
+    public sealed class Ticks : SharedProject
+    {
+        public Ticks()
+            : base("hotreload-edits-")
+        {
+            File.WriteAllText(PathOf("Ticks.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(PathOf("Program.cs"), "for (int i = 1; ; i++)\n{\n    Demo.Tick(i);\n    Thread.Sleep(100);\n}\n");
+            File.WriteAllText(PathOf("Demo.cs"), Demo);
+            Prepare();
+        }
     }
 }
