@@ -128,3 +128,43 @@
 
     main();
 })();
+
+// A Copy button on each of the agent section's commands and paths, so a setup line is taken whole and exact.
+(() => {
+    "use strict";
+
+    function copy(text, button) {
+        const done = () => {
+            button.textContent = "Copied";
+            setTimeout(() => { button.textContent = "Copy"; }, 1500);
+        };
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(done, () => { button.textContent = "Select and copy"; });
+        } else {
+            button.textContent = "Select and copy";
+        }
+    }
+
+    function button(label, text) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "copy";
+        b.textContent = "Copy";
+        b.setAttribute("aria-label", `Copy ${label}`);
+        b.addEventListener("click", () => copy(text(), b));
+        return b;
+    }
+
+    document.querySelectorAll("#agents pre").forEach(pre => {
+        const box = document.createElement("div");
+        box.className = "copyable";
+        pre.replaceWith(box);
+        box.append(pre, button("the command", () => pre.textContent.trim()));
+    });
+    document.querySelectorAll("#agents .paths li").forEach(item => {
+        const code = item.querySelector("code");
+        if (code) {
+            item.append(button(`${item.querySelector("span")?.textContent ?? ""} path`.trim(), () => code.textContent.trim()));
+        }
+    });
+})();
