@@ -100,9 +100,10 @@ public sealed class TestRun : IDisposable
         // sentinel there (Microsoft/TestingPlatform) unless telemetry is opted out.
         Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
-        // debugger gives up on an evaluation after 1 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable),
-        // and dotnet watch's words after what it made of a save are followed for 3 s, not 10.
-        Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "1000");
+        // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable;
+        // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
+        // made of a save are followed for 3 s, not 10.
+        Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "3000");
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();

@@ -878,8 +878,8 @@ exception.
 A run keeps to a folder of its own (`TestRun`, set up by a module initializer before anything starts): the IDE's state
 (`PASSENGER_SETTINGS`: its log, the language servers' logs, agents' sockets, profiler snapshots), every test's
 folders (`TestFolders.Create`) and the shells' history, with an empty Git configuration in place of the person's
-(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (1 s for
-the debugger's 5 s) and `PASSENGER_WATCH_LATER_MS` (3 s for 10); a test that holds a language server to not responding
+(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (3 s for
+the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux) and `PASSENGER_WATCH_LATER_MS` (3 s for 10); a test that holds a language server to not responding
 sets that server's `SlowRequest`/`ResponseLimit`, never the run's, since a check Roslyn answers late under load would end
 a server that was only slow. Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
