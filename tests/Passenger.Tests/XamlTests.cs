@@ -844,6 +844,8 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
                 File.WriteAllText(PathOf("App.axaml"), AppXaml);
                 File.WriteAllText(PathOf("MainWindow.axaml"), Window);
                 File.WriteAllText(PathOf("MainWindow.axaml.cs"), CodeBehind);
+                // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+                Directory.CreateDirectory(PathOf("bin"));
             }, Folder);
             Prepare();
         }
