@@ -233,9 +233,9 @@ public sealed class BuildRunController
         }
     }
 
-    /// <summary>Waits for the project host's design-time builds of WPF projects under way, the Build window saying which,
-    /// and holds the rest off until the build ends (<see cref="FinishBuild"/>): both write a project's obj/…/App.g.cs, and
-    /// on Windows the second writer's MarkupCompile fails (MC1000).</summary>
+    /// <summary>Waits for the project host's design-time builds of WPF and Avalonia projects under way, the Build window
+    /// saying which, and holds the rest off until the build ends (<see cref="FinishBuild"/>): both write a project's
+    /// obj/…/App.g.cs or obj/…/Avalonia/resources, and on Windows the second writer fails (MC1000, MSB4018).</summary>
     private Task HoldDesignTimeBuildsAsync(CancellationToken stop) => session.DesignTimeBuilds.HoldAsync(running =>
     {
         if (session.Builder.IsRunning)

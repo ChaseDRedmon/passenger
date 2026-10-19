@@ -567,6 +567,71 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
+    /// <summary>An Avalonia app built the moment it opens, while the project host's design-time build of it is writing its
+    /// resources: Avalonia's GenerateAvaloniaResources runs before CoreCompile, so in a design-time build too, and both
+    /// write obj/…/Avalonia/resources, which on Windows failed the build (MSB4018, "The process cannot access the file",
+    /// CI's NewSolutionTests). The build waits for the design-time build, as a WPF app's does. Here the design-time build
+    /// holds the resources as the task does while it writes them, until the test lets it go; a build's begun meanwhile
+    /// says so.</summary>
+    [AvaloniaFact]
+    public void A_build_begun_while_an_avalonia_apps_design_time_build_writes_its_resources_waits_for_it_and_succeeds()
+    {
+        string app = PathNames.Canonical(TestFolders.Create("avalonia-build-"));
+        string release = Path.Combine(app, "release");
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                File.WriteAllText(Path.Combine(app, "Overlap.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+                    + $"  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Avalonia\" Version=\"{AvaloniaApp.Version}\" />\n"
+                    + "    <AvaloniaResource Include=\"Assets/**\" />\n  </ItemGroup>\n</Project>\n");
+                Directory.CreateDirectory(Path.Combine(app, "Assets"));
+                File.WriteAllText(Path.Combine(app, "Assets", "note.txt"), "a resource\n");
+                File.WriteAllText(Path.Combine(app, "Shapes.cs"), "namespace Overlap;\n\npublic sealed class Circle\n{\n}\n");
+                File.WriteAllText(Path.Combine(app, "Directory.Build.targets"), """
+                    <Project>
+                      <Target Name="Hold" BeforeTargets="GenerateAvaloniaResources" Condition="'$(DesignTimeBuild)' == 'true' And !Exists('release')">
+                        <MakeDir Directories="$(IntermediateOutputPath)Avalonia" />
+                        <Exec Condition="'$(OS)' == 'Windows_NT'" Timeout="120000" Command="powershell -NoProfile -Command &quot;$held = [IO.File]::Open('$(IntermediateOutputPath)Avalonia\resources', 'OpenOrCreate', 'Write', 'Read'); Set-Content -Path held -Value held; while (-not (Test-Path release)) { Start-Sleep -Milliseconds 100 }; $held.Dispose()&quot;" />
+                        <Exec Condition="'$(OS)' != 'Windows_NT'" Timeout="120000" Command="echo held &gt; held; while [ ! -f release ]; do sleep 0.1; done" />
+                      </Target>
+                      <Target Name="Overlap" BeforeTargets="GenerateAvaloniaResources" Condition="'$(DesignTimeBuild)' != 'true' And Exists('held') And !Exists('release')">
+                        <WriteLinesToFile File="overlapped" Lines="begun" />
+                      </Target>
+                    </Project>
+                    """);
+                Restore.Run(Path.Combine(app, "Overlap.csproj"));
+            }, app);
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            window.OpenFolder(app);
+            try
+            {
+                // Pumped, not settled: the language server's load waits for the design-time build.
+                Ui.PumpUntil(() => File.Exists(Path.Combine(app, "held")), "the design-time build to hold the Avalonia resources", TimeSpan.FromMinutes(2));
+                Assert.True(window.Perform(AppActions.Build));
+                const string waiting = "Waiting for the design-time build of Overlap to end";
+                Ui.PumpUntil(() => !window.IsBuilding || window.BottomPanel.Build.Document.Snapshot.ToString().Contains(waiting, StringComparison.Ordinal),
+                    "the build to wait for the design-time build or end", TimeSpan.FromMinutes(2));
+                File.WriteAllText(release, "go");
+                Ui.PumpUntil(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(3));
+                string built = window.BottomPanel.Build.Document.Snapshot.ToString();
+                Assert.False(File.Exists(Path.Combine(app, "overlapped")), $"The build wrote the Avalonia resources while the design-time build had them open ({window.Status}):\n{built}");
+                Assert.True(window.Status == "Build succeeded", $"The Avalonia app did not build once its design-time build had ended ({Ui.Said(window)}):\n{built}");
+                Assert.Contains(waiting, built, StringComparison.Ordinal);
+            }
+            finally
+            {
+                File.WriteAllText(release, "go");
+                window.Close();
+            }
+        }
+        finally
+        {
+            TestFolders.Delete(app);
+        }
+    }
+
     /// <summary>The dotnet command of the build just begun, once it has started: a build starts it once the project host
     /// has held its design-time builds off. Pumped, not settled, as the build holds background work until it ends.</summary>
     private static int BuildCommand(MainWindow window, int? before)

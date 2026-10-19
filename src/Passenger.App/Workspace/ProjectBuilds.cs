@@ -115,8 +115,8 @@ public sealed class ProjectBuilds
         waiting.Clear();
     }
 
-    /// <summary>Holds the project host's design-time builds of WPF projects off (every window's on that host) for a build of
-    /// the IDE's own, which writes the generated code they write in obj/: done once those running, named to
+    /// <summary>Holds the project host's design-time builds of WPF and Avalonia projects off (every window's on that host)
+    /// for a build of the IDE's own, which writes the generated code and resources they write in obj/: done once those running, named to
     /// <paramref name="waiting"/>, have ended, and none starts until <see cref="Release"/>. Done at once without a host.</summary>
     public async Task HoldAsync(Action<IReadOnlyList<string>> waiting, CancellationToken cancel)
     {

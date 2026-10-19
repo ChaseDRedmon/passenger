@@ -44,11 +44,16 @@ internal static class DesignTimeBuilds
     /// <summary>One build session at a time: MSBuild's build manager is the process's.</summary>
     private static readonly SemaphoreSlim Session = new(1, 1);
 
-    /// <summary>The design-time builds running WPF's markup compilation and the IDE's own builds holding them off
+    /// <summary>The design-time builds that generate XAML's output in obj/ and the IDE's own builds holding them off
     /// (<see cref="HoldAsync"/>), which take turns, as Visual Studio's builds and design-time builds take its build manager:
-    /// both write the project's obj/…/App.g.cs, which Windows lets one writer open at a time, and rewrite it under the other's
-    /// compiler. Other design-time builds write nothing a build reads, and never wait.</summary>
+    /// both write WPF's obj/…/App.g.cs and Avalonia's obj/…/Avalonia/resources, which Windows lets one writer open at a
+    /// time, and rewrite them under the other's compiler. Other design-time builds write nothing a build reads, and never
+    /// wait.</summary>
     private static readonly object Turns = new();
+
+    /// <summary>The targets a design-time build runs that write what the project's build then reads: WPF's markup
+    /// compilation, and Avalonia's resources (before CoreCompile, so in a design-time build too, unless up to date).</summary>
+    private static readonly string[] Generating = ["DesignTimeMarkupCompilation", "GenerateAvaloniaResources"];
 
     private static readonly List<string> Running = [];
     private static int holds;
@@ -100,7 +105,7 @@ internal static class DesignTimeBuilds
         }
     }
 
-    /// <summary>Holds markup-compiling design-time builds off for a build of the IDE's own until <paramref name="release"/>
+    /// <summary>Holds XAML-generating design-time builds off for a build of the IDE's own until <paramref name="release"/>
     /// is cancelled: told first of those running, if any, then that they are held once none runs.</summary>
     public static async Task HoldAsync(Action<HoldState> told, CancellationToken release)
     {
@@ -141,7 +146,7 @@ internal static class DesignTimeBuilds
         }
     }
 
-    /// <summary>A markup-compiling design-time build's turn, begun once no build of the IDE's holds them off; disposed as
+    /// <summary>A XAML-generating design-time build's turn, begun once no build of the IDE's holds them off; disposed as
     /// it ends.</summary>
     private static async Task<IDisposable> TurnAsync(string path, CancellationToken cancel)
     {
@@ -272,8 +277,8 @@ internal static class DesignTimeBuilds
     }
 
     /// <summary>Compile and CoreCompile, and XAML's markup compilation where a project has it, as Roslyn's build host runs,
-    /// with the errors and warnings the build logged, which the server reports as its build host's. One with markup
-    /// compilation takes its turn with the IDE's own builds (<see cref="HoldAsync"/>).</summary>
+    /// with the errors and warnings the build logged, which the server reports as its build host's. One that generates
+    /// XAML's output (<see cref="Generating"/>) takes its turn with the IDE's own builds (<see cref="HoldAsync"/>).</summary>
     private static async Task<(ProjectInstance Built, IReadOnlyList<BuildDiagnostic> Logged)> BuildAsync(Project project, DiagnosticLogger diagnostics, CancellationToken cancel)
     {
         ProjectInstance instance = project.CreateProjectInstance();
@@ -287,7 +292,7 @@ internal static class DesignTimeBuilds
         {
             targets.Add("DesignTimeMarkupCompilation");
         }
-        using IDisposable? turn = markup ? await TurnAsync(project.FullPath, cancel).ConfigureAwait(false) : null;
+        using IDisposable? turn = Generating.Any(instance.Targets.ContainsKey) ? await TurnAsync(project.FullPath, cancel).ConfigureAwait(false) : null;
         BuildRequestData request = new(instance, [.. targets], null, BuildRequestDataFlags.ProvideProjectStateAfterBuild);
         TaskCompletionSource<BuildResult> done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         BuildSubmission submission = BuildManager.DefaultBuildManager.PendBuildRequest(request);

@@ -45,7 +45,7 @@ public static class HostMethods
     public const string Inspect = "inspect";
 
     /// <summary><see cref="HoldParams"/>: a build of the IDE's own is to run, so no design-time build that runs WPF's markup
-    /// compilation starts until the request is cancelled; a <see cref="HoldState"/> partial says it is held once none runs,
+    /// compilation or Avalonia's resources starts until the request is cancelled; a <see cref="HoldState"/> partial says it is held once none runs,
     /// after one naming those still running, if any.</summary>
     public const string Hold = "hold";
 }
