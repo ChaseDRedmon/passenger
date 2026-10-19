@@ -570,9 +570,26 @@ public partial class MainWindow : Window
                 }
                 state.Flush();
             };
-            Closed += (_, _) => state.Release();
+            Action setAside = () => UiThread.Post(SayWhatWasSetAside);
+            State.StateFile.SetAsideNow += setAside;
+            Closed += (_, _) =>
+            {
+                State.StateFile.SetAsideNow -= setAside;
+                state.Release();
+            };
+            SayWhatWasSetAside();
         }
         return state;
+    }
+
+    /// <summary>A file of the window's state that did not read and was set aside (its settings, a folder's breakpoints)
+    /// is said in the status bar, so the person knows where what they kept went.</summary>
+    private void SayWhatWasSetAside()
+    {
+        if (State.StateFile.TakeUnsaid(StateFolder) is { Count: > 0 } said)
+        {
+            status.Text = string.Join("; ", said);
+        }
     }
 
     /// <summary>The layout as it stands, kept with the folder open and as the one a folder without its own opens on.</summary>

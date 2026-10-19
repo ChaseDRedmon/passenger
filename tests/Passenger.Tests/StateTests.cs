@@ -13,8 +13,8 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>The IDE's own state, in one store in its state folder: a file that does not read is set aside and
-/// logged, never written over; a later build's values and a hand edit out of range stay in the file while the window
+/// <summary>The IDE's own state, in one store in its state folder: a file that does not read is set aside, said in
+/// the status bar and logged, never written over; a later build's values and a hand edit out of range stay in the file while the window
 /// uses what it can; two windows' changes are both kept; what a person kept before the store is there on the first
 /// run; and a folder's layout, breakpoints and bookmarks come back with it.</summary>
 public sealed class StateTests : IDisposable
@@ -29,7 +29,7 @@ public sealed class StateTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_settings_file_a_crash_cut_short_is_set_aside_and_logged_and_never_written_over()
+    public void A_settings_file_a_crash_cut_short_is_set_aside_said_in_the_status_bar_and_logged_and_never_written_over()
     {
         using IDisposable theme = TestsTheme();
         string file = Path.Combine(settings, "settings.json");
@@ -46,6 +46,8 @@ public sealed class StateTests : IDisposable
         string log = Ui.IdeLog();
         Assert.Contains("settings.json did not read", log, StringComparison.Ordinal);
         Assert.Contains("set aside as settings.json.bad", log, StringComparison.Ordinal);
+        Assert.True(window.Status?.Contains($"settings.json did not read, so its defaults stand: what it held is kept as {file}.bad", StringComparison.Ordinal) == true,
+            $"Only the log says the settings were set aside, so the person finds them gone with nothing saying where they went: '{window.Status}'");
 
         // A change after it goes to a new file, whole, and the one set aside stays as it was.
         window.ApplySettings(window.Settings with { EditorFontSize = 15 });
@@ -55,6 +57,31 @@ public sealed class StateTests : IDisposable
         Assert.Equal(15, (double)written["editorFontSize"]!);
         Assert.Equal(cut, File.ReadAllText(file + ".bad"));
         Assert.Empty(Directory.GetFiles(settings, "*.tmp"));
+    }
+
+    [AvaloniaFact]
+    public void A_settings_file_a_hand_edit_left_not_reading_is_set_aside_by_the_next_change_and_the_status_bar_says_where_it_went()
+    {
+        using IDisposable theme = TestsTheme();
+        string file = Path.Combine(settings, "settings.json");
+        MainWindow window = Keeping();
+        window.KeepSettings();
+        window.ApplySettings(window.Settings with { EditorFontSize = 15 });
+        Ui.WaitFor(() => File.Exists(file), "the settings to be written");
+
+        // Edited by hand while the window is open, a comma too many: the window keeps what it has.
+        string broken = "{\n  \"version\": 1,\n  \"editorFontSize\": 18,,\n  \"theme\": \"Light\"\n}\n";
+        File.WriteAllText(file, broken);
+        Ui.Settle();
+        Assert.Equal(15, window.Settings.EditorFontSize);
+
+        // The next change made here cannot merge over it: it is set aside, and the status bar says where.
+        window.ApplySettings(window.Settings with { EditorFontSize = 16 });
+        Ui.WaitFor(() => File.Exists(file + ".bad"), "the file that did not read to be set aside");
+        Assert.Equal(broken, File.ReadAllText(file + ".bad"));
+        Ui.WaitFor(() => window.Status?.Contains($"what it held is kept as {file}.bad", StringComparison.Ordinal) == true,
+            "the status bar to say the settings were set aside and where");
+        window.Close();
     }
 
     [AvaloniaFact]

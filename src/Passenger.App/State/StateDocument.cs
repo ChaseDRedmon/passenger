@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.State;
@@ -23,7 +24,7 @@ public interface IStateDocument<TSelf> where TSelf : class, IStateDocument<TSelf
 /// <summary>One file of the store, read the first time it is wanted and clamped. A change is written a moment later,
 /// off the UI thread, through a temporary file flushed to disk and moved over the old one; it is merged over what the
 /// file holds then, so a value this build does not know, or one another Passenger changed, stays. A file that does not
-/// read is set aside as <c>.bad</c> and logged, never written over.</summary>
+/// read is set aside as <c>.bad</c>, logged and said in a window keeping its state there, never written over.</summary>
 public sealed class StateDocument<T> where T : class, IStateDocument<T>, new()
 {
     /// <summary>How long a change waits before it is written, so a burst of them (a drag, an edit moving breakpoints)
@@ -315,6 +316,24 @@ internal static class StateFile
     public static bool DoesNotRead(Exception error) =>
         error is JsonException or InvalidOperationException or ArgumentException or NotSupportedException or FormatException;
 
+    /// <summary>The files set aside that no window has said yet, each with what a window says of it.</summary>
+    private static readonly List<(string File, string Said)> Unsaid = [];
+
+    /// <summary>Raised on any thread once a file is set aside, for a window keeping its state there to say so.</summary>
+    public static event Action? SetAsideNow;
+
+    /// <summary>What a window keeping its state in a folder says of the files set aside there that no window has said
+    /// yet, which are then said: the person's settings in a .bad file, the defaults standing, are never news only to the log.</summary>
+    public static IReadOnlyList<string> TakeUnsaid(string root)
+    {
+        lock (Unsaid)
+        {
+            List<(string File, string Said)> taken = [.. Unsaid.Where(u => PathNames.IsUnder(u.File, Path.GetFullPath(root)))];
+            Unsaid.RemoveAll(taken.Contains);
+            return [.. taken.Select(t => t.Said)];
+        }
+    }
+
     /// <summary>Moves a file that did not read to its <c>.bad</c> name (numbered past one there already), and logs it;
     /// false when it could not be moved.</summary>
     public static bool SetAside(string file, string reason)
@@ -328,6 +347,11 @@ internal static class StateFile
         {
             File.Move(file, bad);
             Log($"{file} did not read ({reason}): set aside as {Path.GetFileName(bad)}, and the defaults stand");
+            lock (Unsaid)
+            {
+                Unsaid.Add((Path.GetFullPath(file), $"{Path.GetFileName(file)} did not read, so its defaults stand: what it held is kept as {bad}"));
+            }
+            SetAsideNow?.Invoke();
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
