@@ -73,8 +73,8 @@ $PASSENGER_PID`. macOS opens no socket path over 103 bytes, so its `PASSENGER_SE
 scene, `tools/site-shots/agent.py`, uses `$TMPDIR/pss-agent-<theme>`).
 
 Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire inside a running dispatcher frame: a wait
-that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests). One that has come due also fires while
-`Ui.Settle` runs the queued jobs, so the caret's 530 ms blink redraws the editor during any settle that long: keep what
+that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests). `Ui.Settle` fires every one that has come due
+(it promotes them, as a running frame does), so the caret's 530 ms blink redraws the editor during any settle that long: keep what
 a key holds in `BackgroundWork` short (the XAML service waits for typing to pause only in a C# file under a loaded XAML
 project).
 
@@ -922,6 +922,28 @@ is deleted, and what it covered tested through the window instead. `BannedSymbol
 by hand, a lone `TextDocument`, `LineDiff`, `CommitGraph`, `Snippet.Parse`); the editor rig in `Rig.cs` is the one
 exception.
 
+A test waits for what it checks, however slow the machine (#237). `Ui.Settle`, and every wait built on it (`Ui.Press`,
+`Ui.Landed`, `Ui.WaitFor`), waits until the IDE is quiet: `BackgroundWork` landed, nothing in `Passenger.Core.InFlight`
+(each language server request unanswered, all but Roslyn's `workspace/diagnostic` pull, which it holds open until the
+next change) and every dispatcher timer come due fired. A program `ProcessRunner` ran that has ended holds
+`BackgroundWork` until its console has its last output and exit code; the folder watcher's gathering and delivery,
+Local History's queue and a console's batches were background work already. Left out by design: a program still
+running and its output, the state store's half-second write delay (a test that reads a state file flushes it), the
+templates' read ahead, and the system's own delay before the watcher hears a change (a test that needs it heard waits
+for the watcher's `Changed`). A wait that gives up lists each hold by the file and line that took it (`InFlight.Watched`,
+set by `TestRun`, names `BackgroundWork`'s holds, `UiThread`'s crossings and each `Debounce` by caller, at no cost
+outside tests) and each piece in flight, with since when (`Ui.Busy`). No fixed sleeps: `Thread.Sleep`, `Task.Delay`
+and `Screenshot.Pump` are banned in the tests (RS0030) outside `Waiting` and `Ui`. A wait for something is `Ui.WaitFor`,
+`Ui.PumpUntil`/`Ui.Pumped` (the window's loop run, not settled) or `Waiting.Until`/`UntilAsync`/`Within` (off it);
+time a test needs to pass (a debounce it measures, a moment in which nothing may happen) is `Ui.Hold(time, why)`,
+`Ui.Stall` (the window's thread blocked) or `Waiting.For`. Every wall-clock limit is written as the time on a
+developer's machine and multiplied by `TestRun.TimeScale` (`PASSENGER_TEST_TIME_SCALE`, 1 when unset, a value that is no
+number above 0 ending the run; `Limits.Scaled`): Ui's and Waiting's waits scale what they are given, and the settle,
+folder, process, restore, git, debug adapter and MCP call limits go through it. CI sets it per system in `test.yml`
+from how much slower its runners are than the Mac (2 on macOS, 2.5 on Windows, 2 on Linux: the 90th percentile of a test's
+time there over its time on the Mac, to the nearest half). `FLAKES.md` is the ledger of CI failures and their
+causes, each a race in the IDE or a test that waited wrong, so a pattern shows.
+
 A run keeps to a folder of its own (`TestRun`, set up by a module initializer before anything starts): the IDE's state
 (`PASSENGER_SETTINGS`: its log, the language servers' logs, profiler snapshots; agents' sockets in the folder named
 for it), every test's
@@ -943,7 +965,7 @@ what they started is waited out and its folders are removed (`TestsLeaveNothingB
 cascades into the next test's waits. A plain `[Fact]` that runs window code through `HeadlessUnitTestSession.Dispatch`
 must not end on the session's thread (the next window test would wait on it for good): it hands a failure back as the
 run's answer and `await Task.Yield()`s before throwing. After a resume, a debugging test waits for the session to leave
-the stop before waiting for Ended or Paused. A Mac that sleeps during a run fails tests with "Background work never finished"
+the stop before waiting for Ended or Paused. A Mac that sleeps during a run fails tests with "The IDE was not quiet within …"
 (Settle's limits are wall-clock); `pmset -g log` shows the sleeps, and the lead's full runs go under `caffeinate -is`.
 
 What runs beside what is chosen (`Collections.cs`): window tests run one at a time on Avalonia's session thread and, as
@@ -1031,7 +1053,7 @@ build failure says why. A test's stand-in that holds a file a target writes leav
 target's inputs, makes MSBuild skip the target as up to date (an empty `obj/…/Avalonia/resources` was embedded:
 AVLN9999). Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
 never throws, while what it waits for isn't there yet; `WaitFor`'s limit also covers background work held all along (a
-build, a test run), where `Settle` alone gives up after 90 s. A chord goes through one `Ui.Press(window, "control M ,
+build, a test run), where `Settle` alone gives up after 90 s (scaled). A chord goes through one `Ui.Press(window, "control M ,
 control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a dispatcher timer that fires during a
 settle), so a settle between its keys can lose it. Find Usages, Safe Delete and every list of the server's locations
 make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per location on the UI thread. A test that opens a dialog holds it to `DialogButtonsTests.Check`

@@ -35,19 +35,26 @@ jobs:
         # its others). With four, about 13 to 15 minutes of tests each; GitHub runs five macOS jobs at once, the fifth
         # CI's disk image.
         shard: [1, 2, 3, 4]
+        # time_scale multiplies every test's wall-clock limit, each written as the time on the Mac
+        # (PASSENGER_TEST_TIME_SCALE): the 90th percentile of how much longer each test of a second or more on the Mac took
+        # on the system's runner (run 39301973028's .trx files against the Mac's, 19 October: macOS 2.23, Windows 2.64,
+        # Linux 1.96), to the nearest half.
         include:
           - system: macOS
             name: macOS (arm64)
             os: macos-latest
             shards: 4
+            time_scale: 2
           - system: Windows
             name: Windows (x64)
             os: windows-latest
             shards: 4
+            time_scale: 2.5
           - system: Linux
             name: Linux (x64)
             os: ubuntu-24.04
             shards: 4
+            time_scale: 2
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
@@ -163,6 +170,7 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
           LABEL: ${{ matrix.name }}, shard ${{ matrix.shard }} of ${{ matrix.shards }}
+          PASSENGER_TEST_TIME_SCALE: ${{ matrix.time_scale }}
         run: |
           dotnet test tests/Passenger.Tests --no-build --settings "TestResults/shards/shard-$env:SHARD.runsettings" `
             --results-directory TestResults --logger trx --logger "console;verbosity=normal" `
