@@ -731,12 +731,31 @@ public sealed class UpdatesTests : IDisposable
             return new Dictionary<string, byte[]> { [Package(version)] = bytes, ["SHA256SUMS"] = Encoding.UTF8.GetBytes(sums) };
         }
 
-        /// <summary>An app of this version made ready under the folder downloads go to, whatever it is named there.</summary>
-        public override bool Holds(string version) =>
-            Directory.Exists(Path.Combine(Staging, version))
-            && Directory.EnumerateDirectories(Path.Combine(Staging, version)).Any(staged => Version(staged) == version);
-        public override IReadOnlyList<string> Downloaded() =>
-            Directory.Exists(Staging) ? [.. Directory.EnumerateFileSystemEntries(Staging).Select(p => Path.GetFileName(p))] : [];
+        /// <summary>An app of this version made ready under the folder downloads go to, whatever it is named there: not while
+        /// the updater removes it, whose folder may go between a look's steps (a wait's look returns false, never throws).</summary>
+        public override bool Holds(string version)
+        {
+            try
+            {
+                return Directory.EnumerateDirectories(Path.Combine(Staging, version)).Any(staged => Version(staged) == version);
+            }
+            catch (Exception gone) when (gone is DirectoryNotFoundException or FileNotFoundException)
+            {
+                return false;
+            }
+        }
+
+        public override IReadOnlyList<string> Downloaded()
+        {
+            try
+            {
+                return [.. Directory.EnumerateFileSystemEntries(Staging).Select(p => Path.GetFileName(p))];
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return [];
+            }
+        }
 
         /// <summary>Whether the installed app's signature holds, as Gatekeeper checks it.</summary>
         public bool SignatureHolds() =>
