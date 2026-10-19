@@ -891,7 +891,9 @@ exception.
 A run keeps to a folder of its own (`TestRun`, set up by a module initializer before anything starts): the IDE's state
 (`PASSENGER_SETTINGS`: its log, the language servers' logs, agents' sockets, profiler snapshots), every test's
 folders (`TestFolders.Create`) and the shells' history, with an empty Git configuration in place of the person's
-(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (3 s for
+(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`); on macOS and Linux NuGet's home is the run's too, its package cache named
+as NuGet names the default, ending in a separator, so a restore of the repository's own projects (SelfDebuggingTests')
+writes the nuget.g.props the person's build did and compiles nothing again. The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (3 s for
 the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux) and `PASSENGER_WATCH_LATER_MS` (3 s for 10); a test that holds a language server to not responding
 sets that server's `SlowRequest`/`ResponseLimit`, never the run's, since a check Roslyn answers late under load would end
 a server that was only slow. Nothing changes those variables afterwards; a test that needs fresh
@@ -900,7 +902,8 @@ log, history or Git signing and hooks. Nor does a test start the person's Passen
 `--mcp-attach` with no window to join starts this build with `--headless` (a person's window on the headless platform,
 ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
-an update gives its window the updater of a copy installed in a test folder, and no other window has one. After every window test, pass or fail, the windows it left open are closed,
+an update gives its window the updater of a copy installed in a test folder, and no other window has one; each
+version's disk image is made once a class (`UpdatesTests.DiskImages`), since hdiutil takes seconds over each. After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
 cascades into the next test's waits. A plain `[Fact]` that runs window code through `HeadlessUnitTestSession.Dispatch`
 must not end on the session's thread (the next window test would wait on it for good): it hands a failure back as the
@@ -914,8 +917,13 @@ the assembly's one collection, class after class; beside them run only the debug
 window answers, a profile's samples, the debugger's evaluation limit), or that debugs through the window, goes in
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
-written before each test, and a file a test adds goes through `project.Write`. A class whose tests each restore a fresh
-folder takes it from `RestoredFolders`. A `SharedProject` leaves a repository's `.git` alone (a class whose tests change the
+written before each test, and a file a test adds goes through `project.Write`, which ends the shared server: a file
+every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A class whose tests each restore
+a fresh folder takes it from `RestoredFolders`; one whose tests mostly leave the project as written shares it and takes a
+fresh folder only for a test that changes it (`DebuggerTests.Sum` and `Fresh`), since `RestoredFolders.Take` may come in
+the test itself, its batch being no test's own (`TestFolders.Unowned`). A shared project that its first test builds
+makes its bin first (`DebuggerTests.Sum`): bin's making changes the folder's own time, which the next reset takes for a
+file added and ends the server for. A `SharedProject` leaves a repository's `.git` alone (a class whose tests change the
 repository puts it back itself) and keeps bin and obj between tests, so a window that never saves launches on an
 up-to-date build (`HotReloadEditsTests`); its `Dispose` is virtual for a fixture that holds more (`ProjectFileHelpTests`'
 stand-in feed). A rule held under both looks is checked in one window, the look switched in place through the window's
