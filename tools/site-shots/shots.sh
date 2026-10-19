@@ -6,7 +6,8 @@
 # SITE_SHOTS_FLAGS (--window-buttons by default, so macOS's are in every main-window picture) is added to every
 # capture's command line; SITE_SHOTS_REUSE=1 takes the pictures in
 # the copy the last run made, without making it again, and SITE_SHOTS_THEMES=dark (or light) takes one theme's.
-# A step's point is in the window's logical units: half the picture's pixels.
+# A step's point is in the window's logical units: half the picture's pixels. The agent scene's agent is agent.py, run
+# by python3 through --agent.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -25,7 +26,7 @@ if [[ ! -x "$passenger" ]]; then
 fi
 command -v cwebp > /dev/null || { echo "site-shots: cwebp is not on the PATH (brew install webp)" >&2; exit 2; }
 
-all_scenes=(editor debugger git find-in-files profiler xaml project-files web live-tree)
+all_scenes=(editor debugger git find-in-files profiler xaml project-files web live-tree agent)
 scenes=("$@")
 if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=("${all_scenes[@]}")
@@ -116,6 +117,10 @@ shot() {
     shift 2
     # Under TMPDIR rather than the repository, since the status bar names a profile's snapshot by its path there.
     local state="$tmp/passenger-site-shots/state/$name-$theme" png="$work/png/$name-$theme.png"
+    if [[ $name == agent ]]; then
+        # The window's agent socket is in its state's mcp/, and macOS keeps a socket's path to 103 bytes.
+        state="$tmp/pss-$name-$theme"
+    fi
     rm -rf "$state"
     mkdir -p "$state"
     PASSENGER_SETTINGS="$state" "$passenger" "$folder/Greenhouse.slnx" --theme "$theme" --look passenger \
@@ -170,6 +175,15 @@ scene() {
                 --click-name RunConfigButton --click 890,74 --click-name DebugButton --wait 10000 \
                 --key "meta+shift+F12" --key "meta+shift+A" --type "Live Visual Tree" --key enter --wait 3000 \
                 --click 994,363 --wait 2000 --hover 600,600 ;;
+        agent)
+            # An agent (agent.py, run in the Terminal window's Agent tab) debugs the app, finds its button, clicks it and
+            # reads the plants' moisture, all through Passenger's MCP server. Then the tool windows are hidden for the Live
+            # Visual Tree, the button chosen in it (its details say it has the focus), the Terminal shown again and
+            # heightened for the agent's every line, and the tree scrolled (its scrollbar's thumb dragged) to the button.
+            shot "$name" "$theme" --file src/Greenhouse.App/MainWindow.axaml --caret 16:1 \
+                --agent "python3 -I \"$repo/tools/site-shots/agent.py\"" --key "meta+shift+F12" \
+                --key "meta+shift+A" --type "Live Visual Tree" --key enter --wait 3000 --click 1020,387 --wait 2000 \
+                --key "meta+control+1" --drag 700,444,700,404 --drag 1155,124,1155,148 --wait 1000 --hover 600,300 ;;
     esac
 }
 

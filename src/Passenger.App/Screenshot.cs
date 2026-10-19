@@ -21,6 +21,9 @@ public static class Screenshot
     /// <summary>How long to wait for background work (colouring, indexing) before capturing anyway.</summary>
     private static readonly TimeSpan SettleLimit = TimeSpan.FromSeconds(90);
 
+    /// <summary>How long an agent (<c>--agent</c>) may run, as long as the longest <c>--wait</c>.</summary>
+    private static readonly TimeSpan AgentLimit = TimeSpan.FromMinutes(10);
+
     public static int Run(LaunchOptions launch, ScreenshotOptions options)
     {
         AppBuilder.Configure<App>()
@@ -101,6 +104,10 @@ public static class Screenshot
             {
                 // As File, Open's panel hands the window what was chosen.
                 window.Open(open.Path);
+            }
+            else if (step is ScriptStep.Agent agent)
+            {
+                RunAgent(window, agent);
             }
             else
             {
@@ -185,6 +192,48 @@ public static class Screenshot
             ?? throw new StepRefused($"--click-name {name}: no control named {name} is shown in the window");
         return control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
             ?? throw new StepRefused($"--click-name {name}: {name} is not in the window");
+    }
+
+    /// <summary>Runs an agent in the Terminal window, its calls answered by the window as they come, until it ends: held as
+    /// background work all the while, so the picture waits for it; refused unless it ends in time with exit code 0, since
+    /// an agent that failed would picture the wrong thing.</summary>
+    private static void RunAgent(MainWindow window, ScriptStep.Agent agent)
+    {
+        string named = $"--agent '{agent.Text}'";
+        Task<Run.TerminalRun> starting;
+        try
+        {
+            starting = window.RunAgent(agent.Command);
+        }
+        catch (Exception error) when (error is IOException or System.Net.Sockets.SocketException or ArgumentException or UnauthorizedAccessException)
+        {
+            throw new StepRefused($"{named}: no agent can reach the window: {error.Message}");
+        }
+        Task<int> ended = Ended(starting);
+        BackgroundWork.Track(ended);
+        Stopwatch waited = Stopwatch.StartNew();
+        while (!ended.IsCompleted && waited.Elapsed < AgentLimit)
+        {
+            Pump(TimeSpan.FromMilliseconds(100));
+        }
+        if (!ended.IsCompleted)
+        {
+            if (starting.IsCompletedSuccessfully)
+            {
+                starting.Result.Stop();
+            }
+            throw new StepRefused($"{named} was still running after {AgentLimit.TotalMinutes:0} minutes");
+        }
+        if (ended.IsFaulted)
+        {
+            throw new StepRefused($"{named}: {ended.Exception!.GetBaseException().Message}");
+        }
+        if (ended.Result != 0)
+        {
+            throw new StepRefused($"{named} ended with exit code {ended.Result}");
+        }
+
+        static async Task<int> Ended(Task<Run.TerminalRun> starting) => await (await starting).Ended;
     }
 
     /// <summary>A step the window cannot take as asked, which ends the screenshot with exit code 2 and why.</summary>

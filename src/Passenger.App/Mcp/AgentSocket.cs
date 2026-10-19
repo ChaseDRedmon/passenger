@@ -145,10 +145,15 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
     /// <summary>A person's window, rather than the agent's own IDE.</summary>
     public bool Attached { get; } = attached;
 
-    /// <summary>Whether the person lets this agent use a tool: asked the first time, and again after a no.</summary>
+    /// <summary>Whether the person lets this agent use a tool: asked the first time, and again after a no; never on a
+    /// window nobody is at (<see cref="MainWindow.AgentsUnattended"/>), whose agent uses them all.</summary>
     internal async Task<bool> AllowAsync(MainWindow window, Tool tool, IDictionary<string, System.Text.Json.JsonElement>? arguments, CancellationToken cancel)
     {
         UiThread.Check();
+        if (window.AgentsUnattended)
+        {
+            return true;
+        }
         if (!answers.TryGetValue(tool.Name, out Task<bool>? answer))
         {
             answer = window.AllowAgentAsync(tool.Name, tool.Title ?? tool.Name, [.. (arguments ?? new Dictionary<string, System.Text.Json.JsonElement>()).Select(a => (a.Key, Shown(a.Value)))], cancel);

@@ -10,15 +10,16 @@ namespace Passenger.App;
 /// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T] [--look L] [--scheme S]</c>, PATH a folder, a file, or a
 /// solution or project opened as the workspace; a screenshot with the steps before it; or the Model Context Protocol
 /// server: <c>--mcp [PATH]</c> (an IDE with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c>
-/// (a window's, the one over the folder first), and <c>--no-mcp</c> (a window that never lets agents in). A flag it does
-/// not know, a value it cannot read or out of range, or one the mode does not take is fatal, never ignored.</summary>
+/// (a window's, the one over the folder first), and <c>--no-mcp</c> (a window that never lets agents in; a screenshot's
+/// lets in only its own <c>--agent</c>). A flag it does not know, a value it cannot read or out of range, or one the mode
+/// does not take is fatal, never ignored.</summary>
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
-    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
+    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open", "--agent"];
 
     /// <summary>What only a screenshot takes: its window, its picture and the steps before it.</summary>
-    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--window-buttons", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
+    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--window-buttons", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open", "--agent"];
 
     /// <summary>A screenshot's longest side in pixels: a frame 16384 pixels square is already a gigabyte, and the headless
     /// window draws none at 24000.</summary>
@@ -173,6 +174,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                         ? Path.GetFullPath(opened)
                         : throw new FormatException($"--open takes a folder, a solution (.sln, .slnx) or a C# project (.csproj), not '{opened}'")));
                     break;
+                case "--agent":
+                    string agentText = Value(args, ref i, flag);
+                    steps.Add(new ScriptStep.Agent(agentText, AgentCommand(agentText)));
+                    break;
                 case "--hover":
                     string hoverText = Value(args, ref i, flag);
                     double[] at = Numbers(flag, hoverText, ',', 2, "X,Y");
@@ -239,7 +244,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
         if (!listen && (mcp == McpMode.Stdio || screenshot))
         {
-            throw new FormatException($"--no-mcp stops a window listening for agents, and {(screenshot ? "--screenshot" : "--mcp")}'s never does");
+            throw new FormatException(screenshot
+                ? "--no-mcp stops a window listening for agents, and --screenshot's lets in only its own --agent"
+                : "--no-mcp stops a window listening for agents, and --mcp's never does");
         }
         if (!screenshot && given.FirstOrDefault(ScreenshotOnly.Contains) is { } step)
         {
@@ -324,6 +331,24 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             }
         }
         return shot;
+    }
+
+    /// <summary>An agent's command line, split as a run configuration's arguments are, its program a file (from the working
+    /// directory) or one on the PATH, given by its full path.</summary>
+    private static IReadOnlyList<string> AgentCommand(string text)
+    {
+        IReadOnlyList<string> words = Run.CommandLine.Split(text);
+        if (words.Count == 0)
+        {
+            throw new FormatException($"--agent takes the agent's command line, not '{text}'");
+        }
+        string program = words[0];
+        string? found = program.Contains('/') || program.Contains(Path.DirectorySeparatorChar)
+            ? (File.Exists(program) ? Path.GetFullPath(program) : null)
+            : Core.Programs.OnPath(program) ?? (OperatingSystem.IsWindows() ? Core.Programs.OnPath(program + ".exe") : null);
+        return found is null
+            ? throw new FormatException($"--agent's program '{program}' is neither a file nor on the PATH")
+            : [found, .. words.Skip(1)];
     }
 
     private static string Value(IReadOnlyList<string> args, ref int i, string flag)
@@ -443,6 +468,12 @@ public abstract record ScriptStep
 
     /// <summary>Time for what the screenshot does not wait on by itself: a program running.</summary>
     public sealed record Wait(TimeSpan For) : ScriptStep;
+
+    /// <summary>An agent run in a tab of the Terminal window and waited for, the picture refused unless it ends with exit
+    /// code 0: its command line as given and split, the program by its full path. It joins the window as any agent does,
+    /// through <c>$PASSENGER --mcp-attach $PASSENGER_PID</c>, and uses every tool unasked, since nobody is at a capture to
+    /// answer.</summary>
+    public sealed record Agent(string Text, IReadOnlyList<string> Command) : ScriptStep;
 
     /// <summary>A folder, solution or project opened as File, Open opens the one chosen: with one open already, Open
     /// Solution asks where (Settings' default), and a window of its own opens on New Window.</summary>

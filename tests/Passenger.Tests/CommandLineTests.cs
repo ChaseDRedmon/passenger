@@ -48,7 +48,9 @@ public sealed class CommandLineTests : IDisposable
     [InlineData("--screenshot out.png --caret 3:1", "--caret needs a file to put the caret in, the PATH or a --file")]
     [InlineData(". notes.txt --screenshot out.png", "'notes.txt' would be a second folder or file after '.'; Passenger opens one, and more files with --file")]
     [InlineData("--screenshot out.png --theme dark --theme light", "--theme is given twice")]
-    [InlineData("--no-mcp --screenshot out.png", "--no-mcp stops a window listening for agents, and --screenshot's never does")]
+    [InlineData("--no-mcp --screenshot out.png", "--no-mcp stops a window listening for agents, and --screenshot's lets in only its own --agent")]
+    [InlineData("--screenshot out.png --agent no-agent-by-this-name", "--agent's program 'no-agent-by-this-name' is neither a file nor on the PATH")]
+    [InlineData(". --agent ./notes.txt", "--agent is for a --screenshot, and none is asked for")]
     [InlineData("--mcp --no-mcp", "--no-mcp stops a window listening for agents, and --mcp's never does")]
     [InlineData("--mcp --size 1600x1000", "--size is for a --screenshot, and none is asked for")]
     [InlineData(". --window-buttons", "--window-buttons is for a --screenshot, and none is asked for")]
@@ -128,6 +130,82 @@ public sealed class CommandLineTests : IDisposable
         static bool Near(SKColor a, SKColor b) => Math.Abs(a.Red - b.Red) <= 24 && Math.Abs(a.Green - b.Green) <= 24 && Math.Abs(a.Blue - b.Blue) <= 24;
     }
 
+    /// <summary>--agent runs an agent during the capture, which joins the window as an agent joins a person's, through
+    /// passenger --mcp-attach: here a shell script (PowerShell's on Windows) making one call at a time over JSON lines, as
+    /// an agent's MCP client does. Typing into the editor is a tool a person's window asks about; nobody is at a capture,
+    /// so it is used unasked, and the picture is taken once the agent has ended. An agent that fails ends the capture with
+    /// exit code 2 and no picture.</summary>
+    [Fact]
+    public async Task A_screenshot_s_agent_uses_the_window_s_tools_unasked_through_mcp_attach_and_one_that_fails_takes_no_picture()
+    {
+        string agent = TestFolders.Create("agent-");
+        // The window's socket is in its state's mcp/, and macOS keeps a socket's path to 103 bytes.
+        string state = TestFolders.Create("s");
+        const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""";
+        const string Initialized = """{"jsonrpc":"2.0","method":"notifications/initialized"}""";
+        const string Type = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"type","arguments":{"text":"agent "}}}""";
+        const string Read = """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"editor_text","arguments":{"path":"notes.txt","from":2,"to":2}}}""";
+        string answers = Path.Combine(agent, "answers.txt");
+        string command;
+        if (OperatingSystem.IsWindows())
+        {
+            string script = Path.Combine(agent, "agent.ps1");
+            await File.WriteAllTextAsync(script, $$"""
+                $start = New-Object System.Diagnostics.ProcessStartInfo $env:PASSENGER, "--mcp-attach $env:PASSENGER_PID"
+                $start.UseShellExecute = $false
+                $start.RedirectStandardInput = $true
+                $start.RedirectStandardOutput = $true
+                $server = [System.Diagnostics.Process]::Start($start)
+                function Ask($line, $id) {
+                    $server.StandardInput.WriteLine($line)
+                    do { $answer = $server.StandardOutput.ReadLine() } until ($answer -match ('"id":' + $id))
+                    $answer
+                }
+                $answers = @(Ask '{{Initialize}}' 1)
+                $server.StandardInput.WriteLine('{{Initialized}}')
+                $answers += Ask '{{Type}}' 2
+                $answers += Ask '{{Read}}' 3
+                $server.StandardInput.Close()
+                $server.WaitForExit()
+                Set-Content -Path '{{answers}}' -Value $answers
+                """, TestContext.Current.CancellationToken);
+            command = $"powershell -NoProfile -ExecutionPolicy Bypass -File \"{script}\"";
+        }
+        else
+        {
+            string script = Path.Combine(agent, "agent.sh");
+            await File.WriteAllTextAsync(script, $$"""
+                cd '{{agent}}'
+                mkfifo calls
+                "$PASSENGER" --mcp-attach "$PASSENGER_PID" < calls > answers.txt &
+                exec 3> calls
+                answered() { until grep -q "\"id\":$1" answers.txt; do sleep 0.1; done; }
+                echo '{{Initialize}}' >&3
+                answered 1
+                echo '{{Initialized}}' >&3
+                echo '{{Type}}' >&3
+                answered 2
+                echo '{{Read}}' >&3
+                answered 3
+                exec 3>&-
+                wait
+                """, TestContext.Current.CancellationToken);
+            command = $"sh \"{script}\"";
+        }
+
+        (int code, string error) = await Run(["notes.txt", "--caret", "2:1", "--agent", command, "--size", "800x500", "--scale", "1", "--screenshot", "out.png"], state);
+
+        string answered = File.Exists(answers) ? await File.ReadAllTextAsync(answers, TestContext.Current.CancellationToken) : "(no answers)";
+        Assert.True(code == 0 && File.Exists(Path.Combine(folder, "out.png")), $"The screenshot after its agent was not taken: exit code {code}\n{error}\nThe agent's answers:\n{answered}");
+        Assert.True(answered.Contains("agent two", StringComparison.Ordinal) && !answered.Contains("\"isError\":true", StringComparison.Ordinal),
+            $"The agent's type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
+
+        string fails = OperatingSystem.IsWindows() ? "powershell -NoProfile -Command exit 3" : "sh -c \"exit 3\"";
+        (code, error) = await Run([".", "--agent", fails, "--screenshot", "failed.png"], state);
+        Assert.True(code == 2 && error.Contains($"screenshot: --agent '{fails}' ended with exit code 3", StringComparison.Ordinal) && !File.Exists(Path.Combine(folder, "failed.png")),
+            $"An agent that failed was to end the screenshot with exit code 2 saying so, and take no picture; it exited {code} and wrote:\n{error}");
+    }
+
     [AvaloniaFact]
     public void A_solution_or_project_given_as_a_double_click_gives_it_opens_as_the_workspace_and_neither_as_text()
     {
@@ -156,7 +234,10 @@ public sealed class CommandLineTests : IDisposable
 
     /// <summary>Passenger run in the test's folder with the arguments split at spaces and nothing on standard input, its
     /// exit code and what it wrote to standard error; one still running after two minutes was not refused.</summary>
-    private async Task<(int Code, string Error)> Run(string arguments)
+    private Task<(int Code, string Error)> Run(string arguments) => Run(arguments.Split(' '), settings);
+
+    /// <summary>Passenger run in the test's folder with these arguments and its state in a folder of their own.</summary>
+    private async Task<(int Code, string Error)> Run(IReadOnlyList<string> arguments, string state)
     {
         ProcessStartInfo start = new(Passenger)
         {
@@ -165,11 +246,11 @@ public sealed class CommandLineTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (string argument in arguments.Split(' '))
+        foreach (string argument in arguments)
         {
             start.ArgumentList.Add(argument);
         }
-        start.Environment["PASSENGER_SETTINGS"] = settings;
+        start.Environment["PASSENGER_SETTINGS"] = state;
         using Process process = Process.Start(start)!;
         process.StandardInput.Close();
         Task<string> output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
@@ -184,7 +265,7 @@ public sealed class CommandLineTests : IDisposable
         {
             // Not the runtime's tree kill of this process's own child, which can hang it (ChildProcesses.Kill says why).
             global::Passenger.Core.ChildProcesses.Kill(process);
-            Assert.Fail($"'passenger {arguments}' was still running after two minutes rather than refused");
+            Assert.Fail($"'passenger {string.Join(' ', arguments)}' was still running after two minutes rather than refused");
         }
         await output;
         return (process.ExitCode, (await error).Trim());

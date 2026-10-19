@@ -34,11 +34,37 @@ public partial class MainWindow
     /// <summary>What the status bar says of agents on the window, or null while it says nothing.</summary>
     public string? AgentStatus => AgentText.IsVisible ? AgentText.Text : null;
 
-    private void AddAgents() => Closed += (_, _) => ListenForAgents(false);
+    /// <summary>Whether nobody is at the window to ask: a screenshot's that runs an agent (<c>--agent</c>), which listens
+    /// whatever Enable MCP Server says and lets its agent use every tool. Set before its socket opens.</summary>
+    public bool AgentsUnattended { get; private set; }
+
+    private void AddAgents() => Closed += (_, _) =>
+    {
+        AgentsUnattended = false;
+        ListenForAgents(false);
+    };
+
+    /// <summary>A screenshot's agent (<c>--agent</c>): the window's socket opened to it, and its command line run in a tab
+    /// of the Terminal window, which it joins the window from as any agent does, with <c>$PASSENGER --mcp-attach
+    /// $PASSENGER_PID</c>. Throws saying why agents cannot reach the window.</summary>
+    internal Task<Run.TerminalRun> RunAgent(IReadOnlyList<string> command)
+    {
+        AgentsUnattended = true;
+        if (AgentsAllowed && agentSocket is null)
+        {
+            agentSocket = Mcp.AgentSocket.Open(this);
+            agentSocket.Describe(Folder);
+        }
+        System.Diagnostics.ProcessStartInfo start = Core.ChildProcesses.Command(command[0], command.Skip(1), Folder ?? Environment.CurrentDirectory);
+        start.Environment["PASSENGER"] = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
+        start.Environment["PASSENGER_PID"] = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return ShowInTerminal("Agent", start);
+    }
 
     /// <summary>Opens the window's socket to agents, or closes it and ends their connections.</summary>
     private void ListenForAgents(bool on)
     {
+        on |= AgentsUnattended;
         if (on && AgentsAllowed && agentSocket is null)
         {
             try
