@@ -194,6 +194,53 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_package_restored_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands()
+    {
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-restore-"));
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                AvaloniaApp.Create(folder, "Fresh");
+                File.WriteAllText(Path.Combine(folder, "MainWindow.axaml"), """
+                    <Window xmlns="https://github.com/avaloniaui"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:h="using:Avalonia.Headless"
+                            x:Class="Fresh.MainWindow"
+                            Title="Fresh">
+                        <Window.Resources>
+                            <h:AvaloniaHeadlessPlatformOptions x:Key="Headless" />
+                        </Window.Resources>
+                        <TextBlock Text="Welcome" />
+                    </Window>
+
+                    """);
+                Restore.Run(folder);
+            }, folder);
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(folder, "MainWindow.axaml"));
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("AvaloniaHeadlessPlatformOptions", StringComparison.Ordinal)),
+                "the type of a package the app does not reference marked");
+
+            // The package added (here where the project file does not name it, so only its restore says so) and restored, by
+            // the language server or a terminal's dotnet restore: the restore's assets are what the XAML reads it from.
+            File.WriteAllText(Path.Combine(folder, "Directory.Build.props"),
+                $"<Project>\n  <ItemGroup>\n    <PackageReference Include=\"Avalonia.Headless\" Version=\"{AvaloniaApp.Version}\" />\n  </ItemGroup>\n</Project>\n");
+            Ui.Settle();
+            Restore.Run(folder);
+            Ui.WaitFor(() => document.Markers.Count == 0, "the package's type resolved once its restore landed", TimeSpan.FromSeconds(30));
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void An_x_class_no_csharp_declares_is_marked_as_avalonias_compiler_refuses_it()
     {
         // Unlike WPF's MarkupCompile, Avalonia's compiler makes no class: it says "Unable to find type" (AVLN2000).

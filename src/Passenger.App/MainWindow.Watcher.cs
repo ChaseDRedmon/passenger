@@ -62,7 +62,7 @@ public partial class MainWindow
         }
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);
-        session.Xaml.FilesChanged(changes.Paths);
+        session.Xaml.FilesChanged(changes.Paths.Concat(changes.Restored));
         session.MSBuild.FilesChanged(changes.Paths);
         session.Web?.FilesChanged(changes.Paths);
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())

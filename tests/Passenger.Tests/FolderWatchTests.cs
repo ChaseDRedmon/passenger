@@ -279,11 +279,12 @@ public sealed class FolderWatchTests : IDisposable
         Ui.Landed(() => window.Vcs.Branch == "main", "the branch");
 
         string[] watched = Watched(window);
-        foreach (string kept in new[] { ".", ".git", ".git/refs", ".git/refs/heads", "src", "src/App" })
+        foreach (string kept in new[] { ".", ".git", ".git/refs", ".git/refs/heads", "src", "src/App", "src/App/obj" })
         {
             Assert.True(watched.Contains(kept), $"{kept} is not watched, so what other programs change in it goes unseen");
         }
-        Assert.All(watched, path => Assert.True(path is "." or ".git" or "src" or "src/App" || path.StartsWith(".git/refs", StringComparison.Ordinal),
+        // Of build output only a project's obj itself, where its restore writes the assets its XAML is read from.
+        Assert.All(watched, path => Assert.True(path is "." or ".git" or "src" or "src/App" or "src/App/obj" || path.StartsWith(".git/refs", StringComparison.Ordinal),
             $"{path} is watched, spending one of the user's inotify watches on a folder nothing in the IDE looks at"));
 
         // Each kept folder's own watch is what hears of its files, Git's HEAD among them.
@@ -294,10 +295,10 @@ public sealed class FolderWatchTests : IDisposable
 
         // A folder made later is watched with the kept folders in it, before a file is made there.
         Directory.CreateDirectory(Path.Combine(folder, "src", "Feature", "Deep"));
-        Directory.CreateDirectory(Path.Combine(folder, "src", "Feature", "obj"));
-        Ui.WaitFor(() => Watched(window).Contains("src/Feature/Deep"), "the folders made to be watched");
+        Directory.CreateDirectory(Path.Combine(folder, "src", "Feature", "obj", "Debug"));
+        Ui.WaitFor(() => Watched(window).Contains("src/Feature/Deep") && Watched(window).Contains("src/Feature/obj"), "the folders made to be watched");
         Ui.Settle();
-        Assert.DoesNotContain("src/Feature/obj", Watched(window));
+        Assert.DoesNotContain("src/Feature/obj/Debug", Watched(window));
         string deep = Path.Combine("src", "Feature", "Deep", "Deep.cs");
         Assert.DoesNotContain(deep, window.FileIndex.Files);
         Write("src/Feature/Deep/Deep.cs", "class Deep { }\n");

@@ -5,25 +5,34 @@ namespace Passenger.App.Workspace;
 
 /// <summary>What changed in a folder while it was watched: the files created, changed, renamed or deleted, whether
 /// any of that changed which files there are, whether a project or solution file was among them, and whether Git's
-/// own state moved (a commit or checkout made elsewhere).</summary>
-public sealed record FolderChanges(IReadOnlySet<string> Paths, bool Structure, bool Projects, bool Git);
+/// own state moved (a commit or checkout made elsewhere); and, apart from the files, the restores written (each
+/// project's <c>obj/project.assets.json</c>), whatever ran them: the language server, a terminal's dotnet, a build.</summary>
+public sealed record FolderChanges(IReadOnlySet<string> Paths, bool Structure, bool Projects, bool Git)
+{
+    public IReadOnlySet<string> Restored { get; init; } = new HashSet<string>();
+}
 
 /// <summary>Watches a folder for what other programs change in it (a terminal's <c>git pull</c>, an agent's edits,
 /// <c>dotnet new</c>), as Rider's fsnotifier does. Changes are gathered for a moment and handed over together on the
 /// UI thread, as background work so a screenshot waits for them. Build output, dependencies and Git's folder are
-/// passed over, except Git's HEAD, index and refs; where each folder is watched on its own (Linux), they are never
-/// watched at all, and a folder made later is watched as it appears.</summary>
+/// passed over, except Git's HEAD, index and refs and a restore's assets; where each folder is watched on its own
+/// (Linux), they are never watched at all but for Git's and each obj itself, and a folder made later is watched as it
+/// appears.</summary>
 public sealed class FolderWatcher : IDisposable
 {
     private static readonly TimeSpan Gather = TimeSpan.FromMilliseconds(150);
 
     private static readonly string[] ProjectExtensions = [".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".props", ".targets"];
 
+    /// <summary>The file a restore writes in a project's obj (or, with UseArtifactsOutput, in artifacts/obj/Project).</summary>
+    private const string Assets = "project.assets.json";
+
     private readonly string folder;
     private readonly FolderWatching watching;
     private readonly object gate = new();
     private readonly Dictionary<string, FileSystemWatcher> watches = new(StringComparer.Ordinal);
     private readonly HashSet<string> paths = new(StringComparer.Ordinal);
+    private readonly HashSet<string> restored = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> ownWrites = new(StringComparer.Ordinal);
 
     /// <summary>The changes to which folders are watched, made one at a time in the order they were seen.</summary>
@@ -151,7 +160,15 @@ public sealed class FolderWatcher : IDisposable
     {
         if (watching.EachFolder && Kept(path) && Directory.Exists(path))
         {
-            Follow(() => WatchFrom(path));
+            Follow(() =>
+            {
+                WatchFrom(path);
+                // A restore that made obj may have written its assets before obj was watched.
+                if (Path.GetFileName(path) == "obj" && File.Exists(Path.Combine(path, Assets)))
+                {
+                    Note(Path.Combine(path, Assets), created: true);
+                }
+            });
         }
         Note(path, created: true);
     }
@@ -305,14 +322,19 @@ public sealed class FolderWatcher : IDisposable
     }
 
     /// <summary>Whether a folder is watched where each is watched on its own: the open folder and the kept folders under
-    /// it, and of Git's store only its top and refs, whose files say a commit or checkout happened.</summary>
+    /// it, of Git's store only its top and refs, whose files say a commit or checkout happened, and of build output only
+    /// each project's obj itself, where its restore writes its assets.</summary>
     private bool Kept(string path)
     {
         string[]? parts = Parts(path);
         return parts is null ? path == folder
             : parts[0] == ".git" ? parts.Length == 1 || parts[1] == "refs"
-            : !parts.Any(IgnoredFolders.Contains);
+            : !parts.Any(IgnoredFolders.Contains) || parts[^1] == "obj" && !parts[..^1].Any(IgnoredFolders.Contains);
     }
+
+    /// <summary>Whether a path is a restore's assets, which the rest of build output's files are not.</summary>
+    private static bool IsRestore(string[] parts) =>
+        parts.Length >= 2 && parts[^1] == Assets && (parts[^2] == "obj" || parts.Length >= 3 && parts[^3] == "obj");
 
     /// <summary>A path's names from the open folder down; null for the folder itself or a path outside it.</summary>
     private string[]? Parts(string path) =>
@@ -330,7 +352,8 @@ public sealed class FolderWatcher : IDisposable
         {
             return;
         }
-        if (!inGit && parts.Any(IgnoredFolders.Contains))
+        bool restore = !inGit && IsRestore(parts);
+        if (!inGit && !restore && parts.Any(IgnoredFolders.Contains))
         {
             return;
         }
@@ -343,6 +366,10 @@ public sealed class FolderWatcher : IDisposable
             if (inGit)
             {
                 git = true;
+            }
+            else if (restore)
+            {
+                restored.Add(PathNames.Canonical(path));
             }
             else
             {
@@ -375,8 +402,12 @@ public sealed class FolderWatcher : IDisposable
         bool live;
         lock (gate)
         {
-            changes = new FolderChanges(new HashSet<string>(paths, StringComparer.Ordinal), structure, projects, git);
+            changes = new FolderChanges(new HashSet<string>(paths, StringComparer.Ordinal), structure, projects, git)
+            {
+                Restored = new HashSet<string>(restored, StringComparer.Ordinal),
+            };
             paths.Clear();
+            restored.Clear();
             structure = projects = git = pending = false;
             live = !disposed;
         }
