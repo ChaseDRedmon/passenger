@@ -504,11 +504,20 @@ public static class Ui
         Settle();
     }
 
+    /// <summary>Long enough for the language server to start and load a small project.</summary>
+    private static readonly TimeSpan SettleLimit = TimeSpan.FromSeconds(90);
+
     /// <summary>Runs queued UI work and waits for background work (colouring) to land.</summary>
     public static void Settle()
     {
-        // Long enough for the language server to start and load a small project.
-        DateTime limit = DateTime.UtcNow.AddSeconds(90);
+        if (!Settled(DateTime.UtcNow + SettleLimit))
+        {
+            throw new TimeoutException($"Background work never finished.{ServerLogTail()}");
+        }
+    }
+
+    private static bool Settled(DateTime limit)
+    {
         do
         {
             Dispatcher.UIThread.RunJobs();
@@ -516,12 +525,12 @@ public static class Ui
             Dispatcher.UIThread.RunJobs();
             if (BackgroundWork.Pending == 0)
             {
-                return;
+                return true;
             }
             Thread.Sleep(2);
         }
         while (DateTime.UtcNow < limit);
-        throw new TimeoutException($"Background work never finished.{ServerLogTail()}");
+        return false;
     }
 
     /// <summary>The end of the newest language server's log, which says where a project load that never ended stopped. The
@@ -541,18 +550,24 @@ public static class Ui
     }
 
     /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)
-    /// meanwhile; fails naming what never happened.</summary>
+    /// meanwhile; fails naming what never happened. What it waits for may hold background work all along (a build, a test
+    /// run), which it then waits out for as long as it waits, not for <see cref="Settle"/>'s own limit alone.</summary>
     public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
     {
-        DateTime until = DateTime.UtcNow + (limit ?? TimeSpan.FromSeconds(90));
+        TimeSpan within = limit ?? SettleLimit;
+        DateTime until = DateTime.UtcNow + within;
         while (!condition())
         {
             if (DateTime.UtcNow > until)
             {
-                throw new TimeoutException($"Waited {(limit ?? TimeSpan.FromSeconds(90)).TotalSeconds} s for {what}");
+                throw new TimeoutException($"Waited {within.TotalSeconds} s for {what}");
             }
             Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
-            Settle();
+            DateTime settling = DateTime.UtcNow + SettleLimit;
+            if (!Settled(settling > until ? settling : until))
+            {
+                throw new TimeoutException($"Background work never finished while waiting {within.TotalSeconds} s for {what}.{ServerLogTail()}");
+            }
         }
     }
 
