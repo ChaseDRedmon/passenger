@@ -405,7 +405,7 @@
         "dependencies": {
           "Microsoft.Diagnostics.NETCore.Client": "[0.2.750501, )",
           "Microsoft.Diagnostics.Runtime": "[4.2.751201, )",
-          "Microsoft.Diagnostics.Tracing.TraceEvent": "[3.2.6, )",
+          "Microsoft.Diagnostics.Tracing.TraceEvent": "[4.0.0, )",
           "Passenger.Core": "[0.1.0, )"
         }
       },
@@ -463,11 +463,11 @@
       },
       "Microsoft.Diagnostics.Tracing.TraceEvent": {
         "type": "CentralTransitive",
-        "requested": "[3.2.6, )",
-        "resolved": "3.2.6",
-        "contentHash": "8GhxriLz9/fIjcmC5VuuBMwORVUOAHjdGqxfuxyYVljtpWBhUsAi/L1RpiRgHdeBgNbhbnRhkF8gHtpZF3At8w==",
+        "requested": "[4.0.0, )",
+        "resolved": "4.0.0",
+        "contentHash": "uqiUXrXzIuVqm7h3G9Sr+HuwY8LNKqRDt/yHMOAOFGvzySX7ZVTgFiO0LUKFO+c92qYCn0Gml838quCOfai7RA==",
         "dependencies": {
-          "Microsoft.Diagnostics.NETCore.Client": "0.2.510501"
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.661903"
         }
       },
       "Porta.Pty": {

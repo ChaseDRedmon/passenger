@@ -53,7 +53,7 @@
     <PackageVersion Include="Krafs.Publicizer" Version="2.3.0" />
     <PackageVersion Include="Microsoft.Diagnostics.DbgShim" Version="10.0.750501" />
     <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.750501" />
-    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.6" />
+    <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
     <PackageVersion Include="Microsoft.Diagnostics.Runtime" Version="4.2.751201" />
     <PackageVersion Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.9.0" />
     <PackageVersion Include="ZLinq" Version="1.5.6" />
