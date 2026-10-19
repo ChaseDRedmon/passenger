@@ -215,7 +215,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
   goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Requests resume off the caller's
   thread inside Passenger.Lsp (`ConfigureAwait(false)`), and a large answer (completion's list) is read in
-  `LspDocument` before its caller resumes, so the UI thread never decodes it. Roslyn reads a column past a line's
+  `LspDocument` before its caller resumes, so the UI thread never decodes it. `CountedMessages` counts the server's
+  `workspace/semanticTokens/refresh` as each is read off the connection, before the one-at-a-time dispatch handles it;
+  `SemanticHighlighter` compares that count with the one noted as its request went out. Roslyn reads a column past a line's
   end as the line's end, so no change is sent between a "\r\n"'s halves: `LspDocument.Unsplit` takes in the half
   beside it and puts it back. `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
@@ -935,7 +937,9 @@ and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout 
 drop-down width per column and Don't ask again's place.
 A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says the status with `Ui.Said`, both naming
 the build's errors (`Ui.BuildErrors`: Problems' rows, else the Build window's last lines) when it failed, so a CI-only
-build failure says why. Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
+build failure says why. A test's stand-in that holds a file a target writes leaves it as it found it: a file it creates, newer than the
+target's inputs, makes MSBuild skip the target as up to date (an empty `obj/…/Avalonia/resources` was embedded:
+AVLN9999). Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
 never throws, while what it waits for isn't there yet; `WaitFor`'s limit also covers background work held all along (a
 build, a test run), where `Settle` alone gives up after 90 s. A chord goes through one `Ui.Press(window, "control M ,
 control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a dispatcher timer that fires during a
