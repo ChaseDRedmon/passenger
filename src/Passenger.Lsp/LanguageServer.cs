@@ -411,7 +411,8 @@ public sealed class LanguageServer : IAsyncDisposable
         }
         try
         {
-            return await InvokeAsync<T>(method, parameters, cancel);
+            // Not back on the caller's thread: an answer read where it arrives (completion's) must not wait for a window's.
+            return await InvokeAsync<T>(method, parameters, cancel).ConfigureAwait(false);
         }
         finally
         {
@@ -440,7 +441,7 @@ public sealed class LanguageServer : IAsyncDisposable
     {
         try
         {
-            return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+            return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel).ConfigureAwait(false);
         }
         catch (Exception error) when (Failure(method, error, cancel) is { } failed)
         {

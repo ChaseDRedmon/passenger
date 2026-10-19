@@ -351,7 +351,8 @@ public sealed class LspDocument : IDisposable
         int version = Text.Version;
         CompletionContext context = incomplete ? new CompletionContext(3) : trigger is null ? new CompletionContext(1) : new CompletionContext(2, trigger);
         JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/completion",
-            new CompletionParams(Identifier, PositionOf(offset), context), cancel);
+            new CompletionParams(Identifier, PositionOf(offset), context), cancel).ConfigureAwait(false);
+        // Read where the answer came, not on the caller's thread: a statement's list is every type in reach, each with data.
         return (Shapes.CompletionList(result), version);
     }
 

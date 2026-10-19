@@ -1865,6 +1865,74 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>The server's completion list is read where its answer arrives, never on the UI thread: a statement's list
+    /// is every type and keyword in reach, each item with the server's data, which the key's frames waited for while it was
+    /// read there. What the window allocates is the count, not a time a busy machine stretches: a list of hundreds more
+    /// items (a file with the usings a project's implicit ones bring, against one with none) costs the frame it opens in
+    /// less than a third of what reading those items takes.</summary>
+    [AvaloniaFact]
+    public void A_statements_completion_list_is_read_off_the_UI_thread()
+    {
+        const string Body = "\nstatic class Statement\n{\n    public static int Sum()\n    {\n        int total = 0;\n        return total;\n    }\n}\n";
+        string bare = project.Write("Bare.cs", Body.Replace("Statement", "Bare", StringComparison.Ordinal));
+        string used = project.Write("Used.cs", "using System;\nusing System.Collections.Generic;\nusing System.IO;\nusing System.Linq;\nusing System.Net.Http;\n"
+            + "using System.Threading;\nusing System.Threading.Tasks;\n" + Body.Replace("Statement", "Used", StringComparison.Ordinal));
+        MainWindow window = project.Open("Bare.cs");
+        (int fewItems, long fewRead, long fewFrame) = StatementCompletion(window, bare);
+        (int manyItems, long manyRead, long manyFrame) = StatementCompletion(window, used);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"{fewItems} items: read in {fewRead / 1024} KB, opened in a frame of {fewFrame / 1024} KB; {manyItems} items: {manyRead / 1024} KB, {manyFrame / 1024} KB");
+        Assert.True(manyItems > fewItems + 300, $"With the usings a statement's completion listed {manyItems} items, against {fewItems} without");
+        Assert.True(manyFrame - fewFrame < (manyRead - fewRead) / 3,
+            $"A list of {manyItems} items opened in a frame that allocated {manyFrame / 1024} KB on the UI thread, against {fewFrame / 1024} KB for {fewItems} items: "
+            + $"a third or more of the {(manyRead - fewRead) / 1024} KB reading the extra items takes, so they were read there");
+        window.Close();
+        File.Delete(bare);
+        File.Delete(used);
+    }
+
+    /// <summary>A statement's completion in a file: how many items it lists, what reading its answer allocates (the same
+    /// list asked for from the thread pool, the window's thread waiting), and what the UI thread allocates in the frame the
+    /// list opens in, the one its answer lands in; the least of three.</summary>
+    private static (int Items, long Read, long Frame) StatementCompletion(MainWindow window, string path)
+    {
+        window.OpenFile(path);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "        int total = 0;");
+        window.KeyTextInput(" ");
+        editor.Focus();
+        Ui.Settle();
+        Passenger.Lsp.LspDocument lsp = window.CSharpService!.For(window.EditorArea.Active!)!.Lsp!;
+        int caret = editor.Selections.Primary.Caret;
+        long read = long.MaxValue;
+        int items = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            long before = GC.GetTotalAllocatedBytes(precise: true);
+            Passenger.Lsp.CompletionList? list = Task.Run(() => lsp.CompletionAsync(caret, null)).GetAwaiter().GetResult().List;
+            read = Math.Min(read, GC.GetTotalAllocatedBytes(precise: true) - before);
+            items = list?.Items.Count ?? 0;
+        }
+        long frame = long.MaxValue;
+        for (int round = 0; round < 3; round++)
+        {
+            window.KeyTextInput("S");
+            long opening = 0;
+            DateTime limit = DateTime.UtcNow.AddSeconds(60);
+            while (!window.Assist.IsCompletionOpen && DateTime.UtcNow < limit)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                opening = GC.GetAllocatedBytesForCurrentThread() - before;
+            }
+            frame = Math.Min(frame, opening);
+            Assert.True(window.Assist.IsCompletionOpen, $"Completion never opened for a statement in {Path.GetFileName(path)}");
+            Ui.Press(window, "ESCAPE");
+            Ui.Press(window, "BACK_SPACE");
+        }
+        return (items, read, frame);
+    }
+
     /// <summary>Completion after a dot reads the file's syntax (the live templates that fit there, the postfix templates
     /// for what is before the dot), which in a file of 20,000 lines is the highlighter's tree carried over the edit, never
     /// the file parsed again on the UI thread. What the window allocates is the count, not a time a slow machine would
