@@ -1,28 +1,55 @@
 # Passenger
 
-An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first, with
-builds for Linux ([how to install them](https://passenger-ide.net/linux)).
+An IDE for C# and modern .NET, written in C# with Avalonia and inspired by JetBrains Rider. Windows and macOS first,
+with builds for Linux ([how to install them](https://passenger-ide.net/linux)).
 
 **[passenger-ide.net](https://passenger-ide.net)**: what it does, downloads, and how to connect a coding agent.
 
-![Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines](site/images/editor.webp)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/editor-light.webp">
+  <img src="site/images/editor-dark.webp" alt="Passenger's editor: a C# file with completion open after a dot, inlay hints, and the change bars of uncommitted lines">
+</picture>
 
-It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, code folding, Rider's Visual Studio
-keymaps), Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the
-Roslyn language server, a Solution view, building, running and unit tests, a debugger and a profiler of its own, Git,
-NuGet and a terminal. And your coding agent can use all of it too: debugging, profiling and testing in the same IDE
-you do. The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1)
-lists what comes next.
+Passenger edits, builds, runs, tests, debugs and profiles C# and .NET, with an editor, a debugger and a profiler of its
+own. Three things set it apart:
 
-The pictures here are of a small sample shop, drawn by Passenger itself on Avalonia's headless platform.
+- **An IDE your agent can drive.** Passenger is an MCP server. A coding agent asks it about the code, builds, tests,
+  debugs and profiles through it, and tries out the Avalonia or WPF app it is building: pictures of its windows, its
+  controls, clicks and typing. On your own window it asks you first.
+- **The Avalonia developer's IDE.** XAML completion, checks, refactorings and a preview as you type; while the app
+  runs, its Live Visual Tree, binding errors and values, and breakpoints in the XAML. WPF's XAML gets the same help.
+- **Rider's ways for C# and .NET.** Rider's Visual Studio keymaps (Visual Studio OSX on a Mac), its actions under their
+  names and its behaviours where they matter. The look is its own: Passenger's theme, or Harbour, each dark and light.
+
+The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1) lists what is left before the first release. The
+pictures here are of a sample project committed to this repository, in your system's light or dark.
+
+## What it does
+
+### The editor and C#
+
+A text control of its own over an immutable rope: multiple carets, folding, soft wrap, Extend Selection, live, postfix
+and surround templates, inlay hints, the symbol at the caret lit through the file, splits and tabs in windows of their
+own, and Rider's keymaps with their chords. A key costs what it changed, not the file's size.
+
+C# comes from Roslyn: its parser colours as you type, then the language server gives diagnostics, completion, hovers,
+signature help, quick fixes and refactorings (Change Signature, Extract Interface, Move, Pull Members Up, Safe Delete
+and more), a rename that renames the type's file, Go to Declaration, Implementation and Base Symbols, Find Usages, call
+and type hierarchies and decompiled library sources. Problems lists the whole solution's without a build. Razor and
+Blazor files get C# and HTML help together.
 
 ### Debugging
 
-Passenger's own debugger (started from SharpDbg, over ICorDebug): breakpoints with conditions, hit counts and log
-messages, stepping, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set,
-watches and evaluation, and the values each line used drawn after it, as Rider does.
+Passenger's own debugger (started from SharpDbg and ICorDebugSharp, over ICorDebug): breakpoints with conditions, hit
+counts and log messages, exception breakpoints, stepping through async code, Smart Step Into, the values methods
+returned, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set, watches and
+evaluation, and the values each line used drawn after it, as Rider does. Edit the code while debugging and Hot Reload
+puts it in the program, paused or running. Data breakpoints work on Windows x64, where the runtime supports them.
 
-![Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables](site/images/debugger.webp)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/debugger-light.webp">
+  <img src="site/images/debugger-dark.webp" alt="Stopped at a breakpoint: the values after the lines, and the Debug window's frames and variables">
+</picture>
 
 Run | Attach to Process (Ctrl+Alt+P, ⌘⌥P on a Mac) lists the .NET programs running on your machine, by executable,
 process ID, user and command line, and debugs the one you choose as if Passenger had started it. Run | Detach lets it
@@ -38,35 +65,169 @@ itself attach as a program the debugger starts does. The program has to run as y
 
 ### Profiling
 
-A sampling profiler like dotTrace's, over the runtime's EventPipe: a configuration profiled from its first
-instruction, then its call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch
-of the timeline. A memory snapshot counts a running program's heap by type.
+A sampling profiler over the runtime's EventPipe, from a program's first instruction or attached to one already
+running: its call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch of the
+timeline. A memory snapshot counts the heap by type and shows what keeps an object alive and how much it holds; two
+snapshots compared say which objects are new, which died and which survived.
 
-![A profile of the sample's forecast: the timeline above the call tree, its hot path opened](site/images/profiler.webp)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/profiler-light.webp">
+  <img src="site/images/profiler-dark.webp" alt="A profile of a run: its timeline above the call tree">
+</picture>
+
+### Avalonia and WPF
+
+`.axaml` files get the help C# gets, from the project's own assemblies and Avalonia's own compiler and previewer:
+completion of controls, properties, values, resources, selectors and binding paths checked against `x:DataType`, the
+XAML compiler's errors on their lines, Go to Declaration into C#, rename of `x:Name`, Reformat Code, Extract Resource
+and Extract Style, and a missing property, command or converter made from where it is used. XAML Preview draws the
+file beside it, following each edit. None of it needs an Avalonia Accelerate licence.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/xaml-light.webp">
+  <img src="site/images/xaml-dark.webp" alt="An Avalonia .axaml file with XAML completion open, and XAML Preview drawing it beside the editor">
+</picture>
+
+Debug an Avalonia app and the Live Visual Tree shows its controls as they are, each property with where its value came
+from and each style with why it applies or not, and the XAML shows each binding's value after its line. A failed
+binding is a console line linked to its XAML and a row in Problems, and can stop the debugger like an exception.
+Breakpoints go on an element, one of its attributes, or a property's next change. The profiler charts an Avalonia app's
+frames and their layout by control, and a failed Avalonia.Headless test (xUnit v3) carries a picture of each window as
+it was.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/live-tree-light.webp">
+  <img src="site/images/live-tree-dark.webp" alt="Debugging an Avalonia app: the Live Visual Tree with an element's details, and binding values after the XAML's lines">
+</picture>
+
+WPF projects get the same XAML help on every system. On Windows, XAML Preview draws WPF files, and the Live Visual
+Tree and binding errors work while a WPF app is debugged; elsewhere a WPF or Windows Forms project builds for its code
+help and says it runs only on Windows.
+
+### Project files and the web languages
+
+In a `.csproj`, `.props` or `.targets`: completion of elements, properties, items and their values, and of package ids
+and versions from your feeds (under central package management, the version goes to `Directory.Packages.props`), a
+property's evaluated value and where it was set, Go to Declaration into the SDK's own files, and the evaluation's
+errors on their lines.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/project-files-light.webp">
+  <img src="site/images/project-files-dark.webp" alt="A project file with MSBuild help: a property's evaluated value and where it is set">
+</picture>
+
+JavaScript, TypeScript, HTML, CSS, SCSS, Less and JSON go through their language servers on Node.js: completion,
+checks, navigation and formatting, TypeScript on the project's own version, JSON against its schema, ESLint's problems
+and fixes as you type, and the project's own Prettier on Reformat Code and on save.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/web-light.webp">
+  <img src="site/images/web-dark.webp" alt="A TypeScript file with its language server's help">
+</picture>
 
 ### Git
 
-The Commit window with its changes and unversioned files, the log with its branch graph and each commit's files,
-diffs, blame annotations, change bars in the gutter that roll back a hunk, branches, push, pull and fetch.
+The Commit window with its changes, the log with its branch graph and branches, side-by-side diffs with the changed
+words marked, blame, change bars in the gutter that roll a change back, the history of a file, a folder or a
+selection, stashes, push, pull and fetch, and conflicts resolved in a three-way merge.
 
-![The Commit window beside the editor, and the Git log with a commit's details](site/images/git.webp)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/git-light.webp">
+  <img src="site/images/git-dark.webp" alt="The Git window's log with its branch graph and a commit's details">
+</picture>
 
 ### Search
 
-Search Everywhere, Go to File, Go to Symbol and Find Action, Find and Replace in Files with a preview, Recent Files,
-bookmarks, and Extend Selection through the syntax tree.
+Search Everywhere, Go to File, Go to Symbol and Find Action, Find and Replace in Files across the solution, a project,
+a folder or a scope with a file mask and a preview, Find Usages in a window of its own, Recent Files and Recent
+Locations, bookmarks and File Structure.
 
-![Find in Files: every match with its file and line, the chosen one previewed below](site/images/find-in-files.webp)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/find-in-files-light.webp">
+  <img src="site/images/find-in-files-dark.webp" alt="Find in Files: every match with its file and line, the chosen one previewed below">
+</picture>
+
+### And the rest
+
+- **Build and run:** a Solution view of the projects as MSBuild evaluates them, builds with their errors in Problems,
+  run configurations from your launch profiles, consoles whose stack frames link to their lines, and Hot Reload under
+  `dotnet watch`.
+- **Unit tests:** xUnit, NUnit, MSTest and TUnit, through VSTest or Microsoft.Testing.Platform, found from the code
+  before any build, with run marks in the gutter, grouping and filters, and any test debugged.
+- **NuGet:** the feeds your `nuget.config` names, packages installed, updated and removed per project, central package
+  management, and vulnerable versions marked with the lowest that fixes them.
+- **Terminal:** an emulator of its own with a shell per tab; a console program can run and be debugged in it.
+- **Local History**, tool windows docked or floating, a window per solution, New Solution from `dotnet new`'s
+  templates, and updates that install themselves on Windows and macOS.
+
+## Your coding agent, using the IDE as you do
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/images/agent-light.webp">
+  <img src="site/images/agent-dark.webp" alt="An agent driving the Avalonia app it is building, through Passenger">
+</picture>
+
+Connect a coding agent such as Claude Code or Codex to Passenger and it works through the IDE, not just your files. It
+finds where things are declared and used, reads the warnings, and renames, fixes and formats code as the IDE does, in
+C#, Razor, XAML, the web languages and project files alike. It builds, runs and tests, sets breakpoints, steps, reads
+and changes variables, applies Hot Reload and profiles a run. It searches and replaces across files, commits, resolves
+conflicts, adds packages, types into the terminal and looks at the window. When the program is an Avalonia app, or a
+WPF app on Windows, it sees and drives the app as a person testing it would, without taking your focus or your pointer.
+
+There are two ways in, each a flag on Passenger's own executable:
+
+- **`--mcp-attach`** joins the window you have open over the folder the agent works in (`--mcp-attach PID` chooses one
+  Passenger's windows), so its breakpoints and stops show in your editor and its runs in your Run window. A window lets
+  agents in only once you turn on Settings | MCP Server | Enable MCP Server, through a socket in your own user's
+  folder, and the first time an agent uses a tool that changes anything, the window asks you.
+- **`--mcp FOLDER`** starts a Passenger of the agent's own with no window, over a folder or solution, for work it does
+  alone.
+
+Passenger is `/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac,
+`%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe` on Windows, and `~/.local/bin/passenger` on Linux
+(`/usr/local/bin/passenger` when installed for everyone). A repository's `.mcp.json` gives it to everyone who works
+there with Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "passenger": {
+      "command": "/Applications/Passenger.app/Contents/MacOS/Passenger",
+      "args": ["--mcp-attach"]
+    }
+  }
+}
+```
+
+Or add it for yourself:
+
+```sh
+# Claude Code
+claude mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
+# Codex CLI
+codex mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
+```
+
+Claude Desktop takes the same `mcpServers` entry in Settings | Developer | Edit Config, and the Codex desktop app takes
+it in Settings | MCP servers | Add server (STDIO, with the same command and argument). Any other agent that can add an
+MCP server connects the same way.
+
+This repository's own [`.mcp.json`](.mcp.json) runs [`tools/mcp.sh`](tools/mcp.sh) (`just mcp`): the last Debug build
+with `--mcp` over this folder, run from a clone of the build so rebuilding Passenger never changes the files under the
+agent's IDE.
 
 ## Building
 
 You need the .NET 11 SDK (the release candidate works until it ships in November 2026) and
-[just](https://github.com/casey/just).
+[just](https://github.com/casey/just). To use what you build, Passenger needs what a release needs: a .NET SDK 10 or
+later, Git, and Node.js for the web languages.
 
 ```sh
 just build                 # Debug build; warnings are errors
-just run                   # run it
+just run [PATH]            # run it on a folder or solution (--theme dark|light, --look passenger|harbour)
+just test [FILTER]         # every test, the IDE driven whole on Avalonia's headless platform, or those matching
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
+just mcp [FOLDER]          # Passenger as an MCP server over a folder, from a clone of the last build
 just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, win-arm64, linux-x64, linux-arm64 too)
 just package-mac           # the macOS disk image (or osx-x64); signed with PASSENGER_SIGN_IDENTITY, else ad hoc
 just package-win win-x64   # the Windows installer (or win-arm64), unsigned unless tools/package-win.sh's variables sign it
@@ -84,35 +245,8 @@ pins, and on Windows and Linux only as nuget.org signed them (NuGet checks no si
 machine updates a lock file when you add or change a package; commit it with the change, since CI restores only what
 the lock files name.
 
-## Your coding agent, using the IDE as you do
-
-Connect a coding agent such as Claude Code to Passenger and it works through the IDE, not just your files. It finds
-where things are declared and used, reads the compiler's warnings, and renames and fixes code as the IDE does. It
-builds, runs and tests. It sets breakpoints, steps through the program, reads and changes its variables, and profiles
-a run to find what is slow. It commits, adds packages, types into the terminal, and takes a screenshot to see what you
-see.
-
-Connect it to the window you have open and watch it work: its breakpoints and stops show in your editor, its runs in
-your Run window. Or give it a Passenger of its own with no window, for work it does alone. A window lets agents in
-only once you turn on Settings | MCP Server | Enable MCP Server, through a connection only you can reach, and asks you
-the first time an agent wants to change anything.
-
-Tell your agent to start Passenger with `--mcp-attach`, and it joins the window you have open. Passenger is
-`/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac, `%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe`
-on Windows, and `~/.local/bin/passenger` on Linux (`/usr/local/bin/passenger` when installed for everyone). For a Passenger of the agent's own, with no window, use `--mcp` and the folder or solution instead.
-
-```sh
-# Claude Code
-claude mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
-# Codex CLI
-codex mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
-```
-
-Claude Desktop takes it in Settings | Developer | Edit Config (`"mcpServers": {"passenger": {"command": "<Passenger's
-path>", "args": ["--mcp-attach"]}}`), and the Codex desktop app in Settings | MCP servers | Add server (STDIO, with
-the same command and argument). Passenger connects through MCP, the standard most coding agents use to reach their
-tools, so any other agent that can add an MCP server connects the same way. In this repository, `.mcp.json` runs
-`just mcp`, which starts the last build over this folder.
+The website is [`site/`](site), plain HTML and CSS deployed to [passenger-ide.net](https://passenger-ide.net) by each
+push to main that touches it.
 
 ## Licence
 
