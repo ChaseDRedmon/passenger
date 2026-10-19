@@ -226,6 +226,64 @@ public sealed class ProfilerTests : IDisposable
         }
     }
 
+    /// <summary>Profile is refused while a profiled program is still starting, as it is while one runs: pressed again (the
+    /// program's window slow to come), it started the program a second time, and the first, no longer the window's run,
+    /// could be neither snapshotted nor killed until the profiler gave up on it.</summary>
+    [AvaloniaFact]
+    public void Profile_again_while_a_profiled_program_starts_starts_no_second_program()
+    {
+        string pids = TestFolders.Create("pids-");
+        string project = Project("Starting", $"File.WriteAllText(Path.Combine(@\"{pids}\", $\"{{Environment.ProcessId}}.pid\"), \"\");\nConsole.ReadLine();\n");
+        Directory.CreateDirectory(Path.Combine(project, "Properties"));
+        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
+            "{ \"profiles\": { \"Undiagnosed\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_EnableDiagnostics\": \"0\" } } } }");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<int> Programs() => [.. Directory.GetFiles(pids, "*.pid").Select(p => int.Parse(Path.GetFileNameWithoutExtension(p), System.Globalization.CultureInfo.InvariantCulture))];
+        Task<string?> started = window.ProfileAsync();
+        Task<string?>? again = null;
+        try
+        {
+            Ui.PumpUntil(() => Programs().Count > 0, "the program to run as the profiler waits for it", TimeSpan.FromMinutes(2));
+            Assert.Equal("A run is already being profiled", window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+
+            again = window.ProfileAsync();
+            DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (!again.IsCompleted && DateTime.UtcNow < until)
+            {
+                Screenshot.Pump(TimeSpan.FromMilliseconds(50));
+            }
+            Assert.True(again.IsCompleted, $"A second Profile while the first program started went on to start it again ({Programs().Count} programs)");
+            Assert.Equal("A run is already being profiled", again.Result);
+            Assert.Single(Programs());
+            Assert.False(started.IsCompleted, $"The first profile's start ended: {(started.IsCompleted ? started.Result : null)}");
+
+            // Kill still ends the one program there is.
+            Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProfilerView).OfType<Avalonia.Controls.Button>()
+                .Single(b => b.Content as string == "Kill");
+            kill.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.PumpUntil(() => started.IsCompleted, "Kill to end the profile's start", TimeSpan.FromSeconds(10));
+            Assert.Equal("Profiling Starting: Undiagnosed was stopped as it started", started.Result);
+            Assert.True(Processes.Gone(Programs()[0]), $"Kill left the program running: {Processes.Describe(Programs()[0])}");
+            Assert.Null(window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+            window.Close();
+        }
+        finally
+        {
+            foreach (int program in Programs())
+            {
+                Processes.Kill(program);
+            }
+            if (again is { IsCompleted: false })
+            {
+                Ui.PumpUntil(() => again.IsCompleted, "the second profile's start to give up", TimeSpan.FromSeconds(60));
+            }
+            TestFolders.Delete(pids);
+        }
+    }
+
     [AvaloniaFact]
     public void A_memory_snapshot_of_a_program_being_profiled_counts_its_heap_by_type_and_it_runs_on()
     {

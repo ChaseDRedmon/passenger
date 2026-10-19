@@ -57,13 +57,12 @@ public sealed class ProfilerCommands
         });
         parts.Actions.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
         {
-            WhyNot = _ => Session.Profiling is not null ? "A run is already being profiled"
-                : Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null,
+            WhyNot = _ => Busy(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
             Menus = [new MenuPlace("Run", 0, 2)],
         });
         parts.Actions.Add(new IdeAction(AppActions.AttachProfiler, "Attach Profiler to Running Program", "Run", context => _ = AttachReportingAsync())
         {
-            WhyNot = _ => Session.Profiling is not null ? "A run is already being profiled" : Attachable() is null ? NothingRunning : null,
+            WhyNot = _ => Busy(Session) ?? (Attachable() is null ? NothingRunning : null),
             Menus = [new MenuPlace("Run", 3, 0)],
         });
         View.StopRequested += (_, _) => _ = SnapshotAsync();
@@ -125,11 +124,34 @@ public sealed class ProfilerCommands
     public async Task<string?> ProfileAsync(string? arguments = null)
     {
         ProjectSession profiled = Session;
-        BuildRunController builds = parts.Builds();
-        if (profiled.Profiling is not null)
+        if (Busy(profiled) is { } busy)
         {
-            return "A run is already being profiled";
+            return busy;
         }
+        launching = profiled;
+        try
+        {
+            return await LaunchAsync(profiled, arguments);
+        }
+        finally
+        {
+            if (launching == profiled)
+            {
+                launching = null;
+            }
+        }
+    }
+
+    /// <summary>The folder whose Profile has yet to hand its run over (resolving, building, or waiting for the program to
+    /// reach the profiler): another Profile or Attach Profiler there would start a run the window could not reach.</summary>
+    private ProjectSession? launching;
+
+    /// <summary>Why another run cannot be profiled in a folder now: one is, or one is still starting.</summary>
+    private string? Busy(ProjectSession folder) => folder.Profiling is not null || launching == folder ? "A run is already being profiled" : null;
+
+    private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments)
+    {
+        BuildRunController builds = parts.Builds();
         if (profiled.Configurations.Chosen is not { } chosen)
         {
             return "Nothing to profile: no executable project";
@@ -232,9 +254,9 @@ public sealed class ProfilerCommands
     public async Task<string?> AttachAsync()
     {
         ProjectSession profiled = Session;
-        if (profiled.Profiling is not null)
+        if (Busy(profiled) is { } busy)
         {
-            return "A run is already being profiled";
+            return busy;
         }
         if (Attachable() is not { } target)
         {
@@ -254,7 +276,7 @@ public sealed class ProfilerCommands
             View.Stopped(failed.Message);
             return failed.Message;
         }
-        if (profiled.IsEnded || profiled.Profiling is not null)
+        if (profiled.IsEnded || Busy(profiled) is not null)
         {
             await running.DisposeAsync();
             return profiled.IsEnded ? "The solution was closed" : "A run is already being profiled";
