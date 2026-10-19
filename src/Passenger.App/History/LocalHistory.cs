@@ -262,6 +262,18 @@ public sealed class LocalHistory
         Enqueue(() => Append([new HistoryEvent(set, time, HistoryKind.Label, null, null, null, null, name, system)]));
     }
 
+    /// <summary>Whether what has happened is still being recorded: an agent's look at the history waits for its own saves.</summary>
+    public bool IsRecording
+    {
+        get
+        {
+            lock (gate)
+            {
+                return draining || jobs.Count > 0;
+            }
+        }
+    }
+
     /// <summary>Everything kept so far, oldest first, and the content each path is known to have now (null for deleted).</summary>
     public (IReadOnlyList<HistoryEvent> Events, IReadOnlyDictionary<string, string?> Known) Snapshot()
     {

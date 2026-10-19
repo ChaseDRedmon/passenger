@@ -162,14 +162,36 @@ public partial class MainWindow
         return popup;
     }
 
+    /// <summary>Revert Selected and Later Changes on a file or folder of the open folder, as its history's tab does with the
+    /// row of a change set chosen: what it was before that set put back. Null once written, else why not.</summary>
+    public async Task<string?> RevertLocalHistoryAsync(string path, long set)
+    {
+        if (session.LocalHistory is not { } history || Folder is not { } folder)
+        {
+            return NoFolder;
+        }
+        string full = PathNames.Canonical(path);
+        bool isFolder = Directory.Exists(full);
+        (IReadOnlyList<HistoryEvent> events, IReadOnlyDictionary<string, string?> known) = history.Snapshot();
+        IReadOnlyList<HistoryRow> rows = await BackgroundWork.Run(() => isFolder ? HistoryRows.OfFolder(events, full) : HistoryRows.OfFile(events, known, full));
+        if (rows.FirstOrDefault(r => r.Set == set) is not { } row)
+        {
+            return $"No change set {set} is in the history of {Path.GetRelativePath(folder, full)}";
+        }
+        IReadOnlyList<(string Path, string? Version)> files = isFolder
+            ? [.. (await BackgroundWork.Run(() => HistoryRows.Since(events, known, set, full))).Select(f => (f.Path, f.Then))]
+            : [(full, row.Version)];
+        return await RevertAsync(files, HistoryTab.RevertName(row));
+    }
+
     /// <summary>Puts files back to versions, as one activity of the history: an open file's text as one undoable step over
     /// the lines that differ, then saved, as Rider's revert writes the file; a closed one's bytes written as they were; one
-    /// that did not exist then deleted (to the Trash, and kept in the history).</summary>
-    private async Task RevertAsync(IReadOnlyList<(string Path, string? Version)> files, string activity)
+    /// that did not exist then deleted (to the Trash, and kept in the history). Null once all are written, else why not.</summary>
+    private async Task<string?> RevertAsync(IReadOnlyList<(string Path, string? Version)> files, string activity)
     {
         if (session.LocalHistory is not { } history)
         {
-            return;
+            return NoFolder;
         }
         List<string> refused = [];
         using (history.During(activity))
@@ -217,6 +239,8 @@ public partial class MainWindow
             }
         }
         FilesChanged();
-        status.Text = refused.Count == 0 ? activity : $"Cannot revert because {string.Join(", ", refused)} could not be written";
+        string? problem = refused.Count == 0 ? null : $"Cannot revert because {string.Join(", ", refused)} could not be written";
+        status.Text = problem ?? activity;
+        return problem;
     }
 }

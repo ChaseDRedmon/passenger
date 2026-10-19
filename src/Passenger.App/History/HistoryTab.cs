@@ -213,9 +213,15 @@ public sealed class HistoryTab : DockPanel
         {
             return Task.CompletedTask;
         }
-        string when = GitLogView.When(row.Time);
-        string name = row.Name is { } named ? $"Revert to '{named}' at {when}" : $"Revert to {when}";
+        string name = RevertName(row);
         return IsFolder ? host.Revert([.. files.Select(f => (f.Path, f.Then))], name) : host.Revert([(Path, row.Version)], name);
+    }
+
+    /// <summary>What Revert Selected and Later Changes names its activity, as Rider names it: the row's label or time.</summary>
+    public static string RevertName(HistoryRow row)
+    {
+        string when = GitLogView.When(row.Time);
+        return row.Name is { } named ? $"Revert to '{named}' at {when}" : $"Revert to {when}";
     }
 
     /// <summary>Rider's Revert Selection: only the folder's files chosen, back as they were before the chosen row.</summary>

@@ -239,16 +239,26 @@ public sealed partial class PassengerTools
         "(their UI thread's time at the median and longest; measuring, arranging, rendering and the compositor in all) with the Frames page's " +
         "layout table (each control type by its own measure and arrange time, with its heaviest controls and their XAML lines), the controls " +
         "heaviest in layout, and the longest frame's own breakdown, or a count of 0 and why when it drew none in that time; the " +
-        "Performance Profiler window shows the whole snapshot.")]
+        "Performance Profiler window shows the whole snapshot. With attach, Run | Attach Profiler to Running Program instead: the program " +
+        "being debugged, else the one run started, profiled from now for seconds (else until it ends), and left running after.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
         [Description("How long to profile before the snapshot; the program's whole run when not given")] int? seconds = null,
         [Description("How many hot spots to return")] int top = 25,
-        [Description("With seconds: a memory snapshot too, the heap's types by size, taken just before the CPU snapshot")] bool memory = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        [Description("With seconds: a memory snapshot too, the heap's types by size, taken just before the CPU snapshot")] bool memory = false,
+        [Description("Profile the program already running (debugged, else run's) from now, rather than launch the configuration")] bool attach = false,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        Choose(configuration);
-        if (await window.ProfileAsync(arguments).WaitAsync(cancel) is { } problem)
+        if (attach && (configuration is not null || arguments is not null))
+        {
+            throw new ArgumentException("An attached profiler profiles the program already running: name no configuration or arguments");
+        }
+        if (!attach)
+        {
+            Choose(configuration);
+        }
+        if (await (attach ? window.AttachProfilerAsync() : window.ProfileAsync(arguments)).WaitAsync(cancel) is { } problem)
         {
             throw new InvalidOperationException(problem);
         }

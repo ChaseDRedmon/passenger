@@ -242,6 +242,9 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         await using McpClient client = await Start(["--mcp", library]);
         Dictionary<string, object?> project = new() { ["path"] = "Lib.csproj" };
         Assert.DoesNotContain("Passenger.Sample", (await Call(client, "editor_text", project)).GetString(), StringComparison.Ordinal);
+        // Found on the folder's own feed, as the NuGet window's search finds it.
+        JsonElement found = Assert.Single((await Call(client, "nuget_search", new() { ["query"] = "Passenger" })).EnumerateArray());
+        Assert.Equal(("Passenger.Sample", "1.0.0"), (found.GetProperty("id").GetString(), found.GetProperty("version").GetString()));
 
         await Call(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample", ["version"] = "1.0.0" });
         string installed = (await Call(client, "editor_text", project)).GetString()!;
@@ -314,6 +317,26 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.Contains("done", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
     }
 
+    /// <summary>Run to Cursor and Set Next Statement for an agent: the program run on to a line, then moved back to do a line again.</summary>
+    [Fact]
+    public async Task An_agent_runs_the_program_on_to_a_line_and_moves_it_back_to_do_a_line_again()
+    {
+        Write("Program.cs", "int total = 0;\ntotal += 1;\ntotal += 10;\ntotal += 100;\nConsole.WriteLine($\"total {total}\");\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+        await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 2 });
+        Assert.StartsWith("Program.cs:2:", (await Call(client, "debug_start")).GetProperty("location").GetString(), StringComparison.Ordinal);
+
+        JsonElement ranTo = await Call(client, "debug_run_to", new() { ["path"] = "Program.cs", ["line"] = 4 });
+        Assert.StartsWith("Program.cs:4:", ranTo.GetProperty("location").GetString(), StringComparison.Ordinal);
+        Assert.Equal("11", Local(ranTo, "total"));
+        JsonElement moved = await Call(client, "debug_set_next_statement", new() { ["path"] = "Program.cs", ["line"] = 3 });
+        Assert.StartsWith("Program.cs:3:", moved.GetProperty("location").GetString(), StringComparison.Ordinal);
+        Assert.Equal("11", Local(moved, "total"));
+
+        Assert.Equal("not debugging", (await Call(client, "debug_continue")).GetProperty("state").GetString());
+        Assert.Contains("total 121", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task An_agent_reads_and_commits_changes_and_runs_a_command_in_the_ides_terminal()
     {
@@ -339,6 +362,13 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             Assert.Equal(["Two as a number", "First"], log.EnumerateArray().Select(c => c.GetProperty("subject").GetString()));
             Assert.Equal(["New.txt"], (await Call(client, "vcs_status")).GetProperty("changes").EnumerateArray().Select(c => c.GetProperty("path").GetString()));
 
+            // Stash Changes takes the new file away, and Unstash Changes brings it back.
+            JsonElement stashed = Assert.Single((await Call(client, "vcs_stash", new() { ["action"] = "push", ["message"] = "the new file" })).EnumerateArray());
+            Assert.EndsWith("the new file", stashed.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(repository, "New.txt")), "Stash Changes left the new file in place");
+            Assert.Empty((await Call(client, "vcs_stash", new() { ["action"] = "pop", ["index"] = 0 })).EnumerateArray());
+            Assert.Equal("new\n", File.ReadAllText(Path.Combine(repository, "New.txt")));
+
             // A branch an agent names is a name, never one of git's options: git switch --orphan=x would empty the tree.
             CallToolResult orphan = await Result(client, "vcs_checkout", new() { ["branch"] = "--orphan=x" });
             Assert.True(orphan.IsError, "vcs_checkout took the branch --orphan=x for an option, and checked out an empty branch");
@@ -351,6 +381,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             string answer = (await Call(client, "terminal_run", new() { ["command"] = command })).GetString()!;
             Assert.Contains("42", answer, StringComparison.Ordinal);
             Assert.Contains("Notes.txt", answer, StringComparison.Ordinal);
+            string screen = (await Call(client, "terminal_screen")).GetString()!;
+            Assert.True(screen.Contains("42", StringComparison.Ordinal), $"terminal_screen did not show what the command printed:\n{screen}");
             if (OperatingSystem.IsWindows())
             {
                 // PowerShell's history is the run's (HISTFILE), as sh's is: never the person's, which PSReadLine keeps.

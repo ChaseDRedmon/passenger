@@ -17,6 +17,9 @@ public partial class MainWindow
     /// <summary>The settings in force.</summary>
     public AppSettings Settings => settings;
 
+    /// <summary>Whether the settings are the person's, kept in settings.json, rather than this window's own defaults.</summary>
+    public bool SettingsKept => settingsStore.IsKept;
+
     private void AddSettings()
     {
         Editors.ForEachEditor(editor => ApplyTo(editor, settings));

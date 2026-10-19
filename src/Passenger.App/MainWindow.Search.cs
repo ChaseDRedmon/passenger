@@ -10,9 +10,9 @@ namespace Passenger.App;
 /// popup offers them. The scope is kept with the folder and the mask for every folder, as Rider keeps them.</summary>
 public partial class MainWindow
 {
-    private const string RecentlyViewedScope = "Recently Viewed Files";
-    private const string OpenFilesScope = "Open Files";
-    private const string CurrentFileScope = "Current File";
+    internal const string RecentlyViewedScope = "Recently Viewed Files";
+    internal const string OpenFilesScope = "Open Files";
+    internal const string CurrentFileScope = "Current File";
 
     /// <summary>Find in Files' mask and whether a directory's subdirectories are searched, every folder's.</summary>
     private FindSettingsState findSettings = new();
@@ -246,6 +246,10 @@ public partial class MainWindow
         popups.Show(popup);
         return popup;
     }
+
+    /// <summary>Find in Files for an agent: a query's matches in a scope under its mask, as the popup searches them.</summary>
+    public Task<IReadOnlyList<SearchMatch>> FindInFilesAsync(SearchQuery query, SearchScope scope, CancellationToken cancellation) =>
+        SearchFiles(query, scope, cancellation);
 
     private Task<IReadOnlyList<SearchMatch>> SearchFiles(SearchQuery query, SearchScope scope, CancellationToken cancellation)
     {

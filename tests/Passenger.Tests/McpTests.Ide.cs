@@ -1,0 +1,213 @@
+using System.Diagnostics;
+using System.Text.Json;
+using Avalonia.Headless.XUnit;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+using Passenger.App;
+using Passenger.Core;
+
+namespace Passenger.Tests;
+
+/// <summary>The IDE's own windows for an agent: Find in Files in the window's scopes and masks, a file's Local History read
+/// and reverted, what Problems and the Build window list beyond a build's answer, the person's settings read and changed as
+/// Settings changes them, and Attach Profiler on a program already running.</summary>
+public sealed partial class McpTests
+{
+    [Fact]
+    public async Task An_agent_finds_text_in_the_windows_scopes_reverts_a_file_through_local_history_and_reads_problems_and_the_build_window()
+    {
+        const string helper = "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n";
+        Write("Bad.cs", "class Bad\n{\n    public int Count = \"none\";\n}\n");
+        Write("Notes.txt", "one two\ntwo three\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+
+        // Find in Files: the folder's files by text, then as its mask, a regex and its scopes narrow them.
+        JsonElement found = await Call(client, "find_in_files", new() { ["text"] = "Twice" });
+        Assert.Equal(["Helper.cs:3", "Program.cs:4"], Places(found));
+        Assert.Equal(["Helper.cs:3"], Places(await Call(client, "find_in_files", new() { ["text"] = "Twice", ["mask"] = "*.cs, !Program.cs" })));
+        Assert.Equal(["Program.cs:4"], Places(await Call(client, "find_in_files", new() { ["text"] = @"Twice\(\w\)", ["regex"] = true })));
+        await Call(client, "open_file", new() { ["path"] = "Helper.cs", ["line"] = 1, ["column"] = 1 });
+        Assert.Equal(["Helper.cs:3"], Places(await Call(client, "find_in_files", new() { ["text"] = "Twice", ["scope"] = "openFiles" })));
+        foreach ((Dictionary<string, object?> arguments, string said) in new (Dictionary<string, object?>, string)[]
+        {
+            (new() { ["text"] = "(", ["regex"] = true }, "Invalid pattern '('"),
+            (new() { ["text"] = "Twice", ["scope"] = "directory", ["directory"] = "nowhere" }, "Directory is not found"),
+            (new() { ["text"] = "Twice", ["mask"] = "*.cs; *.json" }, "File masks should be comma-separated"),
+        })
+        {
+            CallToolResult refused = await Result(client, "find_in_files", arguments);
+            Assert.True(refused.IsError == true && Text(refused).Contains(said, StringComparison.Ordinal), $"find_in_files {JsonSerializer.Serialize(arguments)} answered: {Text(refused)}");
+        }
+
+        // Two saves of Helper.cs are its Local History, the newest first, each with what the file held before it.
+        await Call(client, "type", new() { ["text"] = "/* a */ " });
+        await Call(client, "save_all");
+        await Call(client, "type", new() { ["text"] = "/* b */ " });
+        await Call(client, "save_all");
+        JsonElement[] rows = [.. (await Call(client, "local_history", new() { ["path"] = "Helper.cs" })).GetProperty("rows").EnumerateArray()];
+        Assert.True(rows.Length >= 2 && rows[0].GetProperty("title").GetString() == "Change" && rows[1].GetProperty("title").GetString() == "Change",
+            $"Helper.cs's history after two saves: {string.Join("; ", rows.Select(r => r.GetRawText()))}");
+        JsonElement before = await Call(client, "local_history", new() { ["path"] = "Helper.cs", ["set"] = rows[0].GetProperty("set").GetInt64() });
+        Assert.True(before.GetProperty("exists").GetBoolean());
+        Assert.Equal("/* a */ " + helper, before.GetProperty("text").GetString());
+
+        // A label across the folder's history, then the file put back as it was before its first save.
+        Assert.Equal("Label agent was here put", (await Call(client, "local_history_label", new() { ["name"] = "agent was here" })).GetString());
+        JsonElement labelled = (await Call(client, "local_history")).GetProperty("rows")[0];
+        Assert.Equal(("agent was here", true), (labelled.GetProperty("title").GetString(), labelled.GetProperty("label").GetBoolean()));
+        await Call(client, "local_history_revert", new() { ["path"] = "Helper.cs", ["set"] = rows[1].GetProperty("set").GetInt64() });
+        Assert.Equal(helper, File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+        Assert.EndsWith("\tstatic class Helper", (await Call(client, "editor_text", new() { ["path"] = "Helper.cs", ["to"] = 1 })).GetString(), StringComparison.Ordinal);
+        string reverted = (await Call(client, "local_history", new() { ["path"] = "Helper.cs" })).GetProperty("rows")[0].GetProperty("title").GetString()!;
+        Assert.StartsWith("Revert to ", reverted, StringComparison.Ordinal);
+        CallToolResult unknown = await Result(client, "local_history_revert", new() { ["path"] = "Helper.cs", ["set"] = 999_999 });
+        Assert.True(unknown.IsError == true && Text(unknown).Contains("No change set 999999", StringComparison.Ordinal), $"A revert to no change set answered: {Text(unknown)}");
+
+        // The last build's problems are Problems' Build tab, and its MSBuild output the Build window's.
+        JsonElement built = await Call(client, "build");
+        Assert.False(built.GetProperty("succeeded").GetBoolean());
+        JsonElement problems = await Call(client, "problems");
+        string[] build = [.. problems.GetProperty("build").EnumerateArray().Select(p => $"{p.GetProperty("code").GetString()} {p.GetProperty("path").GetString()}:{p.GetProperty("line").GetInt32()}")];
+        Assert.True(build.Contains("CS0029 Bad.cs:3") && build.Contains("CS0219 Helper.cs:5"), $"Problems' Build tab, for an agent: {string.Join("; ", build)}");
+        Assert.Equal(JsonValueKind.Array, problems.GetProperty("toolset").ValueKind);
+        Assert.False(problems.TryGetProperty("solution", out _), "Problems' solution tab was answered with solution-wide analysis off");
+        string output = (await Call(client, "build_output")).GetString()!;
+        Assert.True(output.Contains("CS0029", StringComparison.Ordinal), $"The Build window's console, for an agent, lacks the build's error:\n{output}");
+
+        // Solution-wide analysis turned on through the settings: every file's problems, a file never opened among them.
+        JsonElement turnedOn = Assert.Single((await Call(client, "settings_set", new() { ["changes"] = new Dictionary<string, object> { ["solutionWideAnalysis"] = true } })).EnumerateArray());
+        Assert.Equal((false, true), (turnedOn.GetProperty("before").GetBoolean(), turnedOn.GetProperty("after").GetBoolean()));
+        string[] solution = [.. (await Call(client, "problems")).GetProperty("solution").EnumerateArray().Select(p => $"{p.GetProperty("code").GetString()} {p.GetProperty("path").GetString()}:{p.GetProperty("line").GetInt32()}")];
+        Assert.True(solution.Contains("CS0029 Bad.cs:3"), $"Solution-wide analysis's problems, for an agent: {string.Join("; ", solution)}");
+        // A windowless Passenger's settings are its own, kept nowhere.
+        Assert.False((await Call(client, "settings")).GetProperty("kept").GetBoolean());
+
+        // Replace in Files: a closed file written, the open one changed in the editor and saved.
+        Assert.Equal("Replaced 2 matches in 1 file: Notes.txt",
+            (await Call(client, "replace_in_files", new() { ["text"] = "two", ["replacement"] = "2", ["mask"] = "*.txt" })).GetString());
+        Assert.Equal("one 2\n2 three\n", File.ReadAllText(Path.Combine(folder, "Notes.txt")));
+        Assert.Equal("Replaced 1 match in 1 file: Helper.cs",
+            (await Call(client, "replace_in_files", new() { ["text"] = "unused", ["replacement"] = "spare", ["scope"] = "currentFile" })).GetString());
+        Assert.Equal(helper.Replace("unused", "spare", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+    }
+
+    /// <summary>An agent on the person's window reads their settings and changes them as Settings does: asked first, a number
+    /// brought into its range, kept in settings.json and in force in the window at once; a name or choice Settings lacks
+    /// changes nothing, and Enable MCP Server stays the person's.</summary>
+    [AvaloniaFact]
+    public void An_agent_reads_and_changes_the_persons_settings_as_settings_does_once_they_allow_it()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.KeepSettings();
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine(folder, "Program.cs"));
+        Ui.Settle();
+        window.ApplySettings(window.Settings with { McpServer = true });
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            // Read, unasked: what Settings has, with each number's range and each choice.
+            JsonElement read = Await(Task.Run(() => Call(client, "settings")), "the agent reading the settings");
+            Assert.True(read.GetProperty("kept").GetBoolean(), "The person's window's settings were read as kept nowhere");
+            JsonElement font = Setting(read, "editorFontSize");
+            Assert.Equal((13.0, 6.0, 48.0), (font.GetProperty("value").GetDouble(), font.GetProperty("min").GetDouble(), font.GetProperty("max").GetDouble()));
+            Assert.Equal(["Always", "ForWarningsOrErrors", "ForErrors", "Never"],
+                Setting(read, "showBuildResults").GetProperty("choices").EnumerateArray().Select(c => c.GetString()!));
+
+            // A change is asked about first, then made as Settings' OK makes it.
+            Task<JsonElement> changing = Task.Run(() => Call(client, "settings_set", new()
+            {
+                ["changes"] = new Dictionary<string, object> { ["editorFontSize"] = 99, ["showBuildResults"] = "always" },
+            }));
+            Press(Question(window, "the question for the agent's settings change"), "Allow");
+            JsonElement[] changed = [.. Await(changing, "the agent's settings change").EnumerateArray()];
+            JsonElement size = Assert.Single(changed, c => c.GetProperty("name").GetString() == "editorFontSize");
+            Assert.Equal((13.0, 48.0), (size.GetProperty("before").GetDouble(), size.GetProperty("after").GetDouble()));
+            Assert.Equal("brought into its range, 6 to 48", size.GetProperty("note").GetString());
+            Assert.Equal("Always", Assert.Single(changed, c => c.GetProperty("name").GetString() == "showBuildResults").GetProperty("after").GetString());
+            Assert.Equal(48, window.Settings.EditorFontSize);
+            Assert.Equal(48, window.EditorArea.CodeEditor.FontSize);
+            Assert.Equal(global::Passenger.App.Settings.BuildResultsMode.Always, window.Settings.ShowBuildResults);
+            WaitFor(() => Ui.Shared(Path.Combine(settings, "settings.json")).Contains("\"editorFontSize\": 48", StringComparison.Ordinal), "settings.json to keep the agent's change");
+
+            // What Settings lacks, or an agent may not change, changes nothing.
+            foreach ((Dictionary<string, object> changes, string said) in new (Dictionary<string, object>, string)[]
+            {
+                (new() { ["editorFontSise"] = 12, ["editorFontSize"] = 12 }, "Settings has no setting editorFontSise"),
+                (new() { ["showBuildResults"] = "Sometimes" }, "showBuildResults is one of Always, ForWarningsOrErrors, ForErrors, Never, not \"Sometimes\""),
+                (new() { ["editorFontSize"] = "large" }, "editorFontSize takes a number, not \"large\""),
+                (new() { ["mcpServer"] = false }, "Enable MCP Server is the person's to change"),
+            })
+            {
+                CallToolResult refused = Await(Task.Run(() => Result(client, "settings_set", new() { ["changes"] = changes })), "the refused settings change");
+                Assert.True(refused.IsError == true && Text(refused).Contains(said, StringComparison.Ordinal), $"settings_set {JsonSerializer.Serialize(changes)} answered: {Text(refused)}");
+            }
+            Assert.Equal(48, window.Settings.EditorFontSize);
+            Assert.True(window.Settings.McpServer, "An agent turned the person's MCP server off");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+
+        static JsonElement Setting(JsonElement read, string name) =>
+            read.GetProperty("settings").EnumerateArray().Single(s => s.GetProperty("name").GetString() == name);
+    }
+
+    /// <summary>Attach Profiler for an agent: the program Run started, profiled from now for a while, left running after.</summary>
+    [Fact]
+    public async Task An_agent_profiles_a_program_already_running_and_leaves_it_running()
+    {
+        Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{folder}\", \"spin.pid\"), Environment.ProcessId.ToString());\n"
+            + "long turns = 0;\nwhile (true)\n{\n    turns = Spin.Turn(turns);\n}\n\nstatic class Spin\n{\n    public static long Turn(long turns) => turns + 1;\n}\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+        CallToolResult unattached = await Result(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
+        Assert.True(unattached.IsError == true, $"Attach Profiler with nothing running answered: {Text(unattached)}");
+
+        Assert.True((await Call(client, "run", new() { ["waitSeconds"] = 0 })).GetProperty("stillRunning").GetBoolean());
+        int spinning = await WrittenId("spin.pid", "the program to start");
+        JsonElement profiled = await Call(client, "profile", new() { ["attach"] = true, ["seconds"] = 2 });
+        Assert.True(profiled.GetProperty("samples").GetInt32() > 0, $"Attach Profiler sampled nothing: {profiled.GetRawText()}");
+        Assert.Contains(profiled.GetProperty("hotSpots").EnumerateArray(), h => h.GetProperty("method").GetString()!.Contains("Turn", StringComparison.Ordinal));
+        using Process program = Process.GetProcessById(spinning);
+        Assert.False(program.HasExited, "The program an agent attached the profiler to ended with its snapshot");
+        await Call(client, "stop");
+    }
+
+    /// <summary>Razor for an agent, as the editor has it from Roslyn's server with Razor cohosted in it: a component's errors,
+    /// what a name in its markup is, and a method's usages across its markup and its code block.</summary>
+    [Fact]
+    public async Task An_agent_reads_a_razor_components_errors_names_and_usages_through_roslyns_razor()
+    {
+        string blazor = PathNames.Canonical(TestFolders.Create("mcp-razor-"));
+        madeFolders.Add(blazor);
+        TestFolders.Prepare(() =>
+        {
+            BlazorApp.Create(blazor);
+            File.WriteAllText(Path.Combine(blazor, "Components", "Sum.razor"),
+                "<p>@Total</p>\n\n@code {\n    private int Total => Twice(21);\n\n    private static int Twice(int value) => value * 2;\n}\n");
+            File.WriteAllText(Path.Combine(blazor, "Components", "Broken.razor"), "<p>@Missing</p>\n");
+            Restore.Run(blazor);
+        }, blazor);
+        await using McpClient client = await Start(["--mcp", blazor]);
+
+        JsonElement error = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = "Components/Broken.razor" })).EnumerateArray(),
+            d => d.GetProperty("severity").GetString() == "error");
+        Assert.Equal(("CS0103", 1), (error.GetProperty("code").GetString(), error.GetProperty("line").GetInt32()));
+        string total = (await Call(client, "symbol_info", new() { ["path"] = "Components/Sum.razor", ["line"] = 1, ["column"] = 6 })).GetString()!;
+        Assert.True(total.Contains("Total", StringComparison.Ordinal) && total.Contains("int", StringComparison.Ordinal), $"symbol_info on a Razor component's name said: {total}");
+        string[] used = [.. (await Call(client, "usages", new() { ["path"] = "Components/Sum.razor", ["line"] = 6, ["column"] = 25 })).EnumerateArray()
+            .Select(p => $"{p.GetProperty("path").GetString()}:{p.GetProperty("line").GetInt32()}").Order(StringComparer.Ordinal)];
+        Assert.Equal([Path.Combine("Components", "Sum.razor") + ":4", Path.Combine("Components", "Sum.razor") + ":6"], used);
+    }
+
+    /// <summary>A Find in Files answer's matches as path:line.</summary>
+    private static string[] Places(JsonElement found) =>
+        [.. found.GetProperty("matches").EnumerateArray().Select(m => $"{m.GetProperty("path").GetString()}:{m.GetProperty("line").GetInt32()}").Order(StringComparer.Ordinal)];
+}

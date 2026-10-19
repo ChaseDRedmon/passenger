@@ -124,6 +124,13 @@ public sealed class CSharpService : IAsyncDisposable
     private CancellationTokenSource? analysing;
     private bool solutionWide;
 
+    /// <summary>The analysis's sources whose first pull has not been answered.</summary>
+    private int unanswered;
+
+    /// <summary>Whether solution-wide analysis has yet to answer its first pull: an agent's look at the solution's problems
+    /// waits for it, as the Problems window fills once it has.</summary>
+    public bool IsAnalysing => unanswered > 0;
+
     /// <summary>How long after a pull the server refused it is asked again, doubled while the server keeps refusing, up
     /// to <see cref="RefusedPullsAtMost"/>.</summary>
     private static readonly TimeSpan RefusedPull = TimeSpan.FromSeconds(1);
@@ -245,6 +252,7 @@ public sealed class CSharpService : IAsyncDisposable
         bool first = true;
         TimeSpan pause = RefusedPull;
         BackgroundWork.Begin();
+        unanswered++;
         try
         {
             while (!cancel.IsCancellationRequested)
@@ -283,6 +291,7 @@ public sealed class CSharpService : IAsyncDisposable
                 {
                     first = false;
                     BackgroundWork.End();
+                    unanswered--;
                 }
                 // A source with nothing to hold a pull open on answers at once: it is asked again only now and then.
                 if (changed.Count == 0 && DateTime.UtcNow - asked < TimeSpan.FromSeconds(1))
@@ -304,6 +313,7 @@ public sealed class CSharpService : IAsyncDisposable
             if (first)
             {
                 BackgroundWork.End();
+                unanswered--;
             }
         }
     }

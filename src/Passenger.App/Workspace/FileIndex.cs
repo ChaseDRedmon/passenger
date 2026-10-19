@@ -20,6 +20,9 @@ public sealed class FileIndex
     /// <summary>Every file indexed, by its path from the root.</summary>
     public IReadOnlyList<string> Files => files;
 
+    /// <summary>Whether a walk is under way whose list has not landed: an agent's search waits for it, as the folder opens.</summary>
+    public bool IsWalking { get; private set; }
+
     /// <summary>Walks the folder again off the UI thread. The files found before stay searchable until the walk is done,
     /// and only the newest walk's list lands; another folder's list goes at once.</summary>
     public void Build(string root)
@@ -30,6 +33,7 @@ public sealed class FileIndex
         }
         Root = root;
         int walk = ++walks;
+        IsWalking = true;
         // Held through the walk, then by the crossing, which lets go of what it can never deliver.
         IDisposable held = BackgroundWork.Scope();
         Task.Run(() => Walk(root)).ContinueWith(walked =>
@@ -39,6 +43,10 @@ public sealed class FileIndex
                 if (walked.IsCompletedSuccessfully && walk == walks)
                 {
                     files = walked.Result;
+                }
+                if (walk == walks)
+                {
+                    IsWalking = false;
                 }
             });
             held.Dispose();
@@ -53,6 +61,7 @@ public sealed class FileIndex
         walks++;
         Root = null;
         files = [];
+        IsWalking = false;
     }
 
     /// <summary>The best matches for a query, best first, as relative paths.</summary>
