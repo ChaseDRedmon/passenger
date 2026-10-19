@@ -23,7 +23,7 @@ public sealed class DapConnection : IAsyncDisposable
     private readonly Lock writeGate = new();
     private readonly ConcurrentDictionary<int, (string Command, TaskCompletionSource<JsonElement> Answer)> pending = new();
     private readonly Dictionary<string, Func<JsonElement, Task<object?>>> handlers = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Action> afterResponse = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (Action Then, bool EvenIfFailed)> afterResponse = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Action<JsonElement>> eventHandlers = new(StringComparer.Ordinal);
     private readonly Channel<JsonElement> inbox = Channel.CreateUnbounded<JsonElement>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
     private readonly CancellationTokenSource stopping = new();
@@ -73,22 +73,22 @@ public sealed class DapConnection : IAsyncDisposable
 
     /// <summary>Answers a request. A handler that throws answers with the exception's message as the
     /// error; <paramref name="then"/> runs once the answer is written (the initialized event must
-    /// follow the initialize response).</summary>
-    public void Handle<TArguments, TResponse>(string command, Func<TArguments, Task<TResponse>> handler, Action? then = null)
+    /// follow the initialize response), after an error too when <paramref name="evenIfFailed"/>.</summary>
+    public void Handle<TArguments, TResponse>(string command, Func<TArguments, Task<TResponse>> handler, Action? then = null, bool evenIfFailed = false)
     {
         handlers[command] = async arguments => await handler(Read<TArguments>(arguments)).ConfigureAwait(false);
-        Then(command, then);
+        Then(command, then, evenIfFailed);
     }
 
     /// <summary>A request answered with no body.</summary>
-    public void Handle<TArguments>(string command, Func<TArguments, Task> handler, Action? then = null)
+    public void Handle<TArguments>(string command, Func<TArguments, Task> handler, Action? then = null, bool evenIfFailed = false)
     {
         handlers[command] = async arguments =>
         {
             await handler(Read<TArguments>(arguments)).ConfigureAwait(false);
             return null;
         };
-        Then(command, then);
+        Then(command, then, evenIfFailed);
     }
 
     public void OnEvent<TBody>(string name, Action<TBody> handler) => eventHandlers[name] = body => handler(Read<TBody>(body));
@@ -184,7 +184,7 @@ public sealed class DapConnection : IAsyncDisposable
         return element.Deserialize<T>(Options) ?? throw new JsonException($"Expected {typeof(T).Name}, not null");
     }
 
-    private void Then(string command, Action? then)
+    private void Then(string command, Action? then, bool evenIfFailed)
     {
         if (then is null)
         {
@@ -192,7 +192,7 @@ public sealed class DapConnection : IAsyncDisposable
         }
         else
         {
-            afterResponse[command] = then;
+            afterResponse[command] = (then, evenIfFailed);
         }
     }
 
@@ -383,9 +383,9 @@ public sealed class DapConnection : IAsyncDisposable
         {
             return;
         }
-        if ((bool)response["success"]! && afterResponse.TryGetValue(command, out Action? then))
+        if (afterResponse.TryGetValue(command, out (Action Then, bool EvenIfFailed) after) && (after.EvenIfFailed || (bool)response["success"]!))
         {
-            then();
+            after.Then();
         }
     }
 

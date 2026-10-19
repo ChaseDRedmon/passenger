@@ -119,10 +119,11 @@ public partial class ManagedDebugger
         _launch = launch;
         _initialThreadId = launch.InitialThreadId;
         _launchOutput = Task.WhenAll(Forward(launch.Output, isError: false), Forward(launch.Error, isError: true));
-        _launchExit = Task.Run(launch.WaitForExit);
+        Task<int?> launchExit = Task.Run(launch.WaitForExit);
+        _launchExit = launchExit;
         // The exit is told as soon as the program has gone, not when the runtime's word of it is handled:
         // mscordbi can crash tearing the session down first (a race in its transport), taking that word with it.
-        _ = _launchExit.ContinueWith(ended => ReportExit(ended.Result), TaskScheduler.Default);
+        _ = launchExit.ContinueWith(ended => ReportExit(ended.Result), TaskScheduler.Default);
         int processId = launch.ProcessId;
 
         _logger?.Invoke($"Process created suspended with PID: {processId}");
@@ -139,13 +140,13 @@ public partial class ManagedDebugger
                 corDebug.Initialize();
                 corDebug.SetManagedHandler(_callbacks);
                 return corDebug.DebugActiveProcess(processId, false);
-            }, _logger);
+            }, () => launchExit.IsCompleted, _ending.Token, _logger);
         }
         catch (Exception error)
         {
             _logger?.Invoke($"Taking hold of process {processId} failed: {error}");
             // A program that ended meanwhile is why, whatever the debugger was refused on the way.
-            string ended = _launchExit.Wait(TimeSpan.FromMilliseconds(500)) && _launchExit.Result is int code ? $" (the program had ended, with exit code {code})" : "";
+            string ended = launchExit.Wait(TimeSpan.FromMilliseconds(500)) && launchExit.Result is int code ? $" (the program had ended, with exit code {code})" : "";
             // A program the debugger could not take hold of (not .NET, or failed first) is not left behind, held.
             launch.Kill();
             throw new InvalidOperationException($"Could not take hold of process {processId} as it started: {error.Message}{ended}", error);

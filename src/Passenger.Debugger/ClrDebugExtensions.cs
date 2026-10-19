@@ -18,6 +18,7 @@ public static class ClrDebugExtensions
         ICorDebug? corDebug = ComInterfaceMarshaller<ICorDebug>.ConvertToManaged(pCorDebug);
         if (GCHandle.FromIntPtr((IntPtr)parameter).Target is RuntimeStartup startup)
         {
+            startup.Told(hr);
             startup.Answered.TrySetResult((corDebug, hr));
             // Bounded, so an attach that never returns cannot hold the program at its start for good.
             startup.LetGo.Wait(TimeSpan.FromSeconds(30));
@@ -25,8 +26,22 @@ public static class ClrDebugExtensions
     }
 
     /// <summary>What dbgshim's callback hands over, and what holds a starting runtime in it until the debugger has hold.</summary>
-    private sealed class RuntimeStartup
+    private sealed class RuntimeStartup(int pid, Action<string>? log)
     {
+        /// <summary>Logged on dbgshim's thread as the answer comes, so a log says when it came even after the wait for it
+        /// was given up; a log that fails never reaches dbgshim.</summary>
+        public void Told(int hr)
+        {
+            try
+            {
+                log?.Invoke($"The runtime in process {pid} answered the handshake: 0x{hr:X8}");
+            }
+            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            {
+                // The log's file is gone or full; the answer still counts.
+            }
+        }
+
         public TaskCompletionSource<(ICorDebug? CorDebug, int Hr)> Answered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>Set once the debugger has taken hold of the process, or given up on it; never disposed, since dbgshim's
@@ -37,11 +52,13 @@ public static class ClrDebugExtensions
     /// <summary>A process taken hold of as its runtime starts: registered for, then let go (<paramref name="resume"/>, handed
     /// the runtime's answer so it can stop waiting on a port once the runtime has answered), then <paramref name="attach"/>
     /// run while the starting runtime waits in dbgshim's callback, so none of the program runs before the debugger has it.
-    /// A runtime already running answers at once, and is taken hold of where it is.</summary>
-    public static async Task<(ICorDebug CorDebug, ICorDebugProcess Process)> Automatic(int pid, Func<Task, Task>? resume, Func<ICorDebug, ICorDebugProcess> attach, Action<string>? log = null)
+    /// A runtime already running answers at once; a starting one is waited for however long it takes (a runtime's first
+    /// start on a machine reads it from a cold disk), until the process has <paramref name="ended"/> or the session ends.</summary>
+    public static async Task<(ICorDebug CorDebug, ICorDebugProcess Process)> Automatic(int pid, Func<Task, Task>? resume, Func<ICorDebug, ICorDebugProcess> attach,
+        Func<bool> ended, CancellationToken sessionEnded, Action<string>? log = null)
     {
         IntPtr unregisterToken = IntPtr.Zero;
-        RuntimeStartup startup = new();
+        RuntimeStartup startup = new(pid, log);
         GCHandle startupHandle = GCHandle.Alloc(startup);
         try
         {
@@ -58,18 +75,22 @@ public static class ClrDebugExtensions
             if (resume is not null)
             {
                 await resume(startup.Answered.Task);
+                log?.Invoke($"Let process {pid} go; its runtime's answer is waited for while it lives");
             }
 
-            (ICorDebug? CorDebug, int Hr) result;
-            try
+            while (!startup.Answered.Task.IsCompleted)
             {
-                result = await startup.Answered.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                if (sessionEnded.IsCancellationRequested)
+                {
+                    throw new InvalidOperationException("the session ended before its runtime told the debugger it had started");
+                }
+                if (ended())
+                {
+                    throw new InvalidOperationException("it ended before its runtime told the debugger it had started");
+                }
+                await Task.WhenAny(startup.Answered.Task, Task.Delay(100, sessionEnded)).ConfigureAwait(false);
             }
-            catch (TimeoutException)
-            {
-                throw new TimeoutException($"Process {pid}'s runtime never told the debugger it had started (dbgshim's handshake) within 5 s");
-            }
-            log?.Invoke($"The runtime in process {pid} answered the handshake: 0x{result.Hr:X8}");
+            (ICorDebug? CorDebug, int Hr) result = await startup.Answered.Task.ConfigureAwait(false);
             if (result.CorDebug is not { } corDebug)
             {
                 throw new InvalidOperationException($"dbgshim could not take hold of process {pid}'s runtime: {Described(result.Hr)}");

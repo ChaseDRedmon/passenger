@@ -180,8 +180,13 @@ public partial class ManagedDebugger
     /// decompile is asked for under the engine's lock and ends off it.</summary>
     private readonly Dictionary<Guid, Task<bool>> _decompiling = [];
 
-    /// <summary>Cancelled as the session ends, which gives up a decompile under way.</summary>
+    /// <summary>Cancelled as the session ends, which gives up a decompile under way and a start still waiting for the
+    /// program's runtime.</summary>
     private readonly CancellationTokenSource _ending = new();
+
+    /// <summary>The session is ending (a disconnect, a terminate, the client gone): what waits on it gives up. Called before the
+    /// engine's lock is asked for, since configurationDone holds that lock while it waits for the program's runtime.</summary>
+    public void Ending() => _ = _ending.CancelAsync();
 
     /// <summary>How often the program has been let go, so an event put off for a decompile is dropped when it was let go
     /// meanwhile (<see cref="AfterDecompiling"/>).</summary>
@@ -418,7 +423,7 @@ public partial class ManagedDebugger
     /// one held at its start once the debugger is registered for its runtime and has let it go (<paramref name="resume"/>),
     /// so a client that lets it go itself once answered finds the debugger there, and none of its events is handled before
     /// the process is the engine's. A failure answers the request with its reason.</summary>
-    private async Task PerformAttach(int processId, Func<Process, Task, Task> resume)
+    private async Task PerformAttach(int processId, Func<Process, Task, CancellationToken, Task> resume)
     {
         _logger?.Invoke($"Attaching to process: {processId}");
         Process process;
@@ -433,7 +438,8 @@ public partial class ManagedDebugger
         try
         {
             _exited.Reset();
-            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, answered => resume(process, answered), TakeHold, _logger);
+            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, answered => resume(process, answered, _ending.Token), TakeHold,
+                () => process.HasExited, _ending.Token, _logger);
         }
         catch (Exception error)
         {

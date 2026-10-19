@@ -1,4 +1,7 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.IO.Pipes;
+using System.Net.Sockets;
 using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Tests.Debugging.Helpers;
@@ -215,6 +218,138 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
         DapException refused = Assert.Throws<DapException>(() => host.Request("configurationDone"));
         Assert.Contains("could not start TerminalConsoleApp.dll in its terminal: no terminal here", refused.Reason, StringComparison.Ordinal);
         Assert.Empty(host.Request<ThreadsResponse>("threads", limit: TimeSpan.FromSeconds(10)).Threads);
+    }
+
+    /// <summary>A program whose runtime is slow to start (its first start on a machine reads it from a cold disk) is still the
+    /// debugger's, however late its runtime answers: held here 6 s at its start, past the 5 s the debugger once gave it.</summary>
+    [Fact]
+    public async Task A_program_whose_runtime_starts_late_is_still_debugged()
+    {
+        using StartHold hold = new();
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("DebuggableConsoleApp"), stopAtEntry: false, justMyCode: true, environment: hold.Environment)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest(22);
+        Task configured = host.Send("configurationDone");
+        await hold.Held();
+
+        await Task.WhenAny(configured, Task.Delay(TimeSpan.FromSeconds(6), TestContext.Current.CancellationToken));
+        Assert.False(configured.IsCompleted, $"The debugger gave up on the program while its runtime was still starting: {configured.Exception?.InnerException?.Message}");
+        await hold.LetGo();
+        await configured.WaitAsync(DebugSession.RequestLimit, TestContext.Current.CancellationToken);
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        Assert.True((stopped.Reason, stopped.Line) == ("breakpoint", 22), $"The program that started late stopped for {stopped.Reason} at line {stopped.Line}, not at its breakpoint");
+    }
+
+    /// <summary>A launch stopped while its program's runtime is still starting ends at once, the program with it, and says why:
+    /// the debugger waits for a runtime as long as the session lasts, no longer.</summary>
+    [Fact]
+    public async Task A_launch_stopped_while_its_runtime_starts_ends_at_once_with_its_program()
+    {
+        using StartHold hold = new();
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("DebuggableConsoleApp"), stopAtEntry: false, justMyCode: true, environment: hold.Environment)
+            .WaitForInitializedEvent();
+        Task configured = host.Send("configurationDone");
+        int program = await hold.Held();
+
+        Assert.True(host.Disconnect(TimeSpan.FromSeconds(10)), "The disconnect went unanswered 10 s while the program's runtime was starting");
+        DapException failed = await Assert.ThrowsAsync<DapException>(() => configured);
+        Assert.Contains("the session ended before its runtime told the debugger it had started", failed.Reason, StringComparison.Ordinal);
+        for (DateTime until = DateTime.UtcNow.AddSeconds(10); Processes.IsRunning(program) && DateTime.UtcNow < until;)
+        {
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+        }
+        Assert.False(Processes.IsRunning(program), $"The program (process {program}) outlived the session that was stopped as it started");
+    }
+
+    /// <summary>A program that ends before any runtime in it starts fails configurationDone as it ends, saying so and how it
+    /// ended, rather than once a wait runs out.</summary>
+    [Fact]
+    public async Task A_program_that_ends_before_its_runtime_starts_fails_configurationDone_saying_how_it_ended()
+    {
+        (string program, string[] arguments) = OperatingSystem.IsWindows() ? ("cmd", (string[])["/c", "exit 3"]) : ("/bin/sh", ["-c", "exit 3"]);
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(program, stopAtEntry: false, justMyCode: true, arguments)
+            .WaitForInitializedEvent();
+
+        DapException failed = Assert.Throws<DapException>(() => host.WithConfigurationDoneRequest());
+        Assert.Contains("it ended before its runtime told the debugger it had started (the program had ended, with exit code 3)", failed.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>A diagnostic port of the test's own that a launched program's runtime connects to and waits at as it starts,
+    /// before its debugger starts, until the test lets it go (the protocol's ResumeRuntime).</summary>
+    private sealed class StartHold : IDisposable
+    {
+        private readonly string address;
+        private readonly NamedPipeServerStream? pipe;
+        private readonly Socket? listener;
+        private Stream? stream;
+
+        public StartHold()
+        {
+            string name = $"hold-{Guid.NewGuid():N}"[..13];
+            if (OperatingSystem.IsWindows())
+            {
+                address = name;
+                pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            }
+            else
+            {
+                address = Path.Combine(TestRun.Root, name);
+                listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                listener.Bind(new UnixDomainSocketEndPoint(address));
+                listener.Listen(1);
+            }
+        }
+
+        /// <summary>What sends the program's runtime here, to wait.</summary>
+        public IReadOnlyDictionary<string, string> Environment => new Dictionary<string, string> { ["DOTNET_DiagnosticPorts"] = $"{address},connect,suspend" };
+
+        /// <summary>The process whose runtime has come and waits, once it has.</summary>
+        public async Task<int> Held()
+        {
+            using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+            limit.CancelAfter(TimeSpan.FromSeconds(60));
+            if (pipe is not null)
+            {
+                await pipe.WaitForConnectionAsync(limit.Token);
+                stream = pipe;
+            }
+            else
+            {
+                stream = new NetworkStream(await listener!.AcceptAsync(limit.Token), ownsSocket: true);
+            }
+            // "ADVR_V1\0", the runtime's cookie, its process's id and two bytes kept for later.
+            byte[] advertised = new byte[34];
+            await stream.ReadExactlyAsync(advertised, limit.Token);
+            return checked((int)BinaryPrimitives.ReadUInt64LittleEndian(advertised.AsSpan(24)));
+        }
+
+        public async Task LetGo()
+        {
+            // The protocol's header (its magic, its size, the Process command set's ResumeRuntime), then the answer's.
+            byte[] resume = [.. "DOTNET_IPC_V1\0"u8, 20, 0, 0x04, 0x01, 0, 0];
+            await stream!.WriteAsync(resume, TestContext.Current.CancellationToken);
+            await stream.ReadExactlyAsync(new byte[24], TestContext.Current.CancellationToken);
+        }
+
+        public void Dispose()
+        {
+            stream?.Dispose();
+            pipe?.Dispose();
+            listener?.Dispose();
+            if (listener is not null)
+            {
+                File.Delete(address);
+            }
+        }
     }
 
     /// <summary>The client's terminal, as the tests' client keeps one: it starts what runInTerminal asks for, with the

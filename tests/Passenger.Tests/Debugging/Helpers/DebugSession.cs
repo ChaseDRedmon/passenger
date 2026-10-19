@@ -161,6 +161,14 @@ public sealed class DebugSession : IDisposable
         return answer;
     }
 
+    /// <summary>A request with no answer's body, sent without waiting for its answer.</summary>
+    public Task Send(string command, object? arguments = null)
+    {
+        Task answer = Connection.RequestAsync(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken);
+        Observe(answer);
+        return answer;
+    }
+
     /// <summary>A disconnect, answered or not within <paramref name="limit"/>: true when it was, the adapter then on its way out.</summary>
     public bool Disconnect(TimeSpan limit)
     {
@@ -219,13 +227,15 @@ public sealed class DebugSession : IDisposable
         return this;
     }
 
-    public DebugSession WithLaunchRequest(string program, bool stopAtEntry, bool justMyCode, IReadOnlyList<string>? arguments = null, string console = "internalConsole")
+    public DebugSession WithLaunchRequest(string program, bool stopAtEntry, bool justMyCode, IReadOnlyList<string>? arguments = null, string console = "internalConsole",
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         Request("launch", new LaunchArguments
         {
             Program = program,
             Args = arguments,
             Cwd = Path.GetDirectoryName(program),
+            Env = environment,
             Console = console,
             JustMyCode = justMyCode,
             StopAtEntry = stopAtEntry,
