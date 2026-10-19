@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.ToolWindows;
@@ -311,6 +313,65 @@ public sealed class BranchesTests : IDisposable
         Ui.Settle();
         Assert.StartsWith("Merge branch 'feature'", window.CommitView.Message, StringComparison.Ordinal);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_branch_in_the_toolbars_branch_menu_opens_its_own_menu_and_is_checked_out_only_by_its_checkout()
+    {
+        MainWindow window = Open();
+
+        // Enter on feature opens feature's menu, Rider's for a branch, and checks nothing out.
+        ContextMenu menu = OpenBranchWidget(window);
+        MenuItem feature = Reach(window, menu.Items.OfType<MenuItem>(), "feature");
+        Ui.Press(window, "Enter");
+        Assert.True(window.Vcs.Branch == "main", $"Choosing feature in the branch menu checked out {window.Vcs.Branch}, where Rider's opens the branch's own menu");
+        Assert.True(feature.IsSubMenuOpen, "Choosing feature in the branch menu opened no menu of feature's");
+        Assert.Equal(
+            [
+                "Checkout", "New Branch from 'feature'...", "Checkout and Rebase onto 'main'", "Compare with 'main'", "Show Diff with Working Tree",
+                "Rebase 'main' onto 'feature'", "Merge 'feature' into 'main'", "Update", "Push...", "Rename...", "Delete",
+            ], feature.Items.OfType<MenuItem>().Select(i => i.Header as string));
+
+        // Its Merge merges, main still checked out.
+        Reach(window, feature.Items.OfType<MenuItem>(), "Merge 'feature' into 'main'");
+        Ui.Press(window, "Enter");
+        Ui.Landed(() => window.Status == "Merged feature to main", "the merge");
+        Assert.True(Ancestor("feature", "main"), "main lacks feature's commit after Merge 'feature' into 'main'");
+        Assert.Equal("main", window.Vcs.Branch);
+
+        // And its Checkout checks it out.
+        menu = OpenBranchWidget(window);
+        MenuItem login = Reach(window, menu.Items.OfType<MenuItem>(), "team/login");
+        Ui.Press(window, "Enter");
+        Reach(window, login.Items.OfType<MenuItem>(), "Checkout");
+        Ui.Press(window, "Enter");
+        Ui.Landed(() => window.Vcs.Branch == "team/login", "the checkout of team/login");
+        window.Close();
+    }
+
+    /// <summary>The toolbar's branch widget clicked, as a person's pointer clicks it, and its menu waited for.</summary>
+    private static ContextMenu OpenBranchWidget(MainWindow window)
+    {
+        Button button = window.FindControl<Button>("BranchButton")!;
+        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.WaitFor(() => window.OpenContextMenu is { IsOpen: true }, "the branch widget's menu");
+        Ui.Settle();
+        return window.OpenContextMenu!;
+    }
+
+    /// <summary>The arrow keys taken down a menu to an item, as a person moves to it.</summary>
+    private static MenuItem Reach(MainWindow window, IEnumerable<MenuItem> items, string header)
+    {
+        MenuItem item = items.FirstOrDefault(i => i.Header as string == header)
+            ?? throw new InvalidOperationException($"The menu has no {header}: [{string.Join(", ", items.Select(i => i.Header))}]");
+        for (int presses = 0; !item.IsSelected; presses++)
+        {
+            Assert.True(presses < 30, $"Down never reached {header} in the menu");
+            Ui.Press(window, "Down");
+        }
+        return item;
     }
 
     private MainWindow Open()

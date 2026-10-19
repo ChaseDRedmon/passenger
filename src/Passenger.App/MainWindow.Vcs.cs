@@ -150,7 +150,7 @@ public partial class MainWindow
         Explorer.Tree.SetChanges(vcs.Changes.Where(c => c.Kind is not ChangeKind.Deleted).ToDictionary(c => c.Path, c => c.Kind));
     }
 
-    /// <summary>Rider's branch popup: new branch, commit, push, then the local branches to check out.</summary>
+    /// <summary>Rider's branch popup: new branch, commit, push, then the local branches, each with its own menu.</summary>
     private void OnBranchClicked(object? sender, RoutedEventArgs e) => ShowBranches();
 
     private void ShowBranches()
@@ -198,10 +198,12 @@ public partial class MainWindow
         menu.Items.Add(Action(AppActions.Unstash));
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Local", IsEnabled = false });
-        foreach (string branch in await session.Vcs.Repository.BranchesAsync())
+        // Each branch opens the menu the branches panel gives it (Checkout, Merge into Current and the rest), as Rider's
+        // widget does, so a branch is checked out only by its Checkout.
+        (IReadOnlyList<BranchInfo> refs, _) = await session.Vcs.BranchTreeAsync();
+        foreach (BranchInfo branch in refs.Where(b => b.Kind == RefKind.Local).OrderByDescending(b => b.IsCurrent))
         {
-            string chosen = branch;
-            menu.Items.Add(MenuChoice.Of(branch, branch == session.Vcs.Branch, () => _ = session.Vcs.CheckoutAsync(chosen)));
+            menu.Items.Add(MenuChoice.Holding(branch.Name, branch.IsCurrent, GitBranches.Menu(branch)));
         }
         Open(menu, BranchButton);
     }
