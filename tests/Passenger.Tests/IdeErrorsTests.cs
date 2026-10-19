@@ -293,7 +293,9 @@ public sealed class IdeErrorsTests : IDisposable
         }
         // Said as the server is replaced, then by Find Usages, which it never answered, once its connection is gone.
         Assert.Equal("Find Usages failed: the language server stopped responding, so it was ended", window.Status);
-        Assert.Contains($"process {first}) is not responding: textDocument/references waited", Ui.IdeLog());
+        string[] said = [.. Ui.IdeLog().Split('\n').Where(l => l.Contains($"process {first})", StringComparison.Ordinal))];
+        Assert.True(said.Any(l => l.Contains($"process {first}) is not responding: textDocument/references waited", StringComparison.Ordinal)),
+            $"The log did not say the server stopped answering Find Usages; of process {first} it said: {string.Join(" | ", said)}");
         Ui.WaitFor(() => !Running(first), "the server that stopped answering to be ended, not left behind");
 
         TypeAnErrorAndSeeItReported(window);
