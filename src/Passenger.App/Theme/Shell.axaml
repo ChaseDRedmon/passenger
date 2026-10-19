@@ -106,7 +106,7 @@
     <Style Selector="MenuItem /template/ Popup#PART_Popup">
         <Setter Property="VerticalOffset" Value="-16" />
     </Style>
-    <!-- A rule between a menu's groups in the colour of its edge (Rider's Menu.separatorColor). -->
+    <!-- A rule between a menu's groups in the colour of its edge, as Rider's menus draw theirs. -->
     <Style Selector="ContextMenu Separator">
         <Setter Property="Background" Value="{DynamicResource Passenger.PopupBorder}" />
     </Style>
@@ -194,8 +194,8 @@
         <Setter Property="BorderThickness" Value="0" />
     </Style>
 
-    <!-- A list, table or text in a page, framed as a field is, on Rider's list ground (white in light, the page's in
-         dark): a frame in the divider's colour vanishes on the editor's background in dark. -->
+    <!-- A list, table or text in a page, framed as a field is, on the list's ground (white in light, deeper than the page
+         in dark), as Rider frames its lists: a frame in the divider's colour would vanish on a deep ground in dark. -->
     <Style Selector="Border.framed">
         <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
         <Setter Property="BorderThickness" Value="1" />
