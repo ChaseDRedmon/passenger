@@ -524,7 +524,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), Local History given the old bytes; projects,
   solutions, nuget.config, .gitignore and merge results included, never `File.WriteAll*`. A server's edit to files not
   open goes through `WorkspaceEdits.StaleAsync` (refused if one was written within 2 s of the request or its text differs
-  from the server's, the extension's `DocumentTexts`). A project edit or a save waits out a reader that shares no
+  from the server's, the extension's `DocumentTexts`; an agent's call waits for the server instead, `Patience`). A project edit or a save waits out a reader that shares no
   writes (Windows refuses the write while a project load reads the file) for up to 2 s (`FileText.WhileHeld`). Every
   edit from the language server goes through
   `LineEndings.Fit`, then `Indentation.Fit`. `OpenDocument` keeps how its file is stored, encoding, BOM and
@@ -593,7 +593,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   unless `deleteAnyway`), the server's Introduce Field, Introduce Parameter and Encapsulate Field, and Optimize Imports
   and Code Cleanup over a file, project or solution (files not open `EditorArea.Borrow`ed without a tab, one command);
   without options a kind with a dialog describes it (`DescribeAtAsync`), and each answers a `RefactorOutcome`'s files,
-  one command of global undo, saved. `app_details` is the
+  one command of global undo, saved. `refactor`, `rename` and `apply_code_action` run in a `Patience` (`WorkspaceEdits.cs`):
+  refused by `StaleAsync` for a file not open the server may not have read (the agent's own write a moment before), the
+  call waits until `DocumentTexts` says the server holds the disk's text (else for the 2 s to pass) and works it out
+  again, 10 s in all, a file so seen trusted until it is written again; the window's commands still refuse at once. `app_details` is the
   Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` and
   `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
   `LiveTreeController.Watching`; `debug_state` carries `bindingValues`; `hot_reload` is Apply Hot Reload Changes
