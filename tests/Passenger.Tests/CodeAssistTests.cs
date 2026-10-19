@@ -828,6 +828,30 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Extract_method_on_lines_selected_down_to_the_next_statement_keeps_that_statement_on_its_own_line()
+    {
+        project.Write("Average.cs", "using System.Collections.Generic;\n\nstatic class Average\n{\n    public static double Of(IEnumerable<int> values)\n    {\n"
+            + "        int total = 0;\n        int count = 0;\n        foreach (int value in values)\n        {\n            total += value;\n            count++;\n        }\n"
+            + "        return total / count;\n    }\n}\n");
+        MainWindow window = project.Open("Average.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        // Shift+Down from the loop's first word to the return's: the selection ends in the indentation before it.
+        editor.GoTo(new TextPosition(8, 8));
+        for (int i = 0; i < 5; i++)
+        {
+            Ui.Press(window, "shift Down");
+        }
+        int version = editor.Document.Version;
+        Ui.Run(window, AppActions.ExtractMethod);
+        Ui.WaitFor(() => editor.Document.Version != version, "the loop to be extracted");
+        Ui.Settle();
+        Ui.Press(window, "ESCAPE");
+        string after = editor.Document.Snapshot.ToString();
+        Assert.True(after.Contains("        return total / count;\n", StringComparison.Ordinal), $"The return after the loop was joined to the call that replaced it:\n{after}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Extracting_twice_offers_to_rename_each_method_just_made_not_the_one_before()
     {
         MainWindow window = project.Open("Loop.cs");

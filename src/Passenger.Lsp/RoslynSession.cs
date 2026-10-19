@@ -392,11 +392,30 @@ public sealed class LspDocument : IDisposable
         return result.ValueKind == JsonValueKind.Object ? result : null;
     }
 
+    /// <summary>The actions for a range, asked without the whitespace at either end of it: lines selected with Shift+Down
+    /// from a statement's first word end in the next line's indentation, which Roslyn's Extract Method replaced with the
+    /// call, joining the statement after it onto the call's line.</summary>
     public async Task<IReadOnlyList<CodeAction>> CodeActionsAsync(TextRange range, IReadOnlyList<Diagnostic> diagnostics, CancellationToken cancel = default)
     {
         JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/codeAction",
-            new CodeActionParams(Identifier, RangeOf(range), new CodeActionContext(diagnostics, TriggerKind: 1)), cancel);
+            new CodeActionParams(Identifier, RangeOf(Trimmed(Text.Snapshot, range)), new CodeActionContext(diagnostics, TriggerKind: 1)), cancel);
         return Shapes.CodeActions(result);
+    }
+
+    /// <summary>A range without the spaces, tabs and line breaks at its ends; one of nothing else is left as it is.</summary>
+    private static TextRange Trimmed(TextSnapshot text, TextRange range)
+    {
+        int start = range.Start;
+        int end = range.End;
+        while (end > start && char.IsWhiteSpace(text[end - 1]))
+        {
+            end--;
+        }
+        while (start < end && char.IsWhiteSpace(text[start]))
+        {
+            start++;
+        }
+        return start == end ? range : TextRange.FromBounds(start, end);
     }
 
     /// <summary>The actions of one kind the server has for the whole document (ESLint's <c>source.fixAll.eslint</c>),
