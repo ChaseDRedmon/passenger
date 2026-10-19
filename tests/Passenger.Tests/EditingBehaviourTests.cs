@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Input.TextInput;
 using Passenger.Editor;
 using Passenger.Text;
@@ -195,6 +196,22 @@ public sealed class EditingBehaviourTests
         Ui.Settle();
         Assert.Equal("first\nsecond\nsecond", rig.Text);
         Assert.Equal(new TextPosition(2, 2), rig.Editor.CaretPosition);
+    }
+
+    /// <summary>Text on the clipboard whose lines end in a lone carriage return (as classic Mac text and some apps' put
+    /// it there) goes in as lines in the file's breaks, as Rider pastes it: the editor's lines end only at a line feed, so
+    /// the CRs went in as one line the editor drew whole, which the compiler read as several.</summary>
+    [AvaloniaFact]
+    public void Text_pasted_with_lone_carriage_returns_goes_in_as_lines_with_the_files_breaks()
+    {
+        EditorRig rig = new("first\nlast");
+        rig.PlaceCaret("first\n".Length);
+        rig.Window.Clipboard!.SetTextAsync("one\rtwo\r").GetAwaiter().GetResult();
+        rig.Press("meta V");
+        Ui.Settle();
+        Assert.True(rig.Text == "first\none\ntwo\nlast",
+            $"The paste left \"{rig.Text.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\", not its lines with the file's breaks");
+        Assert.Equal(new TextPosition(3, 0), rig.Editor.CaretPosition);
     }
 
     [AvaloniaFact]

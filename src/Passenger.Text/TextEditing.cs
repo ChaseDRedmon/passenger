@@ -578,7 +578,8 @@ public static class TextEditing
     /// <paramref name="indent"/>, a block's lines are indented with it, a level of the block's own for each of its.</summary>
     public static EditPlan Paste(TextSnapshot text, SelectionSet selections, string clipboard, bool wholeLines, string eol, IndentOptions? indent = null)
     {
-        string normalized = LineEndings.In(clipboard, eol);
+        // A lone '\r' (classic Mac text) breaks a line on the clipboard as Rider pastes it, though in the editor's text only '\n' does.
+        string normalized = LineEndings.In(clipboard.Contains('\r', StringComparison.Ordinal) ? clipboard.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n') : clipboard, eol);
         string[] parts = normalized.Split(eol);
         if (selections.HasMultiple && parts.Length == selections.Count && !(wholeLines && selections.Items.All(s => s.IsEmpty)))
         {
