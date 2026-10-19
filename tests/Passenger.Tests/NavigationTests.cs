@@ -37,6 +37,37 @@ public sealed class NavigationTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Go_to_file_with_a_line_after_the_name_opens_the_file_at_that_line_and_column()
+    {
+        Write("src/Editor/CodeEditor.cs", string.Join('\n', Enumerable.Range(1, 30).Select(i => $"// line {i} of the editor")));
+        Write("src/Editor/Commands.cs", "class Commands { }");
+        MainWindow window = Open();
+
+        // As Rider's: a stack trace's "CodeEditor.cs:20" or "CodeEditor.cs:20:4", pasted or typed, finds the file and its place.
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+        window.KeyTextInput("CodeEditor.cs:20");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Assert.False(window.IsPopupOpen, "Go to File found nothing for a file's name with a line after it");
+        Assert.Equal("CodeEditor.cs", window.EditorArea.Active?.Name);
+        Assert.Equal(new TextPosition(19, 0), window.EditorArea.CodeEditor.CaretPosition);
+
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+        window.KeyTextInput("codeed:7:4");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Assert.Equal(new TextPosition(6, 3), window.EditorArea.CodeEditor.CaretPosition);
+
+        // Go to Everything's files take the same.
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToEverything));
+        window.KeyTextInput("CodeEditor.cs:12");
+        Ui.WaitFor(() => window.Popup is Passenger.App.Navigation.SymbolPopup { IsSettled: true } popup && popup.Rows.Count > 0, "Go to Everything's file");
+        Ui.Press(window, "ENTER");
+        Assert.Equal(new TextPosition(11, 0), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Go_to_file_with_nothing_typed_offers_the_files_opened_before_this_one()
     {
         Write("First.cs", "class First { }");

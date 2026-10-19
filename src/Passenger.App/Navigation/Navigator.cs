@@ -248,7 +248,11 @@ public sealed class Navigator
         popup.Done += (_, path) =>
         {
             parts.Popups.Close();
-            if (path is not null)
+            if (path is not null && popup.At is { } at)
+            {
+                NavigateTo(path, at);
+            }
+            else if (path is not null)
             {
                 parts.OpenFile(path);
             }
@@ -317,21 +321,23 @@ public sealed class Navigator
         {
             return [.. session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
         }
+        // A file's name with a line after it ("CodeEditor.cs:20"), as Go to File takes it: its files open at that place.
+        (string named, TextPosition? at) = GoToFilePopup.PlaceIn(query);
         IReadOnlyList<SymbolRow> symbols = [];
         try
         {
-            symbols = session.CSharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
+            symbols = session.CSharp?.Session is { IsLoaded: true } ? await SearchSymbols(named, cancel) : [];
         }
         catch (Lsp.LanguageServerFailed)
         {
             // The files still match without the server.
         }
-        IEnumerable<SymbolRow> files = session.Index.Search(query).Take(20).Select(FileRow);
+        IEnumerable<SymbolRow> files = session.Index.Search(named).Take(20).Select(relative => FileRow(relative, at));
         static bool IsType(int kind) => kind is 5 or 10 or 11 or 23;
         return [.. symbols.Where(r => IsType(r.Kind)), .. files, .. symbols.Where(r => !IsType(r.Kind))];
 
-        SymbolRow FileRow(string relative) =>
-            new(Path.GetFileName(relative), null, Path.GetDirectoryName(relative), SymbolRow.FileKind, Path.Combine(root, relative), new TextPosition(0, 0));
+        SymbolRow FileRow(string relative, TextPosition? place = null) =>
+            new(Path.GetFileName(relative), null, Path.GetDirectoryName(relative), SymbolRow.FileKind, Path.Combine(root, relative), place ?? new TextPosition(0, 0));
     }
 
     private SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)

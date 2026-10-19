@@ -30,6 +30,26 @@ public partial class GoToFilePopup : UserControl
     /// <summary>The chosen file (a full path), or null when the popup was dismissed.</summary>
     public event EventHandler<string?>? Done;
 
+    /// <summary>The place a line after the file's name asked for ("Foo.cs:20", "Foo.cs:20:4", counted from one, as a
+    /// stack trace writes it), from the start of its line when no column is given; null for the file alone.</summary>
+    public Passenger.Text.TextPosition? At { get; private set; }
+
+    /// <summary>A query's name and the line and column after it, Rider's "name:line[:column]".</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(?<name>.*?):(?<line>\d+)(?::(?<column>\d+))?\s*$")]
+    private static partial System.Text.RegularExpressions.Regex Place();
+
+    /// <summary>A query's file name and the place after it (<see cref="At"/>), which Go to Everything's files take too.</summary>
+    public static (string Name, Passenger.Text.TextPosition? At) PlaceIn(string query)
+    {
+        if (Place().Match(query) is { Success: true } place && place.Groups["name"].Value.Trim().Length > 0
+            && int.TryParse(place.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture, out int line) && line > 0)
+        {
+            int column = int.TryParse(place.Groups["column"].Value, System.Globalization.CultureInfo.InvariantCulture, out int given) && given > 0 ? given : 1;
+            return (place.Groups["name"].Value, new Passenger.Text.TextPosition(line - 1, column - 1));
+        }
+        return (query, null);
+    }
+
     public GoToFilePopup()
         : this(new FileIndex(), [])
     {
@@ -37,7 +57,7 @@ public partial class GoToFilePopup : UserControl
 
     private void Refresh()
     {
-        string query = Query.Text ?? string.Empty;
+        (string query, At) = PlaceIn(Query.Text ?? string.Empty);
         string root = index.Root ?? string.Empty;
         IEnumerable<string> paths = query.Trim().Length == 0
             ? recent.Select(full => Path.GetRelativePath(root, full))
