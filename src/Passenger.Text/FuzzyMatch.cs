@@ -3,7 +3,8 @@ namespace Passenger.Text;
 /// <summary>How well a typed query names a file, the way Rider's Go to File ranks: the file's own
 /// name (exact, then prefix, then CamelHumps initials like "CE" for CodeEditor, then anywhere in it,
 /// then its letters close together and in order), or its path when the query has a slash. Higher is
-/// better; null is no match.</summary>
+/// better; null is no match. A name is read where it is in its path, nothing copied, since Go to File
+/// asks this of every file in the folder for every key.</summary>
 public static class FuzzyMatch
 {
     public static int? Score(string query, string relativePath)
@@ -12,8 +13,6 @@ public static class FuzzyMatch
         {
             return 0;
         }
-        string name = Path.GetFileName(relativePath);
-        string stem = Path.GetFileNameWithoutExtension(relativePath);
         if (query.Contains('/') || query.Contains('\\'))
         {
             string normalized = relativePath.Replace('\\', '/');
@@ -24,6 +23,13 @@ public static class FuzzyMatch
             }
             return InOrder(wanted, normalized) is { } spread ? 300 - spread - normalized.Length / 4 : null;
         }
+        ReadOnlySpan<char> name = Path.GetFileName(relativePath.AsSpan());
+        // Each way of matching below finds the query's letters in the name in order: most names fail this one look.
+        if (!Within(query, name))
+        {
+            return null;
+        }
+        ReadOnlySpan<char> stem = Path.GetFileNameWithoutExtension(name);
         if (name.Equals(query, StringComparison.OrdinalIgnoreCase) || stem.Equals(query, StringComparison.OrdinalIgnoreCase))
         {
             return 1000 - relativePath.Length / 8;
@@ -50,25 +56,43 @@ public static class FuzzyMatch
         return null;
     }
 
-    /// <summary>Whether the query's letters are the starts of the name's words in order: "CE" and
-    /// "CoEd" for CodeEditor, "fm" for fuzzy_match.</summary>
-    private static bool Humps(string query, string name)
+    /// <summary>Whether the query's letters are in the name in order, a letter matching in either case (as each way of
+    /// matching above takes it); a query with a surrogate pair, which ignoring case compares whole, always is.</summary>
+    private static bool Within(string query, ReadOnlySpan<char> name)
     {
-        List<int> starts = [];
-        for (int i = 0; i < name.Length; i++)
+        foreach (char c in query)
         {
-            bool start = i == 0 || char.IsUpper(name[i]) && !char.IsUpper(name[i - 1]) || name[i - 1] is '_' or '-' or '.' or ' ';
-            if (start && char.IsLetterOrDigit(name[i]))
+            if (char.IsSurrogate(c))
             {
-                starts.Add(i);
+                return true;
             }
         }
         int q = 0;
-        foreach (int start in starts)
+        for (int i = 0; i < name.Length && q < query.Length; i++)
         {
-            if (q == query.Length)
+            char a = name[i];
+            char b = query[q];
+            bool same = a == b || (char.IsAscii(a) && char.IsAscii(b)
+                ? (a | 0x20) == (b | 0x20) && char.IsAsciiLetter(a)
+                : char.ToLowerInvariant(a) == char.ToLowerInvariant(b) || char.ToUpperInvariant(a) == char.ToUpperInvariant(b));
+            if (same)
             {
-                break;
+                q++;
+            }
+        }
+        return q == query.Length;
+    }
+
+    /// <summary>Whether the query's letters are the starts of the name's words in order: "CE" and
+    /// "CoEd" for CodeEditor, "fm" for fuzzy_match.</summary>
+    private static bool Humps(string query, ReadOnlySpan<char> name)
+    {
+        int q = 0;
+        for (int start = 0; start < name.Length && q < query.Length; start++)
+        {
+            if (!Starts(name, start))
+            {
+                continue;
             }
             int i = start;
             if (char.ToLowerInvariant(name[i]) != char.ToLowerInvariant(query[q]))
@@ -77,7 +101,7 @@ public static class FuzzyMatch
             }
             // A hump may take more than its first letter: "CoEd" is Co + Ed.
             while (q < query.Length && i < name.Length && char.ToLowerInvariant(name[i]) == char.ToLowerInvariant(query[q])
-                   && (i == start || !starts.Contains(i)))
+                   && (i == start || !Starts(name, i)))
             {
                 q++;
                 i++;
@@ -86,8 +110,13 @@ public static class FuzzyMatch
         return q == query.Length && query.Length > 1;
     }
 
+    /// <summary>Whether a word of the name starts at a character: the first, a capital after a letter that is not one, or
+    /// one after a separator, a letter or digit in any case.</summary>
+    private static bool Starts(ReadOnlySpan<char> name, int i) =>
+        (i == 0 || char.IsUpper(name[i]) && !char.IsUpper(name[i - 1]) || name[i - 1] is '_' or '-' or '.' or ' ') && char.IsLetterOrDigit(name[i]);
+
     /// <summary>How spread out the query's letters are when found in order, or null if they are not.</summary>
-    private static int? InOrder(string query, string text)
+    private static int? InOrder(string query, ReadOnlySpan<char> text)
     {
         int q = 0;
         int first = -1;
