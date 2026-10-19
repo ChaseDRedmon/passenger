@@ -277,7 +277,10 @@ public sealed class NuGetSourcesView : Grid
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 8, 0),
         };
-        TextBlock path = new() { Text = RecentRow.Home(file.Path), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.PathSegmentEllipsis };
+        // Its name, then its folder, which gives way first in a narrow pane, as Rider lists a file and where it is: the
+        // path's own ellipsis cut into the name ("…et.config").
+        TextBlock folder = new() { Classes = { "muted" }, Text = RecentRow.Home(Path.GetDirectoryName(file.Path) ?? string.Empty), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
+        ShrinkingRow path = new() { Children = { new TextBlock { Text = Path.GetFileName(file.Path), VerticalAlignment = VerticalAlignment.Center }, folder } };
         Grid line = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 26 };
         Add(line, icon, 0);
         Add(line, path, 1);
