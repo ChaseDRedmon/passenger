@@ -177,7 +177,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             ChooseFromEditorMenu(window, "Reformat with Prettier");
             Assert.Equal("Prettier: file legacy.js was ignored with .prettierignore", window.Status);
             Assert.Equal("const kept = \"as written\";\nconsole.log(kept);\n", editor.Document.Snapshot.ToString());
-            Assert.Contains("Prettier 3.9.9 formatted", Ui.IdeLog(), StringComparison.Ordinal);
+            Assert.Contains($"Prettier {Project.VersionOf("prettier")} formatted", Ui.IdeLog(), StringComparison.Ordinal);
         }
         finally
         {
@@ -325,8 +325,16 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     /// written after each test.</summary>
     public sealed class Project : IDisposable
     {
-        public const string Package = "{\n  \"name\": \"shop-client\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"type\": \"module\",\n"
-            + "  \"devDependencies\": {\n    \"eslint\": \"10.11.0\",\n    \"prettier\": \"3.9.9\"\n  }\n}\n";
+        public static readonly string Package = "{\n  \"name\": \"shop-client\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"type\": \"module\",\n"
+            + $"  \"devDependencies\": {{\n    \"eslint\": \"{VersionOf("eslint")}\",\n    \"prettier\": \"{VersionOf("prettier")}\"\n  }}\n}}\n";
+
+        /// <summary>The version of one of the tests' own npm packages, which NodePackages/package.json pins.</summary>
+        public static string VersionOf(string package)
+        {
+            string file = Path.Combine(AppContext.BaseDirectory, "node-packages", "node_modules", package, "package.json");
+            using System.Text.Json.JsonDocument read = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
+            return read.RootElement.GetProperty("version").GetString() ?? throw new InvalidOperationException($"{file} names no version");
+        }
 
         public const string Config = "export default [\n  {\n    files: [\"**/*.js\"],\n    rules: {\n      \"prefer-const\": \"error\",\n    },\n  },\n];\n";
 
