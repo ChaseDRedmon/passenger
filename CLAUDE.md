@@ -239,8 +239,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (Roslyn's design-time builds, written as its build host writes ProjectFileInfo, `Workspace/ProjectBuilds`, cached
   Brotli-compressed in `projectBuilds.json`) and `cancel` (a request given up: no more projects started, the build's
   submissions cancelled, so a left folder never holds the host), `hold` (a build of the IDE's own: no design-time build
-  running WPF's markup compilation starts until it is cancelled, answered once those running have ended, since both
-  write `obj/…/App.g.cs` and Windows lets one writer have it) and `inspect` (one project evaluated for the code help
+  that generates files a build writes too (WPF's markup compilation, Avalonia's resources: `DesignTimeBuilds.Generating`)
+  starts until it is cancelled, answered once those running have ended, since Windows lets one writer have a file;
+  design-time builds also run with `UseAppHost=false`, so a build's apphost is created and signed by the build alone) and `inspect` (one project evaluated for the code help
   in its MSBuild files, `Inspection.cs`: the open files' unsaved text fed to MSBuild in place of the disk's; properties
   with the places that set them, items, targets, imports, the SDK's frameworks and the evaluation's errors (a skipped
   import as MSB4019), places by a file table, answered from its cache while the inputs hold). Off Windows a project
@@ -436,7 +437,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   Configurations. A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
   brings the Build window forward as Showing build results says (errors only by default). Every build holds the host's
-  WPF design-time builds off while it runs (`ProjectBuilds.HoldAsync`, released in `FinishBuild`), its dotnet command
+  generating design-time builds off while it runs (`ProjectBuilds.HoldAsync`, released in `FinishBuild`), its dotnet command
   starting once the host answers (`ProcessRunner.StartDotnet`'s `after`), so a test reads `Builder.ProcessId` only once
   it has started; dotnet watch's own builds aren't held. A test project's first Project launch profile gives its variables to its tests. A configuration that
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
@@ -908,7 +909,9 @@ what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys
 and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
 `DialogButtonsTests.Check` also holds dialogs to the plain button look, a disabled default, the chrome page, one
 drop-down width per column and Don't ask again's place.
-Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
+A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says the status with `Ui.Said`, both naming
+the build's errors (`Ui.BuildErrors`: Problems' rows, else the Build window's last lines) when it failed, so a CI-only
+build failure says why. Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
 never throws, while what it waits for isn't there yet; `WaitFor`'s limit also covers background work held all along (a
 build, a test run), where `Settle` alone gives up after 90 s. A chord goes through one `Ui.Press(window, "control M ,
 control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a dispatcher timer that fires during a
