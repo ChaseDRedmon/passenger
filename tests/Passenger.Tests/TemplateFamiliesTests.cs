@@ -34,7 +34,9 @@ public sealed class TemplateFamiliesTests : IDisposable
         using IDisposable theme = TestsTheme();
         MainWindow window = Started();
 
-        // The templates were read as the window started: the dialog lists them as it opens, before any read of its own.
+        // The templates are read as the window starts, below its input and drawing, so no settle waits for that read (a dialog
+        // opened before it lands fills in as its own read does); once it has, the dialog lists them as it opens.
+        Ui.WaitFor(() => ProjectTemplates.Ready(place) is not null, "the templates to be read ahead of New Solution", TimeSpan.FromMinutes(2));
         Assert.True(window.Perform(AppActions.NewSolution));
         NewProjectDialog dialog = Assert.Single(window.OwnedWindows.OfType<NewProjectDialog>());
         // Rider's types first, in Rider's order: Desktop where WPF builds, MAUI where dotnet new has its workload's templates
