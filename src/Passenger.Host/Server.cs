@@ -39,14 +39,17 @@ public sealed class Server(TextWriter protocol, HostReady ready)
                 continue;
             }
             running.RemoveAll(t => t.IsCompleted);
-            running.Add(Task.Run(() => Handle(request)));
+            // Cancellable before the next line is read: a cancel sent right behind its request (a hold released at once)
+            // could otherwise be handled first, find nothing, and leave the request running for good.
+            CancellationTokenSource cancel = new();
+            cancellable[request.Id] = cancel;
+            running.Add(Task.Run(() => Handle(request, cancel)));
         }
     }
 
-    private async Task Handle(HostRequest request)
+    private async Task Handle(HostRequest request, CancellationTokenSource cancel)
     {
-        using CancellationTokenSource cancel = new();
-        cancellable[request.Id] = cancel;
+        using CancellationTokenSource owned = cancel;
         try
         {
             object result = request.Method switch
@@ -73,12 +76,20 @@ public sealed class Server(TextWriter protocol, HostReady ready)
 
     private bool Cancel(CancelParams asked)
     {
-        if (cancellable.TryGetValue(asked.Request, out CancellationTokenSource? running))
+        if (!cancellable.TryGetValue(asked.Request, out CancellationTokenSource? running))
+        {
+            return false;
+        }
+        try
         {
             running.Cancel();
             return true;
         }
-        return false;
+        catch (ObjectDisposedException)
+        {
+            // It ended between being found and being cancelled.
+            return false;
+        }
     }
 
     private static T Read<T>(HostRequest request) =>
