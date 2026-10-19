@@ -256,7 +256,8 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
-  over the editor; `WorkspaceEdits` applies renames and fixes across files. `UsageHighlighting` asks the server's
+  over the editor; `WorkspaceEdits` applies renames and fixes across files (a code action through `ApplyAsCommand`, one
+  command of global undo, which keeps a command that changed a file not open). `UsageHighlighting` asks the server's
   `documentHighlight` once a split's caret rests and is Highlight Usages in File. `CodeAssist.Surround.cs` is Surround With
   and Complete Current Statement, from the file's syntax with no server (surround templates are `LiveTemplates` entries
   with a `Surround` scope); `CodeAssist.Refactorings.cs` is Optimize Imports (shared with Code Cleanup), Safe Delete
@@ -305,7 +306,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`LaunchPlan.SandboxedState`, as IntelliJ's DevKit sandbox), unless its configuration sets `PASSENGER_SETTINGS`. A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
-  stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
+  stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
+  (`StateFile.TakeUnsaid`). New state is a document there, never a file of
   its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
@@ -465,7 +467,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `workspaces/<name>-<hash>/localHistory/` (content once per hash, Brotli, in `blobs/`; a JSON line per event in
   `changes.log`), fed by `FileText.Wrote` (every IDE write, with the bytes it replaced), the folder watcher (External
   change, or the `VcsController.Activity` name), files opened, `EditorArea.MoveFile` and Explorer deletes, off the UI
-  thread; it prunes to Rider's 5 days of activity and a size cap (`HistoryKeeping`). `LocalHistoryView` is the tool
+  thread; it prunes to Rider's 5 days of activity and a size cap (`HistoryKeeping`), working from the log on disk, since
+  another process over the same state (an agent's `--mcp`) writes to it too. `LocalHistoryView` is the tool
   window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
 - `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
   `ProjectViewNestingRulesProvider`s, chained as IntelliJ's `FileNestingBuilder` does), the project's `DependentUpon`,
@@ -482,7 +485,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
-  `OpenDocument.Save` applies the save-time properties; a project edit or a save waits out a reader that shares no
+  `OpenDocument.Save` applies the save-time properties. Anything Passenger itself writes to a project, solution,
+  nuget.config or Directory.Packages.props saves that file first if it's open (`MainWindow.SaveBeforeWriting`, or
+  SaveAll before `dotnet add package`) and then loads what it wrote (`FollowWritten`); a delete saves the open files
+  under it first. A project edit or a save waits out a reader that shares no
   writes (Windows refuses the write while a project load reads the file) for up to 2 s (`FileText.WhileHeld`). Every
   edit from the language server goes through
   `LineEndings.Fit`, then `Indentation.Fit`. `OpenDocument` keeps how its file is stored, encoding, BOM and
