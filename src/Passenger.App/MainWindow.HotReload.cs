@@ -43,16 +43,17 @@ public partial class MainWindow
             : "Nothing runs: Debug the program, or Run it with Hot Reload on (Settings, Hot Reload)", ("Run", 0, 9));
     }
 
-    /// <summary>The words dotnet watch says an apply came to with, and what each means.</summary>
-    private static readonly (string Words, string Said)[] WatchSays =
+    /// <summary>The words dotnet watch says an apply came to with, what each means, and what it came to.</summary>
+    private static readonly (string Words, string Said, HotReloadResult Result)[] WatchSays =
     [
-        ("changes applied", "Hot Reload: dotnet watch applied the changes"),
-        ("No managed code changes to apply", "Hot Reload: no managed code changes to apply"),
-        ("Restart is needed to apply the changes", "Hot Reload: dotnet watch is restarting the application to apply the changes"),
+        ("changes applied", "Hot Reload: dotnet watch applied the changes", HotReloadResult.Applied),
+        ("No managed code changes to apply", "Hot Reload: no managed code changes to apply", HotReloadResult.NothingToApply),
+        ("Restart is needed to apply the changes", "Hot Reload: dotnet watch is restarting the application to apply the changes", HotReloadResult.RestartNeeded),
         ("Attempted to invoke a deleted method implementation",
-            "Hot Reload: the program called a method as it was before the edit changed its signature: dotnet watch is restarting the application to apply the changes"),
-        ("Restarting application", "Hot Reload: dotnet watch is restarting the application to apply the changes"),
-        ("Unable to apply changes due to compilation errors", "Hot Reload: dotnet watch could not apply the changes: the code does not compile"),
+            "Hot Reload: the program called a method as it was before the edit changed its signature: dotnet watch is restarting the application to apply the changes",
+            HotReloadResult.RestartNeeded),
+        ("Restarting application", "Hot Reload: dotnet watch is restarting the application to apply the changes", HotReloadResult.RestartNeeded),
+        ("Unable to apply changes due to compilation errors", "Hot Reload: dotnet watch could not apply the changes: the code does not compile", HotReloadResult.Errors),
     ];
 
     /// <summary>How long dotnet watch's later words are followed once it has said what it made of a save: changes it applied
@@ -60,17 +61,20 @@ public partial class MainWindow
     private static readonly TimeSpan WatchSaysLater = TimeSpan.FromSeconds(10);
 
     /// <summary>A program under dotnet watch takes edits as their files are saved: they are saved, and what dotnet watch
-    /// says of them (in the Run window) is said in the status bar, its last word standing.</summary>
-    private async Task SaveForWatchAsync()
+    /// says of them (in the Run window) is said in the status bar, its last word standing, which is the answer (null when
+    /// it said nothing of them).</summary>
+    internal async Task<HotReloadOutcome?> SaveForWatchAsync()
     {
         TaskCompletionSource said = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        HotReloadOutcome? last = null;
         EventHandler<string> heard = (_, text) =>
         {
-            foreach ((string words, string meaning) in WatchSays)
+            foreach ((string words, string meaning, HotReloadResult result) in WatchSays)
             {
                 if (text.Contains(words, StringComparison.Ordinal))
                 {
                     status.Text = meaning;
+                    last = new HotReloadOutcome(result, meaning);
                     said.TrySetResult();
                     return;
                 }
@@ -90,7 +94,17 @@ public partial class MainWindow
         {
             Bottom.Run.Written -= heard;
         }
+        return last;
     }
+
+    /// <summary>Whether Apply Hot Reload Changes goes to dotnet watch: what Run runs with Hot Reload, nothing being debugged.</summary>
+    internal bool HotReloadWatched => session.Debug.HotReload is null && !session.Debug.IsDebugging && buildRun.WatchesHotReload;
+
+    /// <summary>Why Apply Hot Reload Changes cannot run, as the action says it, or null.</summary>
+    internal string? WhyNoHotReload() => actions!.WhyNot(AppActions.ApplyHotReloadChanges, actions.Context());
+
+    /// <summary>The restart for edits Hot Reload could not apply, as an agent asks it: never the question, which is the person's.</summary>
+    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome) => RestartForEditAsync(session, outcome, ask: false);
 
     /// <summary>Apply Hot Reload Changes on the toolbar, and in the Debug and Run windows, while a program runs with Hot
     /// Reload: debugged with it, or run under dotnet watch.</summary>
@@ -124,14 +138,15 @@ public partial class MainWindow
     }
 
     /// <summary>Restarts the program Debug launched so the edits Hot Reload could not apply run: stopped, built and launched
-    /// again with its configuration and the breakpoints. True once the new session is open.</summary>
-    private async Task<bool> RestartForEditAsync(ProjectSession next, HotReloadOutcome outcome)
+    /// again with its configuration and the breakpoints, asked first as Settings says unless <paramref name="ask"/> is false.
+    /// True once the new session is open.</summary>
+    private async Task<bool> RestartForEditAsync(ProjectSession next, HotReloadOutcome outcome, bool ask = true)
     {
         if (next.Debug.Session is not { Attached: false } debugged)
         {
             return false;
         }
-        if (!settings.RestartOnRudeEdit)
+        if (ask && !settings.RestartOnRudeEdit)
         {
             if (neverRestart == debugged)
             {
