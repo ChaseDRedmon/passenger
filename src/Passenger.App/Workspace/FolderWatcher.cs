@@ -353,7 +353,9 @@ public sealed class FolderWatcher : IDisposable
             return;
         }
         bool restore = !inGit && IsRestore(parts);
-        if (!inGit && !restore && parts.Any(IgnoredFolders.Contains))
+        // A passed-over folder itself, come or gone, is the folder above it changing (the Explorer lists it, dimmed);
+        // what changes in it is never followed.
+        if (!inGit && !restore && parts.Any(IgnoredFolders.Contains) && !(created && !parts[..^1].Any(IgnoredFolders.Contains)))
         {
             return;
         }

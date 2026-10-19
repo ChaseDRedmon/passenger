@@ -44,6 +44,28 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A build makes bin and obj after the folder opened, and a clean takes them away: the Explorer shows them come
+    /// and go, dimmed as build output is, as it shows those there when the folder opened, though nothing in them is followed.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Build_output_folders_made_and_deleted_elsewhere_come_and_go_in_the_explorer(bool eachFolder)
+    {
+        Write("Program.cs", "class Program { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Name is "bin" or "obj");
+
+        Write("obj/project.assets.json", "{}\n");
+        Write("bin/Debug/net10.0/App.dll", "");
+        Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Count(r => r.Name is "bin" or "obj" && r.IsDimmed) == 2,
+            $"the build's bin and obj, dimmed, in the Explorer (it shows {string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))})");
+
+        Directory.Delete(Path.Combine(folder, "bin"), recursive: true);
+        Ui.WaitFor(() => !window.ExplorerView.Tree.Rows.Any(r => r.Name == "bin"), "the deleted bin to leave the Explorer");
+        Assert.Contains(window.ExplorerView.Tree.Rows, r => r.Name == "obj");
+        window.Close();
+    }
+
     /// <summary>Git's checkout and rollback, and editors that save so, delete a file and write it anew. The changes seen,
     /// handed over between the two, found the open file gone and closed its tab, as one rollback in 160 did on Windows.</summary>
     [AvaloniaFact]
