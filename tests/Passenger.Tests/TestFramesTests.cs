@@ -52,7 +52,8 @@ public sealed class HeadlessTestsFolder : IDisposable
         "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
         "    <ImplicitUsings>enable</ImplicitUsings>\n" + (vsTest ? "    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>\n" : string.Empty) +
         "  </PropertyGroup>\n  <ItemGroup>\n" + $"    <PackageReference Include=\"xunit.v3\" Version=\"{xunit}\" />\n" + avalonia +
-        (vsTest ? "    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n" : string.Empty) +
+        (vsTest ? $"    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"{AvaloniaApp.Metadata("TestSdkVersion")}\" />\n"
+            + $"    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"{AvaloniaApp.Metadata("XunitRunnerVersion")}\" />\n" : string.Empty) +
         "  </ItemGroup>\n</Project>\n";
 
     private string Tests(string space) => $$"""

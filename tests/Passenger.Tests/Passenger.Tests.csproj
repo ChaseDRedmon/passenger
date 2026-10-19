@@ -31,6 +31,13 @@
     <AssemblyMetadata Include="AvaloniaTemplatesVersion" Value="$(AvaloniaTemplatesVersion)" />
   </ItemGroup>
 
+  <!-- VSTest's SDK and xunit's adapter at the versions this project restores, for the VSTest project TestFramesTests make
+       (HeadlessTestsFolder): the run's feed holds neither, so its restore finds them only in the package cache. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="TestSdkVersion" Value="@(PackageVersion->WithMetadataValue('Identity', 'Microsoft.NET.Test.Sdk')->'%(Version)')" />
+    <AssemblyMetadata Include="XunitRunnerVersion" Value="@(PackageVersion->WithMetadataValue('Identity', 'xunit.runner.visualstudio')->'%(Version)')" />
+  </ItemGroup>
+
   <!-- WPF's reference pack, likewise, for the WPF app WpfXamlTests make (WpfApp.Feed), with the target they make it for
        and the version the SDK's own WPF needs there, which the tests check against the one pinned. -->
   <ItemGroup>
