@@ -99,6 +99,19 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.Equal("1", Local(stop, "i"));
         Assert.Equal("0", Local(stop, "total"));
         Assert.Equal("42", (await Call(client, "debug_evaluate", new() { ["expression"] = "Helper.Twice(i) + 40" })).GetProperty("value").GetString());
+        // A frame past the stack is named as one, with how deep the stack is, never as a list's index out of its range.
+        int depth = stop.GetProperty("frames").GetArrayLength();
+        foreach ((string tool, Dictionary<string, object?> arguments) in new (string, Dictionary<string, object?>)[]
+        {
+            ("debug_evaluate", new() { ["expression"] = "i", ["frame"] = 99 }),
+            ("debug_set_value", new() { ["expression"] = "i", ["value"] = "1", ["frame"] = 99 }),
+        })
+        {
+            CallToolResult past = await Result(client, tool, arguments);
+            Assert.True(past.IsError == true && Text(past).Contains("There is no frame 99: the stopped thread has ", StringComparison.Ordinal)
+                && Text(past).Contains($"{depth} frame", StringComparison.Ordinal),
+                $"{tool} in frame 99 of a stack {depth} deep answered: {Text(past)}");
+        }
 
         stop = await Call(client, "debug_continue");
         Assert.Equal("2", Local(stop, "i"));

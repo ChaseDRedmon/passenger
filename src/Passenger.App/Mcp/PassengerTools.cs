@@ -695,7 +695,7 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<VariableInfo> DebugEvaluate(string expression, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugSession session = Paused();
-        DapStackFrame chosen = (await Stack(session))[frame];
+        DapStackFrame chosen = await FrameAt(session, frame);
         EvaluateResponse value = await session.EvaluateAsync(expression, chosen.Id, "repl");
         return new VariableInfo(expression, value.Result, value.Type, value.VariablesReference);
     });
@@ -706,7 +706,7 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<VariableInfo> DebugSetValue(string expression, [Description("A C# expression: 42, \"text\", null, new List<int>()")] string value, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugSession session = Paused();
-        DapStackFrame chosen = (await Stack(session))[frame];
+        DapStackFrame chosen = await FrameAt(session, frame);
         SetExpressionResponse set = await session.SetExpressionAsync(expression, value, chosen.Id);
         await Session.Debug.RefreshAsync();
         return new VariableInfo(expression, set.Value, set.Type, set.VariablesReference);
@@ -878,6 +878,21 @@ public sealed partial class PassengerTools(MainWindow window)
 
     private static async Task<IReadOnlyList<DapStackFrame>> Stack(DebugSession session) =>
         await session.StackTraceAsync(session.StoppedThread ?? throw new InvalidOperationException("No thread is stopped"));
+
+    /// <summary>A frame of the stopped thread by its place from the top, as debug_state numbers them; one past the stack
+    /// says how deep the stack is.</summary>
+    private static async Task<DapStackFrame> FrameAt(DebugSession session, int frame)
+    {
+        IReadOnlyList<DapStackFrame> frames = await Stack(session);
+        return frame >= 0 && frame < frames.Count
+            ? frames[frame]
+            : throw new ArgumentException(frames.Count switch
+            {
+                0 => $"There is no frame {frame}: the stopped thread has no frames",
+                1 => $"There is no frame {frame}: the stopped thread has 1 frame, 0",
+                _ => $"There is no frame {frame}: the stopped thread has {frames.Count} frames, 0 (the top) to {frames.Count - 1}, as debug_state numbers them",
+            });
+    }
 
     private DebugSession Debugged() => Session.Debug.Session is { State: not DebugState.Ended } session
         ? session
