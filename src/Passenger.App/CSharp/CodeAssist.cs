@@ -1220,6 +1220,28 @@ public sealed partial class CodeAssist
     /// when the actions were asked for. Whether every file took it.</summary>
     private async Task<bool> Apply(OpenDocument document, CodeAction action, string? scope, string what, Asked? listed)
     {
+        (RefactorOutcome made, bool applied) = await ApplyAsync(document, action, scope, what, listed);
+        if (made.Problem is not null)
+        {
+            Message?.Invoke(this, made.Problem);
+            return false;
+        }
+        if (made.Left.Count > 0)
+        {
+            Message?.Invoke(this, $"{what} was not applied to {string.Join(", ", made.Left)}: it was edited meanwhile");
+        }
+        if (made.Said.Length > 0)
+        {
+            Message?.Invoke(this, made.Said);
+        }
+        return applied;
+    }
+
+    /// <summary>A code action's change made, as <see cref="Apply"/> makes it, for the status bar or an agent: why not, else
+    /// the files it changed, those left as edited meanwhile, and what to say beyond its being done (a command it carries
+    /// that Passenger cannot run, or that it changed nothing); and whether every file took it.</summary>
+    public async Task<(RefactorOutcome Outcome, bool Applied)> ApplyAsync(OpenDocument document, CodeAction action, string? scope, string what, Asked? listed)
+    {
         bool resolve = (action.Edit is null && action.Data is not null) || scope is not null;
         // An answer resolved now is for the text as it is now, and carried through what is typed while it comes.
         using Asked? resolving = resolve ? WorkspaceEdits.Track(editors) : null;
@@ -1230,25 +1252,20 @@ public sealed partial class CodeAssist
         }
         catch (LanguageServerFailed failed)
         {
-            Message?.Invoke(this, $"{what} was not applied: {failed.Reason}");
-            return false;
+            return (RefactorOutcome.Refused($"{what} was not applied: {failed.Reason}"), false);
         }
         Asked? asked = resolving ?? listed;
         if (chosen.Edit is { } changes && await StaleAsync(document, changes, asked) is { } stale)
         {
-            Message?.Invoke(this, $"{what} was not applied: {stale}");
-            return false;
+            return (RefactorOutcome.Refused($"{what} was not applied: {stale}"), false);
         }
-        bool applied = chosen.Edit is { } edit && ApplyWorkspace(edit, asked, what);
-        if (chosen.Command is { } command)
+        RefactorOutcome made = chosen.Edit is { } edit ? ApplyEdit(edit, asked, what) : new RefactorOutcome(string.Empty, null, [], []);
+        if (made.Problem is not null)
         {
-            Message?.Invoke(this, NotRun(what, command));
+            return (made, false);
         }
-        else if (chosen.Edit is null)
-        {
-            Message?.Invoke(this, $"{what} changed nothing");
-        }
-        return applied;
+        string said = chosen.Command is { } command ? NotRun(what, command) : chosen.Edit is null ? $"{what} changed nothing" : string.Empty;
+        return (made with { Said = said }, chosen.Edit is not null && made.Left.Count == 0);
     }
 
     /// <summary>Why a server's edit must not be applied to the files not open it changes (<see cref="WorkspaceEdits.StaleAsync"/>):
@@ -1785,31 +1802,41 @@ public sealed partial class CodeAssist
         {
             return;
         }
-        List<string> done = [];
         try
         {
-            (bool removed, bool sorted) = await TidyUsings(lsp, document);
-            if (removed)
-            {
-                done.Add("removed unused usings");
-            }
-            if (sorted)
-            {
-                done.Add("sorted the usings");
-            }
-            string unformatted = document.Text.Snapshot.ToString();
-            using ChangeTracker asked = new(document.Text);
-            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(document.Indentation.Options);
-            if (ApplyAnswer(document, asked, edits, "Code Cleanup") && document.Text.Snapshot.ToString() != unformatted)
-            {
-                done.Add("reformatted");
-            }
-            Message?.Invoke(this, done.Count == 0 ? "Already clean" : $"Code cleanup {string.Join(", ", done)}");
+            Message?.Invoke(this, CleanedUp(await CleanUpAsync(lsp, document)));
         }
         catch (LanguageServerFailed failed)
         {
             Failed("Code Cleanup", failed);
         }
+    }
+
+    /// <summary>What Code Cleanup says it did to a file.</summary>
+    public static string CleanedUp(IReadOnlyList<string> done) => done.Count == 0 ? "Already clean" : $"Code cleanup {string.Join(", ", done)}";
+
+    /// <summary>Code Cleanup on a C# file: the unnecessary usings removed, the usings sorted, then the file reformatted;
+    /// what it did, in the status bar's words ("removed unused usings"), none when the file was clean.</summary>
+    public async Task<IReadOnlyList<string>> CleanUpAsync(LspDocument lsp, OpenDocument document)
+    {
+        List<string> done = [];
+        (bool removed, bool sorted) = await TidyUsings(lsp, document);
+        if (removed)
+        {
+            done.Add("removed unused usings");
+        }
+        if (sorted)
+        {
+            done.Add("sorted the usings");
+        }
+        string unformatted = document.Text.Snapshot.ToString();
+        using ChangeTracker asked = new(document.Text);
+        IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(document.Indentation.Options);
+        if (ApplyAnswer(document, asked, edits, "Code Cleanup") && document.Text.Snapshot.ToString() != unformatted)
+        {
+            done.Add("reformatted");
+        }
+        return done;
     }
 
     /// <summary>Runs the server's action of that title at a range, if it offers one; whether it did.</summary>
@@ -1829,6 +1856,22 @@ public sealed partial class CodeAssist
     /// left alone and named in the status bar. Whether every file took it.</summary>
     private bool ApplyWorkspace(System.Text.Json.JsonElement edit, Asked? asked, string what)
     {
+        RefactorOutcome made = ApplyEdit(edit, asked, what);
+        if (made.Problem is not null)
+        {
+            Message?.Invoke(this, made.Problem);
+            return false;
+        }
+        if (made.Left.Count > 0)
+        {
+            Message?.Invoke(this, $"{what} was not applied to {string.Join(", ", made.Left)}: it was edited meanwhile");
+        }
+        return made.Left.Count == 0;
+    }
+
+    /// <summary><see cref="ApplyWorkspace"/>'s change made: the files it changed and those it left, or why not.</summary>
+    private RefactorOutcome ApplyEdit(System.Text.Json.JsonElement edit, Asked? asked, string what)
+    {
         List<string> dropped = [];
         try
         {
@@ -1836,14 +1879,9 @@ public sealed partial class CodeAssist
         }
         catch (WorkspaceEditFailed failed)
         {
-            Message?.Invoke(this, $"{what} was not applied: {failed.Message}");
-            return false;
+            return RefactorOutcome.Refused($"{what} was not applied: {failed.Message}");
         }
-        if (dropped.Count > 0)
-        {
-            Message?.Invoke(this, $"{what} was not applied to {string.Join(", ", dropped)}: it was edited meanwhile");
-        }
-        return dropped.Count == 0;
+        return new RefactorOutcome(string.Empty, null, WorkspaceEdits.Files(edit), dropped);
     }
 
     /// <summary>Edits answered for a document's text as it was asked about, applied to that document as it is now (through

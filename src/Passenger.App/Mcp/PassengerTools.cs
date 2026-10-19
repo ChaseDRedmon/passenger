@@ -389,25 +389,7 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         if (Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
         {
-            // XAML is Passenger's own to lay out, by the window's XAML code style with the file's .editorconfig over it.
-            OpenDocument markup = Document(path);
-            window.OpenFile(markup.Path);
-            using Passenger.Text.ChangeTracker tracked = new(markup.Text);
-            Passenger.Xaml.Features.XamlFormatted formatted = await CodeAssist.FormatXamlAsync(markup, window.Settings.XamlFormat);
-            if (formatted.Problem is { } problem)
-            {
-                return $"Not reformatted: {problem}";
-            }
-            if (tracked.Map(formatted.Edits) is not { } laid)
-            {
-                return "Not reformatted: the file was edited meanwhile";
-            }
-            if (laid.Count > 0)
-            {
-                WorkspaceEdits.ApplyTo(Editors, markup, laid);
-                markup.Save();
-            }
-            return laid.Count == 0 ? "Already formatted" : $"Reformatted ({laid.Count} edits)";
+            return await FormatXamlAsync(Document(path));
         }
         Served file = await Serve(path, cancel);
         ServerServed served = file as ServerServed ?? throw Lacks(file, "Reformat Code", MSBuildHas);
@@ -427,6 +409,29 @@ public sealed partial class PassengerTools(MainWindow window)
         document.Save();
         return edits.Count == 0 ? "Already formatted" : $"Reformatted ({edits.Count} edits)";
     });
+
+    /// <summary>A XAML file reformatted, saved: Passenger's own layout, by the window's XAML code style with the file's
+    /// .editorconfig over it, which is Code Cleanup's in XAML too.</summary>
+    private async Task<string> FormatXamlAsync(OpenDocument markup)
+    {
+        window.OpenFile(markup.Path);
+        using Passenger.Text.ChangeTracker tracked = new(markup.Text);
+        Passenger.Xaml.Features.XamlFormatted formatted = await CodeAssist.FormatXamlAsync(markup, window.Settings.XamlFormat);
+        if (formatted.Problem is { } problem)
+        {
+            return $"Not reformatted: {problem}";
+        }
+        if (tracked.Map(formatted.Edits) is not { } laid)
+        {
+            return "Not reformatted: the file was edited meanwhile";
+        }
+        if (laid.Count > 0)
+        {
+            WorkspaceEdits.ApplyTo(Editors, markup, laid);
+            markup.Save();
+        }
+        return laid.Count == 0 ? "Already formatted" : $"Reformatted ({laid.Count} edits)";
+    }
 
     [McpServerTool(Name = "find_symbol", Title = "Go to symbol", ReadOnly = true), Description(
         "Types, members and other symbols across the workspace whose names match a query, as Go to Symbol finds them: by " +

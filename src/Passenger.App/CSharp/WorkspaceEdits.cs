@@ -311,6 +311,43 @@ public static class WorkspaceEdits
         }
     }
 
+    /// <summary>What an edit does to each file, as a refactoring's answer names them: made, moved or deleted, else changed,
+    /// with the lines (from one, of the text it was made for) its edits start on. A file made and then filled is one made.</summary>
+    public static IReadOnlyList<RefactoredFile> Files(JsonElement edit)
+    {
+        List<RefactoredFile> files = [];
+        HashSet<string> made = new(StringComparer.Ordinal);
+        foreach (FileEdits change in Shapes.WorkspaceEdit(edit))
+        {
+            if (change.Operation is { } operation)
+            {
+                Resource resource = Resource.Read(operation);
+                string kind = resource.Kind switch { "create" => "created", "rename" => "moved", _ => "deleted" };
+                if (kind == "created")
+                {
+                    made.Add(resource.Path);
+                }
+                files.Add(new RefactoredFile(resource.Path, kind, [], resource.To));
+                continue;
+            }
+            string path = DocumentUris.ToPath(change.Uri);
+            if (made.Contains(path) || change.Edits.Count == 0)
+            {
+                continue;
+            }
+            IReadOnlyList<int> lines = [.. change.Edits.Select(e => e.Range.Start.Line + 1).Distinct().Order()];
+            if (files.FindIndex(f => f.Path == path && f.Change == "changed") is int at and >= 0)
+            {
+                files[at] = files[at] with { Lines = [.. files[at].Lines.Concat(lines).Distinct().Order()] };
+            }
+            else
+            {
+                files.Add(new RefactoredFile(path, "changed", lines));
+            }
+        }
+        return files;
+    }
+
     /// <summary>One of an edit's file operations (create, rename or delete): its paths and its options.</summary>
     private sealed record Resource(string Kind, string Path, string? To, JsonElement Options)
     {
@@ -326,6 +363,17 @@ public static class WorkspaceEdits
             Options.ValueKind == JsonValueKind.Object && Options.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.True;
     }
 }
+
+/// <summary>What a refactoring came to, for its dialog, the status bar and an agent alike: what to say of it, why it was
+/// not made (then nothing changed), each file it changed, and the open files it left alone as edited meanwhile, by name.</summary>
+public sealed record RefactorOutcome(string Said, string? Problem, IReadOnlyList<RefactoredFile> Files, IReadOnlyList<string> Left)
+{
+    public static RefactorOutcome Refused(string problem) => new(problem, problem, [], []);
+}
+
+/// <summary>A file a refactoring changed: created, changed, moved (to <paramref name="To"/>) or deleted, with the lines its
+/// edits start on, from one, in the text as it was.</summary>
+public sealed record RefactoredFile(string Path, string Change, IReadOnlyList<int> Lines, string? To = null);
 
 /// <summary>A workspace edit that could not be made, and why: a file it renames onto is there already, one it renames
 /// or deletes is not, an open file it moves could not be saved first, or the disk refused. An MCP tool says it as its

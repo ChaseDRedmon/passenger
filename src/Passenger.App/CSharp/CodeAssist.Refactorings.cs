@@ -18,20 +18,20 @@ public sealed partial class CodeAssist
 {
     /// <summary>One of Rider's refactorings that Roslyn's server offers as code actions in words of its own: which of its
     /// actions are it, which of their nested choices fit it, and what to say when the server offers none here.</summary>
-    private sealed record ServerRefactoring(string Name, Func<CodeAction, bool> Pick, string Missing, Func<ActionChoice, bool>? Keep = null);
+    public sealed record ServerRefactoring(string Name, Func<CodeAction, bool> Pick, string Missing, Func<ActionChoice, bool>? Keep = null);
 
     /// <summary>Roslyn makes a field of a constant (its Introduce constant, whose nested choices include a local constant)
     /// or of a field initializer's value; of anything else it makes only a local.</summary>
-    private static readonly ServerRefactoring IntroduceField = new("Introduce Field",
+    public static readonly ServerRefactoring IntroduceField = new("Introduce Field",
         a => a.Title.StartsWith("Introduce field", StringComparison.Ordinal) || a.Title.StartsWith("Introduce constant", StringComparison.Ordinal),
         "the C# language server makes a field only of a constant expression",
         c => !c.Text.Contains("local", StringComparison.OrdinalIgnoreCase));
 
-    private static readonly ServerRefactoring IntroduceParameter = new("Introduce Parameter",
+    public static readonly ServerRefactoring IntroduceParameter = new("Introduce Parameter",
         a => a.Title.StartsWith("Introduce parameter", StringComparison.Ordinal),
         "choose an expression in a method's body that uses none of its locals");
 
-    private static readonly ServerRefactoring EncapsulateField = new("Encapsulate Field",
+    public static readonly ServerRefactoring EncapsulateField = new("Encapsulate Field",
         a => a.Title.StartsWith("Encapsulate field", StringComparison.Ordinal),
         "put the caret on a field's declaration");
 
@@ -50,7 +50,7 @@ public sealed partial class CodeAssist
         {
             Selection primary = Editor.Selections.Primary;
             using Asked asked = WorkspaceEdits.Track(editors);
-            List<CodeAction> offered = [.. (await lsp.CodeActionsAsync(primary.Range, [])).Where(a => a.Disabled is null && refactoring.Pick(a))];
+            IReadOnlyList<CodeAction> offered = await OfferedAsync(lsp, primary.Range, refactoring);
             if (offered.Count == 0)
             {
                 Message?.Invoke(this, $"{name} is not available here: {refactoring.Missing}");
@@ -75,6 +75,16 @@ public sealed partial class CodeAssist
         }
     }
 
+    /// <summary>The server's actions that are a refactoring of Rider's over a range of a file, those it would not let run
+    /// left out.</summary>
+    public static async Task<IReadOnlyList<CodeAction>> OfferedAsync(LspDocument lsp, TextRange range, ServerRefactoring refactoring) =>
+        [.. (await lsp.CodeActionsAsync(range, [])).Where(a => a.Disabled is null && refactoring.Pick(a))];
+
+    /// <summary>The choices the server nests under one of a refactoring's actions that are of its kind (Introduce Field's
+    /// without its local constant), as its list offers them.</summary>
+    public static IReadOnlyList<ActionChoice> ChoicesOf(CodeAction action, ServerRefactoring refactoring) =>
+        refactoring.Keep is { } keep ? [.. ClientCommands.Choices(action).Where(keep)] : ClientCommands.Choices(action);
+
     private async Task OptimizeUsings()
     {
         BackgroundWork.Begin();
@@ -85,13 +95,7 @@ public sealed partial class CodeAssist
                 return;
             }
             (bool removed, bool sorted) = await TidyUsings(lsp, document);
-            Message?.Invoke(this, (removed, sorted) switch
-            {
-                (true, true) => "Optimize Imports removed unused usings and sorted the rest",
-                (true, false) => "Optimize Imports removed unused usings",
-                (false, true) => "Optimize Imports sorted the usings",
-                _ => "The usings are already optimized",
-            });
+            Message?.Invoke(this, Optimized(removed, sorted));
         }
         catch (LanguageServerFailed failed)
         {
@@ -103,9 +107,18 @@ public sealed partial class CodeAssist
         }
     }
 
+    /// <summary>What Optimize Imports says it did to a file.</summary>
+    public static string Optimized(bool removed, bool sorted) => (removed, sorted) switch
+    {
+        (true, true) => "Optimize Imports removed unused usings and sorted the rest",
+        (true, false) => "Optimize Imports removed unused usings",
+        (false, true) => "Optimize Imports sorted the usings",
+        _ => "The usings are already optimized",
+    };
+
     /// <summary>Rider's Optimize Imports in C#, as Code Cleanup's first step too: the usings the server finds unnecessary
     /// removed (IDE0005's fix), then the rest sorted (its Sort Usings); whether each changed the file.</summary>
-    private async Task<(bool Removed, bool Sorted)> TidyUsings(LspDocument lsp, OpenDocument document)
+    public async Task<(bool Removed, bool Sorted)> TidyUsings(LspDocument lsp, OpenDocument document)
     {
         // Asked of the server now rather than read from the diagnostics shown, which a file just opened has yet to get.
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync();
@@ -144,7 +157,11 @@ public sealed partial class CodeAssist
         BackgroundWork.Begin();
         try
         {
-            doomed = await FindDoomed(lsp, caret);
+            (doomed, string? whyNot) = await FindDoomedAsync(lsp, caret);
+            if (whyNot is not null)
+            {
+                Message?.Invoke(this, whyNot);
+            }
         }
         catch (LanguageServerFailed failed)
         {
@@ -166,52 +183,45 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, $"Safe Delete left the {doomed.Removal.Kind} '{doomed.Removal.Name}' where it is");
                 return;
             }
-            Delete(doomed);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            Message?.Invoke(this, $"Safe Delete failed: {error.Message}");
+            Message?.Invoke(this, Delete(doomed).Said);
         }
         finally
         {
-            doomed.Tracker?.Dispose();
+            doomed.Dispose();
         }
     }
 
-    /// <summary>What Safe Delete would take out, and the usages that would break; null, said in the status bar, where it
-    /// cannot (no declaration, one outside the folder's code, a parameter).</summary>
-    private async Task<Doomed?> FindDoomed(LspDocument lsp, int caret)
+    /// <summary>What Safe Delete would take out of the symbol at an offset (its declaration or a use of it), and the usages
+    /// that would break; else why it cannot (no declaration, one outside the folder's code, a parameter). The caller
+    /// disposes what it found.</summary>
+    public async Task<(Doomed? Doomed, string? WhyNot)> FindDoomedAsync(LspDocument lsp, int caret)
     {
         IReadOnlyList<LspLocation> declared = await lsp.DefinitionAsync(caret);
         if (declared.Count != 1)
         {
-            Message?.Invoke(this, declared.Count == 0 ? "Nothing to delete here: put the caret on a name" : $"Safe Delete cannot delete a symbol declared in {declared.Count} places");
-            return null;
+            return (null, declared.Count == 0 ? "Nothing to delete here: put the caret on a name" : $"Safe Delete cannot delete a symbol declared in {declared.Count} places");
         }
         string path = DocumentUris.ToPath(declared[0].Uri);
         string? root = service()?.Session?.Folder;
         OpenDocument? open = editors.Documents.FirstOrDefault(d => d.Path == path);
         if (root is null || !PathNames.IsUnder(path, root) || !path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || open?.IsReadOnly == true)
         {
-            Message?.Invoke(this, "Safe Delete deletes only what this folder's own code declares");
-            return null;
+            return (null, "Safe Delete deletes only what this folder's own code declares");
         }
         ParsedText? syntax = open?.Syntax?.Current ?? (FileText.Load(path) is { } file ? SafeDeletion.Parse(file.Text) : null);
         if (syntax is null)
         {
-            return null;
+            return (null, $"Safe Delete cannot read {Path.GetFileName(path)} as text");
         }
         ServerLines lines = ServerLines.Of(syntax.Text);
         int at = lines.OffsetOf(declared[0].Range.Start);
         if (SafeDeletion.At(syntax, at) is not { } removal)
         {
-            Message?.Invoke(this, "Safe Delete removes a type, a member or a local, and none is declared here");
-            return null;
+            return (null, "Safe Delete removes a type, a member or a local, and none is declared here");
         }
         if (removal.WhyNot is { } why)
         {
-            Message?.Invoke(this, why);
-            return null;
+            return (null, why);
         }
         // The open file followed from the text read, so what is typed while the usages come is carried.
         ChangeTracker? tracker = open is null ? null : new ChangeTracker(open.Text);
@@ -223,7 +233,7 @@ public sealed partial class CodeAssist
             List<LspLocation> uses = [.. referenced
                 .Where(r => paths[r.Uri] != path || !removal.Range.Contains(lines.OffsetOf(r.Range.Start)))
                 .OrderBy(r => paths[r.Uri], StringComparer.Ordinal).ThenBy(r => r.Range.Start.Line).ThenBy(r => r.Range.Start.Character)];
-            return new Doomed(path, open, tracker, syntax.Text, at, removal, uses);
+            return (new Doomed(path, open, tracker, syntax.Text, at, removal, uses), null);
         }
         catch
         {
@@ -272,37 +282,48 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>Takes the declaration out of its file as it is now: an open one through its document, one undo step; one
-    /// not open on disk. One whose declaration was edited meanwhile is left alone.</summary>
-    private void Delete(Doomed doomed)
+    /// not open on disk, a command of its own. One whose declaration was edited meanwhile is left alone, and said so.</summary>
+    public RefactorOutcome Delete(Doomed doomed)
     {
         Removal removal = doomed.Removal;
         string uses = doomed.Uses.Count == 0 ? string.Empty : $", leaving {doomed.Uses.Count} {(doomed.Uses.Count == 1 ? "usage" : "usages")} to fix";
-        if (doomed.Open is { } open)
+        int first = doomed.Text.GetLineFromOffset(removal.Range.Start);
+        int last = doomed.Text.GetLineFromOffset(Math.Max(removal.Range.Start, removal.Range.Start + removal.Range.Length - 1));
+        try
         {
-            if (!editors.Documents.Contains(open) || open.Syntax is not { } parser
-                || SafeDeletion.At(parser.Current, doomed.Tracker!.MapOffset(doomed.Offset)) is not { WhyNot: null } now || now.Name != removal.Name)
+            if (doomed.Open is { } open)
             {
-                Message?.Invoke(this, $"Safe Delete was not applied: '{removal.Name}' was edited meanwhile");
-                return;
+                if (!editors.Documents.Contains(open) || open.Syntax is not { } parser
+                    || SafeDeletion.At(parser.Current, doomed.Tracker!.MapOffset(doomed.Offset)) is not { WhyNot: null } now || now.Name != removal.Name)
+                {
+                    return RefactorOutcome.Refused($"Safe Delete was not applied: '{removal.Name}' was edited meanwhile");
+                }
+                WorkspaceEdits.ApplyTo(editors, open, [new TextEdit(now.Range.Start, now.Range.Length, string.Empty)]);
             }
-            WorkspaceEdits.ApplyTo(editors, open, [new TextEdit(now.Range.Start, now.Range.Length, string.Empty)]);
+            else
+            {
+                if (FileText.Load(doomed.Path) is not { } file || file.Text != doomed.Text.ToString())
+                {
+                    return RefactorOutcome.Refused($"Safe Delete was not applied: {Path.GetFileName(doomed.Path)} changed meanwhile");
+                }
+                // A command of its own, as the file has no undo: Undo in the Solution view puts the declaration back.
+                using Editors.CommandHistory.Recording recording = editors.Commands.Record("Safe Delete");
+                recording.Watch(doomed.Path);
+                _ = FileText.Save(doomed.Path, doomed.Text.Replace(removal.Range.Start, removal.Range.Length, string.Empty).ToString(), file.Encoding, file.HasBom, file.CrBreaks);
+            }
         }
-        else
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            if (FileText.Load(doomed.Path) is not { } file || file.Text != doomed.Text.ToString())
-            {
-                Message?.Invoke(this, $"Safe Delete was not applied: {Path.GetFileName(doomed.Path)} changed meanwhile");
-                return;
-            }
-            // A command of its own, as the file has no undo: Undo in the Solution view puts the declaration back.
-            using Editors.CommandHistory.Recording recording = editors.Commands.Record("Safe Delete");
-            recording.Watch(doomed.Path);
-            _ = FileText.Save(doomed.Path, doomed.Text.Replace(removal.Range.Start, removal.Range.Length, string.Empty).ToString(), file.Encoding, file.HasBom, file.CrBreaks);
+            return RefactorOutcome.Refused($"Safe Delete failed: {error.Message}");
         }
-        Message?.Invoke(this, $"Deleted the {removal.Kind} '{removal.Name}'{uses}");
+        return new RefactorOutcome($"Deleted the {removal.Kind} '{removal.Name}'{uses}", null,
+            [new RefactoredFile(doomed.Path, "changed", [.. Enumerable.Range(first + 1, last - first + 1)])], []);
     }
 
     /// <summary>What Safe Delete takes out: the declaring file (its document when open, followed from when its usages were
     /// asked for), its text then, where the name is in it, what goes, and the usages that would break.</summary>
-    private sealed record Doomed(string Path, OpenDocument? Open, ChangeTracker? Tracker, TextSnapshot Text, int Offset, Removal Removal, IReadOnlyList<LspLocation> Uses);
+    public sealed record Doomed(string Path, OpenDocument? Open, ChangeTracker? Tracker, TextSnapshot Text, int Offset, Removal Removal, IReadOnlyList<LspLocation> Uses) : IDisposable
+    {
+        public void Dispose() => Tracker?.Dispose();
+    }
 }

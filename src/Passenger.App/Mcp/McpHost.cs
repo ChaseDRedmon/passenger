@@ -28,7 +28,10 @@ public static class McpHost
 
     private const string Instructions =
         "Passenger is a C# IDE. These tools act on its open workspace as its user would: open a folder or solution, ask the C# " +
-        "language server about code (diagnostics, symbol_info, definition, usages, rename, code_actions), search the folder's files " +
+        "language server about code (diagnostics, symbol_info, definition, usages, rename, code_actions), make the refactorings that change " +
+        "code across the solution as the IDE's dialogs do (refactor: Change Signature with every call updated, Move, Safe Delete, Extract " +
+        "Interface, Pull Members Up, Push Members Down, Introduce Field or Parameter, Encapsulate Field, Optimize Imports and Code Cleanup " +
+        "over a file, project or solution; each undone whole by the IDE's Undo) rather than editing each file by hand, search the folder's files " +
         "(find_in_files, replace_in_files), build, run, and debug (breakpoint_set, debug_start or debug_attach, debug_step, debug_evaluate, " +
         "debug_variables), read what Problems and Local History keep (problems, local_history), read and change the settings (settings, " +
         "settings_set), see or drive the window (screenshot, ide_action), and look at and drive the Avalonia or WPF app it runs or debugs as a person tests it (app_screenshot, app_tree, app_click, " +

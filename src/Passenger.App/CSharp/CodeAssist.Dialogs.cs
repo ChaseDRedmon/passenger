@@ -12,7 +12,8 @@ namespace Passenger.App.CSharp;
 /// <summary>Rider's refactorings that ask their options in a dialog of their own: Change Signature, Extract Interface,
 /// Move to Another File and Move to Namespace, Pull Members Up and Push Members Down. Each asks Passenger's extension in
 /// the language server what is at the caret, shows its dialog, and on Next has the extension compute the change, which is
-/// applied as one command that Undo takes back whole, the files it makes included.</summary>
+/// applied as one command that Undo takes back whole, the files it makes included. The making is a method of its own per
+/// refactoring (<see cref="ChangeSignatureAsync"/>...), which an agent's refactor tool calls with the dialog's options.</summary>
 public sealed partial class CodeAssist
 {
     private async Task ChangeSignature()
@@ -29,9 +30,8 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, problem);
                 return;
             }
-            await ShowAsync(new ChangeSignatureDialog(signature, (method, returnType, parameters) => MakeAsync(name, document,
-                lsp => lsp.ExtensionAsync<Refactored>(Handlers.ChangeSignature, new SignatureChange(lsp.PlaceOf(caret.Offset), method, returnType, parameters)),
-                files => $"Changed the signature of {signature.Container}{(signature.Kind == "method" ? "." + method : string.Empty)} in {Count(files, "file")}")));
+            await ShowAsync(new ChangeSignatureDialog(signature, (method, returnType, parameters) =>
+                Shown(ChangeSignatureAsync(document, caret.Offset, signature, method, returnType, parameters))));
         }
     }
 
@@ -49,9 +49,8 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, problem);
                 return;
             }
-            await ShowAsync(new ExtractInterfaceDialog(source, (interfaceName, file, members) => MakeAsync(name, document,
-                lsp => lsp.ExtensionAsync<Refactored>(Handlers.ExtractInterface, new InterfaceExtraction(lsp.PlaceOf(caret.Offset), interfaceName, file, members)),
-                _ => $"Extracted the interface {interfaceName} from {source.Type} to {file}")));
+            await ShowAsync(new ExtractInterfaceDialog(source, (interfaceName, file, members) =>
+                Shown(ExtractInterfaceAsync(document, caret.Offset, source, interfaceName, file, members))));
         }
     }
 
@@ -88,14 +87,9 @@ public sealed partial class CodeAssist
     {
         using (caret)
         {
-            string what = toFile ? "Move to Another File" : "Move to Namespace";
             await ShowAsync(toFile
-                ? MoveTypeDialog.ToFile(type, file => MakeAsync(what, document,
-                    lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToFile, new TypeToFile(lsp.PlaceOf(caret.Offset), file)),
-                    _ => $"Moved {type.Kind} {type.Name} to {file}"))
-                : MoveTypeDialog.ToNamespace(type, space => MakeAsync(what, document,
-                    lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToNamespace, new TypeToNamespace(lsp.PlaceOf(caret.Offset), space)),
-                    files => $"Moved {type.Kind} {type.Name} to namespace {space} in {Count(files, "file")}")));
+                ? MoveTypeDialog.ToFile(type, file => Shown(MoveTypeToFileAsync(document, caret.Offset, type, file)))
+                : MoveTypeDialog.ToNamespace(type, space => Shown(MoveTypeToNamespaceAsync(document, caret.Offset, type, space))));
         }
     }
 
@@ -110,26 +104,69 @@ public sealed partial class CodeAssist
         }
         using (caret)
         {
-            string? problem = hierarchy.Problem
-                ?? (up && hierarchy.Bases.Count == 0 ? $"'{hierarchy.Type}' has no base type in this solution to pull members up to"
-                : !up && hierarchy.Derived.Count == 0 ? $"No class in this solution derives from '{hierarchy.Type}' to push members down to"
-                : hierarchy.Members.Count == 0 ? $"'{hierarchy.Type}' has no members to move"
-                : null);
-            if (problem is not null)
+            if (MembersMoveProblem(hierarchy, up) is { } problem)
             {
                 Message?.Invoke(this, problem);
                 return;
             }
-            Func<string, IReadOnlyList<string>, IReadOnlyList<string>, Task<string?>> make = (target, members, made) => MakeAsync(name, document,
-                lsp => lsp.ExtensionAsync<Refactored>(up ? Handlers.PullMembersUp : Handlers.PushMembersDown, new MembersMove(lsp.PlaceOf(caret.Offset), target, members, made)),
-                files => up
-                    ? $"Pulled {Count(members.Count, "member")} of {hierarchy.Type} up to {hierarchy.Bases.First(b => b.Id == target).Text}"
-                    : $"Pushed {Count(members.Count, "member")} of {hierarchy.Type} down to {Count(target.Split('\n').Length, "class", "classes")}");
+            Func<string, IReadOnlyList<string>, IReadOnlyList<string>, Task<string?>> make = (target, members, made) =>
+                Shown(MoveMembersAsync(document, caret.Offset, hierarchy, up, target, members, made));
             await ShowAsync(up ? MembersMoveDialog.PullUp(hierarchy, make) : MembersMoveDialog.PushDown(hierarchy, make));
         }
     }
 
     private static string Count(int count, string one, string? many = null) => count == 1 ? $"1 {one}" : $"{count} {many ?? one + "s"}";
+
+    /// <summary>What Passenger's extension says is at a place of a file for a refactoring, as its dialog would show it: the
+    /// method Change Signature changes (<see cref="Handlers.DescribeSignature"/>), the type Extract Interface or Move takes,
+    /// the hierarchy Pull Members Up and Push Members Down move members in.</summary>
+    public static Task<T> DescribeAtAsync<T>(LspDocument lsp, int offset, string handler) where T : class =>
+        lsp.ExtensionAsync<T>(handler, new Roslyn.Extension.Caret(lsp.PlaceOf(offset)));
+
+    /// <summary>Why Pull Members Up or Push Members Down has nothing to do for the type described, as Rider says it before
+    /// its dialog would open; null when it has.</summary>
+    public static string? MembersMoveProblem(Hierarchy hierarchy, bool up) => hierarchy.Problem
+        ?? (up && hierarchy.Bases.Count == 0 ? $"'{hierarchy.Type}' has no base type in this solution to pull members up to"
+        : !up && hierarchy.Derived.Count == 0 ? $"No class in this solution derives from '{hierarchy.Type}' to push members down to"
+        : hierarchy.Members.Count == 0 ? $"'{hierarchy.Type}' has no members to move"
+        : null);
+
+    /// <summary>Change Signature on the method or constructor at an offset of a file, given its new name, return type and
+    /// parameters (each the one it was, or new with the value every call passes): the declaration, its family's and every
+    /// call changed, as one command.</summary>
+    public Task<RefactorOutcome> ChangeSignatureAsync(OpenDocument document, int offset, Signature signature, string method, string returnType, IReadOnlyList<ParameterChange> parameters) =>
+        MakeAsync("Change Signature", document,
+            lsp => lsp.ExtensionAsync<Refactored>(Handlers.ChangeSignature, new SignatureChange(lsp.PlaceOf(offset), method, returnType, parameters)),
+            files => $"Changed the signature of {signature.Container}{(signature.Kind == "method" ? "." + method : string.Empty)} in {Count(files, "file")}");
+
+    /// <summary>Extract Interface from the type at an offset: an interface of this name, in a new file of this name beside
+    /// the type's, of the members chosen by their ids, which the type then implements.</summary>
+    public Task<RefactorOutcome> ExtractInterfaceAsync(OpenDocument document, int offset, InterfaceSource source, string name, string file, IReadOnlyList<string> members) =>
+        MakeAsync("Extract Interface", document,
+            lsp => lsp.ExtensionAsync<Refactored>(Handlers.ExtractInterface, new InterfaceExtraction(lsp.PlaceOf(offset), name, file, members)),
+            _ => $"Extracted the interface {name} from {source.Type} to {file}");
+
+    /// <summary>Move to Another File: the type at an offset into a new file of this name beside its own.</summary>
+    public Task<RefactorOutcome> MoveTypeToFileAsync(OpenDocument document, int offset, TypeSource type, string file) =>
+        MakeAsync("Move to Another File", document,
+            lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToFile, new TypeToFile(lsp.PlaceOf(offset), file)),
+            _ => $"Moved {type.Kind} {type.Name} to {file}");
+
+    /// <summary>Move to Namespace: the type at an offset into this namespace, the files that use it following.</summary>
+    public Task<RefactorOutcome> MoveTypeToNamespaceAsync(OpenDocument document, int offset, TypeSource type, string space) =>
+        MakeAsync("Move to Namespace", document,
+            lsp => lsp.ExtensionAsync<Refactored>(Handlers.MoveTypeToNamespace, new TypeToNamespace(lsp.PlaceOf(offset), space)),
+            files => $"Moved {type.Kind} {type.Name} to namespace {space} in {Count(files, "file")}");
+
+    /// <summary>Pull Members Up (into the base type whose id is the target) or Push Members Down (into each derived class
+    /// whose id is a line of it): the members chosen by their ids, those listed as made abstract left abstract where they
+    /// stay.</summary>
+    public Task<RefactorOutcome> MoveMembersAsync(OpenDocument document, int offset, Hierarchy hierarchy, bool up, string target, IReadOnlyList<string> members, IReadOnlyList<string> made) =>
+        MakeAsync(up ? "Pull Members Up" : "Push Members Down", document,
+            lsp => lsp.ExtensionAsync<Refactored>(up ? Handlers.PullMembersUp : Handlers.PushMembersDown, new MembersMove(lsp.PlaceOf(offset), target, members, made)),
+            files => up
+                ? $"Pulled {Count(members.Count, "member")} of {hierarchy.Type} up to {hierarchy.Bases.FirstOrDefault(b => b.Id == target)?.Text ?? target}"
+                : $"Pushed {Count(members.Count, "member")} of {hierarchy.Type} down to {Count(target.Split('\n').Length, "class", "classes")}");
 
     /// <summary>What Passenger's extension says is at the caret for a refactoring, with the file and the caret followed from
     /// now; null, said in the status bar, when the server cannot be asked.</summary>
@@ -143,7 +180,7 @@ public sealed partial class CodeAssist
         BackgroundWork.Begin();
         try
         {
-            return (await lsp.ExtensionAsync<T>(handler, new Roslyn.Extension.Caret(lsp.PlaceOf(Caret))), document, caret);
+            return (await DescribeAtAsync<T>(lsp, Caret, handler), document, caret);
         }
         catch (LanguageServerFailed failed)
         {
@@ -165,10 +202,22 @@ public sealed partial class CodeAssist
         }
     }
 
+    /// <summary>A refactoring's outcome as its dialog takes it: what it said in the status bar once made, else why not, for
+    /// the dialog to say.</summary>
+    private async Task<string?> Shown(Task<RefactorOutcome> making)
+    {
+        RefactorOutcome made = await making;
+        if (made.Problem is null)
+        {
+            Message?.Invoke(this, made.Said);
+        }
+        return made.Problem;
+    }
+
     /// <summary>A refactoring computed by Passenger's extension for a file and applied as one command, which Undo takes back
-    /// whole: every file it changes, open or not, and every file it makes. Null once made, said in the status bar; else
-    /// why not, for its dialog to say.</summary>
-    private async Task<string?> MakeAsync(string name, OpenDocument document, Func<LspDocument, Task<Refactored>> ask, Func<int, string> done)
+    /// whole: every file it changes, open or not, and every file it makes. What it came to: the files it changed and what
+    /// to say of it, or why it was not made.</summary>
+    private async Task<RefactorOutcome> MakeAsync(string name, OpenDocument document, Func<LspDocument, Task<Refactored>> ask, Func<int, string> done)
     {
         try
         {
@@ -177,17 +226,16 @@ public sealed partial class CodeAssist
             Refactored made = await ask(lsp);
             if (made.Problem is { } problem)
             {
-                return problem;
+                return RefactorOutcome.Refused(problem);
             }
             if (made.Changes.Count == 0)
             {
-                Message?.Invoke(this, $"{name} changed nothing");
-                return null;
+                return new RefactorOutcome($"{name} changed nothing", null, [], []);
             }
             System.Text.Json.JsonElement edit = RoslynExtension.WorkspaceEdit(made);
             if (await WorkspaceEdits.StaleAsync(editors, lsp, edit, asked.Since) is { } stale)
             {
-                return $"{name} was not applied: {stale}";
+                return RefactorOutcome.Refused($"{name} was not applied: {stale}");
             }
             List<string> dropped = [];
             using (CommandHistory.Recording recording = editors.Commands.Record(name))
@@ -200,16 +248,16 @@ public sealed partial class CodeAssist
             }
             FilesChanged?.Invoke(this, EventArgs.Empty);
             // Counted by file: a file made is its creation and its text, which the edit counts apart.
-            Message?.Invoke(this, done(made.Changes.Count - dropped.Count) + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty));
-            return null;
+            string said = done(made.Changes.Count - dropped.Count) + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
+            return new RefactorOutcome(said, null, WorkspaceEdits.Files(edit), dropped);
         }
         catch (LanguageServerFailed failed)
         {
-            return $"{name} failed: {failed.Reason}";
+            return RefactorOutcome.Refused($"{name} failed: {failed.Reason}");
         }
         catch (WorkspaceEditFailed failed)
         {
-            return failed.Message;
+            return RefactorOutcome.Refused(failed.Message);
         }
     }
 
