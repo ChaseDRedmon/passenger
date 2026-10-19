@@ -403,7 +403,7 @@
       "passenger.profiler": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Diagnostics.NETCore.Client": "[0.2.661903, )",
+          "Microsoft.Diagnostics.NETCore.Client": "[0.2.750501, )",
           "Microsoft.Diagnostics.Runtime": "[4.2.751201, )",
           "Microsoft.Diagnostics.Tracing.TraceEvent": "[3.2.6, )",
           "Passenger.Core": "[0.1.0, )"
@@ -448,9 +448,9 @@
       },
       "Microsoft.Diagnostics.NETCore.Client": {
         "type": "CentralTransitive",
-        "requested": "[0.2.661903, )",
-        "resolved": "0.2.661903",
-        "contentHash": "3ISv5jXar4dHBt/7Rz3YdnR3VpnC94BhSdSvuq8ZuKgCOcVuTdmgRnq0hUzJyL/z8Ge4VekFjhui2aufUXPdvg=="
+        "requested": "[0.2.750501, )",
+        "resolved": "0.2.750501",
+        "contentHash": "XVOWyjoikpjTecPv8fYWspgNGhXtOeMX3K3wq9kXftU9U04V6IwCY4NQuVrY/BIBwmui6lF8z7pNP64cwFvUNQ=="
       },
       "Microsoft.Diagnostics.Runtime": {
         "type": "CentralTransitive",
