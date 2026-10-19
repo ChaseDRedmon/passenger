@@ -96,6 +96,9 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable("npm_config_update_notifier", "false");
         Environment.SetEnvironmentVariable("npm_config_audit", "false");
         Environment.SetEnvironmentVariable("npm_config_fund", "false");
+        // Nor the person's application data: a Testing Platform test app the IDE runs writes its first-run notice's
+        // sentinel there (Microsoft/TestingPlatform) unless telemetry is opted out.
+        Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }
