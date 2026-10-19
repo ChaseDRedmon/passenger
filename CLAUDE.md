@@ -673,7 +673,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
-  `EvalRefusedException`; a value shown by its ToString then shows its type. `Extensions.EvaluationTimeout` (5 s, the
+  `EvalRefusedException`; a value shown by its ToString then shows its type. An evaluation the engine could not stop runs on with the program, its
+  abort still pending: it fires wherever the thread then is (a rude abort runs no finally), so code evaluated at a stop
+  takes no lock another thread may hold. `Extensions.EvaluationTimeout` (5 s, the
   adapter's `PASSENGER_EVAL_TIMEOUT_MS`) also sets the abort's wait (0.4×) and the rude abort's (1×). Data breakpoints (Variables' Set Data
   Breakpoint, `ManagedDebugger_DataBreakpoints`, `DebugRegisters`): the runtime watches memory only on Windows x64
   (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
@@ -751,7 +753,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   value-store diagnostics) and runs in a load context of its own that takes the app's Avalonia whatever its 12.x; it
   never touches `Dispatcher.UIThread` before the app makes it, and answers on the app's UI thread over a Unix socket in
   the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
-  default 64. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
+  default 64. Its wire's types are made ready as it connects, before the app's Main
+  (`Connection.Configure`): System.Text.Json readies a type on first use under one lock for all of a context's types,
+  which a thread the debugger stopped can hold from an evaluation at the stop, whose abort, still pending once the app
+  runs on, then fires inside the lock and keeps it for good. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
   selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools (`app_*`,
   `Mcp/PassengerTools.App.cs`) ask the same inspector: its windows, the tree with each element's box, text and state,
@@ -905,7 +910,10 @@ own; a test says what a person would see or get ("an edit saved keeps the file's
 "typing never loses a word's colour"), and its failure message names the consequence. The long
 random editing session checks every key against a plain string model, which is what keeps the rope,
 the line index and undo honest; keep it passing rather than narrowing it; it also runs with soft wrap on, moves checked against what a move among rows
-must do and rows against a fresh editor's. Performance is held by what the UI thread allocates, compared between a
+must do and rows against a fresh editor's. Headless, a window draws each frame into a new WriteableBitmap whose Skia memory
+is GC memory pressure (Avalonia.Headless's `HeadlessWindowImpl.Lock`), so a test that presses thousands of keys draws
+a small window (the sessions are 300 high) and checks text without copying it (`EditorRig.DifferenceFrom` reads the rope
+piece by piece). Performance is held by what the UI thread allocates, compared between a
 small case and a large one, rather than by a time where a time is noisy; to see where the UI thread's time goes,
 attach Passenger's own profiler to the test process (`ProfilingSession.AttachAsync(Environment.ProcessId, …)`). One test of something a person sees or
 gets is worth more than many that restate the code they call: a test that only checks one type or function on its own
