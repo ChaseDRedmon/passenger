@@ -446,6 +446,57 @@ public static class TestFolders
                 Writable(path);
                 Thread.Sleep(100);
             }
+            catch (IOException error) when (OperatingSystem.IsWindows())
+            {
+                throw new IOException($"{error.Message} Still running: {Running(path)}", error);
+            }
+        }
+    }
+
+    /// <summary>The programs that may hold a folder on Windows, which no API names for a folder a process runs in: those
+    /// the run started (its children's children, by their parents), and any naming the folder or run by dotnet.</summary>
+    private static string Running(string path)
+    {
+        try
+        {
+            System.Diagnostics.ProcessStartInfo start = new("powershell", ["-NoProfile", "-Command",
+                "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)\" }"])
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using System.Diagnostics.Process listing = System.Diagnostics.Process.Start(start)!;
+            string listed = listing.StandardOutput.ReadToEnd();
+            listing.WaitForExit(30_000);
+            Dictionary<int, (int Parent, string Row)> processes = [];
+            foreach (string row in listed.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string[] fields = row.Split('\t');
+                if (fields.Length >= 3 && int.TryParse(fields[0], out int id) && int.TryParse(fields[1], out int parent))
+                {
+                    processes[id] = (parent, row);
+                }
+            }
+            bool Ours(int id)
+            {
+                for (int depth = 0; depth < 64 && processes.TryGetValue(id, out (int Parent, string Row) process); depth++)
+                {
+                    if (process.Parent == Environment.ProcessId)
+                    {
+                        return true;
+                    }
+                    id = process.Parent;
+                }
+                return false;
+            }
+            string[] holding = [.. processes.Where(p => Ours(p.Key) || p.Value.Row.Contains(Path.GetFileName(path), StringComparison.OrdinalIgnoreCase)
+                || p.Value.Row.Split('\t')[2].Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase)).Select(p => p.Value.Row.Replace('\t', ' '))];
+            return holding.Length == 0 ? "nothing of the run's" : string.Join("; ", holding);
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return $"(the processes could not be listed: {error.Message})";
         }
     }
 
