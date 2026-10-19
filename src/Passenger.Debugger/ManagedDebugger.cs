@@ -582,6 +582,25 @@ public partial class ManagedDebugger
 
     private ICorDebugStepper? _stepper;
 
+    internal void Log(string message) => _logger?.Invoke(message);
+
+    /// <summary>Ends the step's stepper as its thread leaves an async method at an await, the async stepper's step going on
+    /// from where the method's run resumes. A stepper left set, though inactive, would take the next breakpoint for its own.</summary>
+    internal void EndStepper()
+    {
+        _stepper?.TryDeactivate();
+        _stepper = null;
+    }
+
+    /// <summary>The step over an await goes on from where its run resumed, on this thread, which need not be the one that
+    /// stepped: the statement's return-value watch follows it there.</summary>
+    internal void StepOnFromResume(ICorDebugThread thread, StepType type)
+    {
+        EndStepper();
+        SetupStepper(thread, type);
+        FollowReturnWatch(thread);
+    }
+
     /// <summary>A pause that came while the process was held for an event of its own, taken at the next Continue.</summary>
     private bool _pauseRequested;
 

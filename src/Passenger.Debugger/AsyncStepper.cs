@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
@@ -12,12 +13,6 @@ public enum StepType
 internal sealed class AsyncStepper
 {
     private readonly ManagedDebugger _debugger;
-    private enum AsyncStepStatus
-    {
-        YieldBreakpoint,
-        ResumeBreakpoint
-    }
-
     private class AsyncBreakpoint
     {
         public ICorDebugFunctionBreakpoint? Breakpoint;
@@ -43,28 +38,35 @@ internal sealed class AsyncStepper
         }
     }
 
+    /// <summary>A step over (or into) an await: from its line on the thread that steps, to the line after it on whichever
+    /// thread the method's run goes on.</summary>
     private class AsyncStep
     {
         public int ThreadId;
         public StepType InitialStepType;
         public uint ResumeOffset;
-        public AsyncStepStatus Status;
-        public AsyncBreakpoint? Breakpoint;
-        public ICorDebugHandleValue? AsyncIdHandle; // Strong handle to builder's ObjectIdForDebugger
+
+        /// <summary>Where the stepping thread leaves the method at the await, before the awaiter is told to go on with it.</summary>
+        public AsyncBreakpoint? Yield;
+
+        /// <summary>Where the method's runs go on after the await, set as the stepping thread leaves it.</summary>
+        public AsyncBreakpoint? Resume;
+
+        /// <summary>Which run of the method the step is in; none when it could not be told, and the method's first resume
+        /// is then the step's.</summary>
+        public RunId? Run;
 
         public void Dispose()
         {
-            Breakpoint?.Dispose();
-            try
-            {
-                AsyncIdHandle?.Dispose();
-            }
-            catch
-            {
-                // Ignore handle cleanup errors
-            }
+            Yield?.Dispose();
+            Resume?.Dispose();
+            Run?.Handle.TryDispose();
         }
     }
+
+    /// <summary>A run of an async method, by a strong handle compared by address at a stop: its state machine where that
+    /// is a class (a Debug build's), read with nothing run in the program, else the id its builder gives a debugger.</summary>
+    private sealed record RunId(ICorDebugHandleValue Handle, bool IsStateMachine);
 
     private readonly Dictionary<CORDB_ADDRESS, ModuleInfo> _modules;
     // Every call comes under the engine's lock (a request or a runtime event at a time), so the stepper needs no lock of its own.
@@ -287,23 +289,12 @@ internal sealed class AsyncStepper
                 return (false, null);
             }
 
-            // Create yield breakpoint
-            ICorDebugFunctionBreakpoint yieldBreakpoint = ilCode.CreateBreakpoint((int)awaitInfo.YieldOffset);
-            yieldBreakpoint.Activate(true);
-
             _currentAsyncStep = new AsyncStep
             {
                 ThreadId = thread.Id,
                 InitialStepType = stepType,
                 ResumeOffset = awaitInfo.ResumeOffset,
-                Status = AsyncStepStatus.YieldBreakpoint,
-                Breakpoint = new AsyncBreakpoint
-                {
-                    Breakpoint = yieldBreakpoint,
-                    ModuleAddress = moduleAddress,
-                    MethodToken = methodToken,
-                    ILOffset = awaitInfo.YieldOffset
-                }
+                Yield = Arm(ilCode, moduleAddress, methodToken, awaitInfo.YieldOffset),
             };
 
             // Don't set shouldUseSimpleStepper to false - the simple stepper should be created
@@ -340,14 +331,12 @@ internal sealed class AsyncStepper
             return (true, true);
         }
 
-        // Check if we have an active async step
-        if (_currentAsyncStep is null)
+        if (_currentAsyncStep is not { } step)
         {
             return (false, null);
         }
-
-        // Check if breakpoint matches our async step
-        if (!MatchesBreakpoint(breakpoint, _currentAsyncStep.Breakpoint!, thread))
+        bool atYield = step.Yield is { } yield && MatchesBreakpoint(breakpoint, yield, thread);
+        if (!atYield && (step.Resume is not { } resume || !MatchesBreakpoint(breakpoint, resume, thread)))
         {
             // Another breakpoint ends the async step only if it stops, which the debugger tells once its condition is tested.
             return (false, null);
@@ -355,104 +344,117 @@ internal sealed class AsyncStepper
 
         // Check if IP matches expected offset
         ICorDebugILFrame? frame = thread.ActiveFrame as ICorDebugILFrame;
-        if (frame is null)
-        {
-            _currentAsyncStep?.Dispose();
-            _currentAsyncStep = null;
-            return (false, null);
-        }
-
-        (int pnOffset, CorDebugMappingResult pMappingResult) ipResult = frame.IP;
-        if (ipResult.pnOffset != _currentAsyncStep.Breakpoint!.ILOffset)
+        if (frame is null || frame.IP.pnOffset != (atYield ? step.Yield! : step.Resume!).ILOffset)
         {
             // Wrong offset - cancel async stepping
-            _currentAsyncStep?.Dispose();
+            step.Dispose();
             _currentAsyncStep = null;
             return (false, null);
         }
 
-        if (_currentAsyncStep.Status == AsyncStepStatus.YieldBreakpoint)
+        if (atYield)
         {
-            if (_currentAsyncStep.ThreadId != thread.Id)
-            {
-                return (false, null);
-            }
-            // Yield breakpoint hit - switch to resume breakpoint
-            return await HandleYieldBreakpoint(thread, frame);
+            // Another run of the method leaving it at the await is not the step's.
+            return step.ThreadId == thread.Id ? (true, await HandleYieldBreakpoint(step, frame)) : (false, null);
         }
-        else if (_currentAsyncStep.Status == AsyncStepStatus.ResumeBreakpoint)
-        {
-            // Resume breakpoint hit - check if we should stop
-            return await HandleResumeBreakpoint(thread);
-        }
-
-        return (false, null);
+        await HandleResumeBreakpoint(step, thread, frame);
+        return (true, false);
     }
 
-    private async Task<(bool HandledByAsyncStepper, bool? ShouldStop)> HandleYieldBreakpoint(ICorDebugThread thread, ICorDebugILFrame frame)
+    /// <summary>The stepping thread is leaving the method at the await (Roslyn's yield point comes before the awaiter is
+    /// told to go on with it): its stepper goes, and the step waits where the run resumes, its run told first. Never stops,
+    /// and never fails: a run not told makes the method's first resume the step's.</summary>
+    private async Task<bool> HandleYieldBreakpoint(AsyncStep step, ICorDebugILFrame frame)
     {
-        // Disable all simple steppers when we hit the yield breakpoint
-        DisableAllSimpleSteppers(thread.Process);
-
-        // Get async state machine ID for parallel execution tracking
+        _debugger.EndStepper();
+        step.Yield!.Dispose();
+        step.Yield = null;
         ICorDebugFunction function = frame.Function;
-        ICorDebugCode ilCode = function.ILCode;
-        ICorDebugHandleValue? asyncIdHandleValue = await GetAsyncIdReference(frame);
-        ArgumentNullException.ThrowIfNull(asyncIdHandleValue);
-        _currentAsyncStep!.AsyncIdHandle = asyncIdHandleValue;
-
-        // Create resume breakpoint
-        ICorDebugFunctionBreakpoint resumeBreakpoint = ilCode.CreateBreakpoint((int)_currentAsyncStep!.ResumeOffset);
-        resumeBreakpoint.Activate(true);
-
-        // Deactivate yield breakpoint
-        _currentAsyncStep!.Breakpoint?.Deactivate();
-
-        // Update state
-        _currentAsyncStep!.Breakpoint = new AsyncBreakpoint
-        {
-            Breakpoint = resumeBreakpoint,
-            ModuleAddress = function.Module.BaseAddress,
-            MethodToken = function.Token,
-            ILOffset = _currentAsyncStep!.ResumeOffset
-        };
-        _currentAsyncStep!.Status = AsyncStepStatus.ResumeBreakpoint;
-
-        // Continue execution
-        return (true, false);
+        step.Run = StateMachineOf(frame) ?? await BuilderRunOf(frame);
+        step.Resume = Arm(function.ILCode, function.Module.BaseAddress, function.Token, step.ResumeOffset);
+        return false;
     }
 
-    private async Task<(bool HandledByAsyncStepper, bool? ShouldStop)> HandleResumeBreakpoint(ICorDebugThread thread)
+    /// <summary>A run of the method goes on after the await: when it is the step's, the step goes on from here, on
+    /// whichever thread. Another run's is let go on.</summary>
+    private async Task HandleResumeBreakpoint(AsyncStep step, ICorDebugThread thread, ICorDebugILFrame frame)
     {
-        // Check if this is the same thread
-        if (_currentAsyncStep!.ThreadId == thread.Id)
+        if (!await IsTheStepsRun(step, thread, frame))
         {
-            // Same thread - set up stepper and clear async step
-            _debugger.SetupStepper(thread, _currentAsyncStep.InitialStepType);
-            _currentAsyncStep?.Dispose();
-            _currentAsyncStep = null;
+            return;
         }
-        // Different thread - check async ID
-        else if (_currentAsyncStep!.AsyncIdHandle is not null)
+        _currentAsyncStep = null;
+        step.Dispose();
+        _debugger.Log($"The awaited run goes on on thread {thread.Id}{(thread.Id == step.ThreadId ? "" : $", not the stepping thread {step.ThreadId}")}: the step goes on there");
+        _debugger.StepOnFromResume(thread, step.InitialStepType);
+    }
+
+    /// <summary>Whether a run resuming is the step's: its state machine the step's, compared with nothing run in the
+    /// program; the id its builder gives a debugger the same; or the first resume, when the step's run could not be told.</summary>
+    private async Task<bool> IsTheStepsRun(AsyncStep step, ICorDebugThread thread, ICorDebugILFrame frame)
+    {
+        if (step.Run is not { } run)
         {
-            ICorDebugHandleValue? currentAsyncId = await GetAsyncIdReference((ICorDebugILFrame)thread.ActiveFrame);
-            if (currentAsyncId is not null)
-            {
-                CORDB_ADDRESS currentAddress = currentAsyncId.Dereference().Address;
-                ICorDebugValue dereferencedHandle = _currentAsyncStep!.AsyncIdHandle!.Dereference();
-                CORDB_ADDRESS storedAddress = dereferencedHandle.Address;
-
-                if (currentAddress == storedAddress || currentAddress == 0 || storedAddress == 0)
-                {
-                    // Same async instance - set up stepper and clear async step
-                    ICorDebugStepper stepper = _debugger.SetupStepper(thread, _currentAsyncStep.InitialStepType);
-                    _currentAsyncStep?.Dispose();
-                    _currentAsyncStep = null;
-                }
-            }
+            return true;
         }
+        RunId? resumed = run.IsStateMachine ? StateMachineOf(frame) : await BuilderRunOf(frame);
+        if (resumed is null)
+        {
+            return true;
+        }
+        try
+        {
+            return resumed.Handle.Dereference().Address == run.Handle.Dereference().Address;
+        }
+        catch (COMException error)
+        {
+            _debugger.Log($"Which run of the method resumed on thread {thread.Id} could not be told: {error.Message}");
+            return true;
+        }
+        finally
+        {
+            resumed.Handle.TryDispose();
+        }
+    }
 
-        return (true, false);
+    /// <summary>The run of a frame's async method by its state machine, when that is a class (a Debug build's), as its
+    /// <c>this</c>; none for a struct's, whose runs move from the stack to a box at their first await.</summary>
+    private RunId? StateMachineOf(ICorDebugILFrame frame)
+    {
+        try
+        {
+            return frame.Arguments is [ICorDebugReferenceValue { Type: CorElementType.CLASS, IsNull: false } stateMachine, ..]
+                && stateMachine.Dereference() is ICorDebugHeapValue2 heap
+                ? new RunId(heap.CreateHandle(CorDebugHandleType.HANDLE_STRONG), IsStateMachine: true)
+                : null;
+        }
+        catch (Exception error) when (error is COMException or InvalidCastException)
+        {
+            _debugger.Log($"The async method's state machine could not be read: {error.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>The run of a frame's async method by the id its builder gives a debugger, which code run in the program
+    /// reads (only that thread runs): none when it could not be read, as when that code waits on a thread held meanwhile.</summary>
+    private async Task<RunId?> BuilderRunOf(ICorDebugILFrame frame)
+    {
+        try
+        {
+            return await GetAsyncIdReference(frame) is { } id ? new RunId(id, IsStateMachine: false) : null;
+        }
+        catch (Exception error) when (error is ManagedDebugger.EvalException or COMException or InvalidOperationException)
+        {
+            _debugger.Log($"Which run of the async method this is could not be read, so its first resume is taken as the step's: {error.Message}");
+            return null;
+        }
+    }
+
+    private static AsyncBreakpoint Arm(ICorDebugCode ilCode, CORDB_ADDRESS module, mdMethodDef method, uint offset)
+    {
+        ICorDebugFunctionBreakpoint breakpoint = ilCode.CreateBreakpoint((int)offset);
+        breakpoint.Activate(true);
+        return new AsyncBreakpoint { Breakpoint = breakpoint, ModuleAddress = module, MethodToken = method, ILOffset = offset };
     }
 
     private ModuleMetadataReader.AsyncAwaitInfo? FindNextAwaitInfo(ModuleMetadataReader.AsyncMethodSteppingInfo asyncInfo, uint currentOffset)
@@ -596,22 +598,6 @@ internal sealed class AsyncStepper
         mdMethodDef methodToken = function.Token;
 
         return moduleAddress == asyncBp.ModuleAddress && methodToken == asyncBp.MethodToken && breakpoint == asyncBp.Breakpoint;
-    }
-
-    /// <summary>
-    /// Disable all simple steppers across all app domains
-    /// </summary>
-    private void DisableAllSimpleSteppers(ICorDebugProcess process)
-    {
-        IEnumerable<ICorDebugAppDomain> appDomains = process.EnumerateAppDomains();
-        foreach (ICorDebugAppDomain appDomain in appDomains)
-        {
-            IEnumerable<ICorDebugStepper> steppers = appDomain.EnumerateSteppers();
-            foreach (ICorDebugStepper stepper in steppers)
-            {
-                stepper.Deactivate();
-            }
-        }
     }
 
     public void ClearActiveAsyncStep()

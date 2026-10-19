@@ -300,16 +300,11 @@ public partial class ManagedDebugger
         // Check if async stepper handles this breakpoint
         if (_asyncStepper is not null)
         {
-            ICorDebugStepper? steppingHere = _stepper;
+            // The step's own breakpoints at an await, where the async step takes the step over from its stepper and hands it
+            // to the thread its run resumes on, never stop.
             (bool asyncHandled, bool? shouldStop) = await _asyncStepper.TryHandleBreakpoint(corThread, functionBreakpoint);
             if (asyncHandled)
             {
-                if (steppingHere is not null && _stepper == steppingHere)
-                {
-                    // The step's own breakpoint at an await, where the async step takes over from the stepper that ran to it.
-                    steppingHere.Deactivate();
-                    _stepper = null;
-                }
                 if (shouldStop is false)
                 {
                     Continue(clearVariables: true);

@@ -212,6 +212,43 @@ public class StepTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_step_over_an_await_stops_at_its_next_line_though_asking_the_builder_which_run_resumed_would_wait_on_a_paused_thread()
+    {
+        // The method's builder answers which run of it resumed only once the passing thread has passed again, which never
+        // happens while an evaluation runs alone, as one waiting on what a paused thread holds never ends: the step tells
+        // its run apart without running the program.
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "waiting", "step over the await whose builder waits", "a step over the waiting builder's await lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "passed by another thread"), Condition: "pass < 0"));
+        AssertStepEnded(await host.WaitForStoppedEvent(), "the waiting builder's step ends here");
+    }
+
+    [Fact]
+    public async Task A_step_over_an_await_stops_at_its_next_line_though_asking_the_builder_which_run_leaves_would_wait_on_a_paused_thread()
+    {
+        // As above, asked as the stepping thread leaves the method at the await, where asking Task's own builder was seen to
+        // wait until the other threads ran: the step lost there kept its stepper, which took the next breakpoint for its own.
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "waiting first", "step over the await whose builder waits", "a step over the waiting builder's await lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "passed by another thread"), Condition: "pass < 0"));
+        AssertStepEnded(await host.WaitForStoppedEvent(), "the waiting builder's step ends here");
+    }
+
+    [Fact]
+    public async Task A_step_over_an_await_whose_method_goes_on_on_another_thread_shows_what_the_statement_called_there_returned()
+    {
+        // The statement's call after the await is made on the thread the step goes on on, not the one that stepped.
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "elsewhere", "step over the await that goes on elsewhere",
+            "a step over the await that goes on elsewhere lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "passed by another thread"), Condition: "pass < 0"));
+        StoppedEvent stepped = await host.WaitForStoppedEvent();
+        AssertStepEnded(stepped, "the step over the await that goes on elsewhere ends here");
+        Assert.True(host.Locals(stepped).Any(v => (v.Name, v.Value) == ("Say() returned", "\"said elsewhere\"")),
+            "Variables leaves out what the statement's call after the await returned, on the thread the method went on on");
+    }
+
+    [Fact]
     public async Task A_step_of_a_thread_the_program_does_not_have_is_refused_rather_than_answered_as_taken()
     {
         using DebugSession host = await AttachToBreakpoint(20);
@@ -271,15 +308,16 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         return host;
     }
 
-    /// <summary>LoopingConsoleApp launched in a mode where its first thread waits for a second to pass a line, stopped on
-    /// the line that waits and stepping over it, with the other breakpoint given and one where a step lost runs on to.</summary>
+    /// <summary>LoopingConsoleApp launched in a mode (its arguments, by spaces) where its first thread waits for a second to
+    /// pass a line, stopped on the line that waits and stepping over it, with the other breakpoint given and one where a
+    /// step lost runs on to.</summary>
     private static async Task StepOverWhileAnotherThreadPasses(DebugSession host, string mode, string from, string runsOnTo, DapSourceBreakpoint other)
     {
         string program = Debuggees.Program(Looping);
         host.WithInitializeRequest().Request("launch", new LaunchArguments
         {
             Program = program,
-            Args = [mode],
+            Args = [.. mode.Split(' ')],
             Cwd = Path.GetDirectoryName(program),
             Console = "internalConsole",
             JustMyCode = true,

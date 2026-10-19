@@ -70,6 +70,20 @@ public partial class ManagedDebugger
         _returnWatch = calls.Count == 0 ? null : new ReturnWatch(thread.Id, range, calls);
     }
 
+    /// <summary>The step's statement goes on after an await in its run resumed on this thread, in a frame of its own: the
+    /// calls the statement makes after the await are watched there, and the values its calls returned before are kept.</summary>
+    private void FollowReturnWatch(ICorDebugThread thread)
+    {
+        if (_returnWatch is { } watch && thread.ActiveFrame is { } frame && RangeOf(frame) is { } range)
+        {
+            _returnWatch = watch with { ThreadId = thread.Id, Frame = range };
+        }
+        if (_returnedThread is not null)
+        {
+            _returnedThread = thread.Id;
+        }
+    }
+
     /// <summary>The call a breakpoint is after, when it is one of the step's.</summary>
     private WatchedCall? WatchedCallOf(ICorDebugFunctionBreakpoint breakpoint) => _returnWatch?.Calls.FirstOrDefault(call => call.Breakpoint == breakpoint);
 
@@ -82,7 +96,7 @@ public partial class ManagedDebugger
         if (_returnWatch is not { } watch || thread.Id != watch.ThreadId || EnumerateFramesForThread(thread).FirstOrDefault() is not ICorDebugILFrame frame
             || RangeOf(frame) != watch.Frame || Read(frame, call.CallOffset) is not { } value)
         {
-            _logger?.Invoke($"The breakpoint after the call at IL_{call.CallOffset:X4} is not the step's: another frame's, or no value is there");
+            _logger?.Invoke($"The breakpoint after the call at IL_{call.CallOffset:X4} on thread {thread.Id} is not the step's: another frame's, or no value is there");
             return;
         }
         if (value is ICorDebugReferenceValue || _stepper is not { } stepper)
