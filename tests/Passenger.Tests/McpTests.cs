@@ -77,6 +77,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         await using McpClient client = await Start(["--mcp", folder]);
         IList<McpClientTool> tools = await Exchange("Listing the tools", TimeSpan.FromMinutes(1), cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
         Assert.Contains(tools, t => t.Name == "debug_start");
+        // An agent reads how its tests will run from the tool: an xUnit v3 project's through the Testing Platform, not VSTest.
+        string testsRun = Assert.Single(tools, t => t.Name == "tests_run").Description;
+        Assert.True(testsRun.Contains("Testing Platform", StringComparison.Ordinal) && testsRun.Contains("xUnit v3", StringComparison.Ordinal),
+            $"tests_run tells an agent its tests run otherwise than they do: {testsRun}");
 
         JsonElement symbol = Assert.Single((await Call(client, "find_symbol", new() { ["query"] = "Twice" })).EnumerateArray());
         Assert.Equal("Helper.cs", symbol.GetProperty("path").GetString());

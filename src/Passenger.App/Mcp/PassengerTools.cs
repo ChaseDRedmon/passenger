@@ -400,9 +400,10 @@ public sealed partial class PassengerTools(MainWindow window)
     // Unit tests
 
     [McpServerTool(Name = "tests_run", Title = "Run unit tests", Destructive = true), Description(
-        "Builds and runs unit tests through VSTest, as the Unit Tests window does: all of them, or those whose full name (Namespace.Class.Method) " +
-        "contains filter. With debug, under the debugger (breakpoints stop in tests). Waits for the run and returns the tally and every failure " +
-        "with its message and stack trace.")]
+        "Builds and runs unit tests as the Unit Tests window does, each test project through the runner its build asks for: a Microsoft " +
+        "Testing Platform application (xUnit v3, MSTest's runner, TUnit) through the platform's own protocol, any other through VSTest. All " +
+        "of them, or those whose full name (Namespace.Class.Method) contains filter. With debug, under the debugger (breakpoints stop in " +
+        "tests). Waits for the run and returns the tally and every failure with its message and stack trace.")]
     public Task<TestRunInfo> TestsRun(
         [Description("Part of a test's full name: a method, a class, a namespace")] string? filter = null,
         bool debug = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
