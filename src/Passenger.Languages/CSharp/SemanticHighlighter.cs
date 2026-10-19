@@ -47,9 +47,9 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     private int? askedFor;
     private bool disposed;
 
-    /// <summary>The server's words that its colours moved (<see cref="LspDocument.ColourRefreshes"/>) as the latest fetch's
-    /// last request was sent; null before it sends one.</summary>
-    private int? outAfter;
+    /// <summary>The latest fetch's last request, placed among the server's words that its colours moved as it reached the
+    /// server; null before it sends one.</summary>
+    private SentRequest? outAfter;
 
     public SemanticHighlighter(IHighlighter syntax, LspDocument document, SemanticTokensLegend legend)
     {
@@ -66,12 +66,13 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     /// <summary>Asks for fresh tokens now: the server's view moved (projects loaded, another project chosen).</summary>
     public void Refresh() => Request(TimeSpan.Zero);
 
-    /// <summary>The server's word that its colours moved, handled: tokens are asked for again, unless the latest request was
-    /// sent after the word arrived and so answers with what it told of (Roslyn's word comes 2 s after the tokens it last
-    /// made, as the whole file's are asked for once typing has paused as long, and asking again then throws that away).</summary>
+    /// <summary>The server's word that its colours moved, handled: tokens are asked for again, unless the latest request
+    /// reached the server only after the word was read and so answers with what it told of (Roslyn's word comes 2 s after
+    /// the tokens it last made, as the whole file's are asked for once typing has paused as long, so the two meet within a
+    /// millisecond or two, and asking again then throws that away).</summary>
     public void Refreshed()
     {
-        if (outAfter is int sent && sent >= document.ColourRefreshes)
+        if (outAfter is { AfterEveryWord: true })
         {
             return;
         }
@@ -189,7 +190,7 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
             askedFor = version;
             if (Screen(snapshot) is { } range)
             {
-                (SemanticTokens? near, _) = await Out(request, () => document.SemanticTokensAsync(range, cancel));
+                (SemanticTokens? near, _) = await Out(request, sent => document.SemanticTokensAsync(range, cancel, sent));
                 if (near is not null && !await Land(near, snapshot, version, range, request, cancel))
                 {
                     return;
@@ -204,7 +205,7 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
                     held = true;
                 }
             }
-            (SemanticTokens? all, _) = await Out(request, () => document.SemanticTokensAsync(cancel));
+            (SemanticTokens? all, _) = await Out(request, sent => document.SemanticTokensAsync(cancel, sent));
             if (all is not null)
             {
                 await Land(all, snapshot, version, null, request, cancel);
@@ -232,17 +233,18 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
         }
     }
 
-    /// <summary>A request of the latest fetch: what the server had said by its sending is noted, kept while its answer lands
-    /// and the fetch goes on, until a new fetch begins or the request fails.</summary>
-    private async Task<(SemanticTokens? Tokens, int Version)> Out(int request, Func<Task<(SemanticTokens? Tokens, int Version)>> send)
+    /// <summary>A request of the latest fetch: where it reached the server among the server's words is followed, kept while
+    /// its answer lands and the fetch goes on, until a new fetch begins or the request fails.</summary>
+    private async Task<(SemanticTokens? Tokens, int Version)> Out(int request, Func<SentRequest, Task<(SemanticTokens? Tokens, int Version)>> send)
     {
+        SentRequest sent = new();
         if (request == asked)
         {
-            outAfter = document.ColourRefreshes;
+            outAfter = sent;
         }
         try
         {
-            return await send();
+            return await send(sent);
         }
         catch (LanguageServerFailed) when (request == asked)
         {

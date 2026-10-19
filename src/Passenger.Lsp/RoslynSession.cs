@@ -312,9 +312,6 @@ public sealed class LspDocument : IDisposable
 
     private LanguageServer Server => session.Server;
 
-    /// <summary>The server's words so far that its colours moved (<see cref="LanguageServer.ColourRefreshes"/>).</summary>
-    public int ColourRefreshes => Server.ColourRefreshes;
-
     /// <summary>A Razor file (.razor, .cshtml), which the server hands to Razor, cohosted in it: its colours have Razor's
     /// legend (<see cref="LanguageServer.RazorLegend"/>) and its diagnostics are Razor's one source.</summary>
     public bool IsRazor { get; }
@@ -480,10 +477,17 @@ public sealed class LspDocument : IDisposable
         await Server.RequestAsync<List<LspTextEdit>>("textDocument/formatting",
             new DocumentFormattingParams(Identifier, new FormattingOptions(indent.Size, !indent.UseTabs)), cancel) ?? [];
 
-    public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(CancellationToken cancel = default)
+    /// <summary>The whole document's tokens; <paramref name="sent"/>, when given, is told where the request reached the
+    /// server among its words that its colours moved.</summary>
+    public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(CancellationToken cancel = default, SentRequest? sent = null)
     {
         int version = Text.Version;
-        SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/full", new SemanticTokensParams(Identifier), cancel);
+        SemanticTokensParams parameters = new(Identifier);
+        if (sent is not null)
+        {
+            Server.Follow(parameters, sent);
+        }
+        SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/full", parameters, cancel);
         if (tokens is { Data.Length: > 0 })
         {
             session.Coloured();
@@ -493,10 +497,15 @@ public sealed class LspDocument : IDisposable
 
     /// <summary>The tokens of a range only, encoded from the document's start as the whole file's are: Roslyn colours a
     /// screen of lines in milliseconds, where a long file takes it about a second.</summary>
-    public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(TextRange range, CancellationToken cancel = default)
+    public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(TextRange range, CancellationToken cancel = default, SentRequest? sent = null)
     {
         int version = Text.Version;
-        SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/range", new SemanticTokensRangeParams(Identifier, RangeOf(range)), cancel);
+        SemanticTokensRangeParams parameters = new(Identifier, RangeOf(range));
+        if (sent is not null)
+        {
+            Server.Follow(parameters, sent);
+        }
+        SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/range", parameters, cancel);
         return (tokens, version);
     }
 

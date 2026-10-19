@@ -215,9 +215,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
   goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Requests resume off the caller's
   thread inside Passenger.Lsp (`ConfigureAwait(false)`), and a large answer (completion's list) is read in
-  `LspDocument` before its caller resumes, so the UI thread never decodes it. `CountedMessages` counts the server's
-  `workspace/semanticTokens/refresh` as each is read off the connection, before the one-at-a-time dispatch handles it;
-  `SemanticHighlighter` compares that count with the one noted as its request went out. Roslyn reads a column past a line's
+  `LspDocument` before its caller resumes, so the UI thread never decodes it. `CountedMessages` notes each of the
+  server's `workspace/semanticTokens/refresh` as it is read off the connection, before the one-at-a-time dispatch handles
+  it, with how many messages had then crossed to the server's input whole (`TracedStream.Crossed`: StreamJsonRpc copies
+  what it writes there on the thread pool); `SemanticHighlighter` asks again only for a word read once its request had
+  crossed (`SentRequest`). Roslyn reads a column past a line's
   end as the line's end, so no change is sent between a "\r\n"'s halves: `LspDocument.Unsplit` takes in the half
   beside it and puts it back. `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's

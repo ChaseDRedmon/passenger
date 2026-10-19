@@ -20,6 +20,20 @@ internal sealed class TracedStream(Stream inner, int server, string direction) :
     private int length;
     private bool tracing;
     private bool lost;
+    private long crossed;
+
+    /// <summary>How many messages have crossed whole so far, each counted once its last byte has; past any count once the
+    /// frames no longer read, so that nothing is taken to have come before a message that may have crossed.</summary>
+    public long Crossed
+    {
+        get
+        {
+            lock (gate)
+            {
+                return lost ? long.MaxValue : crossed;
+            }
+        }
+    }
 
     public override bool CanRead => inner.CanRead;
     public override bool CanSeek => false;
@@ -179,6 +193,7 @@ internal sealed class TracedStream(Stream inner, int server, string direction) :
     private void End()
     {
         remaining = -1;
+        crossed++;
         if (tracing && LanguageServer.Trace is { } trace)
         {
             string message = Encoding.UTF8.GetString(body.GetBuffer(), 0, (int)body.Length);

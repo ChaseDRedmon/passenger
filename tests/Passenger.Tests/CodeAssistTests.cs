@@ -2247,6 +2247,9 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             // Once typing stops, the whole file's, once.
             Ui.PumpUntil(() => Volatile.Read(ref whole) > 0, "the whole file's colours once typing stopped");
             Ui.Settle();
+            // Past the idle a needless second ask would wait out after the screen's colours, which no settle waits for.
+            Screenshot.Pump(TimeSpan.FromSeconds(3));
+            Ui.Settle();
             int refreshes = Volatile.Read(ref refreshedSince);
             Assert.True(whole <= 1 + refreshes,
                 $"Once typing stopped the whole file's colours were asked for {whole} times, with {refreshes} word from the server since that they moved:\n{string.Join('\n', wire)}");

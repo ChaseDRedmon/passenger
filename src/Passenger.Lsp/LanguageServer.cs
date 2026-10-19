@@ -117,10 +117,10 @@ public sealed class LanguageServer : IAsyncDisposable
     /// semantic tokens should be asked for again. Raised on any thread.</summary>
     public event EventHandler? ColoursRefreshRequested;
 
-    /// <summary>How many times so far the server has said its colours moved, counted as each word is read off the
-    /// connection, before it waits its turn to be handled (<see cref="ColoursRefreshRequested"/>): a request sent once a
-    /// word had arrived answers with what it told of.</summary>
-    public int ColourRefreshes => messages.ColourRefreshes;
+    /// <summary>Has the request of these parameters, once sent, tell <paramref name="request"/> whether it reached the server
+    /// after every word that its colours moved read so far (<see cref="ColoursRefreshRequested"/>, which comes later):
+    /// placed as it crosses to the server, not as its caller sends it.</summary>
+    internal void Follow(object parameters, SentRequest request) => messages.Follow(parameters, request);
 
     /// <summary>The server's diagnostics moved in a way only it knows: they should be pulled again, and only they, since
     /// asking a long file's colours again costs the server a second. Raised on any thread.</summary>
@@ -1006,7 +1006,7 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("workspace/semanticTokens/refresh")]
         public object? RefreshTokens(JsonElement? request = null)
         {
-            // Counted as it was read (CountedMessages), perhaps well before now: what came before it was handled first.
+            // Noted as it was read (CountedMessages), perhaps well before now: what came before it was handled first.
             Owner?.ColoursRefreshRequested?.Invoke(Owner, EventArgs.Empty);
             return null;
         }
