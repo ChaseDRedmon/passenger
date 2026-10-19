@@ -188,7 +188,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
   `roslyn/`, less the four Visual Studio assemblies it never loads (`RoslynServerLeftOut`; the build fails if the
-  package stops carrying one). `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
+  package stops carrying one). `RoslynServerVersion` is held at 5.11.0, the last stable build: every later one starts
+  Visual Studio Telemetry's session even with telemetry off, loading the left-out RemoteControl (moving needs the
+  owner's word on carrying it); after lowering it, delete `artifacts/bin/*/debug/roslyn*`, since the copy skips older
+  files and leaves a mixed server that won't start. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
   and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
   `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project. `RoslynExtension` is
   Passenger's own extension to the server (`src/Passenger.Roslyn.Extension`, compiled against the server package's own
@@ -406,9 +409,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
-  `App/Profiling/MemoryView` is the Memory page. ClrMD 3 finds no statics on .NET 9 and later, so
-  `HeapGraph.StaticBases` reaches ISOSDacInterface14 through ClrMD's private fields: a ClrMD update keeps
-  `MemorySnapshotsTests` passing.
+  `App/Profiling/MemoryView` is the Memory page. ClrMD 4 finds statics itself and reads .NET 11;
+  `HeapGraph` loads the program's own runtime folder's DAC and gives ClrMD a locator that finds nothing (no symbol
+  server, no cache in the person's app data). ClrMD's Azure packages stay carried: its `FileLocator` getter loads
+  Azure.Core when the DAC reads memory a dump lacks, and pruning them hung snapshots on Linux and left types unnamed on
+  Windows.
 - `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
   encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty); on Windows PowerShell is told
   `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches the
