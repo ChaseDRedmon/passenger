@@ -1,6 +1,7 @@
 using System.Text;
 using Avalonia;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input.Platform;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -15,9 +16,30 @@ public sealed class EditingSessionTests
 {
     private const string Alphabet = "abcdefghijklmnopqrstuvwxyz0123456789.,;:+-*/=!?";
 
+    /// <summary>What <see cref="AnyKey"/> types: the model's letters and the brackets and quotes the editor's typing help
+    /// closes, steps over and wraps a selection in.</summary>
+    private const string TypedAlphabet = Alphabet + "(){}[]\"'";
+
     /// <summary>The narrow editor's width, about thirty-five characters of text, which wraps the longer of the session's
     /// lines and more of them as Join Lines makes them longer.</summary>
     private const double WrappedWidth = 380;
+
+    /// <summary>The keys of Rider's macOS keymap <see cref="AnyKey"/> presses, Undo and Redo among them twice as often.</summary>
+    private static readonly (string Keys, string Name)[] EditingKeys =
+    [
+        ("ENTER", "Enter"), ("shift ENTER", "Start New Line"), ("meta ENTER", "Start New Line Before"), ("BACK_SPACE", "Backspace"),
+        ("DELETE", "Delete"), ("alt BACK_SPACE", "Delete Word Left"), ("alt DELETE", "Delete Word Right"), ("LEFT", "Left"), ("RIGHT", "Right"),
+        ("UP", "Up"), ("DOWN", "Down"), ("shift LEFT", "Shift+Left"), ("shift RIGHT", "Shift+Right"), ("shift UP", "Shift+Up"),
+        ("shift DOWN", "Shift+Down"), ("alt LEFT", "Word Left"), ("alt RIGHT", "Word Right"), ("alt shift LEFT", "Select Word Left"),
+        ("alt shift RIGHT", "Select Word Right"), ("meta LEFT", "Line Start"), ("meta RIGHT", "Line End"), ("meta shift LEFT", "Select to Line Start"),
+        ("meta shift RIGHT", "Select to Line End"), ("TAB", "Tab"), ("shift TAB", "Shift+Tab"), ("control D", "Duplicate"), ("meta shift L", "Delete Line"),
+        ("alt UP", "Move Line Up"), ("alt DOWN", "Move Line Down"), ("control shift J", "Join Lines"), ("control shift U", "Toggle Case"),
+        ("control K", "Cut to Line End"), ("meta Z", "Undo"), ("meta Z", "Undo"), ("meta shift Z", "Redo"), ("meta X", "Cut"), ("meta C", "Copy"),
+        ("meta V", "Paste"), ("meta V", "Paste"), ("alt shift DOWN", "Clone Caret Below"), ("alt shift UP", "Clone Caret Above"), ("ESCAPE", "Escape"),
+        ("alt shift PERIOD", "Select Next Occurrence"), ("meta SLASH", "Line Comment"), ("control meta SLASH", "Block Comment"), ("PAGE_DOWN", "Page Down"),
+        ("PAGE_UP", "Page Up"), ("control M , M", "Toggle Fold"), ("control M , S", "Fold"), ("control M , E", "Unfold"), ("control M , A", "Fold All"),
+        ("control M , X", "Unfold All"),
+    ];
 
     [AvaloniaTheory]
     [InlineData(1)]
@@ -31,6 +53,142 @@ public sealed class EditingSessionTests
     [InlineData(3)]
     public void A_long_session_of_keys_with_soft_wrap_on_edits_as_the_model_says_moves_by_rows_and_wraps_as_a_fresh_editor_would(int seed) =>
         Session(seed, wrapped: true);
+
+    /// <summary>The keys the model leaves out, at several carets, in folds and in wrapped rows: selections, word and text
+    /// moves, Tab, the line and comment commands, case, cut, copy and paste (CRLF text into an LF file), folding, Undo and
+    /// Redo. Checked by what holds whatever a key does: no key fails, no caret leaves the text, the line index reads the
+    /// text's lines, an undo or redo gives back a text the session had, the rows are a fresh editor's with the same folds,
+    /// and at the end the file undoes to itself as opened and redoes to the session's last text.</summary>
+    [AvaloniaTheory]
+    [InlineData(3)]
+    [InlineData(8)]
+    public void A_session_of_every_editing_key_at_several_carets_and_in_folds_never_fails_a_key_and_undoes_to_the_file_as_opened(int seed)
+    {
+        Random random = new(seed);
+        string initial = StartingText(random, lines: 400);
+        EditorRig rig = new(initial);
+        // Carried through each edit as the open file carries them, the editor told of them, and kept as the editor folds them.
+        List<FoldRegion> folds = [];
+        rig.Document.Changed += (_, change) =>
+        {
+            if (folds.Count > 0)
+            {
+                folds = [.. folds.Select(r => r with
+                {
+                    Start = TextEditing.MapOffset(r.Start, change.Edits, afterInsertions: true),
+                    End = TextEditing.MapOffset(r.End, change.Edits, afterInsertions: true),
+                })];
+                rig.Editor.SetFoldRegions(folds);
+            }
+        };
+        rig.Editor.FoldsToggled += (_, regions) => folds = [.. regions];
+        rig.Window.Width = WrappedWidth;
+        rig.Editor.SoftWrap = true;
+        Ui.Settle();
+        HashSet<string> had = [initial];
+        for (int step = 0; step < 1500; step++)
+        {
+            string key = AnyKey(random, rig, ref folds);
+            string where = $"seed {seed}, step {step}, after {key}";
+            string text = rig.Text;
+            Assert.All(rig.Editor.Selections.Items, s => Assert.True(Math.Max(s.Anchor, s.Caret) <= text.Length, $"A caret was left past the text's end ({where})"));
+            Assert.True(key is not ("Undo" or "Redo") || had.Contains(text), $"{key} gave a text the session never had ({where})");
+            had.Add(text);
+            if (step % 50 == 0)
+            {
+                AssertLinesMatch(rig.Document.Snapshot, text, random, where);
+                AssertRowsMatchAFreshEditor(rig, random, where);
+            }
+        }
+
+        while (rig.Document.CanRedo)
+        {
+            rig.Editor.TryExecute(EditorActions.Redo);
+        }
+        string final = rig.Text;
+        while (rig.Document.CanUndo)
+        {
+            rig.Editor.TryExecute(EditorActions.Undo);
+        }
+        Assert.True(initial == rig.Text, $"Undoing everything did not give back the file as opened (seed {seed}).");
+        while (rig.Document.CanRedo)
+        {
+            rig.Editor.TryExecute(EditorActions.Redo);
+        }
+        Assert.True(final == rig.Text, $"Redoing everything did not give back the session's last text (seed {seed}).");
+    }
+
+    /// <summary>One key, a click, a caret added, a paste of text with CRLF breaks, or folds set; what it was.</summary>
+    private static string AnyKey(Random random, EditorRig rig, ref List<FoldRegion> folds)
+    {
+        string text = rig.Text;
+        int roll = random.Next(100);
+        if (roll < 35)
+        {
+            char typed = random.Next(5) == 0 ? ' ' : TypedAlphabet[random.Next(TypedAlphabet.Length)];
+            rig.Type(typed.ToString());
+            return $"typing '{typed}'";
+        }
+        if (roll < 40)
+        {
+            int offset = random.Next(text.Length + 1);
+            rig.PlaceCaret(offset);
+            return $"a click at {offset}";
+        }
+        if (roll < 43)
+        {
+            int offset = random.Next(text.Length + 1);
+            if (!rig.Editor.Selections.Items.Any(s => s.Start <= offset && offset <= s.End))
+            {
+                rig.AddCaret(offset);
+            }
+            return $"a caret added at {offset}";
+        }
+        if (roll < 48)
+        {
+            string[] pieces = ["a", "bc", "\r\n", "\n", "    ", "x y", "\t"];
+            string pasted = string.Concat(Enumerable.Range(0, random.Next(1, 6)).Select(_ => pieces[random.Next(pieces.Length)]));
+            rig.Window.Clipboard!.SetTextAsync(pasted).GetAwaiter().GetResult();
+            rig.Press("meta V");
+            Ui.Settle();
+            string said = pasted.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
+            Assert.True(!rig.Text.Contains('\r', StringComparison.Ordinal), $"Pasting '{said}' left a carriage return in a file of LF breaks");
+            return $"a paste of '{said}'";
+        }
+        if (roll < 50)
+        {
+            folds = Folds(random, rig.Document.Snapshot);
+            rig.Editor.SetFoldRegions(folds);
+            return "folds set";
+        }
+        (string keys, string name) = EditingKeys[random.Next(EditingKeys.Length)];
+        rig.Press(keys);
+        Ui.Settle();
+        return name;
+    }
+
+    /// <summary>Regions of a few lines here and there, some inside others, about half of them folded.</summary>
+    private static List<FoldRegion> Folds(Random random, TextSnapshot text)
+    {
+        List<FoldRegion> made = [];
+        int line = 0;
+        while (line < text.LineCount - 3)
+        {
+            line += random.Next(1, 30);
+            int last = line + random.Next(1, 8);
+            if (last >= text.LineCount)
+            {
+                break;
+            }
+            made.Add(new FoldRegion(text.GetLine(line).End, text.GetLine(last).End, "...", Folded: random.Next(2) == 0));
+            if (random.Next(3) == 0 && last - line > 2)
+            {
+                made.Add(new FoldRegion(text.GetLine(line + 1).End, text.GetLine(last - 1).End, "...", Folded: random.Next(2) == 0));
+            }
+            line = last + 1;
+        }
+        return [.. made.OrderBy(r => r.Start)];
+    }
 
     private static void Session(int seed, bool wrapped)
     {
@@ -203,6 +361,7 @@ public sealed class EditingSessionTests
         {
             fresh.Window.Width = WrappedWidth;
             fresh.Editor.SoftWrap = true;
+            fresh.Editor.SetFoldRegions(rig.Editor.FoldRegions);
             Ui.Settle();
             Assert.True(fresh.Editor.RowsShown == rig.Editor.RowsShown,
                 $"The session's editor shows {rig.Editor.RowsShown} rows, a fresh one {fresh.Editor.RowsShown} for the same text ({where}).");
