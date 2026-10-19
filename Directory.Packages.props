@@ -12,7 +12,7 @@
          KnownFrameworkReference's TargetingPackVersion): downloaded for the tests' local feed, from which the WPF app they
          make restores off Windows without reaching nuget.org (tests/Passenger.Tests/WpfApp.cs). Another SDK's version
          fails WpfXamlTests saying which to pin here, rather than the app's restore reaching nuget.org. -->
-    <WindowsDesktopRefVersion>11.0.0-rc.1.26425.128</WindowsDesktopRefVersion>
+    <WindowsDesktopRefVersion>11.0.0-rc.2.26504.105</WindowsDesktopRefVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.4" />
