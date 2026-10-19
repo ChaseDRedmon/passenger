@@ -169,7 +169,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "after the edit".Length, "applied again")]);
             window.Perform(AppActions.ApplyHotReloadChanges);
             Ui.WaitFor(() => Output(window).Contains("applied again", StringComparison.Ordinal), "the applied edit to reach the program", TimeSpan.FromMinutes(1));
-            Ui.WaitFor(() => window.Status?.Contains("dotnet watch applied the changes", StringComparison.Ordinal) == true, $"the status bar to say the changes applied ({window.Status})");
+            WaitWatched(window, () => window.Status?.Contains("dotnet watch applied the changes", StringComparison.Ordinal) == true, "the status bar to say the changes applied");
         }
         finally
         {
@@ -200,8 +200,8 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             int at = program.Text.Snapshot.ToString().IndexOf("Say() =>", StringComparison.Ordinal);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "Say() =>".Length, "Say(int times = 1) =>")]);
             window.Perform(AppActions.ApplyHotReloadChanges);
-            Ui.WaitFor(() => window.Status?.Contains("dotnet watch is restarting the application", StringComparison.Ordinal) == true,
-                $"the status bar to say dotnet watch restarts the program, whose callers still called the method as it was ({window.Status}):\n{Output(window)}", TimeSpan.FromMinutes(1));
+            WaitWatched(window, () => window.Status?.Contains("dotnet watch is restarting the application", StringComparison.Ordinal) == true,
+                "the status bar to say dotnet watch restarts the program, whose callers still called the method as it was", TimeSpan.FromMinutes(1));
         }
         finally
         {
@@ -213,6 +213,20 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
+
+    /// <summary>Waits as <see cref="Ui.WaitFor"/> does for what the window says of a program under dotnet watch; one that
+    /// never comes says what the status bar and the Run window said by the end of the wait, not as it began.</summary>
+    private static void WaitWatched(MainWindow window, Func<bool> condition, string what, TimeSpan? limit = null)
+    {
+        try
+        {
+            Ui.WaitFor(condition, what, limit);
+        }
+        catch (TimeoutException waited)
+        {
+            throw new TimeoutException($"{waited.Message}; the status bar says \"{window.Status}\" and the Run window:\n{Output(window)}", waited);
+        }
+    }
 
     [AvaloniaFact]
     public void What_the_program_writes_to_standard_error_is_drawn_in_the_error_colour_and_its_output_is_not()
