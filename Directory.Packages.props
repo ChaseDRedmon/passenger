@@ -49,7 +49,7 @@
   <!-- The debugger's engine. The expression compiler is Roslyn's, packed from its own source (Roslyn does not
        publish it) at the Microsoft.CodeAnalysis version above, which it must match. -->
   <ItemGroup>
-    <PackageVersion Include="ICSharpCode.Decompiler" Version="11.0.0.9375" />
+    <PackageVersion Include="ICSharpCode.Decompiler" Version="11.1.0.9782" />
     <PackageVersion Include="Krafs.Publicizer" Version="2.3.2" />
     <PackageVersion Include="Microsoft.Diagnostics.DbgShim" Version="10.0.750501" />
     <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.750501" />

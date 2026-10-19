@@ -85,9 +85,9 @@
       },
       "ICSharpCode.Decompiler": {
         "type": "Direct",
-        "requested": "[11.0.0.9375, )",
-        "resolved": "11.0.0.9375",
-        "contentHash": "zjdmwehqkqtGHz/ItQJ3nSMFX65c0UW2wYBOiHWkP5WtY9Zm0f5Yz+Yh0UbKX+JiNtG57YbHPxh64VC08IZKMg=="
+        "requested": "[11.1.0.9782, )",
+        "resolved": "11.1.0.9782",
+        "contentHash": "8aXhTlTHfq+Ng+w415pMapSfhsI768AQrix7q3lDf8BBbmPyNUaJVB+mFg2Sv7oCs72MZkK2Zk8K6DE6tsb1Mg=="
       },
       "Microsoft.TestPlatform.TranslationLayer": {
         "type": "Direct",

@@ -13,6 +13,9 @@ internal sealed class DebuggingAssemblyResolver(List<string> modulePaths) : IAss
     public Task<MetadataFile?> ResolveAsync(IAssemblyReference name) => Task.FromResult(Resolve(name));
     public Task<MetadataFile?> ResolveModuleAsync(MetadataFile mainModule, string moduleName) => Task.FromResult(ResolveModule(mainModule, moduleName));
 
+    // The module paths are the debuggee's own, a list already in memory: there is no file system reading to hold.
+    public IDisposable? BeginSnapshot() => null;
+
     public MetadataFile? Resolve(IAssemblyReference name)
     {
         string? exactMatch = null;
