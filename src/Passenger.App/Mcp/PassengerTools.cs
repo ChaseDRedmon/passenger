@@ -105,6 +105,13 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         int unsaved = Editors.Documents.Count(d => d.IsModified);
         Editors.SaveAll();
+        // A read-only file, or one the system refused, keeps its changes, and the agent is told so rather than "Saved".
+        List<OpenDocument> left = [.. Editors.Documents.Where(d => d.IsModified)];
+        if (left.Count > 0)
+        {
+            string names = string.Join(", ", left.Select(d => FileText.IsReadOnly(d.Path) ? $"{Relative(d.Path)} (read-only)" : Relative(d.Path)));
+            throw new InvalidOperationException($"Saved {unsaved - left.Count} of {unsaved} files; not saved: {names}");
+        }
         return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {unsaved} file{(unsaved == 1 ? "" : "s")}");
     });
 

@@ -136,11 +136,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     public static bool IsSaving(string path) => path.EndsWith(SaveSuffix, StringComparison.Ordinal);
 
     /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
-    /// where the old one was; a symlink is written through to its target, the file keeps its permissions (and on macOS
-    /// its extended attributes, Finder's tags among them, its ACL and creation date), and one deleted since it was opened
-    /// is written anew. A text the encoding cannot hold is written as UTF-8 instead, never
-    /// with a question mark for each such character; the result is how it was written, with why when it changed. A CR
-    /// file (<paramref name="crBreaks"/>) has each of the text's breaks written as '\r'.</summary>
+    /// where the old one was; a symlink is written through to its target, the file keeps its permissions (on macOS its
+    /// extended attributes, ACL and creation date too), one deleted since it was opened is written anew, and a read-only
+    /// one is refused. A text the encoding cannot hold is written as UTF-8 instead, never with a question mark for each
+    /// such character; the result is how it was written, with why when it changed. A CR file (<paramref name="crBreaks"/>)
+    /// has each of the text's breaks written as '\r'.</summary>
     public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false)
     {
         string? unheld = Unheld(encoding, text);
@@ -325,7 +325,4 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
 
 /// <summary>A write refused because the file is read-only (<see cref="FileText.IsReadOnly"/>), which only the person's
 /// Clear Read-Only Status makes writable: an IOException, so every writer's failure says it.</summary>
-public sealed class ReadOnlyFileException(string path) : IOException($"{Path.GetFileName(path)} is read-only")
-{
-    public string FilePath { get; } = path;
-}
+public sealed class ReadOnlyFileException(string path) : IOException($"{Path.GetFileName(path)} is read-only");
