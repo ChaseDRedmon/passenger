@@ -174,6 +174,27 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     [AvaloniaFact]
+    public void Debugging_a_failing_test_shows_its_assertion_in_the_test_not_inside_the_assertion_library()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(15, 8));
+
+        // Any exception stops on the EqualException xunit's Assert.Equal throws, in xunit.assert, whose PDB names its sources
+        // under /_/src: the test's line is where to look, as Rider and Visual Studio show it under Just My Code.
+        Ui.Run(window, AppActions.DebugTests);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.Debugger.Stop is not null, "the stop on the failed assertion", TimeSpan.FromSeconds(120));
+        Assert.Equal("exception", window.Debugger.Session!.StopReason);
+        Assert.True(window.Debugger.Stop!.Top?.Name.Contains("Two_and_two_make_five", StringComparison.Ordinal) == true,
+            $"The stop showed {window.Debugger.Stop.Top?.Name} at {window.Debugger.Stop.Top?.Source?.Path}, not the test whose assertion failed");
+        Assert.Contains(new LineMark(16, LineMarkKind.ExecutionPoint), editor.LineMarks);
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Tests.IsBusy, "the run to end", TimeSpan.FromSeconds(60));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_test_projects_launch_profile_gives_its_variables_to_its_tests_run_and_debugged()
     {
         Directory.CreateDirectory(Path.Combine(folder, "Properties"));

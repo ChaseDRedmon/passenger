@@ -1051,9 +1051,13 @@ public sealed class DebugController : IDisposable
         // A property breakpoint, and XAML Binding Errors, stop in the inspector's call, under Avalonia's: the user's code
         // that set the value or made the binding fail is where it stopped, as Just My Code shows it; with none (a style a
         // pointer set) the call's own frame, whose values say what happened, but no line of the inspector's.
+        // An exception thrown in a library with sources of its own (xunit's Assert.Equal, its PDB naming /_/src/...) stops
+        // there, but under Just My Code the user's frame it came through is the one shown, as Rider and Visual Studio show it.
         DapStackFrame? user = stack.FirstOrDefault(f => f.Source?.Path is not null && f.PresentationHint != "subtle");
         bool inspected = thread == session.StoppedThread && (session.PropertyStop is not null || session.BindingErrorStop);
-        DapStackFrame? top = inspected ? user ?? stack.FirstOrDefault() : stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
+        bool thrown = thread == session.StoppedThread && session.StopReason == "exception";
+        DapStackFrame? top = inspected ? user ?? stack.FirstOrDefault()
+            : (thrown ? user : null) ?? stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
         bool shows = !inspected || top == user;
         executionPoint = thread == session.StoppedThread && shows && top?.Source?.Path is { } path ? (path, top.Line - 1) : executionPoint;
         if (thread == session.StoppedThread)
