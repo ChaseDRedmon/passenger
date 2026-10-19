@@ -62,21 +62,26 @@ public sealed class FindView : DockPanel
     private readonly CodeEditor preview;
     private readonly TextBlock placeholder;
     private readonly Func<string, string?> textOf;
+
+    /// <summary>The searches' tabs, shown only while there is one: an empty row with a rule under it says nothing.</summary>
+    private readonly Border tabBar;
+
     private Search? current;
 
     /// <param name="textOf">A file's text as it is now: the open editor's, else the disk's.</param>
     public FindView(Func<string, string?> textOf)
     {
         this.textOf = textOf;
-        Border bar = new()
+        tabBar = new Border
         {
             [DockProperty] = Dock.Top,
             Height = 32,
+            IsVisible = false,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, Content = tabs, Margin = new Thickness(8, 0) },
         };
-        bar.Bind(Border.BorderBrushProperty, bar.GetResourceObservable("Passenger.Divider"));
-        Children.Add(bar);
+        tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
+        Children.Add(tabBar);
         list = new ListBox
         {
             Classes = { "tree" },
@@ -239,6 +244,7 @@ public sealed class FindView : DockPanel
             tab.Click += (_, _) => ShowSearch(search);
             tabs.Children.Add(tab);
         }
+        tabBar.IsVisible = searches.Count > 0;
     }
 
     private void Close(Search search)
@@ -258,6 +264,7 @@ public sealed class FindView : DockPanel
         current = null;
         rows.Clear();
         tabs.Children.Clear();
+        tabBar.IsVisible = false;
         Body.IsVisible = false;
         placeholder.IsVisible = true;
     }

@@ -296,10 +296,15 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     {
         MainWindow window = project.Open("Loop.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
+        FindView find = window.Find;
+        // With no search yet the window says so and nothing else: no empty row of tabs with a rule under it.
+        Ui.Run(window, AppActions.ShowFind);
+        Avalonia.Controls.Border[] Rules() => [.. find.GetVisualDescendants().OfType<Avalonia.Controls.Border>().Where(b => b.IsEffectivelyVisible && b.BorderThickness.Bottom > 0 && b.TemplatedParent is null)];
+        Assert.True(Rules().Length == 0, "The empty Find window shows a row with a rule under it, before any search has a tab there");
         PlaceAfter(editor, "int tot");
         Ui.Run(window, AppActions.FindUsages);
-        FindView find = window.Find;
         Ui.WaitFor(() => find.Rows.Count > 0, "the usages in the Find window");
+        Assert.True(Rules().Length > 0, "A search's tab has no row of its own over the usages");
         Assert.True(window.DockHost.IsShown("find"));
         Assert.Equal(["Declaration", "Write access", "Read access"], find.Rows.Where(r => r.Depth == 0).Select(r => r.Label));
         Assert.All(find.Rows.Where(r => r.Depth == 1), r => Assert.Equal("Sample", r.Label));
