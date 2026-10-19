@@ -160,7 +160,34 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(File.Exists(notes), "The file left although the Trash refused it");
         OpenDocument open = Assert.Single(window.EditorArea.Documents);
         Assert.Equal("milk, groceries\n", open.Text.Snapshot.ToString());
-        Assert.True(open.IsModified, "The unsaved edit was marked saved, so it would be lost");
+        // Saved before the Trash was asked, the edit is on disk as well.
+        Assert.True(File.ReadAllText(notes) == "milk, groceries\n" || open.IsModified, "The unsaved edit was marked saved without being written, so it would be lost");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_deleted_with_unsaved_edits_goes_to_the_Trash_with_them_and_Local_History_keeps_them()
+    {
+        string notes = PathNames.Canonical(Path.Combine(folder, "Notes.txt"));
+        File.WriteAllText(notes, "groceries\n");
+        MainWindow window = Open();
+        window.OpenFile(notes);
+        window.EditorArea.CodeEditor.Focus();
+        window.KeyTextInput("milk, ");
+        Ui.Settle();
+        Assert.True(window.EditorArea.Active!.IsModified);
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+
+        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
+        Ui.Press(window, "BACK_SPACE");
+        Ui.WaitFor(() => !File.Exists(notes) && window.EditorArea.Documents.Count == 0, "Notes.txt deleted and its tab closed");
+        string trashed = File.ReadAllText(Path.Combine(trash, "Notes.txt"));
+        Assert.True(trashed == "milk, groceries\n", $"The Trash has Notes.txt without what was typed into it before the delete, so the edit is lost: '{trashed}'");
+        Passenger.App.History.LocalHistory history = window.LocalHistory!;
+        Ui.WaitFor(() => history.Snapshot().Events.Any(e => e.Kind == Passenger.App.History.HistoryKind.Deleted && e.Path == notes), "Local History to keep the deletion");
+        string? kept = history.Snapshot().Events.Last(e => e.Kind == Passenger.App.History.HistoryKind.Deleted && e.Path == notes).Before is { } hash
+            && history.Content(hash) is { } bytes ? System.Text.Encoding.UTF8.GetString(bytes) : null;
+        Assert.True(kept == "milk, groceries\n", $"Local History kept Notes.txt as deleted without what was typed into it: '{kept}'");
         window.Close();
     }
 

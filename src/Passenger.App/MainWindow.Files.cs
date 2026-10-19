@@ -460,8 +460,9 @@ public partial class MainWindow
         return true;
     }
 
-    /// <summary>Deletes a file or folder to the Trash, once asked (unless it was already); its open files close without
-    /// saving once it is gone, and keep their edits when it could not go. Local History keeps what it took.</summary>
+    /// <summary>Deletes a file or folder to the Trash, once asked (unless it was already); its open files are saved first,
+    /// so the Trash and Local History have what the editor showed, and close once it is gone, or keep their tabs when it
+    /// could not go.</summary>
     public async Task<bool> DeleteAsync(string path, bool asked = false)
     {
         string what = Path.GetFileName(path);
@@ -469,6 +470,14 @@ public partial class MainWindow
         if (!asked && !await Confirm("Delete", isFolder ? $"Move the folder {what} and everything in it to the Trash?" : $"Move {what} to the Trash?", "Delete"))
         {
             return false;
+        }
+        foreach (OpenDocument document in Editors.Documents.Where(d => d.IsModified && PathNames.Within(d.Path, path)).ToList())
+        {
+            if (!Editors.Save(document))
+            {
+                status.Text = $"{what} could not be deleted: {document.Name} could not be saved first";
+                return false;
+            }
         }
         History.LocalHistory? keeping = session.LocalHistory;
         History.HistoryDeletion? taken = keeping is null ? null : await keeping.CaptureAsync(path);
