@@ -222,6 +222,35 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         static string Words(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
     }
 
+    /// <summary>A package an agent installs or removes is in or out of the project file the editor holds once the tool
+    /// answers, so the agent's next look at the file sees what it did, not the text from before.</summary>
+    [Fact]
+    public async Task An_agents_package_installed_and_removed_shows_in_the_open_project_file_as_each_tool_answers()
+    {
+        string library = PathNames.Canonical(TestFolders.Create("mcp-nuget-"));
+        madeFolders.Add(library);
+        string feed = Directory.CreateDirectory(Path.Combine(library, "feed")).FullName;
+        File.WriteAllBytes(Path.Combine(feed, "Passenger.Sample.1.0.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.0.0"));
+        // Only the folder feed, and restores kept out of the person's own package cache.
+        File.WriteAllText(Path.Combine(library, "nuget.config"),
+            "<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"local\" value=\"feed\" />\n  </packageSources>\n"
+            + "  <config>\n    <add key=\"globalPackagesFolder\" value=\"packages\" />\n  </config>\n</configuration>\n");
+        File.WriteAllText(Path.Combine(library, "Lib.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        await using McpClient client = await Start(["--mcp", library]);
+        Dictionary<string, object?> project = new() { ["path"] = "Lib.csproj" };
+        Assert.DoesNotContain("Passenger.Sample", (await Call(client, "editor_text", project)).GetString(), StringComparison.Ordinal);
+
+        await Call(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample", ["version"] = "1.0.0" });
+        string installed = (await Call(client, "editor_text", project)).GetString()!;
+        Assert.True(installed.Contains("<PackageReference Include=\"Passenger.Sample\" Version=\"1.0.0\" />", StringComparison.Ordinal),
+            $"nuget_install answered with the open project file still as it was:\n{installed}");
+
+        await Call(client, "nuget_remove", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample" });
+        string removed = (await Call(client, "editor_text", project)).GetString()!;
+        Assert.False(removed.Contains("Passenger.Sample", StringComparison.Ordinal), $"nuget_remove answered with the open project file still holding the package:\n{removed}");
+    }
+
     [Fact]
     public async Task An_agent_attaches_to_a_program_already_running_stops_it_at_a_breakpoint_and_detaches_leaving_it_running()
     {

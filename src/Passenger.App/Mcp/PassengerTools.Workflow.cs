@@ -209,6 +209,7 @@ public sealed partial class PassengerTools
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
         bool done = await manager.InstallAsync(chosen.Path, id, at);
+        window.FollowWritten(PackageFiles(chosen));
         Session.ReadAgain();
         return done ? $"{id} {at} is in {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
@@ -221,6 +222,7 @@ public sealed partial class PassengerTools
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
         bool done = await manager.RemoveAsync(chosen.Path, id);
+        window.FollowWritten(PackageFiles(chosen));
         Session.ReadAgain();
         return done ? $"{id} is out of {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
@@ -389,6 +391,11 @@ public sealed partial class PassengerTools
     /// <summary>The text before the cursor on its line, which at a shell waiting for a command is its prompt.</summary>
     private static string Prompt(TerminalScreen screen) =>
         screen.IsAlternate ? string.Empty : screen.Lines[screen.CursorRow].Text(0, screen.CursorColumn);
+
+    /// <summary>What a package change may write: the project file, and under central package management the
+    /// Directory.Packages.props an install puts the version in (any open, since only those changed are read again).</summary>
+    private IEnumerable<string> PackageFiles(ProjectModel project) =>
+        [project.Path, .. Editors.Documents.Select(d => d.Path).Where(p => Path.GetFileName(p).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase))];
 
     private ProjectModel Project(string project)
     {

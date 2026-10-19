@@ -1,4 +1,5 @@
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App;
@@ -79,6 +80,17 @@ public partial class MainWindow
         if (changes.Paths.Count > 0 || changes.Git)
         {
             _ = session.Vcs.RefreshAsync();
+        }
+    }
+
+    /// <summary>Files a program the IDE ran has just written (dotnet add package's project file): those open take the
+    /// disk's text now, as the folder watcher would have them a moment later, so what ran it answers with them changed.</summary>
+    public void FollowWritten(IEnumerable<string> paths)
+    {
+        HashSet<string> written = new(paths.Select(PathNames.Canonical), StringComparer.Ordinal);
+        foreach (OpenDocument document in Editors.Documents.Where(d => written.Contains(d.Path) && File.Exists(d.Path)).ToList())
+        {
+            FollowDisk(document);
         }
     }
 
