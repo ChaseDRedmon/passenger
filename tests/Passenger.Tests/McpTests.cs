@@ -516,6 +516,38 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>A fault of the IDE's met by an agent's call, stood in for by an action that fails as no action should.</summary>
+    [AvaloniaFact]
+    public void An_agents_call_that_meets_a_fault_of_the_IDEs_is_answered_with_it_and_logged()
+    {
+        MainWindow window = AgentsWindow(folder);
+        window.Actions.Add(new IdeAction("tests.fault", "Fault", "Tests", _ => throw new NullReferenceException("The fault's own words")));
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Task<CallToolResult> asking = Task.Run(() => Result(client, "ide_action", new() { ["action"] = "tests.fault" }));
+            Press(Question(window, "the question for the agent's action"), "Allow");
+            CallToolResult faulted = Await(asking, "the action that fails");
+            string said = string.Concat(faulted.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            Assert.True(faulted.IsError == true && said.Contains("NullReferenceException: The fault's own words", StringComparison.Ordinal),
+                $"An agent's call that met a fault of the IDE's was answered without it: {said}");
+            Assert.True(IdeErrors.Errors.Any(e => e.Kind == "NullReferenceException" && e.Message == "The fault's own words"),
+                "A fault an agent's call met is not among the IDE's errors");
+            IdeErrors.Flush();
+            Assert.True(Ui.Shared(IdeErrors.LogPath).Contains("The fault's own words", StringComparison.Ordinal), "A fault an agent's call met is not in passenger.log");
+            IdeErrors.Clear();
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
     /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs, profiles, debugs
     /// and builds a program and its language server loads the project. Each program writes its id to a file named for how
     /// it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once the folder has a

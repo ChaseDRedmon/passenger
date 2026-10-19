@@ -781,9 +781,17 @@ public sealed partial class PassengerTools(MainWindow window)
                 return await work();
             });
         }
-        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException or DapException or LanguageServerFailed or LiveTree.LiveAppException)
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException
+            or HttpRequestException or DapException or LanguageServerFailed or LiveTree.LiveAppException)
         {
             throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
+        }
+        catch (Exception error) when (error is not (OperationCanceledException or ModelContextProtocol.McpException))
+        {
+            // No answer but a fault of the IDE's: logged as one on the window's own thread is, and its words the agent's,
+            // where the SDK would answer only "An error occurred invoking" the tool.
+            IdeErrors.Report(error);
+            throw new ModelContextProtocol.McpException($"Passenger failed: {error.GetType().Name}: {error.Message}", error);
         }
     }
 
