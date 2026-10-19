@@ -99,7 +99,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order), carets
   (`SelectionSet`) and every editing command as a pure function to an `EditPlan`. `MarkupIndent` is Enter's indent in
   XAML, MSBuild files, XML and HTML, as Rider's: in after a start tag, the end tag split onto its own line, under the
-  first attribute inside a tag, HTML's void elements known.
+  first attribute inside a tag, HTML's void elements known and its optional end tags closed as HTML's parser closes
+  them; XML reads back from the caret 4 KB at a time (widening ×4) and forward from the start only where tags don't
+  pair up, so Enter costs what is around the caret, while HTML still reads from the start.
 - `src/Passenger.Editor`: the `CodeEditor` control (drawing, input, commands, in partial files),
   the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
   Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
@@ -321,7 +323,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge`;
   `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
   agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
-  windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions.
+  windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions; the widget gives each local
+  branch the branches panel's `Menu(branch)` as its submenu (`MenuChoice.Holding`), so nothing checks out until
+  Checkout is chosen.
 - `src/Passenger.App/Packages`: NuGet. `PackageSourceSet` reads the folder's nuget.config files through
   NuGet.Configuration as restore does (feeds, credentials, packageSourceMapping); `FeedSet` searches All Feeds or one,
   over `V3Feed`, `V2Feed` and `FolderFeed` (what the tests use offline); each HTTP feed's requests go through
@@ -388,7 +392,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   enables `UiFrames.Provider`: `Snapshot.UiFrames` are an Avalonia app's frames, each with the compositor's first
   drawing after it, recorded by the inspector (below); `App/Profiling/FramesView` is the Frames page (`FrameChart`, the
   layout table by type then control, own time first), a control's row opening its XAML and, for the Live Visual Tree's
-  process, choosing it there. `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port
+  process, choosing it there; `UiFrames.Percentile` (interpolated) is the one percentile for frames, and MCP's
+  `profile` of an inspected Avalonia app always answers `frames`, with `why` when there are none (AgentApp takes
+  `--quit-once-drawn` / `--quit-at-once` for its tests). `ProjectSession.ProfileStarting` is a Profile not yet handed
+  over, which the folder's end cancels. `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port
   (Run > Attach Profiler to Running Program: the debugged one, else Run's); an `Attached` one is never killed.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
@@ -493,7 +500,8 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
-  for the rest, and a `ToolWindow`'s `Action` for its show action. `AppActions.cs` holds the ids and each platform's
+  for the rest, and a `ToolWindow`'s `Action` for its show action (`IdeAction.Words` are other names Find Action finds
+  it by, as Rider's older names). `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
   through the registry, so one that cannot run says why; editor actions go to the focused editor.
   `Product` is what the build is (version, commit, runtime, the licence and notices beside it), the one place the
@@ -510,7 +518,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
   run on the UI thread as the window's own commands are and ended by its `CancellationToken`, answering with what its
   operation returned (`VcsOutcome`, `CommitResult`, `BuildOutcome`, the debugger's `Stop`), never with what the status
-  bar says by then. The tools reach the folder through the window's `ProjectSession` as each call finds it, and the
+  bar says by then; `PassengerTools.OnUi` answers known refusals with their message and sends any other exception to
+  `IdeErrors`, answering "Passenger failed: Type: message", and a non-C# file's `diagnostics` waits only for that
+  file's own checks (`OpenDocument.IsChecking`/`Checking()`, which a check's `Debounce` holds). The tools reach the
+  folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them
   three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
   folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
