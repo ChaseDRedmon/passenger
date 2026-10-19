@@ -243,6 +243,9 @@ internal sealed class ChoicePopup : Border
     /// <summary>What is offered, by its words.</summary>
     public IReadOnlyList<string> Titles { get; }
 
+    /// <summary>What each choice says beside its words.</summary>
+    public IReadOnlyList<string> Details { get; }
+
     /// <summary>What the list is titled.</summary>
     public string Title { get; }
 
@@ -250,6 +253,7 @@ internal sealed class ChoicePopup : Border
     {
         Title = title;
         Titles = [.. choices.Select(c => c.Text)];
+        Details = [.. choices.Select(c => c.Detail)];
         bool numbered = choices.Any(c => c.Mnemonic is not null);
         Classes.Add("popup");
         MinWidth = 320;

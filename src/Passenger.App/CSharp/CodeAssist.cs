@@ -351,6 +351,9 @@ public sealed partial class CodeAssist
     /// <summary>What the open list of choices (fixes, refactorings, definitions) offers, by its words; empty with none open.</summary>
     public IReadOnlyList<string> Offered => layer.Children.OfType<ChoicePopup>().LastOrDefault()?.Titles ?? [];
 
+    /// <summary>What the list of choices shown says beside each of <see cref="Offered"/>.</summary>
+    public IReadOnlyList<string> OfferedDetails => layer.Children.OfType<ChoicePopup>().LastOrDefault()?.Details ?? [];
+
     private void OnTyped(string text)
     {
         HideHover();
@@ -1130,7 +1133,7 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
                 return;
             }
-            List<Choice> choices = [.. linted.Select(f => new Choice(f.Title, f.Action.Kind ?? string.Empty, f)), .. actions.Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))];
+            List<Choice> choices = [.. linted.Select(f => new Choice(f.Title, CodeActionKinds.Shown(f.Action.Kind), f)), .. actions.Select(a => new Choice(a.Title, CodeActionKinds.Shown(a.Kind), a))];
             ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice => choice?.Value switch
             {
                 EslintFix fix => RunLintFix(document, fix),

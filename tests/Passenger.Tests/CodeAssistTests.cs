@@ -1211,6 +1211,43 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         }
     }
 
+    [AvaloniaFact]
+    public void Show_context_actions_says_beside_each_whether_it_is_a_quick_fix_or_a_context_action_in_riders_words()
+    {
+        project.Write("Actions.cs", "static class Actions\n{\n    public static int Go()\n    {\n        int twice = Helper.Twice(2);\n"
+            + "        Missing gone = null;\n        return twice;\n    }\n}\n");
+        MainWindow window = project.Open("Actions.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument actions = window.EditorArea.Active!;
+        Ui.WaitFor(() => window.CSharpService!.For(actions)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0246"), "Missing's error");
+
+        PlaceAfter(editor, "Missi");
+        editor.Focus();
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes for Missing");
+        List<(string, string)> fixes = Shown(window);
+        Assert.True(fixes.Contains(("Generate class 'Missing'", "Quick-fix")), $"The error's fix does not say it is a quick-fix: {Said(fixes)}");
+        Ui.Press(window, "ESCAPE");
+
+        PlaceAfter(editor, "Helper.Twice(2)");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the actions for twice");
+        List<(string, string)> offered = Shown(window);
+        // Roslyn's kinds for these are refactor.inline and refactor.
+        Assert.True(offered.Contains(("Inline temporary variable", "Context action")) && offered.Contains(("Use implicit type", "Context action")),
+            $"Inline temporary variable and Use implicit type do not say they are context actions: {Said(offered)}");
+        Ui.Press(window, "ESCAPE");
+
+        // Rider's list never shows the protocol's kinds.
+        string[] raw = [.. fixes.Concat(offered).Select(o => o.Item2).Where(d => System.Text.RegularExpressions.Regex.IsMatch(d, @"^(quickfix|refactor|source)(\.|$)"))];
+        Assert.True(raw.Length == 0, $"Show Context Actions shows the language server's own kinds beside its actions, which are no words of Rider's: {string.Join(", ", raw)}");
+        window.Close();
+
+        static List<(string, string)> Shown(MainWindow window) => [.. window.Assist.Offered.Zip(window.Assist.OfferedDetails)];
+
+        static string Said(List<(string Title, string Detail)> shown) => string.Join("; ", shown.Select(s => $"{s.Title} [{s.Detail}]"));
+    }
+
     private static T Await<T>(Task<T> task, string what)
     {
         Ui.WaitFor(() => task.IsCompleted, what, TimeSpan.FromSeconds(30));
