@@ -35,7 +35,7 @@
          the files beside the C#. -->
     <PackageVersion Include="TextMateSharp" Version="2.0.4" />
     <!-- VSTest's own client for the vstest.console the SDK ships: discovery, runs and debugging of tests. -->
-    <PackageVersion Include="Microsoft.TestPlatform.TranslationLayer" Version="18.10.1" />
+    <PackageVersion Include="Microsoft.TestPlatform.TranslationLayer" Version="18.11.0" />
     <!-- The Windows install's hooks (Installation.cs), at the version of the vpk tool that packs it (dotnet-tools.json). -->
     <PackageVersion Include="Velopack" Version="1.2.161" />
   </ItemGroup>
@@ -62,7 +62,7 @@
   <ItemGroup>
     <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.1.4" />
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
   </ItemGroup>

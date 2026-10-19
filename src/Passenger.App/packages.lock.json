@@ -91,11 +91,11 @@
       },
       "Microsoft.TestPlatform.TranslationLayer": {
         "type": "Direct",
-        "requested": "[18.10.1, )",
-        "resolved": "18.10.1",
-        "contentHash": "mq0LDPGl00dPI6Qd8HK29Yv31jb0eHR729tsNRyZl6rPJMJy6kJVFmhy05wW1IZdsDnFkWi5FkyFVpaLbkunFg==",
+        "requested": "[18.11.0, )",
+        "resolved": "18.11.0",
+        "contentHash": "PQk9INK5qLjQWzTuJCIDAah8AorDJatkBsCH/fDRTsENRqsAXBwzzY//Sqz5DuH7fQOyWTG+FHVO7FzLxNwCVQ==",
         "dependencies": {
-          "Microsoft.TestPlatform.ObjectModel": "18.10.1"
+          "Microsoft.TestPlatform.ObjectModel": "18.11.0"
         }
       },
       "ModelContextProtocol.Core": {
@@ -261,8 +261,8 @@
       },
       "Microsoft.TestPlatform.ObjectModel": {
         "type": "Transitive",
-        "resolved": "18.10.1",
-        "contentHash": "o+PuLDRVp1iwiVAPBADZItXgm9Ck23XtPhE4kZtZVi0uYnMiiz1Dx9Cjh75kJ+ijfqnORL3VOTOaQVKi0f/ixg=="
+        "resolved": "18.11.0",
+        "contentHash": "BXBHYnwSOljKute8UYCMXOLAdB7awxEMppPSpqOF1ZxLD/W/OH+vTBgFaXA7q0aditJTVXSMVenel+wOkEIyNg=="
       },
       "Microsoft.VisualStudio.Threading.Only": {
         "type": "Transitive",
