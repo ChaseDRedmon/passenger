@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Passenger: an IDE for C# and .NET</title>
-    <meta name="description" content="An IDE for C# and .NET, written in C# and inspired by Rider: its own editor over Roslyn, debugger and profiler, Avalonia's and WPF's XAML, and an MCP server your coding agent uses it through.">
+    <meta name="description" content="A free, open-source IDE for C# and .NET, written in C#: performance and memory profiling, a debugger with Hot Reload, XAML tooling for Avalonia and WPF, and an MCP server your coding agent drives it through.">
     <link rel="canonical" href="https://passenger-ide.net/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
@@ -14,7 +14,7 @@
     <meta property="og:locale" content="en_US">
     <meta property="og:url" content="https://passenger-ide.net/">
     <meta property="og:title" content="Passenger: an IDE for C# and .NET, written in C#">
-    <meta property="og:description" content="An IDE your coding agent can drive, the Avalonia developer's IDE, and Rider's ways for C# and .NET: its own editor, debugger and profiler. Open source, for Windows, macOS and Linux.">
+    <meta property="og:description" content="Performance and memory profiling, a debugger with Hot Reload, and XAML tooling for Avalonia and WPF, free and open source under MIT, with an MCP server your coding agent drives it through. For Windows, macOS and Linux.">
     <meta property="og:image" content="https://passenger-ide.net/images/social.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1200">
@@ -22,7 +22,7 @@
     <meta property="og:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Passenger: an IDE for C# and .NET, written in C#">
-    <meta name="twitter:description" content="An IDE your coding agent can drive, the Avalonia developer's IDE, and Rider's ways for C# and .NET: its own editor, debugger and profiler. Open source, for Windows, macOS and Linux.">
+    <meta name="twitter:description" content="Performance and memory profiling, a debugger with Hot Reload, and XAML tooling for Avalonia and WPF, free and open source under MIT, with an MCP server your coding agent drives it through. For Windows, macOS and Linux.">
     <meta name="twitter:image" content="https://passenger-ide.net/images/social.png">
     <meta name="twitter:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
     <meta name="theme-color" content="#0F131C" media="(prefers-color-scheme: dark)">
@@ -33,7 +33,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Passenger",
-    "description": "An IDE for C# and .NET, written in C# and inspired by Rider: its own editor over Roslyn, debugger and profiler, Avalonia's and WPF's XAML, and an MCP server your coding agent uses it through.",
+    "description": "A free, open-source IDE for C# and .NET, written in C#: performance and memory profiling, a debugger with Hot Reload, XAML tooling for Avalonia and WPF, and an MCP server your coding agent drives it through.",
     "url": "https://passenger-ide.net/",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
@@ -58,8 +58,9 @@
     <div class="wrap">
         <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
         <nav>
+            <a class="wide" href="#avalonia">XAML</a>
+            <a class="wide" href="#profiling">Profiling</a>
             <a class="wide" href="#agents">Agents</a>
-            <a class="wide" href="#avalonia">Avalonia</a>
             <a class="wide" href="#tour">Tour</a>
             <a href="#download">Download</a>
             <a href="https://github.com/Zaneris/passenger">GitHub</a>
@@ -69,11 +70,11 @@
 
 <main>
     <div class="wrap hero">
-        <p class="eyebrow">Open source, MIT · Windows, macOS, Linux</p>
+        <p class="eyebrow"><span>Free and open source, MIT<span class="platforms"> · Windows, macOS, Linux</span></span></p>
         <h1><span class="lead">An IDE for C# and .NET,</span> written in C#.</h1>
-        <p class="lede">Passenger edits, builds, runs, tests, debugs and profiles C# and modern .NET, with an editor, a debugger and a
-            profiler of its own. It works the way JetBrains Rider does and looks like itself. It knows Avalonia's XAML as well as
-            it knows C#, and your coding agent can use all of it, as you do.</p>
+        <p class="lede">Passenger edits, builds, runs, tests, debugs and profiles C# and modern .NET. It includes what usually
+            takes a paid IDE or a paid add-on: performance and memory profiling, a debugger with Hot Reload, and XAML tooling
+            for Avalonia and WPF, free and open source under MIT. Your coding agent can use all of it, as you do.</p>
         <div class="actions">
             <a class="button primary" id="primary-download" href="#download">Download</a>
             <a class="button" href="https://github.com/Zaneris/passenger">Source on GitHub</a>
@@ -91,8 +92,37 @@
     <section id="why">
         <div class="wrap">
             <h2>What sets it apart</h2>
-            <p class="intro">Beside everything an IDE for C# does, three things set Passenger apart.</p>
+            <p class="intro">Profilers, a full debugger and XAML tooling usually come with a paid IDE or a paid add-on. In
+                Passenger they are part of the IDE, free and open source under MIT, for work and personal projects alike.</p>
             <div class="why">
+                <div class="card">
+                    <h3>XAML tooling for Avalonia and WPF</h3>
+                    <p>Completion and checks for both, a preview as you type (WPF's on Windows), the running app's Live Visual
+                        Tree, failed bindings listed with fixes, and in Avalonia, binding values and breakpoints in the XAML.
+                        More XAML tooling than you'll find in other .NET IDEs, free.</p>
+                    <a class="more" href="#avalonia">What it does for XAML</a>
+                </div>
+                <div class="card">
+                    <h3>Performance and memory profiling</h3>
+                    <p>A timeline, call tree, hot spots and flame graph, from a program's start or attached to one running.
+                        Heap snapshots with retained sizes and paths to roots, compared to show new, dead and survived
+                        objects. Usually a paid add-on; here it is built in.</p>
+                    <a class="more" href="#profiling">The profiler</a>
+                </div>
+                <div class="card">
+                    <h3>A debugger of its own</h3>
+                    <p>The values methods returned, Smart Step Into, exception breakpoints, stepping through async code, data
+                        breakpoints on Windows x64, and decompiled code for libraries without symbols. Attach to a .NET program
+                        already running, on a Mac with nothing to set up.</p>
+                    <a class="more" href="#debugging">The debugger</a>
+                </div>
+                <div class="card">
+                    <h3>Hot Reload, debugging or not</h3>
+                    <p>Edit the code while debugging and the program takes it, paused or running, or run it under
+                        <code>dotnet&nbsp;watch</code>. An edit it can't apply is listed with why, and by default the program
+                        restarts to take it.</p>
+                    <a class="more" href="#debugging">Hot Reload</a>
+                </div>
                 <div class="card">
                     <h3>An IDE your agent can drive</h3>
                     <p>Passenger is an MCP server. A coding agent asks it about the code, builds, tests, debugs and profiles
@@ -100,17 +130,135 @@
                     <a class="more" href="#agents">How agents use it</a>
                 </div>
                 <div class="card">
-                    <h3>The Avalonia developer's IDE</h3>
-                    <p>XAML completion, checks and a preview as you type. While the app runs: its Live Visual Tree, binding
-                        errors and values, and breakpoints in the XAML. WPF's XAML too.</p>
-                    <a class="more" href="#avalonia">What it does for XAML</a>
+                    <h3>The rest of a full IDE</h3>
+                    <p>A three-way merge for Git's conflicts, Local History of every file whatever Git knows, NuGet with
+                        vulnerable versions marked and the fix offered, four test frameworks, and a terminal of its own.</p>
+                    <a class="more" href="#tour">The tour</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="avalonia">
+        <div class="wrap">
+            <h2>XAML tooling for Avalonia and WPF</h2>
+            <p class="intro">Passenger is built with Avalonia, and it gives XAML the help C# gets, from the project's own
+                assemblies and the framework's own compiler and previewer. More XAML tooling than you'll find in other .NET
+                IDEs, for Avalonia and WPF alike, with no add-on to buy.</p>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>XAML as you type</h3>
+                    <p>Completion of controls, properties, attached properties, values, resources, selectors and binding paths,
+                        checked against <code>x:DataType</code> or WPF's design-time data context. The XAML compiler's errors
+                        on their lines. Go to Declaration into C#, rename of <code>x:Name</code>, Reformat Code, Extract
+                        Resource and Extract Style, and a missing property, command or converter made from where it is
+                        used.</p>
+                    <p>XAML Preview draws the file beside it with the project's own Avalonia, following each edit, and on
+                        Windows it draws WPF files too.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/xaml-light.webp" width="2400" height="1500">
+                        <img src="/images/xaml-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="An Avalonia .axaml file with XAML completion open, and XAML Preview drawing it beside the editor">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>The running app, from its XAML</h3>
+                    <p>Debug an Avalonia app, or a WPF app on Windows, and the Live Visual Tree shows its controls as they
+                        are, each property with where its value came from and each style with why it applies or not. In an
+                        Avalonia app the XAML shows each binding's value after its line.</p>
+                    <p>A binding that fails is a line in the Run or Debug console linked to its XAML, a row in Problems with a
+                        fix where there is one, and, if you choose, a stop like an exception's. Break When Value Changes stops
+                        on a property's next change, and in Avalonia's XAML a breakpoint goes on an element or one of its
+                        attributes.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/live-tree-light.webp" width="2400" height="1500">
+                        <img src="/images/live-tree-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="Debugging an Avalonia app: the Live Visual Tree with an element's details, and binding values after the XAML's lines">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="grid two">
+                <div class="card">
+                    <h3>Frames in the profiler</h3>
+                    <p>Profile an Avalonia app and its frames are charted with what each cost, and their layout listed by
+                        control type and then by control, each row opening its XAML. Avalonia's debug overlays are a toggle in
+                        the Run and Debug windows.</p>
                 </div>
                 <div class="card">
-                    <h3>Rider's ways for C# and .NET</h3>
-                    <p>Rider's Visual Studio keymaps, its actions under their names, and its behaviours where they matter, so
-                        your hands already know it. The look is Passenger's own.</p>
-                    <a class="more" href="#rider">Rider's ways, its own look</a>
+                    <h3>Failed tests pictured</h3>
+                    <p>When an Avalonia.Headless test with xUnit v3 fails, its result carries a picture of each window as it
+                        was, popups drawn in.</p>
                 </div>
+                <div class="card">
+                    <h3>WPF on every system</h3>
+                    <p>WPF projects get the XAML help on macOS and Linux too: completion, checks, navigation, formatting and
+                        the refactorings. There a WPF project builds for its code help and says it runs only on Windows.</p>
+                </div>
+                <div class="card">
+                    <h3>New projects</h3>
+                    <p>New Solution and New Project offer Avalonia's templates, and install them when they are missing.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="profiling">
+        <div class="wrap">
+            <h2>A profiler and a debugger of its own</h2>
+            <p class="intro">Both are written for Passenger, over the runtime's own EventPipe and ICorDebug. Performance and
+                memory profilers usually come as paid add-ons; here they are part of the IDE, as is Hot Reload while you
+                debug.</p>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>Where the time goes</h3>
+                    <p>Sampling over EventPipe, from a program's first instruction or attached to one already running: its
+                        call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch of the
+                        timeline.</p>
+                    <h3>What holds the memory</h3>
+                    <p>A memory snapshot counts the heap by type, with each object's retained size, and shows the shortest
+                        paths that keep it alive. Two snapshots compared say which objects are new, which died and which
+                        survived.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/profiler-light.webp" width="2400" height="1500">
+                        <img src="/images/profiler-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="A profile of a run: its timeline above the call tree">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature flip" id="debugging">
+                <div class="text">
+                    <h3>A debugger of its own</h3>
+                    <p>Over the runtime's ICorDebug: breakpoints with conditions, hit counts and log messages, exception
+                        breakpoints, stepping through async code, Smart Step Into, the values methods returned, Run to Cursor and
+                        Set Next Statement, threads and frames, variables you can open and set, watches, and the values each line
+                        used drawn after it.</p>
+                    <p>A frame in a library without symbols shows its code, decompiled. Attach to a .NET program already
+                        running, on a Mac too with nothing to set up. Data breakpoints on Windows x64.</p>
+                    <h3>Hot Reload</h3>
+                    <p>Edit the code while debugging and Hot Reload puts it in the program, paused or running. An edit it
+                        can't apply is listed in Problems with why, and by default the program restarts to take it. Without the
+                        debugger, Hot Reload runs under <code>dotnet&nbsp;watch</code>.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/debugger-light.webp" width="2400" height="1500">
+                        <img src="/images/debugger-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="Stopped at a breakpoint: the values after the lines, and the Debug window's frames and variables">
+                    </picture>
+                </figure>
             </div>
         </div>
     </section>
@@ -244,107 +392,6 @@ args = ["--mcp-attach"]</pre>
         </div>
     </section>
 
-    <section id="avalonia">
-        <div class="wrap">
-            <h2>The Avalonia developer's IDE</h2>
-            <p class="intro">Passenger is built with Avalonia, and it gives <code>.axaml</code> files the help C# gets, from the
-                project's own assemblies and Avalonia's own compiler and previewer. None of it needs an Avalonia Accelerate
-                licence.</p>
-
-            <div class="feature">
-                <div class="text">
-                    <h3>XAML as you type</h3>
-                    <p>Completion of controls, properties, attached properties, values, resources, selectors and binding paths
-                        checked against <code>x:DataType</code>. The XAML compiler's errors on their lines. Go to Declaration into
-                        C#, rename of <code>x:Name</code>, Reformat Code, Extract Resource and Extract Style, and a missing
-                        property, command or converter made from where it is used.</p>
-                    <p>XAML Preview draws the file beside it with the project's own Avalonia, following each edit.</p>
-                </div>
-                <figure class="shot">
-                    <picture>
-                        <source media="(prefers-color-scheme: light)" srcset="/images/xaml-light.webp" width="2400" height="1500">
-                        <img src="/images/xaml-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
-                             alt="An Avalonia .axaml file with XAML completion open, and XAML Preview drawing it beside the editor">
-                    </picture>
-                </figure>
-            </div>
-
-            <div class="feature flip">
-                <div class="text">
-                    <h3>The running app, from its XAML</h3>
-                    <p>Debug an Avalonia app and the Live Visual Tree shows its controls as they are, each property with where
-                        its value came from and each style with why it applies or not. The XAML shows each binding's value after
-                        its line.</p>
-                    <p>A binding that fails is a line in the Run or Debug console linked to its XAML, a row in Problems with a
-                        fix where there is one, and, if you choose, a stop like an exception's. Breakpoints go on an element, on
-                        one of its attributes, or on a property's next change.</p>
-                </div>
-                <figure class="shot">
-                    <picture>
-                        <source media="(prefers-color-scheme: light)" srcset="/images/live-tree-light.webp" width="2400" height="1500">
-                        <img src="/images/live-tree-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
-                             alt="Debugging an Avalonia app: the Live Visual Tree with an element's details, and binding values after the XAML's lines">
-                    </picture>
-                </figure>
-            </div>
-
-            <div class="grid two">
-                <div class="card">
-                    <h3>Frames in the profiler</h3>
-                    <p>Profile an Avalonia app and its frames are charted with what each cost, and their layout listed by
-                        control type and then by control, each row opening its XAML. Avalonia's debug overlays are a toggle in
-                        the Run and Debug windows.</p>
-                </div>
-                <div class="card">
-                    <h3>Failed tests pictured</h3>
-                    <p>When an Avalonia.Headless test with xUnit v3 fails, its result carries a picture of each window as it
-                        was, popups drawn in.</p>
-                </div>
-                <div class="card">
-                    <h3>New projects</h3>
-                    <p>New Solution and New Project offer Avalonia's templates, and install them when they are missing.</p>
-                </div>
-                <div class="card">
-                    <h3>WPF's XAML too</h3>
-                    <p>WPF projects get the same XAML help on every system: completion, checks, navigation, formatting and the
-                        refactorings. On Windows, XAML Preview draws WPF files, and the Live Visual Tree and binding errors work
-                        while a WPF app is debugged. Elsewhere a WPF project builds for its code help and says it runs only on
-                        Windows.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section id="rider">
-        <div class="wrap">
-            <h2>Rider's ways, its own look</h2>
-            <p class="intro">If you know Rider, you know where things are in Passenger. It is still its own IDE, written in
-                C#, and it looks like itself.</p>
-            <div class="pair">
-                <div>
-                    <h3>Your hands already know it</h3>
-                    <p>Its keys are Rider's Visual Studio keymap, or on a Mac its Visual Studio OSX keymap, chords included, and
-                        Settings &rsaquo; Keymap changes any of them. Its actions have Rider's names: Search Everywhere, Show
-                        Context Actions, Extend Selection, Surround With, Complete Current Statement, Run to Cursor.</p>
-                    <p>It behaves as Rider does where that matters: tool windows in IntelliJ's six places, files saved as you
-                        go, Local History, a rename across files undone as one step, Rider's file nesting in the Solution view,
-                        and Rider's XML formatting for XAML. The toolbar is the window's title bar, as Rider's is, on Windows,
-                        macOS and most Linux desktops.</p>
-                </div>
-                <div>
-                    <h3>Two looks of its own</h3>
-                    <p><strong>Passenger</strong>, the default, takes the app icon's blue: a blue-to-teal title bar, the
-                        window's areas told apart by shade rather than lines, and an amber mark wherever the window says where
-                        you are.</p>
-                    <p><strong>Harbour</strong> is warmer and rounder: the icon's teal on linen by day and a warm charcoal by
-                        night.</p>
-                    <p>Each comes in dark and light, following your system or your choice, and Rider's colours for the code
-                        are a choice under either.</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
     <section id="tour">
         <div class="wrap">
             <h2>The tour</h2>
@@ -358,6 +405,8 @@ args = ["--mcp-attach"]</pre>
                         live, postfix and surround templates, inlay hints, the symbol at the caret lit through the file, and
                         splits, with tabs in windows of their own. A key costs what it changed, not the file's size: tests hold
                         it in twenty thousand lines and on a line of a million characters.</p>
+                    <p>Coming from Rider? Passenger ships Rider's Visual Studio keymap, or on a Mac its Visual Studio OSX
+                        keymap, chords included, and behaves as a Rider user expects.</p>
                 </div>
                 <div class="card">
                     <h3>C# from Roslyn</h3>
@@ -367,44 +416,19 @@ args = ["--mcp-attach"]</pre>
                         type hierarchies, and decompiled library sources. Problems lists the whole solution's without a
                         build.</p>
                 </div>
-            </div>
-
-            <div class="feature">
-                <div class="text">
-                    <h3>A debugger of its own</h3>
-                    <p>Over the runtime's ICorDebug: breakpoints with conditions, hit counts and log messages, exception
-                        breakpoints, stepping through async code, Smart Step Into, the values methods returned, Run to Cursor and
-                        Set Next Statement, threads and frames, variables you can open and set, watches, and the values each line
-                        used drawn after it.</p>
-                    <p>Edit the code while debugging and Hot Reload puts it in the program, paused or running. A frame in a
-                        library without symbols shows its code, decompiled. Attach to a .NET program already running, on a Mac too with nothing to set up. Data breakpoints
-                        on Windows x64.</p>
+                <div class="card">
+                    <h3>Unit tests</h3>
+                    <p>xUnit, NUnit, MSTest and TUnit, through VSTest or Microsoft.Testing.Platform: tests found from the code
+                        before any build, run marks in the gutter, results grouped and filtered, failures rerun, a run until one
+                        fails, and any test debugged.</p>
                 </div>
-                <figure class="shot">
-                    <picture>
-                        <source media="(prefers-color-scheme: light)" srcset="/images/debugger-light.webp" width="2400" height="1500">
-                        <img src="/images/debugger-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
-                             alt="Stopped at a breakpoint: the values after the lines, and the Debug window's frames and variables">
-                    </picture>
-                </figure>
-            </div>
-
-            <div class="feature flip">
-                <div class="text">
-                    <h3>A profiler too</h3>
-                    <p>Sampling over EventPipe, from a program's first instruction or attached to one already running: its
-                        call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch of the
-                        timeline.</p>
-                    <p>A memory snapshot counts the heap by type and shows what keeps an object alive and how much it holds.
-                        Two snapshots compared say which objects are new, which died and which survived.</p>
+                <div class="card">
+                    <h3>Two looks of its own</h3>
+                    <p><strong>Passenger</strong>, the default, takes the app icon's blue: a blue-to-teal title bar, the
+                        window's areas told apart by shade rather than lines, and an amber mark wherever the window says where
+                        you are. <strong>Harbour</strong> is warmer and rounder: the icon's teal on linen by day and a warm
+                        charcoal by night. Each comes in dark and light, following your system or your choice.</p>
                 </div>
-                <figure class="shot">
-                    <picture>
-                        <source media="(prefers-color-scheme: light)" srcset="/images/profiler-light.webp" width="2400" height="1500">
-                        <img src="/images/profiler-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
-                             alt="A profile of a run: its timeline above the call tree">
-                    </picture>
-                </figure>
             </div>
 
             <div class="feature">
@@ -480,14 +504,7 @@ args = ["--mcp-attach"]</pre>
                     <h3>Build and run</h3>
                     <p>A Solution view of the solution and its projects as MSBuild evaluates them, builds with their errors in
                         Problems, run configurations from your launch profiles, consoles whose stack frames and compiler messages
-                        link to their lines, the browser opened for a web project, and Hot Reload under
-                        <code>dotnet watch</code>.</p>
-                </div>
-                <div class="card">
-                    <h3>Unit tests</h3>
-                    <p>xUnit, NUnit, MSTest and TUnit, through VSTest or Microsoft.Testing.Platform: tests found from the code
-                        before any build, run marks in the gutter, results grouped and filtered, failures rerun, a run until one
-                        fails, and any test debugged.</p>
+                        link to their lines, and the browser opened for a web project.</p>
                 </div>
                 <div class="card">
                     <h3>NuGet</h3>
@@ -510,6 +527,11 @@ args = ["--mcp-attach"]</pre>
                     <p>Tool windows docked or floating, editor tabs split or in windows of their own, a window for each
                         solution, and each solution's layout kept. New Solution starts from any template
                         <code>dotnet new</code> has.</p>
+                </div>
+                <div class="card">
+                    <h3>Updates</h3>
+                    <p>On Windows and macOS each new release downloads in the background and installs as Passenger closes. On
+                        Linux, Passenger says when one is out.</p>
                 </div>
             </div>
         </div>
@@ -568,7 +590,7 @@ args = ["--mcp-attach"]</pre>
 
 <footer>
     <div class="wrap">
-        <p>Passenger is open source under the MIT licence. It is not affiliated with JetBrains; Rider is their trademark.</p>
+        <p>Passenger is free and open source under the MIT licence. It is not affiliated with JetBrains; Rider is their trademark.</p>
         <nav>
             <a href="https://github.com/Zaneris/passenger">GitHub</a>
             <a href="https://github.com/Zaneris/passenger/blob/main/LICENSE">Licence</a>

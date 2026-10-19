@@ -108,6 +108,8 @@ pre .comment { color: var(--muted); }
     font-size: 14px;
 }
 .eyebrow::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--seat); }
+/* On a phone the systems would wrap the pill onto two lines; the download says them. */
+@media (max-width: 480px) { .eyebrow .platforms { display: none; } }
 h1 {
     margin: 0 auto 18px;
     max-width: 15em;
@@ -171,14 +173,16 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
 .grid + .feature, .feature + .grid { margin-top: 64px; }
 .card { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .card p { margin: 0; color: var(--muted); }
+.card p + p { margin-top: 10px; }
 .card .more { display: inline-block; margin-top: 12px; font-weight: 600; }
 
-/* The three things that set Passenger apart, each leading to its section. */
+/* What sets Passenger apart, each leading to its section. */
 .why { display: grid; gap: 16px; }
+@media (min-width: 640px) { .why { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 900px) { .why { grid-template-columns: repeat(3, 1fr); } }
 .why .card { border-top: 3px solid var(--accent); }
 
-.feature { display: grid; gap: 28px; align-items: center; margin-top: 64px; }
+.feature { display: grid; gap: 28px; align-items: center; margin-top: 64px; scroll-margin-top: 84px; }
 .feature:first-child { margin-top: 0; }
 .feature p { margin: 0 0 12px; color: var(--muted); font-size: 17px; }
 .feature p:last-child { margin-bottom: 0; }
