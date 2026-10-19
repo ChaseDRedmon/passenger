@@ -42,6 +42,9 @@ jobs:
     name: Disk image (${{ matrix.rid }})
     strategy:
       fail-fast: false
+      # One image after the other: GitHub runs five macOS jobs at once, four of them the test shards, so a second image
+      # beside the first left a shard waiting for one to end (#206); the two take about as long as Windows' shards.
+      max-parallel: 1
       matrix:
         rid: [osx-arm64, osx-x64]
     runs-on: macos-latest
