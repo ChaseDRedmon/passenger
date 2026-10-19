@@ -121,8 +121,7 @@ public sealed class BranchesTests : IDisposable
         }
         else
         {
-            Ui.Press(window, "control R");
-            Ui.Press(window, "R");
+            Ui.Press(window, "control R , R");
         }
         NamePopup rename = Assert.IsType<NamePopup>(window.Popup);
         rename.Text = "team/signin";

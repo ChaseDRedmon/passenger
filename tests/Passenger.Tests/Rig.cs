@@ -470,9 +470,22 @@ public static class TestFolders
 
 public static class Ui
 {
+    /// <summary>A key, or a chord ("control M , control S"), pressed as a person presses it, then what it ran let land: a
+    /// chord's second key comes right after its first, as a person's does within the two seconds the window waits for
+    /// it, never after background work that may take longer.</summary>
     public static void Press(TopLevel window, string keys)
     {
-        Keystroke stroke = Keystroke.Parse(keys.Replace('+', ' '));
+        Shortcut shortcut = Passenger.Editor.Shortcut.Parse(keys.Replace('+', ' '));
+        Stroke(window, shortcut.First);
+        if (shortcut.Second is { } second)
+        {
+            Stroke(window, second);
+        }
+        Settle();
+    }
+
+    private static void Stroke(TopLevel window, Keystroke stroke)
+    {
         RawInputModifiers modifiers = Raw(stroke.Modifiers);
         bool shown = window.IsVisible;
         window.KeyPress(stroke.Key, modifiers, PhysicalKey.None, null);
@@ -481,7 +494,6 @@ public static class Ui
         {
             window.KeyRelease(stroke.Key, modifiers, PhysicalKey.None, null);
         }
-        Settle();
     }
 
     /// <summary>A key that types, pressed as a keyboard presses it: the key, carrying the character the layout gives it
@@ -710,11 +722,7 @@ public static class Ui
     public static void Run(TopLevel window, string action)
     {
         Shortcut shortcut = Passenger.App.AppActions.Keymap().ShortcutsFor(action)[0];
-        Press(window, Notation(shortcut.First));
-        if (shortcut.Second is { } second)
-        {
-            Press(window, Notation(second));
-        }
+        Press(window, shortcut.Second is { } second ? $"{Notation(shortcut.First)} , {Notation(second)}" : Notation(shortcut.First));
     }
 
     /// <summary>The first shortcut the platform's keymap gives an IDE action, in keymap notation.</summary>

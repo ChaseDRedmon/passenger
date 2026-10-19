@@ -124,8 +124,7 @@ public sealed class FindInFilesTests : IDisposable
         // Other folded (Ctrl+M, S in its body), breakpoints in it and on Last, the caret on Last.
         editor.GoTo(new TextPosition(10, 8));
         editor.Focus();
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control S");
+        Ui.Press(window, "control M , control S");
         window.Debugger.Breakpoints.Toggle(gamma.Path, 10);
         window.Debugger.Breakpoints.Toggle(gamma.Path, 13);
         editor.GoTo(new TextPosition(13, 9));

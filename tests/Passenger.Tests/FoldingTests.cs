@@ -39,8 +39,7 @@ public sealed class FoldingTests : IDisposable
         Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
         Assert.Equal(FoldKind.Imports, Assert.Single(editor.FoldRegions, r => r.Folded).Kind);
         editor.Focus();
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control X");
+        Ui.Press(window, "control M , control X");
         Assert.DoesNotContain(editor.FoldRegions, r => r.Folded);
         int twice = Source.IndexOf("int Twice", StringComparison.Ordinal);
         double before = editor.PointOf(twice).Y;
@@ -48,8 +47,7 @@ public sealed class FoldingTests : IDisposable
         // Ctrl+M, S in the body folds the method: its brace and body lines go, the caret to the signature's end.
         editor.GoTo(new TextPosition(7, 8));
         editor.Focus();
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control S");
+        Ui.Press(window, "control M , control S");
         FoldRegion method = Assert.Single(editor.FoldRegions, r => r.Folded);
         Assert.Equal(Source.IndexOf("int h)", StringComparison.Ordinal) + "int h)".Length, method.Start);
         Assert.Equal("{...}", method.Placeholder);
@@ -64,14 +62,12 @@ public sealed class FoldingTests : IDisposable
         Assert.Equal(5, editor.CaretPosition.Line);
 
         // Ctrl+M, M toggles it open again.
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control M");
+        Ui.Press(window, "control M , control M");
         Assert.DoesNotContain(editor.FoldRegions, r => r.Folded);
         Assert.Equal(before, editor.PointOf(twice).Y, 3);
 
         // Ctrl+M, A folds everything; going to a line inside opens what hid it and leaves the usings folded.
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control A");
+        Ui.Press(window, "control M , control A");
         Assert.All(editor.FoldRegions, r => Assert.True(r.Folded));
         editor.GoTo(new TextPosition(8, 8));
         Ui.Settle();
@@ -298,8 +294,7 @@ public sealed class FoldingTests : IDisposable
         // The last method folded, far below the screen.
         editor.GoTo(new TextPosition(source.Count(c => c == '\n') - 3, 8));
         editor.Focus();
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control S");
+        Ui.Press(window, "control M , control S");
         int last = source.IndexOf("void Last()", StringComparison.Ordinal) + "void Last()".Length;
         Assert.Equal(last, Assert.Single(document.FoldRegions, r => r.Folded).Start);
         editor.Selections = SelectionSet.Single(source.IndexOf("= 1;", StringComparison.Ordinal) + 2);
@@ -335,8 +330,7 @@ public sealed class FoldingTests : IDisposable
         Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
         editor.GoTo(new TextPosition(7, 8));
         editor.Focus();
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control S");
+        Ui.Press(window, "control M , control S");
         Assert.Null(editor.FoldPreviewText);
 
         // The placeholder's chip stands a character past the signature's end.
@@ -385,14 +379,11 @@ public sealed class FoldingTests : IDisposable
             // property's accessors folded.
             editor.Focus();
             editor.GoTo(new TextPosition(2, 0));
-            Ui.Press(first, "control M");
-            Ui.Press(first, "control E");
+            Ui.Press(first, "control M , control E");
             editor.GoTo(new TextPosition(15, 8));
-            Ui.Press(first, "control M");
-            Ui.Press(first, "control S");
+            Ui.Press(first, "control M , control S");
             editor.GoTo(new TextPosition(27, 8));
-            Ui.Press(first, "control M");
-            Ui.Press(first, "control S");
+            Ui.Press(first, "control M , control S");
             FoldRegion[] folded = Folded(editor);
             Assert.Equal([FoldKind.FileHeader, FoldKind.DocComment, FoldKind.Body], folded.Select(r => r.Kind));
 
@@ -441,11 +432,9 @@ public sealed class FoldingTests : IDisposable
 
         // Ctrl+M, X expands all; Ctrl+M, O folds the members' bodies and the doc comments, and leaves the rest open.
         editor.Focus();
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control X");
+        Ui.Press(window, "control M , control X");
         Assert.Empty(Folded(editor));
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control O");
+        Ui.Press(window, "control M , control O");
         Assert.All(editor.FoldRegions, r => Assert.True(r.Folded == r.Kind is FoldKind.Body or FoldKind.DocComment,
             $"Collapse to Definitions left the {r.Kind} region at line {editor.Document.Snapshot.GetLineFromOffset(r.Start)} {(r.Folded ? "folded" : "open")}"));
         // Each member is its signature alone, under the first line of its doc comment.
@@ -513,8 +502,7 @@ public sealed class FoldingTests : IDisposable
         // The item group folded, a property typed above it: it stays folded, and the new element folds too.
         editor.Focus();
         editor.GoTo(new TextPosition(11, 8));
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control S");
+        Ui.Press(window, "control M , control S");
         Assert.Equal("...</ItemGroup>", Assert.Single(editor.FoldRegions, r => r.Folded).Placeholder);
         Assert.Equal(editor.PointOf(editor.Document.Snapshot.GetLineStart(8)).Y + editor.LineHeight, editor.PointOf(editor.Document.Snapshot.GetLineStart(13)).Y, 1);
         editor.GoTo(new TextPosition(4, editor.Document.Snapshot.GetLine(4).Length));
@@ -554,8 +542,7 @@ public sealed class FoldingTests : IDisposable
 
         // The scripts folded, a key typed above them: they stay folded, and the files' array takes the new line.
         editor.GoTo(new TextPosition(4, 8));
-        Ui.Press(window, "control M");
-        Ui.Press(window, "control S");
+        Ui.Press(window, "control M , control S");
         Assert.Equal("...}", Assert.Single(editor.FoldRegions, r => r.Folded).Placeholder);
         editor.GoTo(new TextPosition(1, editor.Document.Snapshot.GetLine(1).Length));
         Ui.Press(window, "ENTER");
