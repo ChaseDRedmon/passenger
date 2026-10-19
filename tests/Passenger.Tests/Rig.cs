@@ -83,6 +83,8 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.Xaml.SourceLink.Variable, "http://127.0.0.1:9/");
         // Nor the web for a JSON schema a file names: those Passenger does not carry are asked of where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Web.JsonSchemas.Variable, "http://127.0.0.1:9/");
+        // Nor the person's Passenger: an agent's call with no window to join starts this build headless, in the run's state.
+        Environment.SetEnvironmentVariable(Passenger.App.Mcp.McpProxy.StartVariable, "headless");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Discord.DiscordIpc.Variable, DiscordNowhere);
         // Nor npm's registry: an npm install the IDE runs (Run 'npm install') takes only what the run's own empty cache

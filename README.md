@@ -194,9 +194,12 @@ WPF app on Windows, it sees and drives the app as a person testing it would, wit
 There are two ways in, each a flag on Passenger's own executable:
 
 - **`--mcp-attach`** joins the window you have open over the folder the agent works in (`--mcp-attach PID` chooses one
-  Passenger's windows), so its breakpoints and stops show in your editor and its runs in your Run window. A window lets
-  agents in only once you turn on Settings | MCP Server | Enable MCP Server, through a socket in your own user's
-  folder, and the first time an agent uses a tool that changes anything, the window asks you.
+  Passenger's windows), so its breakpoints and stops show in your editor and its runs in your Run window. Set it up
+  before Passenger is even running: the agent has its tools from the start, and its first call opens the folder in
+  Passenger, starting it if need be. It never joins a window on another folder. The window asks you before it lets an
+  agent in (Allow, Don't allow, or Always for this folder), unless you have turned on Settings | MCP Server | Enable
+  MCP Server; it is reached through a socket in your own user's folder, and the first time an agent uses a tool that
+  changes anything, or opens another folder in your window, it asks you again.
 - **`--mcp FOLDER`** starts a Passenger of the agent's own with no window, over a folder or solution, for work it does
   alone.
 
@@ -225,9 +228,10 @@ claude mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger
 codex mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
 ```
 
-Claude Desktop takes the same `mcpServers` entry in Settings | Developer | Edit Config, and the Codex desktop app takes
-it in Settings | MCP servers | Add server (STDIO, with the same command and argument). Any other agent that can add an
-MCP server connects the same way.
+Claude Desktop takes the same `mcpServers` entry in Settings | Developer | Edit Config, with the folder to work in after
+`--mcp-attach`, since it starts its servers in no folder of yours; the Codex desktop app takes it in Settings | MCP
+servers | Add server (STDIO, with the same command and argument). Any other agent that can add an MCP server connects
+the same way.
 
 This repository's own [`.mcp.json`](.mcp.json) runs [`tools/mcp.sh`](tools/mcp.sh) (`just mcp`): the last Debug build
 with `--mcp` over this folder, run from a clone of the build so rebuilding Passenger never changes the files under the

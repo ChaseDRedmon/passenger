@@ -5,6 +5,7 @@ using Avalonia.Headless.XUnit;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Passenger.App;
+using Passenger.App.Mcp;
 using Passenger.App.Settings;
 using Passenger.Core;
 using Passenger.Editor;
@@ -959,7 +960,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     }
 
     [AvaloniaFact]
-    public void An_agent_is_refused_until_the_person_enables_the_MCP_server_and_shut_out_when_they_turn_it_off()
+    public void With_the_MCP_server_off_the_window_asks_to_let_an_agent_in_on_it_lets_agents_in_unasked_and_off_again_shuts_them_out()
     {
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
@@ -967,52 +968,54 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         window.OpenFolder(folder);
         Ui.Settle();
 
-        // Off as the window opens: no socket, and an agent that tries to attach is told what would let it in.
-        Assert.Null(window.AgentSocket);
-        Assert.Empty(Sockets());
-        Exception? refused = Await(Task.Run(async () =>
+        // Off as the window opens: it listens all the same, and an agent's first call waits for the person to let it in.
+        string socket = window.AgentSocket ?? throw new InvalidOperationException($"The window does not listen for agents: {window.Status}");
+        Assert.Equal([socket], Sockets());
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", folder])), "the agent attaching");
+        McpClient? second = null;
+        try
         {
-            try
-            {
-                await using McpClient client = await Start(["--mcp-attach", ProcessId]);
-                return null;
-            }
-            catch (Exception error) when (error is not (OperationCanceledException or TimeoutException))
-            {
-                return error;
-            }
-        }), "the agent trying to attach");
-        Assert.True(refused is not null, "An agent reached a window whose MCP server is off");
-        WaitFor(() => Errors().Any(l => l.Contains("Enable MCP Server", StringComparison.Ordinal)), "the refused agent told to turn on Enable MCP Server");
+            Task<JsonElement> asking = Task.Run(() => Call(client, "workspace"));
+            AgentAdmissionDialog asked = Admission(window, "the window to ask whether the agent may work there");
+            Assert.Equal(0, window.Agents);
+            Press(asked, AgentAdmissionDialog.Allow);
+            Assert.Equal(window.Folder, Await(asking, "the agent's workspace call").GetProperty("folder").GetString());
+            WaitFor(() => window.AgentStatus == "Agent connected", "the status bar to say an agent is connected");
 
-        // The person turns it on in Settings, under MCP Server, and the agent is in.
-        SettingsDialog dialog = window.ShowSettings();
-        Ui.Settle();
-        dialog.Query = "agents";
-        Ui.Settle();
-        Assert.Equal([SettingsDialog.McpPage], dialog.Pages);
-        Assert.Equal(["Enable MCP Server"], dialog.Shown);
-        dialog.Change(s => s with { McpServer = true });
-        dialog.Ok();
-        Ui.Settle();
-        string socket = Assert.Single(Sockets());
-        Assert.Equal(socket, window.AgentSocket);
-        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
-        Assert.Equal(window.Folder, Await(Task.Run(async () => (await Call(client, "workspace")).GetProperty("folder").GetString()), "the agent's workspace call"));
-        WaitFor(() => window.AgentStatus == "Agent connected", "the status bar to say an agent is connected");
+            // The person turns it on in Settings, under MCP Server: agents come in unasked from then on.
+            SettingsDialog dialog = window.ShowSettings();
+            Ui.Settle();
+            dialog.Query = "agents";
+            Ui.Settle();
+            Assert.Equal([SettingsDialog.McpPage], dialog.Pages);
+            Assert.Equal(["Enable MCP Server"], dialog.Shown);
+            dialog.Change(s => s with { McpServer = true });
+            dialog.Ok();
+            Ui.Settle();
+            second = Await(Task.Run(() => Start(["--mcp-attach", folder])), "a second agent attaching");
+            Assert.Equal(window.Folder, Await(Task.Run(() => Call(second, "workspace")), "the second agent's call").GetProperty("folder").GetString());
+            Assert.Empty(window.OwnedWindows.OfType<AgentAdmissionDialog>());
+            WaitFor(() => window.AgentStatus == "2 agents connected", "the status bar to count both agents");
 
-        // Turned off again, the agent's connection ends and the socket goes.
-        window.ApplySettings(window.Settings with { McpServer = false });
-        WaitFor(() => window.AgentStatus is null, "the status bar to say no agent is on the window");
-        Assert.False(File.Exists(socket), "The window still listens for agents with its MCP server off");
-        // Its connection ends, which its client hears: a call made as it ends can leave the SDK a failed request unawaited.
-        Await(client.Completion, "the shut-out agent's connection to end");
-        Await(Task.Run(async () =>
+            // Turned off again, the agents' connections end; the socket stays, and an agent's next call asks again.
+            window.ApplySettings(window.Settings with { McpServer = false });
+            WaitFor(() => window.AgentStatus is null, "the status bar to say no agent is on the window");
+            Assert.True(File.Exists(socket), "Turning the MCP server off closed the window's socket, where it is to ask instead");
+            Task<CallToolResult> again = Task.Run(() => Result(client, "workspace"));
+            Press(Admission(window, "the window to ask again once agents were shut out"), AgentAdmissionDialog.DontAllow);
+            CallToolResult refused = Await(again, "the call after agents were shut out");
+            Assert.True(refused.IsError == true && Text(refused).Contains("did not let Test Agent work there", StringComparison.Ordinal),
+                $"A call the person did not let in was answered: {Text(refused)}");
+        }
+        finally
         {
-            await client.DisposeAsync();
-            return true;
-        }), "the agent going");
-        window.Close();
+            Gone(client);
+            if (second is not null)
+            {
+                Gone(second);
+            }
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
@@ -1175,8 +1178,6 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         second.Close();
         Assert.False(File.Exists(secondSocket), "A closed window left its socket");
         Assert.True(File.Exists(firstSocket), "Closing one window took another's socket");
-        // From a folder no window has, the agent reaches the window there is.
-        Assert.Equal(first.Folder, AttachedFolder(Path.GetTempPath()));
         first.Close();
     }
 
@@ -1408,7 +1409,11 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
 
     /// <summary>An agent's client to a Passenger this test started, over its standard input and output.</summary>
     private Task<McpClient> Connect(Process passenger, IList<string> arguments) =>
-        Exchange($"Starting passenger {string.Join(' ', arguments)}", TimeSpan.FromMinutes(1), cancel => McpClient.CreateAsync(new PassengerTransport(passenger), cancellationToken: cancel));
+        Exchange($"Starting passenger {string.Join(' ', arguments)}", TimeSpan.FromMinutes(1),
+            cancel => McpClient.CreateAsync(new PassengerTransport(passenger), new McpClientOptions { ClientInfo = Agent }, cancellationToken: cancel));
+
+    /// <summary>The agent as its client names itself, which a window asking to let it in shows the person.</summary>
+    private static readonly Implementation Agent = new() { Name = "test-agent", Title = "Test Agent", Version = "1.0" };
 
     /// <summary>The SDK's stream transport over a Passenger's input and output; the agent going closes the input, as the
     /// SDK's process transport does, and Passenger ends on its own.</summary>
@@ -1513,10 +1518,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         return window.OwnedWindows.OfType<ConfirmDialog>().Single();
     }
 
-    private static string[] Texts(ConfirmDialog dialog) =>
+    private static string[] Texts(Avalonia.Controls.Window dialog) =>
         [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text ?? string.Empty)];
 
-    private static void Press(ConfirmDialog dialog, string button)
+    private static void Press(Avalonia.Controls.Window dialog, string button)
     {
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button)
             .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));

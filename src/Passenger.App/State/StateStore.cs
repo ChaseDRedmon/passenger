@@ -134,8 +134,8 @@ public sealed class StateStore
 }
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
-/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, and its projects
-/// as MSBuild last evaluated and built them at design time.</summary>
+/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, whether agents
+/// are let in unasked, and its projects as MSBuild last evaluated and built them at design time.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -150,6 +150,7 @@ public sealed class ProjectState
         Find = new(Path.Combine(Folder, "find.json"));
         UnitTests = new(Path.Combine(Folder, "unitTests.json"));
         GitBranches = new(Path.Combine(Folder, "gitBranches.json"));
+        Agents = new(Path.Combine(Folder, "agents.json"));
         ProjectModels = new(Path.Combine(Folder, "projectModels.json"));
         ProjectBuilds = new(Path.Combine(Folder, "projectBuilds.json"));
     }
@@ -186,6 +187,9 @@ public sealed class ProjectState
     /// <summary>The branches marked and unmarked as favourites in the Git log, as Rider keeps them for a project.</summary>
     public StateDocument<ToolWindows.GitBranchesState> GitBranches { get; }
 
+    /// <summary>Whether agents are let into the folder's window without asking (Always for this folder).</summary>
+    public StateDocument<Mcp.AgentsState> Agents { get; }
+
     /// <summary>The folder's projects as MSBuild last evaluated them, which it opens on.</summary>
     public StateDocument<ProjectModelCache> ProjectModels { get; }
 
@@ -204,5 +208,6 @@ public sealed class ProjectState
         Find.Flush();
         UnitTests.Flush();
         GitBranches.Flush();
+        Agents.Flush();
     }
 }

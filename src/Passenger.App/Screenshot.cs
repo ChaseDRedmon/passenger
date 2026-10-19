@@ -34,7 +34,8 @@ public static class Screenshot
             .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch))
             .SetupWithoutStarting();
 
-        MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false };
+        // A capture lets in only its own agent: no socket at all without one.
+        MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false, AgentsAllowed = options.Steps.OfType<ScriptStep.Agent>().Any() };
         window.SetRenderScaling(options.Scale);
         bool settled;
         try

@@ -105,6 +105,7 @@ public static class PassengerApp
         {
             StateFolder = like.StateFolder,
             AgentsAllowed = like.AgentsAllowed,
+            AgentAnswerLimit = like.AgentAnswerLimit,
             Autosaves = like.Autosaves,
             Releases = like.Releases,
             DiscordIpc = like.DiscordIpc,

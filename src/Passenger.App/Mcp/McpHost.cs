@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Headless;
@@ -12,10 +11,11 @@ using Passenger.Core;
 namespace Passenger.App.Mcp;
 
 /// <summary>Passenger as a Model Context Protocol server, three ways. <c>passenger --mcp [FOLDER]</c> is an IDE with no
-/// window, its tools on standard input and output, for an agent to start as its own. A window the person has turned
-/// Enable MCP Server on for listens on a socket of its own (<see cref="AgentSocket"/>), and <c>passenger --mcp-attach
-/// [PID]</c> joins an agent's standard input and output to the one over the folder it works in, so the agent drives the
-/// IDE the person is looking at. Each connection is a server of its own over the same tools.</summary>
+/// window, its tools on standard input and output, for an agent to start as its own. Each window of the person's listens
+/// on a socket of its own (<see cref="AgentSocket"/>), and <c>passenger --mcp-attach [PID] [FOLDER]</c> is the agent's
+/// server for its whole session (<see cref="McpProxy"/>), joining the window over the folder it works in at its first call,
+/// so the agent drives the IDE the person is looking at, once Enable MCP Server or the person's Allow lets it in. Each
+/// connection is a server of its own over the same tools.</summary>
 public static class McpHost
 {
     /// <summary>The IDE has no window, only the headless platform's (whose frames a screenshot takes). The process's, as
@@ -26,7 +26,7 @@ public static class McpHost
     /// only its user can reach.</summary>
     public static string SocketFolder => Path.Combine(StateStore.DefaultRoot, "mcp");
 
-    private const string Instructions =
+    internal const string Instructions =
         "Passenger is a C# IDE. These tools act on its open workspace as its user would: open a folder or solution, ask the C# " +
         "language server about code (diagnostics, symbol_info, definition, usages, rename, code_actions), make the refactorings that change " +
         "code across the solution as the IDE's dialogs do (refactor: Change Signature with every call updated, Move, Safe Delete, Extract " +
@@ -36,26 +36,37 @@ public static class McpHost
         "debug_variables), read what Problems and Local History keep (problems, local_history), read and change the settings (settings, " +
         "settings_set), see or drive the window (screenshot, ide_action), and look at and drive the Avalonia or WPF app it runs or debugs as a person tests it (app_screenshot, app_tree, app_click, " +
         "app_type, app_key, app_scroll, app_binding_errors). Lines and columns count from 1; relative paths are the open folder's. Debugging " +
-        "tools wait for the program to stop and say where it is, with the top frame's locals.";
+        "tools wait for the program to stop and say where it is, with the top frame's locals. Attached to a person's Passenger " +
+        "(--mcp-attach), the first call joins the window open on the agent's folder, opening it or starting Passenger when none is; " +
+        "unless the person has turned on Enable MCP Server, the window asks them to let the agent in, and the call waits for their " +
+        "answer. A call they refuse says so, and a later one asks again; the person is also asked before the agent first uses each " +
+        "tool that changes something, and before it opens another folder in their window.";
+
+    /// <summary>The server as an agent sees it, whichever way it is reached.</summary>
+    internal static Implementation ServerInfo => new()
+    {
+        Name = "passenger",
+        Title = "Passenger",
+        Version = Product.Version,
+    };
+
+    /// <summary>The build's tools, PassengerTools' methods that are one: what every connection and <c>--mcp-attach</c>
+    /// list.</summary>
+    internal static IEnumerable<MethodInfo> ToolMethods() =>
+        typeof(PassengerTools).GetMethods(BindingFlags.Public | BindingFlags.Instance).Where(m => m.GetCustomAttribute<McpServerToolAttribute>() is not null);
 
     /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>).</summary>
     public static McpServerOptions Options(MainWindow window, AgentConnection connection)
     {
-        PassengerTools tools = new(window);
+        PassengerTools tools = new(window, connection);
         McpServerPrimitiveCollection<McpServerTool> collection = [];
-        foreach (MethodInfo method in typeof(PassengerTools).GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(m => m.GetCustomAttribute<McpServerToolAttribute>() is not null))
+        foreach (MethodInfo method in ToolMethods())
         {
             collection.Add(new ConnectedTool(McpServerTool.Create(method, tools), window, connection));
         }
         return new McpServerOptions
         {
-            ServerInfo = new Implementation
-            {
-                Name = "passenger",
-                Title = "Passenger",
-                Version = Product.Version,
-            },
+            ServerInfo = ServerInfo,
             ServerInstructions = Instructions,
             ToolCollection = collection,
         };
@@ -79,7 +90,8 @@ public static class McpHost
             .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch))
             .SetupWithoutStarting();
 
-        MainWindow window = new() { Width = 1600, Height = 1000 };
+        // The agent's own IDE, which no other agent joins.
+        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false };
         window.SetRenderScaling(2);
         window.Show();
         window.Start(launch);
@@ -107,47 +119,49 @@ public static class McpHost
         return 0;
     }
 
-    /// <summary><c>--mcp-attach [PID]</c>: joins standard input and output to a window's socket until either side
-    /// closes: the window whose folder holds <paramref name="folder"/> (else the agent's working directory), the
-    /// innermost first, then the newest; only that process's windows when one is named.</summary>
-    public static int Attach(int? processId, string? folder)
+    /// <summary><c>--headless [PATH]</c>: a person's window on the headless platform, which a test run's
+    /// <c>--mcp-attach</c> starts in place of the installed app (<see cref="McpProxy.StartVariable"/>): it listens for
+    /// agents and asks before letting them in, as any window does, until its input ends.</summary>
+    public static int RunHeadless(LaunchOptions launch)
     {
-        RemoveStale();
-        string here = PathNames.Canonical(folder ?? Environment.CurrentDirectory);
-        IEnumerable<string> candidates = (Directory.Exists(SocketFolder) ? Directory.EnumerateFiles(SocketFolder, "*.sock") : [])
-            .Where(path => processId is not int pid || ProcessOf(path) == pid)
-            .OrderByDescending(path => Holding(WindowFolder(path), here))
-            .ThenByDescending(File.GetLastWriteTimeUtc);
-        foreach (string path in candidates)
+        IsHeadless = true;
+        Stream input = Console.OpenStandardInput();
+        Console.SetOut(Console.Error);
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHarfBuzz()
+            .WithInterFont()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch))
+            .SetupWithoutStarting();
+
+        MainWindow window = new() { Width = 1600, Height = 1000 };
+        window.SetRenderScaling(2);
+        window.Show();
+        window.Start(launch);
+
+        using CancellationTokenSource done = new();
+        // Not held: it waits for the end of the input, which its starter's own end closes.
+        _ = Task.Run(() =>
         {
-            Socket socket = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             try
             {
-                socket.Connect(new UnixDomainSocketEndPoint(path));
+                input.CopyTo(Stream.Null);
             }
-            catch (SocketException)
+            finally
             {
-                socket.Dispose();
-                continue;
+                UiThread.Post(done.Cancel);
             }
-            using NetworkStream stream = new(socket, ownsSocket: true);
-            Stream input = Console.OpenStandardInput();
-            Stream output = Console.OpenStandardOutput();
-            // No window in this process: the copies are the whole of it, for as long as either side stays.
-            Task.WaitAny(
-                Task.Run(() => input.CopyTo(stream)),
-                Task.Run(() =>
-                {
-                    stream.CopyTo(output);
-                    output.Flush();
-                }));
-            return 0;
-        }
-        Console.Error.WriteLine(processId is int wanted
-            ? $"passenger: no window of Passenger {wanted} lets agents in; turn on Settings | MCP Server | Enable MCP Server in it"
-            : "passenger: no Passenger window lets agents in; turn on Settings | MCP Server | Enable MCP Server in one, or use --mcp FOLDER for a Passenger of the agent's own");
-        return 1;
+        });
+        Dispatcher.UIThread.MainLoop(done.Token);
+        PassengerApp.Quit();
+        PassengerApp.End();
+        return 0;
     }
+
+    /// <summary><c>--mcp-attach [PID] [FOLDER]</c>: the agent's server, joining the window over its folder at its first
+    /// call (<see cref="McpProxy"/>).</summary>
+    public static int Attach(int? processId, string? folder) => McpProxy.Run(processId, folder);
 
     /// <summary>The file beside a window's socket that names the folder open in it.</summary>
     internal static string FolderFile(string socket) => Path.ChangeExtension(socket, ".folder");
@@ -189,12 +203,12 @@ public static class McpHost
 
     /// <summary>The process a socket is named for: <c>PID-WINDOW.sock</c>, or <c>PID.sock</c> from before windows had
     /// their own.</summary>
-    private static int? ProcessOf(string path) =>
+    internal static int? ProcessOf(string path) =>
         int.TryParse(Path.GetFileNameWithoutExtension(path).Split('-')[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int pid)
             ? pid
             : null;
 
-    private static string? WindowFolder(string socket)
+    internal static string? WindowFolder(string socket)
     {
         try
         {
@@ -207,7 +221,7 @@ public static class McpHost
     }
 
     /// <summary>How closely a window's folder holds a place: its length when it does, so the innermost wins, else -1.</summary>
-    private static int Holding(string? folder, string here)
+    internal static int Holding(string? folder, string here)
     {
         if (folder is null)
         {

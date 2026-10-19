@@ -382,8 +382,9 @@ public sealed partial class SettingsDialog : Window
         // What turning it on allows is said under it, as Rider's consent to its MCP server says.
         Add(McpPage, "Enable MCP Server", Check(Working.McpServer, v => Change(s => s with { McpServer = v })),
             "mcp model context protocol agents ai claude codex attach socket",
-            "Agents started with passenger --mcp-attach can use this window: read and change files, build, run and debug, use Git, "
-            + "NuGet and the terminal. Each agent asks before its first use of a tool that changes something.");
+            "Agents started with passenger --mcp-attach can use this window without asking to: read and change files, build, run and "
+            + "debug, use Git, NuGet and the terminal. Off, the window asks before letting each agent in. Either way, each agent asks "
+            + "before its first use of a tool that changes something.");
 
         // The JetBrains Discord plugins' options at their defaults (AppSettings says whose), changed only while it is on.
         ComboBox shows = new() { ItemsSource = DiscordChoices, SelectedIndex = (int)Working.DiscordShows, Classes = { "form" }, IsEnabled = Working.ShowInDiscord };

@@ -329,9 +329,13 @@
                     <h3>Your window, or one of its own</h3>
                     <p>With <code>--mcp-attach</code>, the agent joins the Passenger window you have open over the folder it
                         works in. Its breakpoints and stops show in your editor, its runs in your Run window, and the status bar
-                        names what it is doing. A window lets agents in only once you turn on Settings &rsaquo; MCP Server
-                        &rsaquo; Enable MCP Server, through a socket in your own user's folder, and the first time an agent uses a
-                        tool that changes anything, Passenger asks you.</p>
+                        names what it is doing. Set it up before Passenger is running: the agent has its tools from the start,
+                        and its first call opens the folder in Passenger, starting it if need be, never a window on another
+                        folder.</p>
+                    <p>The window asks before it lets an agent in, through a socket in your own user's folder: Allow, Don't
+                        allow, or Always for this folder. Turn on Settings &rsaquo; MCP Server &rsaquo; Enable MCP Server and
+                        it no longer asks. Either way, the first time an agent uses a tool that changes anything, or opens
+                        another folder in your window, Passenger asks you.</p>
                     <p>With <code>--mcp</code> and a folder or solution, the agent starts a Passenger of its own with no window,
                         for work it does alone.</p>
                     <p>The agent starts Passenger from where it is installed:</p>
@@ -359,12 +363,13 @@
                     </details>
                     <details class="client">
                         <summary>Claude Desktop</summary>
-                        <p>In Settings &rsaquo; Developer, choose Edit Config, add Passenger, then restart Claude:</p>
+                        <p>In Settings &rsaquo; Developer, choose Edit Config, add Passenger, then restart Claude. Claude
+                            Desktop starts it in no folder of yours, so name the one to work in after <code>--mcp-attach</code>:</p>
 <pre>{
   "mcpServers": {
     "passenger": {
       "command": "/Applications/Passenger.app/Contents/MacOS/Passenger",
-      "args": ["--mcp-attach"]
+      "args": ["--mcp-attach", "/Users/you/src/app"]
     }
   }
 }</pre>

@@ -31,6 +31,7 @@ internal static class Program
             _ = Updates.ReleaseFeed.Default;
             _ = Discord.DiscordIpc.Default;
             Web.JsonSchemas.CheckVariable();
+            Mcp.McpProxy.CheckVariable();
             _ = MainWindow.WatchSaysLater;
         }
         catch (FormatException error)
@@ -47,6 +48,10 @@ internal static class Program
                 return Mcp.McpHost.Attach(options.AttachTo, options.Folder);
             case McpMode.Stdio:
                 return Mcp.McpHost.RunStdio(options);
+        }
+        if (options.Headless)
+        {
+            return Mcp.McpHost.RunHeadless(options);
         }
         if (options.Screenshot is { } screenshot)
         {

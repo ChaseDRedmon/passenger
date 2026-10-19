@@ -12,8 +12,9 @@ namespace Passenger.Core;
 /// its answer (<c>git show</c> of a file the commit lacks). None outlives the IDE, however the IDE ends
 /// (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's,
 /// ended by its pseudo-terminal's hangup), a program run in the terminal (Porta.Pty's, then taken on: <see cref="Adopt"/>),
-/// vstest.console (VSTest's, which ends with the process that started it) and on Windows Velopack's Update.exe, which
-/// installs an update once Passenger has ended and so must outlive it.</summary>
+/// vstest.console (VSTest's, which ends with the process that started it), on Windows Velopack's Update.exe, which
+/// installs an update once Passenger has ended and so must outlive it, and the person's Passenger that an agent's
+/// <c>--mcp-attach</c> starts (<see cref="StartApart"/>).</summary>
 public static class ChildProcesses
 {
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
@@ -272,6 +273,28 @@ public static class ChildProcesses
         {
             // No file manager to ask.
         }
+    }
+
+    /// <summary>Starts a program of the person's own that outlives whatever started it, as the file manager <see
+    /// cref="Reveal"/> opens does: the person's Passenger, which an agent's <c>--mcp-attach</c> starts on its folder when
+    /// none is running and the build is in no app bundle LaunchServices could open. A session of its own (never on the
+    /// watchdog's list, nor in a job), its input and output none of the starter's, which is an agent's protocol.</summary>
+    public static void StartApart(ProcessStartInfo start)
+    {
+        start.UseShellExecute = false;
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        if (!OperatingSystem.IsWindows())
+        {
+            start.StartDetached = true;
+        }
+        using Process process = Process.Start(start) ?? throw new InvalidOperationException($"{start.FileName} did not start");
+        Started?.Invoke(null, new ChildStart(process.Id, Display(start), start.WorkingDirectory));
+        // What it writes is nobody's: its pipes closed here, its writes to them fail, which .NET's console passes over.
+        process.StandardInput.Close();
+        process.StandardOutput.Close();
+        process.StandardError.Close();
     }
 
     /// <summary>A command as a person would type it, each word quoted that needs to be: for the Run window and the log.</summary>

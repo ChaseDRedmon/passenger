@@ -10,9 +10,10 @@ namespace Passenger.App;
 /// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T] [--look L] [--scheme S]</c>, PATH a folder, a file, or a
 /// solution or project opened as the workspace; a screenshot with the steps before it; or the Model Context Protocol
 /// server: <c>--mcp [PATH]</c> (an IDE with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c>
-/// (a window's, the one over the folder first), and <c>--no-mcp</c> (a window that never lets agents in; a screenshot's
-/// lets in only its own <c>--agent</c>). A flag it does not know, a value it cannot read or out of range, or one the mode
-/// does not take is fatal, never ignored.</summary>
+/// (the agent's server, joining the window over the folder at its first call), and <c>--no-mcp</c> (a window that never
+/// lets agents in; a screenshot's lets in only its own <c>--agent</c>); <c>--headless</c> is a test run's person's window
+/// with nobody at it. A flag it does not know, a value it cannot read or out of range, or one the mode does not take is
+/// fatal, never ignored.</summary>
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
@@ -26,6 +27,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     private const double LargestSide = 16384;
 
     public McpMode Mcp { get; init; }
+
+    /// <summary><c>--headless</c>: a person's window on the headless platform, which a test run's <c>--mcp-attach</c>
+    /// starts in place of the installed app (<see cref="Mcp.McpProxy.StartVariable"/>).</summary>
+    public bool Headless { get; init; }
 
     /// <summary>The process <c>--mcp-attach</c> names, or null for any Passenger's windows.</summary>
     public int? AttachTo { get; init; }
@@ -70,6 +75,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         McpMode mcp = McpMode.None;
         int? attachTo = null;
         bool listen = true;
+        bool headless = false;
         for (int i = 0; i < args.Count; i++)
         {
             string flag = args[i];
@@ -101,6 +107,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                             ? pid
                             : throw new FormatException($"--mcp-attach takes the process id of a running Passenger, not '{args[i]}'");
                     }
+                    break;
+                case "--headless":
+                    headless = true;
                     break;
                 case "--no-mcp":
                     listen = false;
@@ -212,6 +221,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
 
         CheckMode(given, mcp, shot is not null, listen);
+        if (headless && (mcp != McpMode.None || shot is not null || !listen))
+        {
+            throw new FormatException("--headless is a person's window with nobody at it, a test run's: it takes a path, files and a caret, not --mcp, --mcp-attach, --screenshot or --no-mcp");
+        }
         (string? folder, string? workspace, List<string> files) = Opened(path, named);
         if (mcp == McpMode.Attach && files.Count > 0)
         {
@@ -222,7 +235,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
         ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop) { WindowButtons = windowButtons }, cropText, points);
-        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen, Look = look, Scheme = scheme };
+        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen, Headless = headless, Look = look, Scheme = scheme };
     }
 
     /// <summary>Refuses the first flag the chosen mode does not take: a window takes all but a screenshot's, a screenshot

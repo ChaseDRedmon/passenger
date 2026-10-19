@@ -21,8 +21,10 @@ namespace Passenger.App.Mcp;
 /// whether it is Destructive: a person's window asks before an agent first uses one that is not declared harmless.
 /// What a folder has and runs a tool asks of the window's session (<see cref="ProjectSession"/>) as the call finds it, and
 /// what it starts it starts through the session's controllers; the window itself only for what is the window's: opening
-/// a folder in it, its editors, its terminal, its actions and what it draws. No tool reads the status bar.</summary>
-public sealed partial class PassengerTools(MainWindow window)
+/// a folder in it, its editors, its terminal, its actions and what it draws. No tool reads the status bar.
+/// <paramref name="connection"/> is the agent's, through which a person's window asks before the agent replaces its folder;
+/// none is an agent's own IDE's.</summary>
+public sealed partial class PassengerTools(MainWindow window, AgentConnection? connection = null)
 {
     private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
 
@@ -43,13 +45,22 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "open", Title = "Open a folder, solution, project or file", Destructive = false), Description(
         "Opens a folder, solution or project (a directory, .sln, .slnx or .csproj) as the workspace, or a file in the editor " +
-        "(opening its folder first if none is open). Starts the C# language server for the workspace. Returns the workspace.")]
+        "(opening its folder first if none is open). Starts the C# language server for the workspace. On a person's window, " +
+        "opening another folder in place of theirs is asked of them first. Returns the workspace.")]
     public Task<Workspace> Open([Description("Absolute path, or relative to the open folder")] string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         string full = Resolve(path);
         // Opened once what another folder ran has ended.
         if (Directory.Exists(full) || (File.Exists(full) && WorkspaceModel.Opens(full)))
         {
+            string opening = Directory.Exists(full) ? PathNames.Canonical(full) : Path.GetDirectoryName(PathNames.Canonical(full))!;
+            // The person's folder is theirs: an agent on their window replaces it only with their leave.
+            if (connection is { Attached: true } && !window.AgentsUnattended && Session.Folder is { } open && !PathNames.Same(open, opening)
+                && !await window.AllowAgentOpenAsync(connection.Agent, full, open, cancel))
+            {
+                cancel.ThrowIfCancellationRequested();
+                throw new InvalidOperationException($"The person at this Passenger window did not let {connection.Agent} open {full} in place of {open}. Ask them, or work in {open}.");
+            }
             await window.OpenFolder(full).WaitAsync(cancel);
         }
         else if (File.Exists(full))

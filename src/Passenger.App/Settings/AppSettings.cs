@@ -224,9 +224,9 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <c>$schema</c> on the web is downloaded to check and complete it. Those Passenger carries never are.</summary>
     public bool DownloadJsonSchemas { get; init; } = true;
 
-    /// <summary>Rider's Enable MCP Server: agents reach the window through its socket (<c>passenger --mcp-attach</c>).
-    /// Off until the person turns it on, since any program running as them could then act with the IDE's
-    /// permissions.</summary>
+    /// <summary>Rider's Enable MCP Server: agents reaching the window through its socket (<c>passenger --mcp-attach</c>)
+    /// are let in without asking. Off until the person turns it on, since any program running as them could then act with
+    /// the IDE's permissions; off, the window asks the person before each agent's first call goes on.</summary>
     public bool McpServer { get; init; }
 
     /// <summary>Show activity in Discord: the Discord app on this computer shows "Playing Passenger" with Passenger's icon

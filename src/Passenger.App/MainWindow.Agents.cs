@@ -2,25 +2,40 @@ using System.Net.Sockets;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Passenger.App.Mcp;
+using Passenger.Core;
 
 namespace Passenger.App;
 
-/// <summary>Agents in the window: Rider's Enable MCP Server, which opens the window's own socket to them (and closing it
-/// shuts them out), the person's leave before an agent's first use of a tool that changes something, and the status
-/// bar's word on who is on the window and what they run there.</summary>
+/// <summary>Agents in the window: its own socket, open to them from its start (<c>--no-mcp</c> aside), on which an agent
+/// works once let in: by Rider's Enable MCP Server (turning it off shuts them out), by the folder's Always, or by the
+/// person's Allow when its first call comes; the person's leave before an agent's first use of a tool that changes
+/// something, and before it opens another folder here; and the status bar's word on who is on the window and what they
+/// run there.</summary>
 public partial class MainWindow
 {
     private readonly List<string> agentWork = [];
     private Mcp.AgentSocket? agentSocket;
     private int agents;
 
-    /// <summary>Whether this window may let agents in at all, when its setting says so; <c>--no-mcp</c> says never.</summary>
+    /// <summary>The folders this window was told to let agents into always, kept here too for a window that keeps no
+    /// state of its folders.</summary>
+    private readonly HashSet<string> alwaysLetIn = new(StringComparer.FromComparison(PathNames.Comparison));
+
+    /// <summary>Whether Enable MCP Server was on when last followed, so turning it off shuts the agents out.</summary>
+    private bool agentsLetIn;
+
+    /// <summary>Whether this window may let agents in at all; <c>--no-mcp</c>, <c>--mcp</c>'s own window and a screenshot's
+    /// without an agent say never.</summary>
     public bool AgentsAllowed { get; init; } = true;
 
-    /// <summary>The socket agents reach this window through while the person lets them, else null.</summary>
+    /// <summary>How long an agent's call waits for the person to say whether it may work in the window.</summary>
+    public TimeSpan AgentAnswerLimit { get; init; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>The socket agents reach this window through, else null.</summary>
     public string? AgentSocket => agentSocket?.Path;
 
-    /// <summary>Agents connected to the window's socket.</summary>
+    /// <summary>Agents let into the window and still connected.</summary>
     public int Agents
     {
         get => agents;
@@ -34,15 +49,30 @@ public partial class MainWindow
     /// <summary>What the status bar says of agents on the window, or null while it says nothing.</summary>
     public string? AgentStatus => AgentText.IsVisible ? AgentText.Text : null;
 
-    /// <summary>Whether nobody is at the window to ask: a screenshot's that runs an agent (<c>--agent</c>), which listens
-    /// whatever Enable MCP Server says and lets its agent use every tool. Set before its socket opens.</summary>
+    /// <summary>Whether nobody is at the window to ask: a screenshot's that runs an agent (<c>--agent</c>), which lets in
+    /// its agent unasked and lets it use every tool. Set before its agent starts.</summary>
     public bool AgentsUnattended { get; private set; }
 
-    private void AddAgents() => Closed += (_, _) =>
+    /// <summary>Whether an agent is let in without asking: Enable MCP Server, the folder's Always, or nobody at the window.</summary>
+    public bool LetsAgentsIn => AgentsUnattended || settings.McpServer || AlwaysLetsAgentsIn;
+
+    /// <summary>Whether the open folder lets agents in always (Always for this folder).</summary>
+    public bool AlwaysLetsAgentsIn => Folder is { } folder && (alwaysLetIn.Contains(folder) || session.State?.Agents.Value.AlwaysAllowed == true);
+
+    private void AddAgents()
     {
-        AgentsUnattended = false;
-        ListenForAgents(false);
-    };
+        Opened += (_, _) => ListenForAgents(settings.McpServer);
+        Closed += (_, _) =>
+        {
+            AgentsUnattended = false;
+            agentSocket?.Dispose();
+            agentSocket = null;
+            if (!PassengerApp.Windows.Any(w => w != this && w.AgentSocket is not null))
+            {
+                Mcp.AppSocket.Close();
+            }
+        };
+    }
 
     /// <summary>A screenshot's agent (<c>--agent</c>): the window's socket opened to it, and its command line run in a tab
     /// of the Terminal window, which it joins the window from as any agent does, with <c>$PASSENGER --mcp-attach
@@ -61,27 +91,69 @@ public partial class MainWindow
         return ShowInTerminal("Agent", start);
     }
 
-    /// <summary>Opens the window's socket to agents, or closes it and ends their connections.</summary>
-    private void ListenForAgents(bool on)
+    /// <summary>Opens the window's socket to agents once it is shown, with the process's for agents asking it to open a
+    /// folder; Enable MCP Server turned off ends the connections of the agents on it, who are asked at their next call.</summary>
+    private void ListenForAgents(bool serverOn)
     {
-        on |= AgentsUnattended;
-        if (on && AgentsAllowed && agentSocket is null)
+        bool wasOn = agentsLetIn;
+        agentsLetIn = serverOn;
+        if (AgentsAllowed && agentSocket is null && IsVisible)
         {
             try
             {
                 agentSocket = Mcp.AgentSocket.Open(this);
                 agentSocket.Describe(Folder);
+                Mcp.AppSocket.Listen();
             }
             catch (Exception error) when (error is IOException or SocketException or ArgumentException or UnauthorizedAccessException)
             {
                 status.Text = $"Agents cannot reach this window: {error.Message}";
             }
         }
-        else if (!(on && AgentsAllowed) && agentSocket is not null)
+        if (wasOn && !serverOn && !AgentsUnattended)
         {
-            agentSocket.Dispose();
-            agentSocket = null;
+            agentSocket?.ShutOut();
         }
+    }
+
+    /// <summary>Asks the person whether an agent may work in the window, its call waiting: Allow, with Always for this
+    /// folder kept with the folder, Don't allow, or no answer within <see cref="AgentAnswerLimit"/> or before the agent
+    /// goes, which takes the question away.</summary>
+    internal async Task<Admission> AskToLetInAsync(string agent, CancellationToken gone)
+    {
+        UiThread.Check();
+        string? folder = Folder;
+        AgentAdmissionDialog dialog = new(agent, folder);
+        IdeErrors.Write($"Agents: {agent} asks to work in the window on {folder ?? "no folder"}");
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(gone);
+        limit.CancelAfter(AgentAnswerLimit);
+        using CancellationTokenRegistration closing = limit.Token.Register(() => UiThread.Post(() => dialog.Close(Admission.Unanswered)));
+        // The agent's call waits on the person, who may be in another window or program.
+        PassengerApp.BringForward(this);
+        Admission said = await dialog.ShowDialog<Admission?>(this) ?? Admission.NotAllowed;
+        if (said == Admission.Allowed && dialog.Always && folder is not null)
+        {
+            alwaysLetIn.Add(folder);
+            session.State?.Agents.Set(new AgentsState { AlwaysAllowed = true });
+        }
+        IdeErrors.Write($"Agents: {agent} {(said switch
+        {
+            Admission.Allowed => dialog.Always ? "let in always" : "let in",
+            Admission.NotAllowed => "not let in",
+            _ => "not answered",
+        })} on {folder ?? "no folder"}");
+        return said;
+    }
+
+    /// <summary>Asks the person whether an agent may open another folder or solution in the window, replacing the one
+    /// open; an agent that gives up on the call takes the question away unanswered.</summary>
+    internal async Task<bool> AllowAgentOpenAsync(string agent, string opening, string replacing, CancellationToken cancel)
+    {
+        UiThread.Check();
+        string name = Path.GetFileName(opening.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        ConfirmDialog dialog = new($"Open {name} here?", $"{agent} wants to open {opening} here, replacing {replacing}.", AgentAdmissionDialog.Allow, AgentAdmissionDialog.DontAllow);
+        using CancellationTokenRegistration gone = cancel.Register(() => UiThread.Post(() => dialog.Close(false)));
+        return await dialog.ShowDialog<bool>(this);
     }
 
     /// <summary>Asks the person whether an agent may use a tool that changes something, showing what it asked with; an
