@@ -25,6 +25,9 @@ public sealed partial class PassengerTools(MainWindow window)
 {
     private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
 
+    /// <summary>How long a file's markers are waited for: its checks are quick once its project is read.</summary>
+    private static readonly TimeSpan MarkersLimit = TimeSpan.FromSeconds(30);
+
     /// <summary>The folder open in the window as this call finds it: an agent's Open makes another.</summary>
     private ProjectSession Session => window.Session;
 
@@ -108,9 +111,21 @@ public sealed partial class PassengerTools(MainWindow window)
     // Code: the language server's
 
     [McpServerTool(Name = "diagnostics", Title = "Errors and warnings in a file", ReadOnly = true), Description(
-        "The C# language server's errors, warnings and messages for a file, as the editor marks them, fresh.")]
+        "The C# language server's errors, warnings and messages for a file, as the editor marks them, fresh; for any other " +
+        "file (XAML, a project file, JSON), the errors and warnings the editor marks once its checks have run.")]
     public Task<IReadOnlyList<Finding>> Diagnostics(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (Document(path) is { Language.Name: not ("C#" or "Razor") } marked)
+        {
+            // Its checks run as background work after it opens or changes, its markers set as they end.
+            await Until(() => BackgroundWork.Pending == 0, MarkersLimit, cancel);
+            TextSnapshot text = marked.Text.Snapshot;
+            return (IReadOnlyList<Finding>)[.. marked.Markers.Where(m => m.Kind is MarkerKind.Error or MarkerKind.Warning).Select(m =>
+            {
+                TextPosition at = text.GetPosition(Math.Min(m.Range.Start, text.Length));
+                return new Finding(m.Kind == MarkerKind.Error ? "error" : "warning", null, m.Message, Relative(marked.Path), at.Line + 1, at.Column + 1);
+            })];
+        }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync();
         return (IReadOnlyList<Finding>)[.. found.Select(d => new Finding(
@@ -908,6 +923,11 @@ public sealed partial class PassengerTools(MainWindow window)
         if (Session.CSharp is null)
         {
             throw new InvalidOperationException("No C# language server runs for this folder");
+        }
+        // The server is never given another language's file, so waiting for it to load one would wait out the limit.
+        if (document.Language.Name is not ("C#" or "Razor"))
+        {
+            throw new InvalidOperationException($"{Path.GetFileName(document.Path)} is a {document.Language.Name} file: the C# language server answers for C# and Razor files");
         }
         // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
         await Until(() => Session.CSharp is not { } csharp || csharp.IsReady && csharp.For(document)?.Lsp is not null, ServerLimit, cancel);

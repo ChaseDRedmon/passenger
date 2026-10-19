@@ -118,6 +118,19 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         CallToolResult refused = await Result(client, "debug_continue");
         Assert.True(refused.IsError);
         Assert.Contains("debug_start starts it", Assert.IsType<TextContentBlock>(Assert.Single(refused.Content)).Text, StringComparison.Ordinal);
+
+        // A project file's problems are what the editor marks, at once: the C# server never takes the file, so a wait for
+        // it to would have run out its two minutes.
+        await Call(client, "open_file", new() { ["path"] = "Sum.csproj", ["line"] = 7, ["column"] = 1 });
+        await Call(client, "type", new() { ["text"] = "<Import Project=\"Missing.props\" />" });
+        Stopwatch asked = Stopwatch.StartNew();
+        JsonElement missing = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = "Sum.csproj" })).EnumerateArray());
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(60), $"The project file's diagnostics took {asked.Elapsed}");
+        Assert.Equal(("error", 7), (missing.GetProperty("severity").GetString(), missing.GetProperty("line").GetInt32()));
+        Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
+        CallToolResult notCode = await Result(client, "symbol_info", new() { ["path"] = "Sum.csproj", ["line"] = 1, ["column"] = 2 });
+        Assert.True(notCode.IsError == true && Text(notCode).Contains("answers for C# and Razor files", StringComparison.Ordinal),
+            $"symbol_info on a project file did not say at once that it is not C#: {Text(notCode)}");
     }
 
     [Fact]
