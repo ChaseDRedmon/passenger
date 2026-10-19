@@ -8,6 +8,10 @@ namespace Passenger.App.Debugging;
 /// result. One with a reference opens into its children, asked of the debugger the first time.</summary>
 public sealed class VariableNode(string name, string value, string? type, int reference, int depth, VariableRole role) : Observable
 {
+    /// <summary>The most of a value its row, the row's tooltip and a hover show, as Rider cuts a long one: a string of
+    /// megabytes laid out whole held the window for seconds at every stop. Copy Value and Set Value take all of it.</summary>
+    public const int Longest = 1000;
+
     /// <summary>The names the debugger gives its ranges of elements, <see cref="IsRange"/>.</summary>
     private static readonly System.Text.RegularExpressions.Regex RangeName = new(@"^\[(\d+, )*(\d+\.\.\d+|\.\.\.)\]$");
 
@@ -79,6 +83,12 @@ public sealed class VariableNode(string name, string value, string? type, int re
 
     public string Name { get; } = name;
     public string Value { get; } = value;
+
+    /// <summary>The value as its row shows it: cut past <see cref="Longest"/>.</summary>
+    public string Shown => Cut(Value);
+
+    /// <summary>A value as the debugger's rows and hovers show it, cut past <see cref="Longest"/>.</summary>
+    public static string Cut(string value) => value.Length <= Longest ? value : value[..(Longest - 1)] + "…";
     public string? Type { get; } = type;
     public int Reference { get; } = reference;
     public int Depth { get; } = depth;

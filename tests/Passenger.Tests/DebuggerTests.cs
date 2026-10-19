@@ -783,6 +783,42 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     private static (int Line, string Text)? Thrown(CodeEditor editor) =>
         editor.LineAnnotations.FirstOrDefault(a => a.Kind == LineAnnotationKind.Exception) is { Text: not null } thrown ? (thrown.Line, thrown.Text) : null;
 
+    /// <summary>A stop where a local holds a string of megabytes shows the start of it in its row and in a hover, as Rider
+    /// cuts a long value: laid out whole, a 4 MB string held the window for over five seconds at every stop, the UI thread
+    /// allocating 460 MB to show its row. Copy Value still has all of it.</summary>
+    [AvaloniaFact]
+    public void A_string_of_megabytes_shows_its_start_in_variables_and_a_hover_without_holding_the_window()
+    {
+        Write("Program.cs", "string big = new string('x', 4_000_000);\nint n = big.Length;\nConsole.WriteLine(n);\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(2, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the stop");
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        WaitDebugging(window, () => Row(window, "big") is not null, "the string's row");
+        Ui.Settle();
+        long shown = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(shown < 16 << 20, $"Showing the stop's values allocated {shown >> 20} MB on the UI thread: the 8 MB string was laid out whole");
+        Assert.Equal(4_000_002, Row(window, "big")!.Value.Length);
+
+        Point at = editor.TranslatePoint(editor.PointOf(editor.Document.Snapshot.ToString().IndexOf("big.Length", StringComparison.Ordinal) + 1)
+            + new Point(1, editor.LineHeight / 2), window)!.Value;
+        before = GC.GetAllocatedBytesForCurrentThread();
+        window.MouseMove(at, RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the hover card on big");
+        Ui.Settle();
+        long hovered = GC.GetAllocatedBytesForCurrentThread() - before;
+        string card = window.Assist.HoverText!;
+        Assert.True(card.StartsWith("big = {string} \"xxx", StringComparison.Ordinal) && card.Length < 2000,
+            $"The hover card says {card.Length} characters, beginning \"{card[..Math.Min(40, card.Length)]}\"");
+        Assert.True(hovered < 16 << 20, $"Showing the hover card allocated {hovered >> 20} MB on the UI thread: the string was laid out whole");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_value_set_in_the_variables_view_is_the_one_the_program_goes_on_with()
     {

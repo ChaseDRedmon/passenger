@@ -528,12 +528,12 @@ public sealed class DebugView : DockPanel
         icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(iconKey));
         TextBlock type = new() { Text = node.TypeLabel, VerticalAlignment = VerticalAlignment.Center };
         type.Bind(TextBlock.ForegroundProperty, type.GetResourceObservable("Passenger.TextMuted"));
-        TextBlock value = new() { Text = node.Value, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };
+        TextBlock value = new() { Text = node.Shown, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };
         if (node.Role == VariableRole.Error)
         {
             value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Error"));
         }
-        ToolTip.SetTip(value, node.Value);
+        ToolTip.SetTip(value, node.Shown);
         TextBox editor = new() { Classes = { "search" }, MinHeight = 22, Height = 22, MinWidth = 240, Padding = new Thickness(6, 0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
         editor.AddHandler(KeyDownEvent, (_, e) =>
         {
