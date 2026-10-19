@@ -71,7 +71,9 @@ Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources.
 `Directory.Packages.props` (Roslyn's server's too, as `RoslynServerVersion`); shared properties only in
 `Directory.Build.props`. Packages come from nuget.org alone, as nuget.org signed them (`nuget.config`), at what each
 project's `packages.lock.json` pins: a restore that adds or changes a package rewrites the lock file, committed with
-the change, and CI restores in locked mode. Every `just` recipe and CI set `AVALONIA_TELEMETRY_OPTOUT=1`, which
+the change, and CI restores in locked mode. Every lock file holds all six published systems, even a project carried
+only on Windows (`Passenger.Inspector.Wpf`, `Passenger.WpfPreview`): a publish's RuntimeIdentifier reaches the restore
+of every project it references (`GlobalPropertiesToRemove` keeps it out of the build only). Every `just` recipe and CI set `AVALONIA_TELEMETRY_OPTOUT=1`, which
 Avalonia's build task reads only from the environment. `Directory.Build.targets` gives every
 `ProjectReference` its full path, because the .NET 11 SDK opens a solution reached through a symbolic link (anywhere
 under macOS's `/tmp`) by the link while MSBuild resolves references from the real folder, which built each referenced
@@ -349,7 +351,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   change, raising `Changed`. `TemplateFamilies` groups them as Rider's New Solution does: a template group is a Type
   that joins the first of Rider's project types its classifications name (`Kinds`, Rider's names and order), the rest
   grouped by their short name's family; `NewProjectDialog` lists families under a search, with a Type chooser whose
-  choice sets the options below it, values the person set kept where the new Type has them.
+  choice sets the options below it, values the person set kept where the new Type has them. `TemplateFamilies.RiderOrder`
+  is Rider's sort, by order then name (Console 10 … Unit Test 70; Aspire, Azure Functions and MAUI 90); MAUI is a family
+  only where dotnet new lists its workload's templates (GitHub's Windows runner has them), so TemplateFamiliesTests ask
+  `dotnet new list --tag` in the run's home what the machine has.
   `TemplatePacks` is the template packages New Project offers when dotnet new lacks them (Avalonia's, and Rider's
   Aspire, Azure Functions and AI Extensions), their kinds kept with the version they were taken from; choosing one
   offers Install (`dotnet new install` through a `ProcessRunner` into the dialog's console), then the templates are
@@ -653,7 +658,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (arm64)", the check that stands for it). It is called by `ci.yml` (each push and pull request, with the packages'
   and notices' jobs) and by `release.yml`, which a pushed `vX.Y.Z` tag runs: the tests, then both disk images and both
   Windows installers at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
-  names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing.
+  names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing. ci.yml
+  makes its two disk images one after the other (`max-parallel: 1`), so they and the four macOS shards fit GitHub's
+  five macOS runners at once.
 
 ## Rules
 
