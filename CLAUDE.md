@@ -188,9 +188,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
   `roslyn/`, less the four Visual Studio assemblies it never loads (`RoslynServerLeftOut`; the build fails if the
-  package stops carrying one). `RoslynServerVersion` is held at 5.11.0, the last stable build: every later one starts
-  Visual Studio Telemetry's session even with telemetry off, loading the left-out RemoteControl (moving needs the
-  owner's word on carrying it); after lowering it, delete `artifacts/bin/*/debug/roslyn*`, since the copy skips older
+  package stops carrying one). `RoslynServerVersion` is the latest stable build (the owner's rule), 5.11.0: every later one
+  so far, all prereleases, starts Visual Studio Telemetry's session even with telemetry off, loading the left-out
+  RemoteControl (dotnet/roslyn#86122; moving past it is #234); after lowering it, delete `artifacts/bin/*/debug/roslyn*`, since the copy skips older
   files and leaves a mixed server that won't start. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
   and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
   `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project. `RoslynExtension` is
@@ -733,8 +733,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   its PackageVersion, as one command. Installed MSBuild files (the SDK's, packages') open read-only
   (`MSBuildFiles.IsInstalled`). `CodeAssist.MSBuild.cs` connects it to completion, the hover card and Go to Declaration.
 - `MainWindow.TitleBar.cs` and `TitleBars`: the toolbar is the main window's title bar, as Rider's header is: always
-  on Windows and macOS, on Linux by Settings' Merge main menu with window title (off by default while it rests on
-  Avalonia's experimental X11 decorations; greyed under WSL, tiling window managers or an unnamed desktop). Windows
+  on Windows and macOS, on Linux by Settings' Merge main menu with window title (on at first, as checked on a real GNOME
+  desktop; greyed under WSL, tiling window managers or an unnamed desktop). Windows
   learns the bar's parts from Avalonia 12's `WindowDecorationProperties.ElementRole` (TitleBar on the toolbar, User on
   what is on it, Minimize/Maximize/CloseButton on its window buttons), so Windows itself moves, snaps and maximizes the
   window and shows snap layouts: anything new on the bar goes inside `ToolbarStart` or `ToolbarEnd`, or Windows takes a
