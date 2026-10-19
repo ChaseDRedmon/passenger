@@ -221,7 +221,7 @@ public sealed class EslintService : IAsyncDisposable
         finally
         {
             starting = null;
-            Dispatcher.UIThread.Post(BackgroundWork.End);
+            Dispatcher.UIThread.Post(() => BackgroundWork.End());
         }
     }
 

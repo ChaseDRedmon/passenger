@@ -480,7 +480,7 @@ public sealed class WebLanguages : IAsyncDisposable
         finally
         {
             server.Starting = null;
-            Dispatcher.UIThread.Post(BackgroundWork.End);
+            Dispatcher.UIThread.Post(() => BackgroundWork.End());
         }
     }
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
+using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App.Run;
@@ -176,6 +177,12 @@ public sealed class ProcessRunner : IDisposable
             console.Input = ProgramInput.Of(started.StandardInput);
         }
         ConsoleSink sink = console.Sink;
+        Landing landing = new();
+        started.Exited += (_, _) => landing.Ended();
+        if (started.HasExited)
+        {
+            landing.Ended();
+        }
         Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output), Pump(started.StandardError, sink, ConsoleStream.Error));
         _ = outputs.ContinueWith(_ =>
         {
@@ -183,20 +190,60 @@ public sealed class ProcessRunner : IDisposable
             int code = started.ExitCode;
             UiThread.Post(() =>
             {
-                console.Input = null;
-                console.Flush();
-                if (partialLine.Length > 0)
+                try
                 {
-                    Line?.Invoke(this, partialLine.ToString());
-                    partialLine.Clear();
+                    console.Input = null;
+                    console.Flush();
+                    if (partialLine.Length > 0)
+                    {
+                        Line?.Invoke(this, partialLine.ToString());
+                        partialLine.Clear();
+                    }
+                    console.Append($"\nProcess finished with exit code {code}.\n");
+                    running = false;
+                    ending.TrySetResult(code);
+                    Exited?.Invoke(this, code);
                 }
-                console.Append($"\nProcess finished with exit code {code}.\n");
-                running = false;
-                ending.TrySetResult(code);
-                Exited?.Invoke(this, code);
+                finally
+                {
+                    landing.Landed();
+                }
             });
         }, TaskScheduler.Default);
         return null;
+    }
+
+    /// <summary>A program's end until the console has all it wrote and says it ended: background work, so a screenshot or
+    /// a test finds the last of its output and its exit code there. A program still running holds nothing, since it may
+    /// never end; what it writes meanwhile is the sink's to hold as it crosses.</summary>
+    private sealed class Landing
+    {
+        private readonly object gate = new();
+        private IDisposable? held;
+        private bool landed;
+
+        /// <summary>The program has ended (its process's Exited, on any thread): held until <see cref="Landed"/>.</summary>
+        public void Ended()
+        {
+            lock (gate)
+            {
+                if (!landed && held is null)
+                {
+                    held = BackgroundWork.Scope();
+                }
+            }
+        }
+
+        /// <summary>The console says it ended; an end heard only after this holds nothing.</summary>
+        public void Landed()
+        {
+            lock (gate)
+            {
+                landed = true;
+                held?.Dispose();
+                held = null;
+            }
+        }
     }
 
     /// <summary>Ends the process and all it started, and on macOS and Linux what it left holding its output after it ended,

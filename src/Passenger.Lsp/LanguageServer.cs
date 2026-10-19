@@ -43,6 +43,9 @@ public sealed class LanguageServer : IAsyncDisposable
     private volatile bool killed;
     private volatile bool disposing;
 
+    /// <summary>The server as a test's quiet wait names it, among the requests in flight (<see cref="InFlight"/>).</summary>
+    private readonly string who;
+
     private readonly Dictionary<string, object?> options;
 
     /// <summary>What <c>workspace/configuration</c> answers for a section, for a server that is not Roslyn; null for
@@ -70,6 +73,7 @@ public sealed class LanguageServer : IAsyncDisposable
         this.log = log;
         LogFolder = logFolder;
         ProcessId = process.Id;
+        who = $"{Named(process.StartInfo)}, process {process.Id}";
         rpc.Disconnected += (_, e) =>
         {
             if (!disposing)
@@ -211,8 +215,9 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>Every document's diagnostics from one source, as the solution-wide analysis has them; a document unchanged
     /// since the result id given for it comes back as unchanged, with no items.</summary>
     public async Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> WorkspaceDiagnosticsAsync(string? source, IReadOnlyList<PreviousResultId> previous, CancellationToken cancel = default) =>
-        // Roslyn holds this pull open until something changes, so how long it waits says nothing of the server.
-        (await InvokeAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel))?.Items ?? [];
+        // Roslyn holds this pull open until something changes, so how long it waits says nothing of the server, and it is
+        // no work in flight for a test's quiet wait, which would otherwise wait out its limit on every settle.
+        (await InvokeAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel, inFlight: false))?.Items ?? [];
 
     /// <summary>An option's value: one changed while running, else Passenger's own, else null for the server's default.</summary>
     private object? Option(string name)
@@ -470,8 +475,9 @@ public sealed class LanguageServer : IAsyncDisposable
         }
     }
 
-    private async Task<T?> InvokeAsync<T>(string method, object parameters, CancellationToken cancel)
+    private async Task<T?> InvokeAsync<T>(string method, object parameters, CancellationToken cancel, bool inFlight = true)
     {
+        using IDisposable flight = inFlight ? InFlight.Begin(method, who) : InFlight.None;
         try
         {
             return Refused(method) ? throw new LanguageServerFailed("the language server refused it: as a test asked", method)
@@ -482,6 +488,12 @@ public sealed class LanguageServer : IAsyncDisposable
             throw failed;
         }
     }
+
+    /// <summary>The program a server runs, by name: Roslyn's assembly or a web server's script under dotnet or Node.js.</summary>
+    private static string Named(ProcessStartInfo start) =>
+        start.ArgumentList.FirstOrDefault(a => a.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || a.EndsWith(".js", StringComparison.OrdinalIgnoreCase)
+            || a.EndsWith(".cjs", StringComparison.OrdinalIgnoreCase)) is { } program
+            ? Path.GetFileNameWithoutExtension(program) : Path.GetFileNameWithoutExtension(start.FileName);
 
     /// <summary>The connection's exception as the server's failure: gone (it crashed, was ended for hanging or let go for
     /// one started again, the connection disposed or its pipe closed), refused (an error it answered with), or cancelled

@@ -38,7 +38,7 @@ public sealed class StartHold : IDisposable
     public async Task<int> Held(TimeSpan? within = null)
     {
         using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        limit.CancelAfter(within ?? TimeSpan.FromSeconds(60));
+        limit.CancelAfter((within ?? TimeSpan.FromSeconds(60)).Scaled());
         if (pipe is not null)
         {
             await pipe.WaitForConnectionAsync(limit.Token);

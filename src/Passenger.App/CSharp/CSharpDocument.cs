@@ -257,7 +257,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
         }
         finally
         {
-            Dispatcher.UIThread.Post(BackgroundWork.End);
+            Dispatcher.UIThread.Post(() => BackgroundWork.End());
         }
     }
 

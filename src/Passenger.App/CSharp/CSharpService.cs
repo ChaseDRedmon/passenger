@@ -527,7 +527,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
         finally
         {
-            Dispatcher.UIThread.Post(BackgroundWork.End);
+            Dispatcher.UIThread.Post(() => BackgroundWork.End());
         }
     }
 

@@ -19,7 +19,7 @@ public sealed class DebugSession : IDisposable
     /// that holds the engine to a time runs alone (<see cref="Alone"/>).</summary>
     public const string Collection = "Debugger";
 
-    private static readonly TimeSpan EventLimit = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan EventLimit = TimeSpan.FromSeconds(60).Scaled();
 
     private readonly Process adapter;
     private readonly Process? debuggee;
@@ -185,11 +185,11 @@ public sealed class DebugSession : IDisposable
 
     /// <summary>The longest a request may go unanswered: launch and configurationDone start the program, and an evaluation
     /// may run a method of it.</summary>
-    public static readonly TimeSpan RequestLimit = TimeSpan.FromSeconds(60);
+    public static readonly TimeSpan RequestLimit = TimeSpan.FromSeconds(60).Scaled();
 
     private T Answer<T>(string command, Task<T> answer, TimeSpan? limit)
     {
-        TimeSpan most = limit ?? RequestLimit;
+        TimeSpan most = limit?.Scaled() ?? RequestLimit;
         Observe(answer);
         try
         {
@@ -329,23 +329,23 @@ public sealed class DebugSession : IDisposable
         {
             return this;
         }
-        DateTime limit = DateTime.UtcNow.AddSeconds(10);
-        while (true)
+        ServerNotAvailableException? never = null;
+        TimeSpan limit = TimeSpan.FromSeconds(10);
+        bool resumed = Waiting.Until(() =>
         {
             try
             {
                 new DiagnosticsClient(processId).ResumeRuntime();
-                return this;
+                return true;
             }
-            catch (ServerNotAvailableException) when (DateTime.UtcNow < limit)
+            catch (ServerNotAvailableException notYet)
             {
-                Thread.Sleep(50);
+                never = notYet;
+                return false;
             }
-            catch (ServerNotAvailableException never)
-            {
-                throw new TimeoutException($"The program started suspended (process {processId}) opened no diagnostic port in 10 s, so it could not be let go. {Heard()}", never);
-            }
-        }
+        }, limit, every: TimeSpan.FromMilliseconds(50));
+        return resumed ? this
+            : throw new TimeoutException($"The program started suspended (process {processId}) opened no diagnostic port in {limit.Scaled().TotalSeconds} s, so it could not be let go. {Heard()}", never);
     }
 
     public DapStackFrame GetTopStackFrame(int threadId) =>

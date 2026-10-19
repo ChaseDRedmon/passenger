@@ -1,10 +1,14 @@
+using System.Runtime.CompilerServices;
+
 namespace Passenger.Editor;
 
 /// <summary>Work run once what keeps putting it off (typing) pauses for long enough. The wait is background work, so a
 /// screenshot or a test settles on what the pause brings: a DispatcherTimer's wait is no work to them, and headless it
 /// fires only inside a running frame, never while they settle. <paramref name="hold"/>, when given, is held as long as the
-/// background work is (a file's own checks, which an agent waits for). A UI-thread object.</summary>
-public sealed class Debounce(TimeSpan delay, Func<Task> work, Func<IDisposable>? hold = null)
+/// background work is (a file's own checks, which an agent waits for). A UI-thread object. Where background work is
+/// named (a test run), its wait is named by the place that made it.</summary>
+public sealed class Debounce(TimeSpan delay, Func<Task> work, Func<IDisposable>? hold = null,
+    [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
 {
     private CancellationTokenSource? waiting;
 
@@ -26,7 +30,7 @@ public sealed class Debounce(TimeSpan delay, Func<Task> work, Func<IDisposable>?
 
     private async Task WaitAsync(CancellationTokenSource cancel)
     {
-        using (BackgroundWork.Scope())
+        using (BackgroundWork.Scope(file, line))
         using (hold?.Invoke())
         {
             try

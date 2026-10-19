@@ -511,6 +511,7 @@
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.1.4, )",
+          "Passenger.Core": "[0.1.0, )",
           "Passenger.Text": "[0.1.0, )"
         }
       },

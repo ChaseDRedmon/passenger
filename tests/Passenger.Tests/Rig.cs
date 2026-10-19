@@ -44,6 +44,13 @@ public sealed class TestRun : IDisposable
     /// <summary>The IDE's state folder for the whole run.</summary>
     public static string Settings => Path.Combine(Root, "settings");
 
+    /// <summary>What every wall-clock limit of a test is multiplied by (<see cref="Limits.Scaled"/>): <c>PASSENGER_TEST_TIME_SCALE</c>,
+    /// read once, 1 when unset, as on a developer's machine, for whose times each limit is written; CI sets it for each
+    /// system from how much slower its runners are. A value that is no number above 0 ends the run before any test.</summary>
+    public static double TimeScale { get; } = ReadTimeScale();
+
+    public const string TimeScaleVariable = "PASSENGER_TEST_TIME_SCALE";
+
     /// <summary>Where the run's windows look for Discord (<c>PASSENGER_DISCORD_IPC</c>): a place nothing listens.</summary>
     public static string DiscordNowhere => OperatingSystem.IsWindows()
         ? $"{Prefix}{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}-discord-ipc"
@@ -54,6 +61,8 @@ public sealed class TestRun : IDisposable
     {
         // Before anything is started, which inherits it.
         Nice.Normal();
+        // What the IDE has in flight is recorded from the first window on, for the quiet wait (Ui.Settle) to wait out.
+        Passenger.Core.InFlight.Watched = true;
         foreach (string left in Directory.EnumerateDirectories(Path.GetTempPath(), Prefix + "*"))
         {
             // A run still going has its process; one killed has none, and only an id reused since keeps its folder.
@@ -109,6 +118,19 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
+    }
+
+    private static double ReadTimeScale()
+    {
+        string? given = Environment.GetEnvironmentVariable(TimeScaleVariable);
+        if (string.IsNullOrEmpty(given))
+        {
+            return 1;
+        }
+        return double.TryParse(given, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out double scale)
+            && scale > 0 && double.IsFinite(scale)
+            ? scale
+            : throw new InvalidOperationException($"{TimeScaleVariable} is \"{given}\": it must be a number above 0, such as 1.5, by which every test's time limits are multiplied");
     }
 
     /// <summary>On macOS and Linux, NuGet's home for the run, which NuGet takes from DOTNET_CLI_HOME: its user nuget.config,
@@ -178,6 +200,14 @@ public sealed class TestRun : IDisposable
     }
 }
 
+/// <summary>A test's wall-clock limits, each written as the time on a developer's machine and given as that times the run's
+/// <see cref="TestRun.TimeScale"/>: Ui's waits scale what they are given, and every other limit a test sets goes through
+/// <see cref="Scaled"/>.</summary>
+public static class Limits
+{
+    public static TimeSpan Scaled(this TimeSpan limit) => limit == Timeout.InfiniteTimeSpan ? limit : limit * TestRun.TimeScale;
+}
+
 /// <summary>The run's nice value on macOS and Linux. MSBuild keeps no idle node for the next build at any nice value but 0,
 /// and GitHub's macOS runner starts everything at -10: the run is brought to 0 as it begins, which lowers its priority and
 /// so needs no privilege, and what it starts inherits that. A run started above 0 (by zsh's &amp;, at 5) could come down
@@ -244,6 +274,7 @@ public sealed class TestsLeaveNothingBehindAttribute : BeforeAfterTestAttribute
         if (IsWindowTest(methodUnderTest))
         {
             BackgroundWork.Forget();
+            Passenger.Core.InFlight.Forget();
             OpenWindows.Watch();
         }
         TestFolders.Begin(test.UniqueID);
@@ -318,11 +349,7 @@ public static class OpenWindows
         {
             return true;
         }
-        DateTime until = DateTime.UtcNow + Passenger.App.MainWindow.EndLimit + Landing;
-        while (!(ending.All(e => e.IsCompleted) && BackgroundWork.Pending == 0) && DateTime.UtcNow < until)
-        {
-            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
-        }
+        Ui.Pumped(() => ending.All(e => e.IsCompleted) && BackgroundWork.Pending == 0, Passenger.App.MainWindow.EndLimit + Landing.Scaled(), scaled: false);
         return BackgroundWork.Pending == 0;
     }
 }
@@ -496,17 +523,27 @@ public static class TestFolders
     {
         // A settings folder's log lines still queued would make its logs folder again once it was gone.
         Passenger.App.IdeErrors.Flush();
-        DateTime until = DateTime.UtcNow.AddSeconds(30);
-        while (Directory.Exists(path))
+        bool deleted = Waiting.Until(() =>
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, recursive: true);
+                }
+                return true;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                Writable(path);
+                return false;
+            }
+        }, TimeSpan.FromSeconds(30), every: TimeSpan.FromMilliseconds(100));
+        if (!deleted && Directory.Exists(path))
         {
             try
             {
                 Directory.Delete(path, recursive: true);
-            }
-            catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && DateTime.UtcNow < until)
-            {
-                Writable(path);
-                Thread.Sleep(100);
             }
             catch (IOException error) when (OperatingSystem.IsWindows())
             {
@@ -629,33 +666,47 @@ public static class Ui
         Settle();
     }
 
-    /// <summary>Long enough for the language server to start and load a small project.</summary>
+    /// <summary>Long enough for the language server to start and load a small project, on a developer's machine.</summary>
     private static readonly TimeSpan SettleLimit = TimeSpan.FromSeconds(90);
 
-    /// <summary>Runs queued UI work and waits for background work (colouring) to land.</summary>
+    /// <summary>The dispatcher's own promotion of the timers that have come due to queued ticks, which a running frame
+    /// does as its platform timer fires and which jobs run outside a frame never do.</summary>
+    private static readonly Action<Dispatcher> PromoteTimers = typeof(Dispatcher).GetMethod("PromoteTimers", BindingFlags.Instance | BindingFlags.NonPublic) is { } promote
+        ? promote.CreateDelegate<Action<Dispatcher>>()
+        : throw new MissingMethodException("Avalonia's Dispatcher no longer has PromoteTimers, by which a settle fires the timers come due");
+
+    /// <summary>Runs queued UI work and waits until the IDE is quiet: its background work landed (<see cref="BackgroundWork"/>),
+    /// nothing in flight that no frame waits for (<see cref="Passenger.Core.InFlight"/>: a language server's request
+    /// unanswered), and every dispatcher timer that has come due fired. Fails naming what was still busy, and since when.</summary>
     public static void Settle()
     {
-        if (!Settled(DateTime.UtcNow + SettleLimit))
+        TimeSpan limit = SettleLimit.Scaled();
+        if (!Settled(DateTime.UtcNow + limit))
         {
-            throw new TimeoutException($"Background work never finished.{IdeLogTail()}{ServerLogTail()}");
+            throw new TimeoutException($"The IDE was not quiet within {limit.TotalSeconds} s. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
         }
     }
 
-    private static bool Settled(DateTime limit)
+    private static bool Settled(DateTime limit) => Waiting.Until(() =>
     {
-        do
-        {
-            Dispatcher.UIThread.RunJobs();
-            AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
-            Dispatcher.UIThread.RunJobs();
-            if (BackgroundWork.Pending == 0)
-            {
-                return true;
-            }
-            Thread.Sleep(2);
-        }
-        while (DateTime.UtcNow < limit);
-        return false;
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+        PromoteTimers(Dispatcher.UIThread);
+        Dispatcher.UIThread.RunJobs();
+        return BackgroundWork.Pending == 0 && Passenger.Core.InFlight.Count == 0;
+    }, limit - DateTime.UtcNow, every: TimeSpan.FromMilliseconds(2), scaled: false);
+
+    /// <summary>What the IDE was busy with as a wait gave up: each hold of background work by where it was taken, and each
+    /// piece of work in flight, with how long it had been under way.</summary>
+    public static string Busy()
+    {
+        DateTime now = DateTime.UtcNow;
+        IReadOnlyList<(string What, DateTime Since)> held = BackgroundWork.Held();
+        IReadOnlyList<(string What, DateTime Since)> flying = Passenger.Core.InFlight.Now();
+        int unnamed = BackgroundWork.Pending - held.Count;
+        string busy = Passenger.Core.InFlight.Describe(held.Concat(flying).OrderBy(b => b.Since), now);
+        return (busy.Length == 0 && unnamed <= 0 ? "  nothing named" : busy)
+            + (unnamed > 0 ? $"\n  {unnamed} hold{(unnamed == 1 ? "" : "s")} of background work with no name" : string.Empty);
     }
 
     /// <summary>The end of the IDE's own log, which names an exception that left background work waiting for good.</summary>
@@ -686,7 +737,7 @@ public static class Ui
     /// run), which it then waits out for as long as it waits, not for <see cref="Settle"/>'s own limit alone.</summary>
     public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
     {
-        TimeSpan within = limit ?? SettleLimit;
+        TimeSpan within = (limit ?? SettleLimit).Scaled();
         DateTime until = DateTime.UtcNow + within;
         while (!condition())
         {
@@ -694,11 +745,11 @@ public static class Ui
             {
                 throw new TimeoutException($"Waited {within.TotalSeconds} s for {what}");
             }
-            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
-            DateTime settling = DateTime.UtcNow + SettleLimit;
+            Frame();
+            DateTime settling = DateTime.UtcNow + SettleLimit.Scaled();
             if (!Settled(settling > until ? settling : until))
             {
-                throw new TimeoutException($"Background work never finished while waiting {within.TotalSeconds} s for {what}.{IdeLogTail()}{ServerLogTail()}");
+                throw new TimeoutException($"The IDE was not quiet while waiting {within.TotalSeconds} s for {what}. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
             }
         }
     }
@@ -756,16 +807,52 @@ public static class Ui
     /// held back), running the dispatcher's loop but never waiting for that work to land as <see cref="WaitFor"/> does.</summary>
     public static void PumpUntil(Func<bool> condition, string what, TimeSpan? limit = null)
     {
-        DateTime until = DateTime.UtcNow + (limit ?? TimeSpan.FromSeconds(90));
+        TimeSpan within = (limit ?? TimeSpan.FromSeconds(90)).Scaled();
+        if (!Pumped(condition, within, scaled: false))
+        {
+            throw new TimeoutException($"Waited {within.TotalSeconds} s for {what}");
+        }
+    }
+
+    /// <summary>Whether something became true within the limit (scaled unless said), the dispatcher's loop running as
+    /// <see cref="PumpUntil"/> runs it, for a caller that goes on either way.</summary>
+    public static bool Pumped(Func<bool> condition, TimeSpan limit, bool scaled = true)
+    {
+        DateTime until = DateTime.UtcNow + (scaled ? limit.Scaled() : limit);
         while (!condition())
         {
             if (DateTime.UtcNow > until)
             {
-                throw new TimeoutException($"Waited {(limit ?? TimeSpan.FromSeconds(90)).TotalSeconds} s for {what}");
+                return false;
             }
-            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+            Frame();
         }
+        return true;
     }
+
+    /// <summary>One frame of the dispatcher's loop, its timers firing, as a wait runs it between looks.</summary>
+    private static void Frame()
+    {
+#pragma warning disable RS0030 // The one frame between looks at a condition.
+        Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+#pragma warning restore RS0030
+    }
+
+    /// <summary>Time that must pass for what a test checks, the window running all along as on a desktop: a debounce it
+    /// measures, a moment in which nothing is to happen. Never a wait for something to happen, which is
+    /// <see cref="WaitFor"/>'s or <see cref="PumpUntil"/>'s; nor scaled, being no limit. <paramref name="why"/> says what
+    /// the time is for, as the test's reader needs to know.</summary>
+    public static void Hold(TimeSpan time, string why)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(why);
+#pragma warning disable RS0030 // Time a test needs the window to run for, named.
+        Passenger.App.Screenshot.Pump(time);
+#pragma warning restore RS0030
+    }
+
+    /// <summary>The window's thread kept busy for a while, running nothing, as a heavy frame keeps it: for a test of what
+    /// the IDE does while its window falls behind.</summary>
+    public static void Stall(TimeSpan time, string why) => Waiting.For(time, why);
 
     /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item,
     /// failing if it is not there or cannot run.</summary>
@@ -927,6 +1014,91 @@ public static class Ui
     }
 }
 
+/// <summary>The one place a test lets time pass (Thread.Sleep and Task.Delay are banned elsewhere, BannedSymbols.txt): a wait
+/// for a condition, looked at again every few milliseconds until it holds or its limit (scaled by the run's
+/// <see cref="TestRun.TimeScale"/>) is out, and time that a test needs to pass, named. It never runs the window's loop:
+/// <see cref="Ui"/>'s waits do, through it.</summary>
+public static class Waiting
+{
+    private static readonly TimeSpan Often = TimeSpan.FromMilliseconds(10);
+
+    /// <summary>Whether the condition held within the limit, on this thread.</summary>
+    public static bool Until(Func<bool> condition, TimeSpan limit, TimeSpan? every = null, bool scaled = true)
+    {
+        DateTime until = DateTime.UtcNow + (scaled ? limit.Scaled() : limit);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= until)
+            {
+                return false;
+            }
+#pragma warning disable RS0030 // The one wait between looks at a condition.
+            Thread.Sleep(every ?? Often);
+#pragma warning restore RS0030
+        }
+        return true;
+    }
+
+    /// <inheritdoc cref="Until"/>
+    public static Task<bool> UntilAsync(Func<bool> condition, TimeSpan limit, CancellationToken cancel = default, TimeSpan? every = null) =>
+        UntilAsync(() => Task.FromResult(condition()), limit, cancel, every);
+
+    /// <summary>Whether a condition that is itself asked for (an agent's call) held within the limit.</summary>
+    public static async Task<bool> UntilAsync(Func<Task<bool>> condition, TimeSpan limit, CancellationToken cancel = default, TimeSpan? every = null)
+    {
+        DateTime until = DateTime.UtcNow + limit.Scaled();
+        while (!await condition())
+        {
+            if (DateTime.UtcNow >= until)
+            {
+                return false;
+            }
+#pragma warning disable RS0030 // The one wait between looks at a condition.
+            await Task.Delay(every ?? Often, cancel);
+#pragma warning restore RS0030
+        }
+        return true;
+    }
+
+    /// <summary>Whether a task ended within the limit (scaled unless said: a time in which it must not end is no limit),
+    /// however it ended; the caller's cancellation ends the wait.</summary>
+    public static async Task<bool> Within(Task task, TimeSpan limit, CancellationToken cancel = default, bool scaled = true)
+    {
+        try
+        {
+            await task.WaitAsync(scaled ? limit.Scaled() : limit, cancel);
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        catch (Exception) when (task.IsCompleted)
+        {
+            // Ended, by failing or being cancelled: the caller looks at how.
+        }
+        return true;
+    }
+
+    /// <summary>Time that must pass, this thread doing nothing meanwhile: for what a test checks over it, never for
+    /// something to happen. Not scaled, being no limit.</summary>
+    public static void For(TimeSpan time, string why)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(why);
+#pragma warning disable RS0030 // Time a test needs to pass, named.
+        Thread.Sleep(time);
+#pragma warning restore RS0030
+    }
+
+    /// <inheritdoc cref="For"/>
+    public static Task ForAsync(TimeSpan time, string why, CancellationToken cancel = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(why);
+#pragma warning disable RS0030 // Time a test needs to pass, named.
+        return Task.Delay(time, cancel);
+#pragma warning restore RS0030
+    }
+}
+
 /// <summary>How long a key waits for the window's thread: work posted at input's priority, as the platform's keys wait
 /// for the thread between jobs, the longest wait kept until <see cref="Stop"/>. Each is posted as soon as the last is
 /// answered, from a thread of its own, so a loaded machine that is slow to wake a timer or the thread pool still
@@ -991,7 +1163,7 @@ public static class Restore
         Passenger.Core.ChildResult restored;
         try
         {
-            restored = await Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.DotnetCommand(["restore", target]), limit: Limit);
+            restored = await Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.DotnetCommand(["restore", target]), limit: Limit.Scaled());
         }
         catch (TimeoutException hung)
         {
@@ -1070,7 +1242,7 @@ public static class TestGit
         Passenger.Core.ChildResult result;
         try
         {
-            result = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.Command("git", arguments, folder), limit: Limit)).GetAwaiter().GetResult();
+            result = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.Command("git", arguments, folder), limit: Limit.Scaled())).GetAwaiter().GetResult();
         }
         catch (TimeoutException hung)
         {
@@ -1104,33 +1276,19 @@ public static partial class Processes
     /// <summary>The id the first of several programs to run wrote to its file.</summary>
     public static int WrittenId(IReadOnlyList<string> files, string what)
     {
-        DateTime until = DateTime.UtcNow.AddMinutes(2);
-        int id;
-        while ((id = files.Select(ReadId).FirstOrDefault(i => i > 0)) <= 0)
-        {
-            if (DateTime.UtcNow > until)
-            {
-                throw new TimeoutException($"Waited 2 minutes for {what}");
-            }
-            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(50));
-        }
+        int id = 0;
+        Ui.PumpUntil(() => (id = files.Select(ReadId).FirstOrDefault(i => i > 0)) > 0, what, TimeSpan.FromMinutes(2));
         return id;
     }
 
     /// <summary>The id a program wrote to a file once it was running, for a test with no window of its own.</summary>
     public static async Task<int> WrittenIdAsync(string file, string what)
     {
-        DateTime until = DateTime.UtcNow.AddMinutes(2);
-        int id;
-        while ((id = ReadId(file)) <= 0)
-        {
-            if (DateTime.UtcNow > until)
-            {
-                throw new TimeoutException($"Waited 2 minutes for {what}");
-            }
-            await Task.Delay(100);
-        }
-        return id;
+        int id = 0;
+        TimeSpan limit = TimeSpan.FromMinutes(2);
+        return await Waiting.UntilAsync(() => (id = ReadId(file)) > 0, limit, every: TimeSpan.FromMilliseconds(100))
+            ? id
+            : throw new TimeoutException($"Waited {limit.Scaled().TotalSeconds} s for {what}");
     }
 
     /// <summary>Every process a process started, and every one those started, as the system lists them now.</summary>
@@ -1312,15 +1470,8 @@ public static partial class Processes
 
     /// <summary>Whether a process has gone within a few seconds, the time a killed one may take to leave the list, or within
     /// the time given.</summary>
-    public static bool Gone(int id, TimeSpan? within = null)
-    {
-        DateTime until = DateTime.UtcNow + (within ?? TimeSpan.FromSeconds(15));
-        while (IsRunning(id) && DateTime.UtcNow < until)
-        {
-            Thread.Sleep(100);
-        }
-        return !IsRunning(id);
-    }
+    public static bool Gone(int id, TimeSpan? within = null) =>
+        Waiting.Until(() => !IsRunning(id), within ?? TimeSpan.FromSeconds(15), every: TimeSpan.FromMilliseconds(100));
 
     /// <summary>Ends what a failed test left running, its children with it.</summary>
     public static void Kill(int id)
