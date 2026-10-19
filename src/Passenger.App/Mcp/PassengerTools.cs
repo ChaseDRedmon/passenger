@@ -546,7 +546,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         BuildRunController builds = Builds;
         if (await builds.RunAsync(arguments, hotReload).WaitAsync(cancel) is { } refused)
         {
-            throw new InvalidOperationException(refused);
+            throw new InvalidOperationException(WithBuildErrors(refused));
         }
         Task<int> ended = builds.RunEnd;
         // An app with a window never ends by itself: the wait is over once its UI is up, which the app_ tools look at.
@@ -613,7 +613,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         if (await run.WaitAsync(cancel) is { } problem)
         {
-            throw new InvalidOperationException(problem);
+            throw new InvalidOperationException(WithBuildErrors(problem));
         }
         return TestInfo(tests);
     });
@@ -855,10 +855,24 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         Choose(configuration);
         if (await Builds.DebugAsync(arguments).WaitAsync(cancel) is { } problem)
         {
-            throw new InvalidOperationException(problem);
+            throw new InvalidOperationException(WithBuildErrors(problem));
         }
         return await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
+
+    /// <summary>A run, debug, test or profile refused for a failed build, with the build's errors after it (path:line:column,
+    /// code and message, at most ten), so an agent fixes them without asking problems first.</summary>
+    private string WithBuildErrors(string refused)
+    {
+        List<Problem> errors = [.. window.BottomPanel.Problems.Problems.Where(p => p.Severity == ProblemSeverity.Error)];
+        if (errors.Count == 0 || !refused.Contains("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return refused;
+        }
+        IEnumerable<string> lines = errors.Take(10).Select(p =>
+            $"{(p.Path is { } at ? $"{Relative(at)}:{p.Position.Line + 1}:{p.Position.Column + 1}" : p.Project)}: {p.Code} {p.Message}");
+        return $"{refused}:\n{string.Join('\n', lines)}{(errors.Count > 10 ? $"\n… {errors.Count - 10} more: problems lists them" : "")}";
+    }
 
     /// <summary>How long a launched app whose UI is up is watched for a stop in its first layout.</summary>
     private static readonly TimeSpan LaunchSettle = TimeSpan.FromSeconds(2);

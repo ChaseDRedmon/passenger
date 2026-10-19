@@ -73,6 +73,10 @@ public sealed partial class McpTests
         Assert.False(problems.TryGetProperty("solution", out _), "Problems' solution tab was answered with solution-wide analysis off");
         string output = (await Call(client, "build_output")).GetString()!;
         Assert.True(output.Contains("CS0029", StringComparison.Ordinal), $"The Build window's console, for an agent, lacks the build's error:\n{output}");
+        // A run refused for a failed build names its errors, so the agent fixes them without a second call to find them.
+        CallToolResult notRun = await Result(client, "run");
+        Assert.True(notRun.IsError == true && Text(notRun).Contains("Bad.cs:3:", StringComparison.Ordinal) && Text(notRun).Contains("CS0029", StringComparison.Ordinal),
+            $"A run refused for a failed build answered: {Text(notRun)}");
 
         // Solution-wide analysis turned on through the settings: every file's problems, a file never opened among them.
         JsonElement turnedOn = Assert.Single((await Call(client, "settings_set", new() { ["changes"] = new Dictionary<string, object> { ["solutionWideAnalysis"] = true } })).EnumerateArray());

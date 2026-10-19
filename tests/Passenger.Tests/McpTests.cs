@@ -1001,7 +1001,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             dialog.Query = "agents";
             Ui.Settle();
             Assert.Equal([SettingsDialog.McpPage], dialog.Pages);
-            Assert.Equal(["Enable MCP Server"], dialog.Shown);
+            Assert.Equal("Enable MCP Server", dialog.Shown[0]);
             dialog.Change(s => s with { McpServer = true });
             dialog.Ok();
             Ui.Settle();

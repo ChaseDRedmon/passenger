@@ -260,7 +260,7 @@ public sealed partial class PassengerTools
         }
         if (await (attach ? window.AttachProfilerAsync() : window.ProfileAsync(arguments)).WaitAsync(cancel) is { } problem)
         {
-            throw new InvalidOperationException(problem);
+            throw new InvalidOperationException(WithBuildErrors(problem));
         }
         Passenger.Profiler.ProfilingSession running = Session.Profiling!;
         // An Avalonia app's inspector, which records its frames; null for any other program.
