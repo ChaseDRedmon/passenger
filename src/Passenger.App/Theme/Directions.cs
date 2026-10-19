@@ -11,7 +11,10 @@ internal static class Directions
     public const string Variable = "PASSENGER_DIRECTION";
 
     /// <summary>Each direction's letter, as the variable takes it, and the name of its two files.</summary>
-    private static readonly IReadOnlyDictionary<string, string> Known = new Dictionary<string, string>();
+    private static readonly IReadOnlyDictionary<string, string> Known = new Dictionary<string, string>
+    {
+        ["a"] = "BlueLine",
+    };
 
     /// <summary>The direction asked for, or null for the look as it is; one the variable names that does not exist is
     /// fatal, never the look as it is.</summary>
