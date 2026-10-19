@@ -430,9 +430,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Azure.Core when the DAC reads memory a dump lacks, and pruning them hung snapshots on Linux and left types unnamed on
   Windows.
 - `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
-  encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty); on Windows PowerShell is told
-  `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches the
-  person's history. `MainWindow.Terminal.cs` is its
+  encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty, which tells a program's end from
+  the spawn on, so the start looks once more after listening: `sh -c "exit 3"` can end first); on Windows PowerShell is
+  told `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches
+  the person's history. `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),

@@ -38,6 +38,9 @@ public sealed class TerminalSession : IAsyncDisposable
     private long lastRead;
     private volatile bool readEnded;
 
+    /// <summary>Whether the shell's end has been told: Porta.Pty's watcher and the start's own look may both find it.</summary>
+    private int endTold;
+
     /// <summary>How long output must have stopped, after the shell has exited, for its end to be told.</summary>
     private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(150);
 
@@ -93,7 +96,14 @@ public sealed class TerminalSession : IAsyncDisposable
         };
         pty = await PtyProvider.SpawnAsync(options, CancellationToken.None);
         IsRunning = true;
-        pty.ProcessExited += (_, e) => Dispatcher.UIThread.Post(() => AfterLastOutput(e.ExitCode));
+        IPtyConnection started = pty;
+        started.ProcessExited += (_, e) => Ended(e.ExitCode);
+        // Porta.Pty watches for the end from the spawn on, so a program that ends at once (sh -c "exit 3") may have ended,
+        // told no one, before the line above.
+        if (started.WaitForExit(0))
+        {
+            Ended(started.ExitCode);
+        }
         Stream reader = pty.ReaderStream;
         Stream writer = pty.WriterStream;
         new Thread(() => Read(reader)) { IsBackground = true, Name = "Terminal output" }.Start();
@@ -223,6 +233,15 @@ public sealed class TerminalSession : IAsyncDisposable
             ? own
             : OperatingSystem.IsMacOS() ? "/bin/zsh" : "/bin/bash";
         return (shell, ["-l"]);
+    }
+
+    /// <summary>The shell has ended, as Porta.Pty tells or as its start found: told on the window's thread once.</summary>
+    private void Ended(int exitCode)
+    {
+        if (Interlocked.Exchange(ref endTold, 1) == 0)
+        {
+            Dispatcher.UIThread.Post(() => AfterLastOutput(exitCode));
+        }
     }
 
     /// <summary>Tells of the shell's end once what it wrote last is on the screen: when the pseudo-terminal closes, or,
