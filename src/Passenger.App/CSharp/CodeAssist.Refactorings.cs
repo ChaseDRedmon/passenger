@@ -218,9 +218,11 @@ public sealed partial class CodeAssist
         try
         {
             // What uses it from inside what goes with it (a recursive call, a constructor of a type) goes too.
-            List<LspLocation> uses = [.. (await lsp.ReferencesAsync(caret))
-                .Where(r => DocumentUris.ToPath(r.Uri) != path || !removal.Range.Contains(lines.OffsetOf(r.Range.Start)))
-                .OrderBy(r => DocumentUris.ToPath(r.Uri), StringComparer.Ordinal).ThenBy(r => r.Range.Start.Line).ThenBy(r => r.Range.Start.Character)];
+            IReadOnlyList<LspLocation> referenced = await lsp.ReferencesAsync(caret);
+            Dictionary<string, string> paths = DocumentUris.ToPaths(referenced.Select(r => r.Uri));
+            List<LspLocation> uses = [.. referenced
+                .Where(r => paths[r.Uri] != path || !removal.Range.Contains(lines.OffsetOf(r.Range.Start)))
+                .OrderBy(r => paths[r.Uri], StringComparer.Ordinal).ThenBy(r => r.Range.Start.Line).ThenBy(r => r.Range.Start.Character)];
             return new Doomed(path, open, tracker, syntax.Text, at, removal, uses);
         }
         catch
@@ -240,15 +242,17 @@ public sealed partial class CodeAssist
         string root = service()?.Session?.Folder ?? string.Empty;
         // Each usage a row: where it is, then its line's code, the code lined up in a column of its own.
         Grid rows = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        Dictionary<string, string> paths = DocumentUris.ToPaths(doomed.Uses.Select(u => u.Uri));
+        Func<string, int, string> preview = LinePreviews();
         foreach ((LspLocation use, int row) in doomed.Uses.Select((u, i) => (u, i)))
         {
-            string path = DocumentUris.ToPath(use.Uri);
+            string path = paths[use.Uri];
             string shown = root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
             rows.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
             TextBlock where = new() { Text = $"{shown}:{use.Range.Start.Line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 12, 1) };
             TextBlock code = new()
             {
-                Text = LinePreview(path, use.Range.Start.Line),
+                Text = preview(path, use.Range.Start.Line),
                 FontFamily = Fonts.Mono,
                 FontSize = 12,
                 Foreground = InfoCard.Brush("Passenger.TextMuted"),

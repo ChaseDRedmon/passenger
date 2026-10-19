@@ -1510,10 +1510,12 @@ public sealed partial class CodeAssist
             return [.. found.Select(l => new Target(l))];
         }
         IReadOnlyList<LspLocation> family = await lsp.ReferencesAsync(offset);
-        IReadOnlyList<SymbolInformation> named = [.. (await session.SymbolsAsync(name)).Where(s => Bare(s.Name) == name && family.Any(f => SamePlace(f, s.Location)))];
-        foreach (LspLocation place in bases.SelectMany(b => named.Where(s => Inside(s.Location, b)).Select(s => s.Location)))
+        IReadOnlyList<SymbolInformation> symbols = [.. (await session.SymbolsAsync(name)).Where(s => Bare(s.Name) == name)];
+        Dictionary<string, string> paths = DocumentUris.ToPaths([.. family.Select(f => f.Uri), .. symbols.Select(s => s.Location.Uri), .. bases.Select(b => b.Uri), .. found.Select(f => f.Uri)]);
+        IReadOnlyList<SymbolInformation> named = [.. symbols.Where(s => family.Any(f => SamePlace(paths, f, s.Location)))];
+        foreach (LspLocation place in bases.SelectMany(b => named.Where(s => Inside(paths, s.Location, b)).Select(s => s.Location)))
         {
-            if (!found.Any(f => SamePlace(f, place)))
+            if (!found.Any(f => SamePlace(paths, f, place)))
             {
                 found.Add(place);
             }
@@ -1532,8 +1534,10 @@ public sealed partial class CodeAssist
         // The server's implementations of a member that has a body hold the member itself, which is not derived from it.
         // They come in no order; they are listed by file and line.
         IReadOnlyList<LspLocation> own = await lsp.DefinitionAsync(offset);
-        return [.. (await lsp.ImplementationAsync(offset)).Where(l => !own.Any(o => SamePlace(o, l)))
-            .OrderBy(l => DocumentUris.ToPath(l.Uri), StringComparer.Ordinal).ThenBy(l => l.Range.Start.Line).ThenBy(l => l.Range.Start.Character)
+        IReadOnlyList<LspLocation> found = await lsp.ImplementationAsync(offset);
+        Dictionary<string, string> paths = DocumentUris.ToPaths([.. own.Select(o => o.Uri), .. found.Select(l => l.Uri)]);
+        return [.. found.Where(l => !own.Any(o => SamePlace(paths, o, l)))
+            .OrderBy(l => paths[l.Uri], StringComparer.Ordinal).ThenBy(l => l.Range.Start.Line).ThenBy(l => l.Range.Start.Character)
             .Select(l => new Target(l))];
     }
 
@@ -1573,12 +1577,13 @@ public sealed partial class CodeAssist
 
     private static Target TargetOf(HierarchyItem item) => new(new LspLocation(item.Uri, item.SelectionRange), item.Name);
 
-    private static bool SamePlace(LspLocation one, LspLocation other) =>
-        one.Range.Start == other.Range.Start && DocumentUris.ToPath(one.Uri) == DocumentUris.ToPath(other.Uri);
+    /// <summary>Whether two places are one, by their files' paths made once for the list (<see cref="DocumentUris.ToPaths"/>).</summary>
+    private static bool SamePlace(Dictionary<string, string> paths, LspLocation one, LspLocation other) =>
+        one.Range.Start == other.Range.Start && paths[one.Uri] == paths[other.Uri];
 
     /// <summary>Whether a place is in a type's declaration.</summary>
-    private static bool Inside(LspLocation place, HierarchyItem type) =>
-        DocumentUris.ToPath(place.Uri) == DocumentUris.ToPath(type.Uri) && !Before(place.Range.Start, type.Range.Start) && !Before(type.Range.End, place.Range.Start);
+    private static bool Inside(Dictionary<string, string> paths, LspLocation place, HierarchyItem type) =>
+        paths[place.Uri] == paths[type.Uri] && !Before(place.Range.Start, type.Range.Start) && !Before(type.Range.End, place.Range.Start);
 
     private static bool Before(LspPosition one, LspPosition other) => one.Line < other.Line || (one.Line == other.Line && one.Character < other.Character);
 
@@ -1663,13 +1668,15 @@ public sealed partial class CodeAssist
     private void Pick(string title, IReadOnlyList<LspLocation> locations, int offset, IReadOnlyList<string?>? names = null)
     {
         string root = Root ?? string.Empty;
+        Dictionary<string, string> paths = DocumentUris.ToPaths(locations.Select(l => l.Uri));
+        Func<string, int, string> preview = LinePreviews();
         List<Choice> choices = locations.Select((l, i) =>
         {
-            string path = DocumentUris.ToPath(l.Uri);
+            string path = paths[l.Uri];
             string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{l.Range.Start.Line + 1}";
             return names?[i] is { } name
                 ? new Choice(name, shown, l)
-                : new Choice(shown, LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
+                : new Choice(shown, preview(path, l.Range.Start.Line), l, DetailIsCode: true);
         }).ToList();
         ShowModal(new ChoicePopup(title, choices), offset, title, choice =>
         {
@@ -1979,20 +1986,31 @@ public sealed partial class CodeAssist
         return start;
     }
 
-    private string LinePreview(string path, int line)
+    /// <summary>The lines of code a list of places shows, each closed file read once for the list, not once a place, since
+    /// it is read on the UI thread; an open file's from its text.</summary>
+    private Func<string, int, string> LinePreviews()
     {
-        if (editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
+        Dictionary<string, string[]> read = new(StringComparer.Ordinal);
+        return (path, line) =>
         {
-            return open.Text.Snapshot.GetLineText(line).Trim();
-        }
-        try
-        {
-            return File.ReadLines(path).Skip(line).FirstOrDefault()?.Trim() ?? string.Empty;
-        }
-        catch (IOException)
-        {
-            return string.Empty;
-        }
+            if (editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
+            {
+                return open.Text.Snapshot.GetLineText(line).Trim();
+            }
+            if (!read.TryGetValue(path, out string[]? lines))
+            {
+                try
+                {
+                    lines = File.ReadAllLines(path);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    lines = [];
+                }
+                read[path] = lines;
+            }
+            return line < lines.Length ? lines[line].Trim() : string.Empty;
+        };
     }
 
     private static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';
