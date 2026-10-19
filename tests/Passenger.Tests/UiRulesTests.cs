@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.App.Settings;
 
 namespace Passenger.Tests;
 
@@ -473,6 +474,68 @@ public sealed class UiRulesTests : IDisposable
         }
         finally
         {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void A_tooltip_and_a_drop_downs_list_are_the_themes_popups_and_a_field_stands_on_the_fields_ground(Look look)
+    {
+        using IDisposable worn = Wearing(look);
+        MainWindow window = Open(1200, 800);
+        SettingsDialog? settings = null;
+        try
+        {
+            Color popup = Brush(window, "Passenger.Popup");
+            Color edge = Brush(window, "Passenger.PopupBorder");
+            Color text = Brush(window, "Passenger.Text");
+            Color field = Brush(window, "Passenger.Field");
+            Color chosenRow = Brush(window, "Passenger.RowSelected");
+            ToggleButton stripe = window.DockHost.GetVisualDescendants().OfType<ToggleButton>().First(b => b.Classes.Contains("stripe") && b.IsEffectivelyVisible);
+            ToolTip.SetIsOpen(stripe, true);
+            Ui.Settle();
+            ToolTip tip = window.GetVisualDescendants().OfType<ToolTip>().FirstOrDefault(t => t.IsEffectivelyVisible)
+                ?? throw new Xunit.Sdk.XunitException($"The stripe button's tooltip '{ToolTip.GetTip(stripe)}' did not open");
+            Assert.True(tip.Background is ISolidColorBrush tipGround && tipGround.Color == popup && tip.BorderBrush is ISolidColorBrush tipEdge && tipEdge.Color == edge
+                && tip.Foreground is ISolidColorBrush tipWords && tipWords.Color == text,
+                $"A tooltip is drawn on {(tip.Background as ISolidColorBrush)?.Color} with an edge of {(tip.BorderBrush as ISolidColorBrush)?.Color}, "
+                + $"where it is the popup's ground ({popup}) and edge ({edge}) with the window's words, not Fluent's greys");
+            ToolTip.SetIsOpen(stripe, false);
+
+            settings = window.ShowSettings();
+            Ui.Settle();
+            ComboBox combo = settings.GetVisualDescendants().OfType<ComboBox>().First(c => c.IsEffectivelyVisible);
+            Border ground = combo.GetVisualDescendants().OfType<Border>().First(b => b.Name == "Background");
+            Assert.True(ground.Background is ISolidColorBrush comboGround && comboGround.Color == field,
+                $"A drop-down is drawn on {(ground.Background as ISolidColorBrush)?.Color}, where a field's ground is {field}");
+            TextBox search = settings.GetVisualDescendants().OfType<TextBox>().First(t => t.IsEffectivelyVisible);
+            combo.Focus();
+            Ui.Settle();
+            Border searchGround = search.GetVisualDescendants().OfType<Border>().First(b => b.Name == "PART_BorderElement");
+            Assert.True(searchGround.Background is ISolidColorBrush searchColour && searchColour.Color == field,
+                $"A text field without the keys is drawn on {(searchGround.Background as ISolidColorBrush)?.Color}, where a field's ground is {field}");
+
+            combo.IsDropDownOpen = true;
+            Ui.Settle();
+            Border list = combo.GetVisualDescendants().OfType<Popup>().First().Child as Border ?? throw new Xunit.Sdk.XunitException("The drop-down's list has no frame");
+            Assert.True(list.Background is ISolidColorBrush listGround && listGround.Color == popup && list.BorderBrush is ISolidColorBrush listEdge && listEdge.Color == edge,
+                $"A drop-down's list is drawn on {(list.Background as ISolidColorBrush)?.Color} with an edge of {(list.BorderBrush as ISolidColorBrush)?.Color}, "
+                + $"where it is the popup's ground ({popup}) and edge ({edge}), as a menu is");
+            ComboBoxItem chosen = (ComboBoxItem)combo.ContainerFromIndex(combo.SelectedIndex)!;
+            ContentPresenter band = chosen.GetVisualDescendants().OfType<ContentPresenter>().First(p => p.Name == "PART_ContentPresenter");
+            object? radius = window.TryFindResource("Passenger.ControlRadius", window.ActualThemeVariant, out object? found) ? found : null;
+            Assert.True(band.Background is ISolidColorBrush row && row.Color == chosenRow && radius is CornerRadius rounded && chosen.CornerRadius == rounded
+                && Math.Abs(chosen.Bounds.Height - ListRow.Height) < 0.5 && chosen.Margin.Left > 0,
+                $"A drop-down's chosen item is drawn on {(band.Background as ISolidColorBrush)?.Color} with corners of {chosen.CornerRadius}, {chosen.Bounds.Height:0.#} px tall, "
+                + $"where it is a list's chosen row ({chosenRow}) on a band inset from the frame with the controls' corners, {ListRow.Height} tall, as a menu's item is");
+            combo.IsDropDownOpen = false;
+            Ui.Settle();
+        }
+        finally
+        {
+            settings?.Close();
             window.Close();
         }
     }

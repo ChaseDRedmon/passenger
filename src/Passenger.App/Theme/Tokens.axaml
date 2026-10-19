@@ -317,6 +317,34 @@
             <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Passenger.Menu.SelectedText" />
             <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed" ResourceKey="Passenger.Menu.SelectedText" />
             <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
+            <!-- Fluent's own keys for a tooltip, a drop-down's list and a field's ground, where Fluent's neutral greys
+                 showed under either theme: a tooltip and a drop-down's list on the popup's ground and edge in the window's
+                 words, the list's chosen row a list's, the one under the pointer washed; a text field and a drop-down on
+                 the field's ground whether or not they have the keys. -->
+            <StaticResource x:Key="ToolTipBackground" ResourceKey="Passenger.Popup" />
+            <StaticResource x:Key="ToolTipBorderBrush" ResourceKey="Passenger.PopupBorder" />
+            <StaticResource x:Key="ToolTipForeground" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="Passenger.Popup" />
+            <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="Passenger.PopupBorder" />
+            <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
+            <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="Passenger.Hover" />
+            <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="Passenger.Selected" />
+            <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="TextControlBackground" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackground" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackgroundPointerOver" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackgroundPressed" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackgroundUnfocused" ResourceKey="Passenger.Field" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <SolidColorBrush x:Key="Passenger.Frame" Color="#E2E7F0" />
@@ -564,6 +592,30 @@
             <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Passenger.Menu.SelectedText" />
             <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed" ResourceKey="Passenger.Menu.SelectedText" />
             <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
+            <StaticResource x:Key="ToolTipBackground" ResourceKey="Passenger.Popup" />
+            <StaticResource x:Key="ToolTipBorderBrush" ResourceKey="Passenger.PopupBorder" />
+            <StaticResource x:Key="ToolTipForeground" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxDropDownBackground" ResourceKey="Passenger.Popup" />
+            <StaticResource x:Key="ComboBoxDropDownBorderBrush" ResourceKey="Passenger.PopupBorder" />
+            <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundPressed" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundSelectedPointerOver" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundSelectedPressed" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="ComboBoxItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
+            <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="Passenger.Hover" />
+            <StaticResource x:Key="ComboBoxItemBackgroundPressed" ResourceKey="Passenger.Selected" />
+            <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPointerOver" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="ComboBoxItemBackgroundSelectedPressed" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="TextControlBackground" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackground" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackgroundPointerOver" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackgroundPressed" ResourceKey="Passenger.Field" />
+            <StaticResource x:Key="ComboBoxBackgroundUnfocused" ResourceKey="Passenger.Field" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>
