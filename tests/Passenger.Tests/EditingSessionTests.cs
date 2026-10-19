@@ -24,6 +24,11 @@ public sealed class EditingSessionTests
     /// lines and more of them as Join Lines makes them longer.</summary>
     private const double WrappedWidth = 380;
 
+    /// <summary>The long sessions' window height, about fifteen lines, which Up and Down scroll all the more. Each key draws
+    /// a frame into a new bitmap that the runtime counts as memory pressure, inducing a full collection every few frames:
+    /// at the rig's 700 a session took more than twice as long, drawing and collecting.</summary>
+    private const double SessionHeight = 300;
+
     /// <summary>The keys of Rider's macOS keymap <see cref="AnyKey"/> presses, Undo and Redo among them twice as often.</summary>
     private static readonly (string Keys, string Name)[] EditingKeys =
     [
@@ -195,6 +200,8 @@ public sealed class EditingSessionTests
         Random random = new(seed);
         string initial = StartingText(random, lines: 2500);
         EditorRig rig = new(initial);
+        rig.Window.Height = SessionHeight;
+        Ui.Settle();
         if (wrapped)
         {
             rig.Window.Width = WrappedWidth;
@@ -208,10 +215,12 @@ public sealed class EditingSessionTests
         {
             string key = Act(random, rig, model, $"seed {seed}, step {step}", wrapped);
             string where = $"seed {seed}, step {step}, after {key}";
-            Assert.True(model.Text == rig.Text, $"The text differs from the model ({where}).");
+            AssertTextIs(rig, model, where);
             Assert.True(model.Caret == rig.Caret, $"The caret is at {rig.Caret}, the model says {model.Caret} ({where}).");
             if (step % 100 == 0)
             {
+                // The whole text as well, as the rope's pieces put together give it.
+                Assert.True(model.Text == rig.Text, $"The text put together differs from the model ({where}).");
                 AssertLinesMatch(rig.Document.Snapshot, model.Text, random, where);
                 if (wrapped)
                 {
@@ -419,7 +428,7 @@ public sealed class EditingSessionTests
                 break;
         }
         key += $" at carets {string.Join(", ", carets)}";
-        Assert.True(model.Text == rig.Text, $"The text differs from the model ({step}, after {key}).");
+        AssertTextIs(rig, model, $"{step}, after {key}");
         string expected = string.Join(", ", landed.Distinct().Order());
         string actual = string.Join(", ", rig.Editor.Selections.Items.Select(s => s.IsEmpty ? $"{s.Caret}" : $"{s.Anchor}-{s.Caret}"));
         Assert.True(expected == actual, $"The carets are at {actual}, the model says {expected} ({step}, after {key}).");
@@ -461,6 +470,13 @@ public sealed class EditingSessionTests
             }
         }
         return text.ToString();
+    }
+
+    /// <summary>The editor's text is the model's, every character.</summary>
+    private static void AssertTextIs(EditorRig rig, Model model, string where)
+    {
+        int at = rig.DifferenceFrom(model.Text);
+        Assert.True(at < 0, $"The text differs from the model from offset {at} ({where}).");
     }
 
     private static void AssertLinesMatch(TextSnapshot snapshot, string text, Random random, string where)

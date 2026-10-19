@@ -350,6 +350,27 @@ public sealed class EditorRig
     public string Text => Document.Snapshot.ToString();
     public int Caret => Editor.Selections.Primary.Caret;
 
+    /// <summary>Where the document's text first differs from <paramref name="expected"/>, or -1 where it is that text,
+    /// every character, read piece by piece from the rope as the editor reads it: <see cref="Text"/> would copy the whole
+    /// text twice, on the large object heap, for every key a long session checks.</summary>
+    public int DifferenceFrom(string expected)
+    {
+        TextSnapshot text = Document.Snapshot;
+        int at = 0;
+        int differs = -1;
+        text.VisitChunks(0, text.Length, chunk =>
+        {
+            if (differs < 0)
+            {
+                ReadOnlySpan<char> mine = chunk.Span;
+                int common = mine.CommonPrefixLength(expected.AsSpan(at, Math.Min(mine.Length, expected.Length - at)));
+                differs = common < mine.Length ? at + common : -1;
+                at += mine.Length;
+            }
+        });
+        return differs >= 0 ? differs : at == expected.Length ? -1 : at;
+    }
+
     /// <summary>"meta shift L", "alt shift PERIOD", "ENTER": Rider's own keymap notation.</summary>
     public void Press(string keys)
     {
