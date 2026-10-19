@@ -123,6 +123,9 @@ public sealed partial class CodeAssist
     /// <summary>What the hover card says while it shows, null otherwise.</summary>
     public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
 
+    /// <summary>What Parameter Info's card says, while it shows.</summary>
+    public string? SignatureText => signatureCard.IsVisible ? signatureCard.Text : null;
+
     /// <summary>The name in the rename box while it is open, null otherwise.</summary>
     public string? Renaming => modal is RenameBox box ? box.Text : null;
 
@@ -1042,14 +1045,15 @@ public sealed partial class CodeAssist
             signatureCard.Clear();
             signatureCard.AddCode(signature.Label);
             int active = signature.ActiveParameter ?? help.ActiveParameter ?? -1;
+            List<string> names = [.. ParameterNames(signature)];
             if (signature.Parameters is { } parameters && active >= 0 && active < parameters.Count
                 && Shapes.Text(parameters[active].Documentation) is { Length: > 0 } about)
             {
-                signatureCard.AddText(about);
+                signatureCard.AddText(SentencesApart(about, names));
             }
             else if (Shapes.Text(signature.Documentation) is { Length: > 0 } documentation)
             {
-                signatureCard.AddText(documentation);
+                signatureCard.AddText(SentencesApart(documentation, names));
             }
             signatureCard.IsVisible = true;
             Place(signatureCard, caret, above: true);
@@ -1061,6 +1065,39 @@ public sealed partial class CodeAssist
         catch (LanguageServerFailed)
         {
             // No signature shown; the next bracket or comma asks again.
+        }
+    }
+
+    /// <summary>Documentation with the space back where its XML put a reference to one of the signature's parameters
+    /// straight after a sentence's full stop, which the server's plain text runs into the word before: .NET's
+    /// String.Join(String, IEnumerable) says "a separator.&lt;paramref name="separator"/&gt; is included", which read
+    /// "a separator.separator is included".</summary>
+    private static string SentencesApart(string text, IEnumerable<string> parameters) =>
+        parameters.Distinct(StringComparer.Ordinal).Aggregate(text, (said, name) => System.Text.RegularExpressions.Regex.Replace(
+            said, $@"(?<=\p{{Ll}}\.){System.Text.RegularExpressions.Regex.Escape(name)}\b", " " + name, System.Text.RegularExpressions.RegexOptions.CultureInvariant));
+
+    /// <summary>A signature's parameters' names, whether the server labels each by its name (Roslyn), as "name: type"
+    /// (TypeScript) or by where it is in the signature's label.</summary>
+    private static IEnumerable<string> ParameterNames(SignatureInformation signature)
+    {
+        foreach (ParameterInformation parameter in signature.Parameters ?? [])
+        {
+            System.Text.Json.JsonElement label = parameter.Label;
+            string text = label.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => label.GetString() ?? string.Empty,
+                System.Text.Json.JsonValueKind.Array when label.GetArrayLength() == 2 && label[0].TryGetInt32(out int start) && label[1].TryGetInt32(out int end)
+                    && 0 <= start && start <= end && end <= signature.Label.Length => signature.Label[start..end],
+                _ => string.Empty,
+            };
+            int colon = text.IndexOf(':', StringComparison.Ordinal);
+            // TypeScript's "name?: type" names it before the colon, C#'s "type name" last.
+            System.Text.RegularExpressions.Match name = System.Text.RegularExpressions.Regex.Match(colon >= 0 ? text[..colon] : text,
+                @"[\p{L}_][\p{L}\p{Nd}_]*", System.Text.RegularExpressions.RegexOptions.RightToLeft);
+            if (name.Success)
+            {
+                yield return name.Value;
+            }
         }
     }
 

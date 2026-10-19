@@ -1248,6 +1248,39 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         static string Said(List<(string Title, string Detail)> shown) => string.Join("; ", shown.Select(s => $"{s.Title} [{s.Detail}]"));
     }
 
+    [AvaloniaFact]
+    public void Parameter_info_keeps_a_sentence_apart_from_a_parameter_its_documentation_names_straight_after_it()
+    {
+        // Written as .NET documents String.Join(String, IEnumerable<String>): no space between the full stop and the paramref.
+        project.Write("Joins.cs", "using System.Collections.Generic;\n\nstatic class Joins\n{\n"
+            + "    /// <summary>Joins the values.</summary>\n"
+            + "    /// <param name=\"separator\">The string to use as a separator.<paramref name=\"separator\"/> is put between values only.</param>\n"
+            + "    /// <param name=\"values\">The values to join.</param>\n"
+            + "    public static string Join(string separator, IEnumerable<string> values) => string.Join(separator, values);\n\n"
+            + "    public static string Both(List<string> names) => Join(\", \", names) + string.Join(\", \", names);\n}\n");
+        MainWindow window = project.Open("Joins.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "=> Join(");
+        Ui.Run(window, AppActions.ParameterInfo);
+        Ui.WaitFor(() => window.Assist.SignatureText?.Contains("is put between", StringComparison.Ordinal) == true, "Join's parameter info with its separator's documentation");
+        string said = window.Assist.SignatureText!;
+        Assert.True(said.Contains("The string to use as a separator. separator is put between values only.", StringComparison.Ordinal),
+            $"Parameter Info runs the sentence into the parameter its documentation names after it, as though a word were missing:\n{said}");
+
+        // .NET's own, when the reference pack has its documentation.
+        if (!project.ReferencePackDownloaded)
+        {
+            Ui.Press(window, "ESCAPE");
+            PlaceAfter(editor, "+ string.Join(");
+            Ui.Run(window, AppActions.ParameterInfo);
+            Ui.WaitFor(() => window.Assist.SignatureText?.Contains("IEnumerable<string?> values", StringComparison.Ordinal) == true, "String.Join's parameter info");
+            said = window.Assist.SignatureText!;
+            Assert.True(said.Contains("separator. separator is included", StringComparison.Ordinal) && !said.Contains("separator.separator", StringComparison.Ordinal),
+                $"String.Join's Parameter Info reads 'separator.separator':\n{said}");
+        }
+        window.Close();
+    }
+
     private static T Await<T>(Task<T> task, string what)
     {
         Ui.WaitFor(() => task.IsCompleted, what, TimeSpan.FromSeconds(30));
