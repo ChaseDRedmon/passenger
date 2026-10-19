@@ -94,7 +94,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`realpath`, or `GetFinalPathNameByHandle` on Windows) and answers `IsUnder` for every "is this inside that folder".
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order), carets
-  (`SelectionSet`) and every editing command as a pure function to an `EditPlan`.
+  (`SelectionSet`) and every editing command as a pure function to an `EditPlan`. `MarkupIndent` is Enter's indent in
+  XAML, MSBuild files, XML and HTML, as Rider's: in after a start tag, the end tag split onto its own line, under the
+  first attribute inside a tag, HTML's void elements known.
 - `src/Passenger.Editor`: the `CodeEditor` control (drawing, input, commands, in partial files),
   the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
   Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
@@ -163,7 +165,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
   `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
-  file, projects read off the UI thread, told each build's AVLN problems; `LibrarySources` decompiles a library's
+  file, projects read off the UI thread, told each build's AVLN problems, a project read again as a restore's
+  `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
+  the Explorer or Git); `LibrarySources` decompiles a library's
   type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
   request needs the `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
@@ -814,6 +818,10 @@ its own cache and config (`TestRun`), so Run 'npm install' fails fast without th
 Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with XAML Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
 what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
+`UiRulesTests` holds the window-wide rules (menu marks and placement, tool window tabs and rows, popup widths, titles
+and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
+`DialogButtonsTests.Check` also holds dialogs to the plain button look, a disabled default, the chrome page, one
+drop-down width per column and Don't ask again's place.
 Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
 never throws, while what it waits for isn't there yet. A test that opens a dialog holds it to `DialogButtonsTests.Check`
 (centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
@@ -864,7 +872,14 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   resources `ControlRadius` 4, `ToolRadius` 6, `PopupRadius` 8); a class style comes after them and says only how it
   differs. A visual inconsistency is fixed once in a shared place (a token, a base style or resource, or a helper such
   as `DialogFooter.Of`), never per control, following Rider where the design is in question; a control that can't use
-  the shared piece says why in one line. A dialog's buttons come from `DialogFooter.Of(default, cancel, more…)` (Rider's
-  order per platform) in a `Border.footerBar`; a list or table in a page is `Border.framed`; a rule inside a page is
-  `Passenger.Separator` (`Passenger.Divider` is for edges between panels). PopupHost gives each popup room for its
-  frame's shadow.
+  the shared piece says why in one line. A dialog's buttons come from `DialogFooter` in a `Border.footerBar`:
+  `Of(default, cancel, more…)` for OK, Cancel, Apply; `Listed(…)` for Rider's DialogWrapper order (the default last on
+  macOS); `Answers(…)` for a question's answers as Rider's message dialogs lay them (the row reversed on macOS); what
+  stands beside them (Don't ask again, a problem) goes at the footer's left through `DialogFooter.Bar`/`Row`. A list or
+  table in a page is `Border.framed`; a rule inside a page is `Passenger.Separator` (`Passenger.Divider` is for edges
+  between panels). PopupHost gives each popup room for its frame's shadow. A menu's value in force is `MenuChoice`
+  (checked, never greyed); a tool window's tab is `ToolTabs.Tab` (`panelTab`), a choice among a few `segment`; popups
+  take widths from `PopupFrame` and titles from `popupTitle`; every list, menu and popup row is `ListRow.Height` (24); a
+  tool window's empty state is `TextBlock.emptyText`; a row that narrows is a `ShrinkingRow`; menus' shadow room and
+  placement are `MenuShadow`, scrollbars `ControlThemes.axaml`, the focus ring `FocusRing`; every Window's ground is the
+  chrome. `MainWindow.SmallestWidth` is 640: the layout works at half a 1366-wide screen.
