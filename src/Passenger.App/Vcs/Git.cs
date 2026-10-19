@@ -49,8 +49,9 @@ public enum RefKind
 }
 
 /// <summary>A branch or tag: its full name (refs/heads/main), which names it to git whatever else shares its short one,
-/// and the short name it is shown by.</summary>
-public sealed record GitRef(string FullName, string Name, RefKind Kind);
+/// and the short name it is shown by; and, where read, git's own short name for it (heads/main while a tag is named main
+/// too), which is what git writes of it in a merge's message and conflict markers.</summary>
+public sealed record GitRef(string FullName, string Name, RefKind Kind, string? GitName = null);
 
 /// <summary>A branch or tag as the Git log's branches panel lists it: the commit it names, whether it is checked out, and
 /// for a local branch the remote and the remote's branch it tracks (its upstream), if any.</summary>
@@ -450,23 +451,24 @@ public sealed class Git
     public async Task<(IReadOnlyList<BranchInfo> Branches, IReadOnlyList<string> Remotes)> BranchTreeAsync()
     {
         GitResult refs = await RunAsync(Root, ["for-each-ref",
-            "--format=%(HEAD)%1f%(refname)%1f%(objectname)%1f%(*objectname)%1f%(upstream:remotename)%1f%(upstream:remoteref)",
+            "--format=%(HEAD)%1f%(refname)%1f%(objectname)%1f%(*objectname)%1f%(upstream:remotename)%1f%(upstream:remoteref)%1f%(refname:short)",
             "refs/heads", "refs/remotes", "refs/tags"]);
         GitResult remotes = await RunAsync(Root, ["remote"]);
         List<BranchInfo> found = [];
         foreach (string line in refs.Succeeded ? refs.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [])
         {
             string[] field = line.Split('\x1f');
-            if (field.Length < 6)
+            if (field.Length < 7)
             {
                 continue;
             }
             string full = field[1];
+            string? own = field[6].Length > 0 ? field[6] : null;
             GitRef? named = full switch
             {
-                _ when full.StartsWith("refs/heads/", StringComparison.Ordinal) => new GitRef(full, full[11..], RefKind.Local),
-                _ when full.StartsWith("refs/remotes/", StringComparison.Ordinal) && !full.EndsWith("/HEAD", StringComparison.Ordinal) => new GitRef(full, full[13..], RefKind.Remote),
-                _ when full.StartsWith("refs/tags/", StringComparison.Ordinal) => new GitRef(full, full[10..], RefKind.Tag),
+                _ when full.StartsWith("refs/heads/", StringComparison.Ordinal) => new GitRef(full, full[11..], RefKind.Local, own),
+                _ when full.StartsWith("refs/remotes/", StringComparison.Ordinal) && !full.EndsWith("/HEAD", StringComparison.Ordinal) => new GitRef(full, full[13..], RefKind.Remote, own),
+                _ when full.StartsWith("refs/tags/", StringComparison.Ordinal) => new GitRef(full, full[10..], RefKind.Tag, own),
                 _ => null,
             };
             if (named is not null)

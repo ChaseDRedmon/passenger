@@ -647,11 +647,12 @@ public sealed class VcsController : IDisposable
         SwitchAsync(repository => repository.NewBranchAtAsync(name, from.Ref.FullName), $"Checked out new branch {name} from {from.Name}", "Git checkout");
 
     /// <summary>Rider's Merge into Current: another branch merged into the one checked out; one that stops for conflicts
-    /// opens the Conflicts dialog.</summary>
+    /// opens the Conflicts dialog. Named to git by git's own short name, which its message and conflict markers say
+    /// ("Merge branch 'feature'"), where the full name put "Merge branch 'refs/heads/feature'" in the history.</summary>
     public Task<VcsOutcome> MergeAsync(BranchInfo branch)
     {
         string into = Branch ?? "HEAD";
-        return SwitchAsync(repository => repository.MergeAsync(branch.Ref.FullName), $"Merged {branch.Name} to {into}", "Git merge", $"{branch.Name} Merged with Conflicts");
+        return SwitchAsync(repository => repository.MergeAsync(branch.Ref.GitName ?? branch.Ref.FullName), $"Merged {branch.Name} to {into}", "Git merge", $"{branch.Name} Merged with Conflicts");
     }
 
     /// <summary>Rider's Rebase Current onto Selected; one that stops for conflicts opens the Conflicts dialog.</summary>

@@ -234,6 +234,7 @@ public sealed class BranchesTests : IDisposable
         Choose(panel, rows, "feature", "Merge 'feature' into 'main'");
         Assert.True(Ancestor("feature", "main"), "main lacks feature's commit after the merge");
         Assert.Equal("Merged feature to main", window.Status);
+        Assert.Equal("Merge branch 'feature'", Git("log", "-1", "--format=%s").Trim());
 
         // Checkout and Rebase onto 'main': team/login checked out, its commit on top of main.
         Choose(panel, rows, "team/login", "Checkout and Rebase onto 'main'");
@@ -304,7 +305,12 @@ public sealed class BranchesTests : IDisposable
         ConflictsDialog dialog = window.ConflictsWindow!;
         Assert.Equal("Merging branch feature into branch main", dialog.Description);
         Assert.Equal(["Shop.cs"], dialog.Rows.Select(r => r.Conflict.Name));
+        // The file's markers and the merge's message name the branch as git and Rider do.
+        Assert.Contains(">>>>>>> feature\n", File.ReadAllText(Path.Combine(folder, "Shop.cs")), StringComparison.Ordinal);
         dialog.Close();
+        window.Perform(AppActions.Commit);
+        Ui.Settle();
+        Assert.StartsWith("Merge branch 'feature'", window.CommitView.Message, StringComparison.Ordinal);
         window.Close();
     }
 
