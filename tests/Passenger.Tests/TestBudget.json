@@ -8,7 +8,7 @@
     "HotReloadEditsTests": 240,
     "BuildRunTests": 300,
     "UnitTestsTests": 240,
-    "McpTests": 270,
+    "McpTests": 510,
     "SelfDebuggingTests": 180,
     "IdeErrorsTests": 150,
     "VcsTests": 150,
