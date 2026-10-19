@@ -33,6 +33,9 @@ just test [filter]         # every test, or those whose name matches
 just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
                            # CI runs' results
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
+just site-shots [SCENE...] # site/images/<scene>-<dark|light>.webp retaken (after just build; macOS, cwebp) from the
+                           # sample in tools/site-shots/sample, copied under TMPDIR with a fixed history, its NuGet
+                           # under artifacts/site-shots; SITE_SHOTS_FLAGS (--window-buttons by default) on every capture
 ```
 
 **Use Passenger on itself.** `.mcp.json` starts Passenger's MCP server over this repository (`tools/mcp.sh`), so its
@@ -59,7 +62,10 @@ A step after one that opens a dialog goes to that dialog, as a person's keys and
 to capture a tool window over its drop place); `--right-click X,Y` opens the menu of what is there; `--crop X,Y,W,H`,
 `--click X,Y` and `--hover X,Y` (the pointer left to rest, for a hover card) are in logical units; `--click-name NAME`
 clicks the visible control of that x:Name at its centre (a name none has ends it with exit code 2); `--wait MS` gives a
-running program time.
+running program time. `--window-buttons` draws macOS's traffic lights into a main-window capture (`Theme/TrafficLights`:
+Passenger's own drawing, measured from AppKit's of an active window made as Avalonia makes Passenger's, Dark Aqua under
+the Dark theme and Aqua under the Light); Windows' and Linux's merged bars draw their own, so there it changes nothing,
+and it draws none in full screen or when a dialog is captured.
 
 Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire inside a running dispatcher frame: a wait
 that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests). One that has come due also fires while
@@ -752,8 +758,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   uses and uninstalls the archive. ClrMD's DAC stays loaded once used (`HeapGraph.Runtime`): unloading it crashed the
   IDE on Linux. Linux's file systems tell letter case apart, so a test of another letter case skips there.
 - `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
-  touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its share card,
-  `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment).
+  touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its pictures are
+  `just site-shots`' (each scene in both themes, a `<picture>` choosing by `prefers-color-scheme`, as the README's do);
+  its share card, `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment)
+  after the pictures.
 - `.github/workflows`: `test.yml` is every test on macOS, Windows and Linux, each system's suite in four shards run at
   once (jobs named as "macOS (arm64), shard 1 of 4"), then a summary job per system named as the system ("macOS
   (arm64)", the check that stands for it). It is called by `ci.yml` (each push and pull request, with the packages'
