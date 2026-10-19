@@ -329,7 +329,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `VcsController` and `MainWindow.Branches.cs`; a branch filters the Log through `GitLogView.FilterBranch`, and
   favourites are the folder's `gitBranches.json`. `MergeState` is what a merge, rebase, cherry-pick or
   revert stopped on and Rider's words for its sides (during a rebase yours is git's theirs); `ConflictsDialog` is
-  Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge`;
+  Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge` (each stage read with
+  `git cat-file --filters` in the conflicted file's encoding, the result written with its encoding and breaks);
   `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
   agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions; the widget gives each local
@@ -493,14 +494,22 @@ window or takes the focus; it shows everything but the system's own window chrom
   `OpenDocument.Save` applies the save-time properties. Anything Passenger itself writes to a project, solution,
   nuget.config or Directory.Packages.props saves that file first if it's open (`MainWindow.SaveBeforeWriting`, or
   SaveAll before `dotnet add package`) and then loads what it wrote (`FollowWritten`); a delete saves the open files
-  under it first. A project edit or a save waits out a reader that shares no
+  under it first, and holds off design-time builds under it (`ProjectBuilds.HoldOff`). Every write of a workspace file
+  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on macOS its tags, ACL
+  and creation date (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
+  window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), Local History given the old bytes; projects,
+  solutions, nuget.config, .gitignore and merge results included, never `File.WriteAll*`. A server's edit to files not
+  open goes through `WorkspaceEdits.StaleAsync` (refused if one was written within 2 s of the request or its text differs
+  from the server's, the extension's `DocumentTexts`). A project edit or a save waits out a reader that shares no
   writes (Windows refuses the write while a project load reads the file) for up to 2 s (`FileText.WhileHeld`). Every
   edit from the language server goes through
   `LineEndings.Fit`, then `Indentation.Fit`. `OpenDocument` keeps how its file is stored, encoding, BOM and
   `LineSeparator` (a CR file's breaks are held as '\n' and written as '\r'); the status bar's widgets and File > File
   Encoding / Line Separators change them (`MainWindow.FileProperties.cs`), each one undoable step, a choice winning
   over .editorconfig's while the file is open. `FileEncoding` lists the encodings; `EncodingChange` weighs Reload
-  against Convert as Rider's EncodingUtil does.
+  against Convert as Rider's EncodingUtil does. Bytes that aren't UTF-8 are read in the .editorconfig's 8-bit charset,
+  else the system's ANSI code page on Windows, else windows-1252 (`FileEncoding.EightBit`), Latin-1 only when chosen; a
+  typed character the encoding can't hold is said in the banner (`OpenDocument.EncodingWarning`) before a save.
 - `src/Passenger.App/PassengerApp.cs`: the process root. Its project windows (a folder or solution each), the one in
   front, and the one `OpenProject(path, ThisWindow | NewWindow)` that a start, Open, the recent solutions, the Welcome
   screen, the Window menu, the system's file activation (`App.OnActivated`) and `--mcp` go through; `NewWindow` makes a
