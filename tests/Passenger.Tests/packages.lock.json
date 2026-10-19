@@ -118,6 +118,26 @@
           "Avalonia.Skia": "12.1.4"
         }
       },
+      "Azure.Core": {
+        "type": "Transitive",
+        "resolved": "1.53.0",
+        "contentHash": "x9c/toFMOtRrlTdFuE7rlGCVAduQzWVfKmLz5juj41zJAXEhYD5hluiUyyAEzJ6OxpBnKtiaBztzwpZITAVjtg==",
+        "dependencies": {
+          "Microsoft.Bcl.AsyncInterfaces": "10.0.3",
+          "Microsoft.Identity.Client": "4.83.1",
+          "Microsoft.Identity.Client.Extensions.Msal": "4.83.1",
+          "System.ClientModel": "1.10.0",
+          "System.Memory.Data": "10.0.3"
+        }
+      },
+      "Azure.Identity": {
+        "type": "Transitive",
+        "resolved": "1.21.0",
+        "contentHash": "GeFv8sGwRKvDKwI2WFy8r0mhmlxEVZg24Sit2NogTjiSO8RVjllWM65OT6e1sKjOvG8V74y7hAbaELUUPjZQSw==",
+        "dependencies": {
+          "Azure.Core": "1.53.0"
+        }
+      },
       "HarfBuzzSharp": {
         "type": "Transitive",
         "resolved": "8.3.1.3",
@@ -164,8 +184,8 @@
       },
       "Microsoft.Bcl.AsyncInterfaces": {
         "type": "Transitive",
-        "resolved": "6.0.0",
-        "contentHash": "UcSjPsst+DfAdJGVDsu346FX0ci0ah+lw3WRtn18NUwEqRt70HaOQ7lI72vy3+1LxtqI3T5GWwV39rQSrCzAeg=="
+        "resolved": "10.0.3",
+        "contentHash": "TV62UsrJZPX6gbt3c4WrtXh7bmaDIcMqf9uft1cc4L6gJXOU07hDGEh+bFQh/L2Az0R1WVOkiT66lFqS6G2NmA=="
       },
       "Microsoft.CodeAnalysis.Analyzers": {
         "type": "Transitive",
@@ -190,10 +210,37 @@
         "resolved": "10.8.3",
         "contentHash": "K0B05oApxmviWalNHPMBBcRC7erKiDATz3ENNR/jqTR9JwIwLRefgDhj2jCRwL1aca99pXUe0qyQC73/xIuZig=="
       },
+      "Microsoft.Identity.Client": {
+        "type": "Transitive",
+        "resolved": "4.83.1",
+        "contentHash": "jOLIrZ3cynoqHLLO1cXplFFabrhrMEYs/EuKHvmCyrOm1axqiVFT6nCSnHxk7w5+d2BeQfCdM12Yf/0X7OeS1g==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Abstractions": "8.14.0"
+        }
+      },
+      "Microsoft.Identity.Client.Extensions.Msal": {
+        "type": "Transitive",
+        "resolved": "4.83.1",
+        "contentHash": "I3k4J4Hj4KbLEFanjeUzzDOVecukETaTgEkJ7h2pP/Yazs6SLp6TVUTo/Eo+ptPXMwvc+iX7rBFtMSUrA7R+Mg==",
+        "dependencies": {
+          "Microsoft.Identity.Client": "4.83.1",
+          "System.Security.Cryptography.ProtectedData": "4.5.0"
+        }
+      },
+      "Microsoft.IdentityModel.Abstractions": {
+        "type": "Transitive",
+        "resolved": "8.14.0",
+        "contentHash": "iwbCpSjD3ehfTwBhtSNEtKPK0ICun6ov7Ibx6ISNA9bfwIyzI2Siwyi9eJFCJBwxowK9xcA1mj+jBWiigeqgcQ=="
+      },
       "Microsoft.NET.StringTools": {
         "type": "Transitive",
         "resolved": "18.4.0",
         "contentHash": "iQWOKi3L5QStmWqDjDubcr1KlTDy88qBTe88I0etlUUo1l0zSNebGJXl1Xetyl+ACA+ujP3YUtxo3Nz54JPriw=="
+      },
+      "Microsoft.Security.AntiSSRF": {
+        "type": "Transitive",
+        "resolved": "1.0.0",
+        "contentHash": "V0AJQt8FC5HXkvFhBqB0WgMADVL+vG+qiMK9p39OHdqfNwYOh1durk8j9rKPklWasBxpk8ifVdzoJmEgUWVoeg=="
       },
       "Microsoft.Testing.Extensions.Telemetry": {
         "type": "Transitive",
@@ -336,6 +383,19 @@
         "type": "Transitive",
         "resolved": "3.119.4",
         "contentHash": "XOpbx/4CReO2wYsq2s6rbvdauc6dntG4Zv499sHGTJ87bwZaFXszFkwql3+FIZMc8kUPeaj3Mx2ezIJmo8a1Kg=="
+      },
+      "System.ClientModel": {
+        "type": "Transitive",
+        "resolved": "1.10.0",
+        "contentHash": "lBEWs54F5Y5pZ9hC+8z4S/X76957ex+DPk7WecRHlbIHtrPfbRMMlOgI3iDn4Jpb3bSxvBnKaaHoD59auFjlBA==",
+        "dependencies": {
+          "System.Memory.Data": "10.0.3"
+        }
+      },
+      "System.Memory.Data": {
+        "type": "Transitive",
+        "resolved": "10.0.3",
+        "contentHash": "MaGhRfGunmrj/nHjtsi9XkhlYJ/ERGWrbA+BiSKNtGnAjc9XlG5EhAvak6VRcX5LYzPF6pBO8nJ613dTgzabig=="
       },
       "System.Security.Cryptography.ProtectedData": {
         "type": "Transitive",
@@ -612,7 +672,9 @@
         "resolved": "4.2.751201",
         "contentHash": "9rg4pJnc46e7QvUYC8Pxu5VqPJhKEO2ILGEZy1LOKrwurLC8iSAAzamDVLd/cYPb3zGbM9RE4Zo41Tis8OxCyA==",
         "dependencies": {
-          "Microsoft.Diagnostics.NETCore.Client": "0.2.661903"
+          "Azure.Identity": "1.21.0",
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.661903",
+          "Microsoft.Security.AntiSSRF": "1.0.0"
         }
       },
       "Microsoft.Diagnostics.Tracing.TraceEvent": {

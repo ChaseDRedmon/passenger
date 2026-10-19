@@ -185,7 +185,9 @@ internal sealed class HeapGraph
     }
 
     /// <summary>ClrMD's file locator for what a dump lacks, which finds nothing: its own downloads from symbol servers,
-    /// and the Azure sign-in it carries for them (left out of the build), are never needed for a program run here.</summary>
+    /// with the symbol cache it makes under the person's local application data and the Azure sign-in it brings for them,
+    /// are never needed for a program run here. The Azure assemblies stay carried: on Linux ClrMD's FileLocator getter
+    /// loads Azure.Core even when given a locator, and the snapshot then waits for good.</summary>
     private sealed class NothingDownloaded : IFileLocator
     {
         public static readonly NothingDownloaded Locator = new();
