@@ -2,7 +2,8 @@
 """Which of a system's CI shards runs each test class, and the checks that every test runs in exactly one of them.
 
 CI (.github/workflows/test.yml) splits each system's tests across parallel shards, each a runner of its own. A shard
-lists the whole suite (`dotnet test --list-tests`) and `split` deals its classes out by their seconds on that system in
+lists the whole suite (`list`, which runs `dotnet test --list-tests` again when its listing names no test or says
+discovery failed, and fails quoting what it printed) and `split` deals its classes out by their seconds on that system in
 tests/Passenger.Tests/TestTimes.json, the longest first, each to the shard with the fewest seconds so far, so every
 shard of a commit deals the same; each runs its own hand with `dotnet test --settings shard-N.runsettings`, whose
 TestCaseFilter names its classes. A class the times lack weighs its budget in TestBudget.json. Before any test runs,
@@ -25,7 +26,10 @@ from xml.sax.saxutils import escape
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TIMES = os.path.join(ROOT, "tests", "Passenger.Tests", "TestTimes.json")
 BUDGET = os.path.join(ROOT, "tests", "Passenger.Tests", "TestBudget.json")
+PROJECT = os.path.join(ROOT, "tests", "Passenger.Tests")
 SYSTEMS = ("macOS", "Windows", "Linux")
+# What xunit's adapter writes into the listing when it could not discover an assembly's tests.
+DISCOVERY_FAILED = "Exception discovering tests"
 # How much sooner the slowest shard must end, dealt from a run's own times, before the summary asks for a new deal.
 WORTH_DEALING_AGAIN = 120
 
@@ -60,14 +64,73 @@ def key(name):
     return "".join(c if c.isascii() else "?" for c in name)
 
 
-def listing(path):
-    """The tests `dotnet test --list-tests` printed, by display name."""
-    with open(path, encoding="utf-8", errors="replace") as file:
-        lines = file.read().splitlines()
+def tests_in(text):
+    """The tests a `dotnet test --list-tests` printout names, by display name, or None when it never says which are there."""
+    lines = text.splitlines()
     starts = [i for i, line in enumerate(lines) if line.strip() == "The following Tests are available:"]
     if not starts:
-        sys.exit(f"test-shards: {path} is not what dotnet test --list-tests prints: it never says which tests are there")
+        return None
     return [line.strip() for line in lines[starts[0] + 1:] if line.startswith("    ") and line.strip()]
+
+
+def unlisted(text):
+    """Why a `dotnet test --list-tests` printout is no listing of the suite, or None when it is one."""
+    tests = tests_in(text)
+    if tests is None:
+        return "it never says which tests are there"
+    # Discovery that failed may still have listed some of the tests, so this shard's deal would not be the others'.
+    if DISCOVERY_FAILED in text:
+        return f"it says \"{DISCOVERY_FAILED}\", so some or all of the tests are missing from it"
+    if not tests:
+        return "it names no test"
+    return None
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as file:
+        return file.read()
+
+
+def listing(path):
+    """The tests `dotnet test --list-tests` printed, by display name."""
+    text = read(path)
+    if (why := unlisted(text)) is not None:
+        sys.exit(f"test-shards: {path} is not a listing of the suite: {why}. dotnet test printed:\n{text}")
+    return tests_in(text)
+
+
+def list_tests(arguments):
+    """The suite as `dotnet test --list-tests` lists it (with a shard's settings, that shard's hand), written to a file as
+    it printed it. A listing that names no test, or says discovery failed, is asked for again; still so after the last
+    try, the step fails with what dotnet printed."""
+    command = ["dotnet", "test", PROJECT, "--no-build", "--list-tests"]
+    if arguments.settings:
+        command += ["--settings", arguments.settings]
+    for attempt in range(1, arguments.tries + 1):
+        # Its standard error goes to the log; its output, which the listing is, as bytes, so the file is what it printed.
+        done = subprocess.run(command, stdout=subprocess.PIPE, check=False)
+        with open(arguments.out, "wb") as file:
+            file.write(done.stdout)
+        text = done.stdout.decode("utf-8", errors="replace")
+        why = unlisted(text)
+        if why is None:
+            print(f"{len(tests_in(text))} tests listed{f' with {arguments.settings}' if arguments.settings else ''}")
+            return 0
+        if attempt < arguments.tries:
+            say("warning", "Listing the tests", f"dotnet test --list-tests (exit code {done.returncode}) is no listing of the "
+                f"suite: {why}. Listing again, try {attempt + 1} of {arguments.tries}")
+            echo(done.stdout)
+    say("error", "Listing the tests", f"dotnet test --list-tests is no listing of the suite in {arguments.tries} tries: "
+        f"{why}. Its last exit code was {done.returncode}, and what it printed follows")
+    echo(done.stdout)
+    return 1
+
+
+def echo(printed):
+    """A program's output into the log as it printed it: Python's own encoding on Windows (cp1252) cannot hold every name."""
+    sys.stdout.flush()
+    sys.stdout.buffer.write(printed)
+    sys.stdout.buffer.flush()
 
 
 def owner(name):
@@ -195,7 +258,11 @@ def cover(arguments):
     suite = None
     for number, folder in sorted(folders.items()):
         if os.path.exists(os.path.join(folder, "suite.txt")):
-            this = Counter(key(test) for test in listing(os.path.join(folder, "suite.txt")))
+            text = read(os.path.join(folder, "suite.txt"))
+            if (why := unlisted(text)) is not None:
+                problems.append(f"Shard {number} on {system} left no listing of the suite: {why}")
+                continue
+            this = Counter(key(test) for test in tests_in(text))
             if suite is None:
                 suite = this
             elif this != suite:
@@ -272,9 +339,10 @@ def update(arguments):
         if not this:
             sys.exit(f"test-shards: {folder} holds no .trx results")
         for path, _, files in os.walk(folder):
-            if "suite.txt" in files:
+            # A shard whose listing failed ran nothing, and says nothing of the suite.
+            if "suite.txt" in files and unlisted(text := read(os.path.join(path, "suite.txt"))) is None:
                 system, _ = trx.shard_of(os.path.join(path, "suite.txt"))
-                suites.setdefault(system, set()).update(owner(test) for test in listing(os.path.join(path, "suite.txt")))
+                suites.setdefault(system, set()).update(owner(test) for test in tests_in(text))
         for system, classes in this.items():
             for test_class, seconds in classes.items():
                 spent.setdefault(system, {}).setdefault(test_class, []).append(seconds)
@@ -299,6 +367,12 @@ def update(arguments):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
+
+    command = commands.add_parser("list", help="write what dotnet test --list-tests prints, listing again while it names no test")
+    command.add_argument("out", help="the file the listing goes to")
+    command.add_argument("--settings", help="a shard's dotnet test settings, to list only its hand")
+    command.add_argument("--tries", type=int, default=3)
+    command.set_defaults(run=list_tests)
 
     command = commands.add_parser("split", help="deal a system's test classes to its shards, their settings to --out")
     command.add_argument("suite", help="what dotnet test --list-tests printed for the whole suite")
