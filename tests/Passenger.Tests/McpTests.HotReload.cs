@@ -46,4 +46,37 @@ public sealed partial class McpTests
         Assert.Equal("3", Local(await Call(client, "debug_continue"), "total"));
         await Call(client, "stop");
     }
+
+    /// <summary>Run with Hot Reload (Settings' Hot Reload, or run's hotReload, since the headless IDE keeps the default settings)
+    /// runs the program under dotnet watch, which takes saved edits: hot_reload saves them and answers with what dotnet watch
+    /// said of them, and run_output shows the program running them.</summary>
+    [Fact]
+    public async Task An_agent_applies_hot_reload_changes_to_what_run_runs_under_dotnet_watch_and_is_told_what_dotnet_watch_made_of_them()
+    {
+        File.WriteAllText(Path.Combine(folder, "Program.cs"),
+            "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+        Assert.True((await Call(client, "run", new() { ["waitSeconds"] = 0, ["hotReload"] = true })).GetProperty("stillRunning").GetBoolean());
+        // dotnet watch watches once it has loaded the project, which is after the program has started.
+        string output = string.Empty;
+        for (int i = 0; i < 240 && !(output.Contains("before the edit", StringComparison.Ordinal) && output.Contains("Waiting for changes", StringComparison.Ordinal)); i++)
+        {
+            await Task.Delay(500, Cancel);
+            output = (await Call(client, "run_output", new() { ["lines"] = 100000 })).GetString()!;
+        }
+        Assert.True(output.Contains("Waiting for changes", StringComparison.Ordinal), $"dotnet watch never watched the program:\n{output[..Math.Min(output.Length, 3000)]}");
+
+        await Call(client, "open_file", new() { ["path"] = "Program.cs", ["line"] = 9, ["column"] = 51 });
+        await Call(client, "type", new() { ["text"] = ", edited" });
+        JsonElement applied = await Call(client, "hot_reload");
+        Assert.True(applied.GetProperty("result").GetString() == "applied" && applied.GetProperty("said").GetString()!.Contains("dotnet watch applied the changes", StringComparison.Ordinal),
+            $"dotnet watch did not apply the saved edit: {applied}\n{(await Call(client, "run_output")).GetString()}");
+        for (int i = 0; i < 60 && !output.Contains("before the edit, edited", StringComparison.Ordinal); i++)
+        {
+            await Task.Delay(500, Cancel);
+            output = (await Call(client, "run_output")).GetString()!;
+        }
+        Assert.True(output.Contains("before the edit, edited", StringComparison.Ordinal), $"The running program never ran the edit:\n{output[Math.Max(0, output.Length - 3000)..]}");
+        await Call(client, "stop");
+    }
 }

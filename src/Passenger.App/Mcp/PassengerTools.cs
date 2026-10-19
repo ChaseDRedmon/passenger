@@ -503,12 +503,15 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
-        int waitSeconds = 30, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        int waitSeconds = 30,
+        [Description("Run it under dotnet watch with Hot Reload, as Settings' Hot Reload does (off by default): hot_reload then applies " +
+            "the edits, or a save does")] bool? hotReload = null,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Choose(configuration);
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;
         BuildRunController builds = Builds;
-        if (await builds.RunAsync(arguments).WaitAsync(cancel) is { } refused)
+        if (await builds.RunAsync(arguments, hotReload).WaitAsync(cancel) is { } refused)
         {
             throw new InvalidOperationException(refused);
         }
@@ -525,6 +528,12 @@ public sealed partial class PassengerTools(MainWindow window)
         string output = Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(Session.Runner.Shown(), 200);
         return new RunResult(code is null, code, code is int exit ? BuildRunController.RunEnded(name, exit) : $"Running {name}", output);
     });
+
+    [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
+        "What the program Run runs (or last ran) has written, the last lines: the Run window's console (under Hot Reload, dotnet watch's " +
+        "words too), or, for a configuration that uses the terminal, its tab of the Terminal window as it shows now.")]
+    public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(
+        Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(Session.Runner.Shown(), lines)));
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]
     public Task<string> Stop(CancellationToken cancel = default) => OnUi(cancel, async () =>

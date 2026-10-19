@@ -358,9 +358,10 @@ public sealed class BuildRunController
 
     /// <summary>Runs the chosen configuration, with these arguments in place of its own if given: its plan's program started
     /// after its build, its output and input in the Run window, or in a tab of the Terminal window when the configuration
-    /// uses the terminal. Null once it runs (<see cref="RunEnd"/> is its end), else why it could not, which the status bar
-    /// says too.</summary>
-    public async Task<string?> RunAsync(string? arguments = null)
+    /// uses the terminal; under dotnet watch as Settings' Hot Reload says, or as <paramref name="hotReload"/> does (an agent's
+    /// run, whose headless IDE keeps the default settings). Null once it runs (<see cref="RunEnd"/> is its end), else why it
+    /// could not, which the status bar says too.</summary>
+    public async Task<string?> RunAsync(string? arguments = null, bool? hotReload = null)
     {
         if (session.Configurations.Chosen is not { } chosen)
         {
@@ -377,32 +378,32 @@ public sealed class BuildRunController
             parts.Editors.SaveAll();
             parts.Views.Run.Clear();
             // dotnet watch builds the project itself, and runs it again after an edit it cannot apply.
-            bool hotReload = parts.Settings().HotReload && chosen.Program.Length == 0;
-            watching = hotReload;
-            (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, build: !hotReload);
+            bool watched = (hotReload ?? parts.Settings().HotReload) && chosen.Program.Length == 0;
+            watching = watched;
+            (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, build: !watched);
             if (plan is null)
             {
                 return Said(problem!);
             }
-            if (plan.WhyNot("run", built: !hotReload) is { } why)
+            if (plan.WhyNot("run", built: !watched) is { } why)
             {
                 return Said(why);
             }
             ran = chosen.Name;
             RunProject = Path.GetDirectoryName(plan.Project);
-            string running = hotReload ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
+            string running = watched ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
             // An Avalonia or WPF app is launched with the inspector in it, which tells of its failed bindings while it runs.
-            LaunchPlan launched = session.InspectedRun(plan, hotReload);
+            LaunchPlan launched = session.InspectedRun(plan, watched);
             LiveApp? inspected = session.RunApp;
             ShowBindings();
-            Dictionary<string, string> variables = hotReload
+            Dictionary<string, string> variables = watched
                 ? new Dictionary<string, string>(launched.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }
                 : new Dictionary<string, string>(launched.Environment);
             if (plan.Console == ConsoleKind.Terminal)
             {
                 // The terminal's text is the program's own: its failed bindings are in Problems alone.
                 WatchBindings(inspected, null);
-                string? refused = await RunInTerminalAsync(chosen.Name, hotReload ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
+                string? refused = await RunInTerminalAsync(chosen.Name, watched ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
                 if (refused is null && session.InTerminal is { } inTerminal)
                 {
                     parts.OpenBrowser(plan, inTerminal.Ended);
@@ -415,7 +416,7 @@ public sealed class BuildRunController
             parts.Dock.Show("run");
             parts.Say(running);
             WatchBindings(inspected, parts.Views.Run);
-            string? notStarted = Started(hotReload
+            string? notStarted = Started(watched
                 ? session.Runner.StartDotnet(Watch(plan), plan.WorkingDirectory, variables)
                 : session.Runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
             if (notStarted is null)
