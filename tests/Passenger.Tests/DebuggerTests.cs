@@ -1307,7 +1307,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             (debuggee, adapter) = (run.Program, run.Debugger);
             Task ended = run.Ended ?? throw new InvalidOperationException("The window closed with no end to wait for");
 
-            Assert.True(await Task.WhenAny(ended, Task.Delay(MainWindow.EndLimit + TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == ended,
+            Assert.True(await Waiting.Within(ended, MainWindow.EndLimit + TimeSpan.FromSeconds(5).Scaled(), TestContext.Current.CancellationToken, scaled: false),
                 "The window closed without ending what it started within its limit, so the IDE's process would not end");
             Assert.True(Processes.Gone(adapter), "After the window closed, the debugger went on running");
             Assert.True(Processes.Gone(debuggee), "After the window closed, the program being debugged went on running");
@@ -1316,7 +1316,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             {
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
-                Thread.Sleep(100);
+                Waiting.For(TimeSpan.FromMilliseconds(100), "for a task nobody came back for to be finalized and heard of, were there one");
             }
             lock (unheard)
             {
