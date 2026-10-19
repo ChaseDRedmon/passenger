@@ -228,9 +228,11 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(window.Perform(AppActions.SplitRight));
         Ui.Settle();
 
+        bool heard = false;
+        window.FolderWatcher!.Changed += (_, changes) => heard |= changes.Paths.Any(p => Path.GetFileName(p) is "Order.cs" or "Purchase.cs");
         Assert.Null(window.Rename(order, "Purchase.cs"));
         // The folder watcher hears of the move after it, and must not take it for the file deleted.
-        Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(500));
+        Ui.WaitFor(() => heard, "the folder watcher to hear of the move");
         Ui.Settle();
         string purchase = Path.Combine(models, "Purchase.cs");
         Assert.False(File.Exists(order), "Order.cs is still on disk after its rename");

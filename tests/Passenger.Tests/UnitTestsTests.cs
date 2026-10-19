@@ -342,7 +342,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         // A frame is measured against the one that marked all 3,000 running, which touched each of them once too.
         List<double> arriving = [];
         double marking = 0;
-        DateTime limit = DateTime.UtcNow.AddMinutes(3);
+        DateTime limit = DateTime.UtcNow + TimeSpan.FromMinutes(3).Scaled();
         rewrites = 0;
         while (window.Tests.IsBusy && DateTime.UtcNow < limit)
         {
@@ -360,7 +360,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
             {
                 marking = took;
             }
-            Thread.Sleep(10);
+            Waiting.For(TimeSpan.FromMilliseconds(10), "results to come in between the frames measured");
         }
         Ui.Settle();
         Assert.False(window.Tests.IsBusy, "The run of 3,000 tests had not ended after 3 minutes");
@@ -519,10 +519,10 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         foreach (string key in new[] { "[", "Fact", "]", "\n", "public void Added(", ") ", "{", " }", "\n" })
         {
             window.KeyTextInput(key);
-            Screenshot.Pump(TimeSpan.FromMilliseconds(40));
+            Ui.Hold(TimeSpan.FromMilliseconds(40), "a pause between keys, as a person types");
         }
         Ui.WaitFor(() => typed.TestMarks.Count == 5, "the new test's run icon");
-        Screenshot.Pump(TimeSpan.FromMilliseconds(400));
+        Ui.Hold(TimeSpan.FromMilliseconds(400), "long enough for anything waiting on a pause in typing to run");
         Ui.Settle();
         Assert.Contains(new TestMark(editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("Added", StringComparison.Ordinal)), TestMarkKind.NotRun), typed.TestMarks);
         Assert.True(others.All(d => marked[d] == 0), $"Typing in {typed.Name} gave other files their run icons again: {string.Join(", ", others.Where(d => marked[d] > 0).Select(d => $"{d.Name} {marked[d]} times"))}");
@@ -641,7 +641,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         foreach (string key in new[] { "[", "Fact", "]", "\n", "public void Typed_during_the_run(", ") ", "{", " }", "\n" })
         {
             window.KeyTextInput(key);
-            Screenshot.Pump(TimeSpan.FromMilliseconds(40));
+            Ui.Hold(TimeSpan.FromMilliseconds(40), "a pause between keys, as a person types");
         }
         Ui.WaitFor(() => !window.Tests.IsBusy && four.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
 
@@ -687,7 +687,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         foreach (string key in new[] { "[", "Fact", "]", "\n", "public void Added(", ") ", "{", " }", "\n" })
         {
             window.KeyTextInput(key);
-            Screenshot.Pump(TimeSpan.FromMilliseconds(40));
+            Ui.Hold(TimeSpan.FromMilliseconds(40), "a pause between keys, as a person types");
         }
         Ui.WaitFor(() => Method(window, "Added") is not null, "the typed test in the tree");
         Assert.Equal(TestState.NotRun, Method(window, "Added")!.State);

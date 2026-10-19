@@ -343,7 +343,7 @@ public sealed class IdeErrorsTests : IDisposable
         try
         {
             asked = window.ShowCallHierarchyAsync();
-            Screenshot.Pump(TimeSpan.FromMilliseconds(200));
+            Ui.Hold(TimeSpan.FromMilliseconds(200), "a moment in which a stopped server cannot answer");
             Assert.False(asked.IsCompleted, "Call Hierarchy answered from a stopped server");
         }
         finally

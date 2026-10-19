@@ -183,7 +183,7 @@ public sealed class FolderWatchTests : IDisposable
         File.WriteAllText(path, "class One { int disk; }\n");
         Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the File Cache Conflict dialog");
         // The dialog has the focus and the idle wait goes by: neither writes over the disk's version, nor does Save.
-        Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1.5));
+        Ui.Hold(TimeSpan.FromSeconds(1.5), "the idle save's second to go by");
         window.Perform(AppActions.Save);
         Ui.Settle();
         Assert.Equal("class One { int disk; }\n", File.ReadAllText(path));

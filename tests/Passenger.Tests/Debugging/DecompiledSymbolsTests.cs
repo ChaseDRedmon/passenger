@@ -94,13 +94,8 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
         string writing = Plant(cache, "Writing.Library.pdb.2c3d.tmp", TimeSpan.FromMinutes(1));
 
         using DebugSession host = DebugSession.ForLaunch(testOutputHelper, cache).WithInitializeRequest();
-        Stopwatch waited = Stopwatch.StartNew();
-        while (File.Exists(stale) || File.Exists(abandoned))
-        {
-            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(30),
-                $"The adapter had not pruned in 30 s: {(File.Exists(stale) ? "symbols unused for 40 days" : "a temporary file 2 hours old")} still there");
-            await Task.Delay(50, TestContext.Current.CancellationToken);
-        }
+        Assert.True(await Waiting.UntilAsync(() => !File.Exists(stale) && !File.Exists(abandoned), TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken, TimeSpan.FromMilliseconds(50)),
+            $"The adapter had not pruned in {TimeSpan.FromSeconds(30).Scaled().TotalSeconds} s: {(File.Exists(stale) ? "symbols unused for 40 days" : "a temporary file 2 hours old")} still there");
         Assert.True(File.Exists(recent), "Symbols used 3 days ago were pruned");
         Assert.True(File.Exists(writing), "A temporary file a minute old, which another adapter may still be writing, was pruned");
         Assert.False(Directory.Exists(Path.GetDirectoryName(Path.GetDirectoryName(stale))), "The pruned entry's folders were left behind, empty");
@@ -165,20 +160,18 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
     /// <summary>Waits for the decompile's temporary file in the cache, the sign that it is under way.</summary>
     private static async Task DecompileStarted(string cache, Task resolving)
     {
-        Stopwatch waited = Stopwatch.StartNew();
-        while (!Directory.EnumerateFiles(cache, "*.tmp", SearchOption.AllDirectories).Any())
+        bool Started() => Directory.EnumerateFiles(cache, "*.tmp", SearchOption.AllDirectories).Any();
+        await Waiting.UntilAsync(() => Started() || resolving.IsCompleted, TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken, TimeSpan.FromMilliseconds(20));
+        if (Started())
         {
-            if (resolving.IsCompleted)
-            {
-                await resolving;
-                throw new InvalidOperationException("The frame was resolved before its decompile was seen to start");
-            }
-            if (waited.Elapsed > TimeSpan.FromSeconds(60))
-            {
-                throw new TimeoutException("No decompile started in 60 s of resolveStackFrame");
-            }
-            await Task.Delay(20, TestContext.Current.CancellationToken);
+            return;
         }
+        if (resolving.IsCompleted)
+        {
+            await resolving;
+            throw new InvalidOperationException("The frame was resolved before its decompile was seen to start");
+        }
+        throw new TimeoutException($"No decompile started in {TimeSpan.FromSeconds(60).Scaled().TotalSeconds} s of resolveStackFrame");
     }
 
     private static List<string> Pdbs(string cache) => [.. Directory.EnumerateFiles(cache, "*.pdb", SearchOption.AllDirectories)];

@@ -232,8 +232,8 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
         Task configured = host.Send("configurationDone");
         await hold.Held();
 
-        await Task.WhenAny(configured, Task.Delay(TimeSpan.FromSeconds(6), TestContext.Current.CancellationToken));
-        Assert.False(configured.IsCompleted, $"The debugger gave up on the program while its runtime was still starting: {configured.Exception?.InnerException?.Message}");
+        // Six seconds in which the runtime is held, and the debugger must not give up on it.
+        Assert.False(await Waiting.Within(configured, TimeSpan.FromSeconds(6), TestContext.Current.CancellationToken, scaled: false), $"The debugger gave up on the program while its runtime was still starting: {configured.Exception?.InnerException?.Message}");
         await hold.LetGo();
         await configured.WaitAsync(DebugSession.RequestLimit, TestContext.Current.CancellationToken);
         StoppedEvent stopped = await host.WaitForStoppedEvent();
@@ -257,10 +257,7 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
         Assert.True(host.Disconnect(TimeSpan.FromSeconds(10)), "The disconnect went unanswered 10 s while the program's runtime was starting");
         DapException failed = await Assert.ThrowsAsync<DapException>(() => configured);
         Assert.Contains("the session ended before its runtime told the debugger it had started", failed.Reason, StringComparison.Ordinal);
-        for (DateTime until = DateTime.UtcNow.AddSeconds(10); Processes.IsRunning(program) && DateTime.UtcNow < until;)
-        {
-            await Task.Delay(100, TestContext.Current.CancellationToken);
-        }
+        await Waiting.UntilAsync(() => !Processes.IsRunning(program), TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken, TimeSpan.FromMilliseconds(100));
         Assert.False(Processes.IsRunning(program), $"The program (process {program}) outlived the session that was stopped as it started");
     }
 

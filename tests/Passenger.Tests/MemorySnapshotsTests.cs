@@ -380,17 +380,18 @@ public sealed class MemorySnapshotsTests : IDisposable
     /// clicks would be: how long each turn took past what it was given is how long the window did not answer.</summary>
     private static void Responsive(Func<bool> done, string what, Action<TimeSpan> stalled)
     {
-        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(2);
+        TimeSpan within = TimeSpan.FromMinutes(2).Scaled();
+        DateTime until = DateTime.UtcNow + within;
         TimeSpan turn = TimeSpan.FromMilliseconds(20);
         Stopwatch each = new();
         while (!done())
         {
             if (DateTime.UtcNow > until)
             {
-                throw new TimeoutException($"Waited 120 s for {what}");
+                throw new TimeoutException($"Waited {within.TotalSeconds} s for {what}");
             }
             each.Restart();
-            Screenshot.Pump(turn);
+            Ui.Hold(turn, "a turn of the window's loop, as a person's clicks come, whose overrun is how long the window did not answer");
             stalled(each.Elapsed - turn);
         }
     }

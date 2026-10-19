@@ -9,3 +9,12 @@ T:Passenger.Text.WordDiff;Word highlights are tested in the diff, the change pop
 T:Passenger.App.Packages.NuGetConfigEditor;A nuget.config is changed through the NuGet window's Sources tab, as a person changes it
 M:Passenger.App.Packages.PackageSourceSet.Load(System.String);Package sources are read by the NuGet window over a folder with its nuget.config files
 M:Passenger.Editor.Snippet.FromProtocol(System.String);A completion's snippet is tested by choosing it from the completion list in the window
+M:System.Threading.Thread.Sleep(System.Int32);A test waits for what it checks (Ui.WaitFor, Ui.PumpUntil, Waiting.Until), and time it needs to pass is Ui.Hold's or Waiting.For's
+M:System.Threading.Thread.Sleep(System.TimeSpan);A test waits for what it checks (Ui.WaitFor, Ui.PumpUntil, Waiting.Until), and time it needs to pass is Ui.Hold's or Waiting.For's
+M:System.Threading.Tasks.Task.Delay(System.Int32);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
+M:System.Threading.Tasks.Task.Delay(System.Int32,System.Threading.CancellationToken);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.Threading.CancellationToken);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.TimeProvider);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.TimeProvider,System.Threading.CancellationToken);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
+M:Passenger.App.Screenshot.Pump(System.TimeSpan);A test waits for what it checks (Ui.WaitFor, Ui.PumpUntil), and time the window must run for is Ui.Hold's

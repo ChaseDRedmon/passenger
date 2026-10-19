@@ -541,19 +541,11 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
     /// for up to 10 s, then failed naming what holds it.</summary>
     private static void Detach(string volume)
     {
-        ChildResult detached;
-        for (int attempt = 1; ; attempt++)
+        ChildResult detached = null!;
+        if (Waiting.Until(() => (detached = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/hdiutil", ["detach", volume, "-force", "-quiet"]),
+            limit: TimeSpan.FromMinutes(1).Scaled())).GetAwaiter().GetResult()).Succeeded, TimeSpan.FromSeconds(10), every: TimeSpan.FromSeconds(1)))
         {
-            detached = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/hdiutil", ["detach", volume, "-force", "-quiet"]), limit: TimeSpan.FromMinutes(1))).GetAwaiter().GetResult();
-            if (detached.Succeeded)
-            {
-                return;
-            }
-            if (attempt == 10)
-            {
-                break;
-            }
-            Thread.Sleep(1000);
+            return;
         }
         ChildResult holders = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/sbin/lsof", ["+D", volume]), limit: TimeSpan.FromMinutes(1))).GetAwaiter().GetResult();
         Assert.Fail($"The test's volume {volume} could not be detached (hdiutil exited with code {detached.ExitCode}: {detached.Error.Trim()}); what has files open on it:\n{holders.Output}");

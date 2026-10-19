@@ -480,7 +480,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             string[] written = [.. projects.Select(p => Path.Combine(folder, "src", p, "bin", "Debug", "net10.0", "written.txt")).Where(File.Exists)];
             Assert.NotEmpty(written);
             long[] lengths = [.. written.Select(f => new FileInfo(f).Length)];
-            Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(2));
+            Ui.Hold(TimeSpan.FromSeconds(2), "long enough for a build still running to write to its output folder again");
             Assert.True(lengths.SequenceEqual(written.Select(f => new FileInfo(f).Length)), "After Stop, the build went on writing to its output folder");
         }
         finally

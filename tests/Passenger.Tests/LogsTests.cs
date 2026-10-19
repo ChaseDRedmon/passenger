@@ -124,7 +124,7 @@ public sealed class LogsTests : IDisposable
             int traced = Logged("lsp.log").Length;
             window.KeyTextInput("// untraced");
             Ui.Settle();
-            Screenshot.Pump(TimeSpan.FromMilliseconds(500));
+            Ui.Hold(TimeSpan.FromMilliseconds(500), "long enough for what the change sent to reach lsp.log, were it traced");
             string after = Logged("lsp.log");
             Assert.True(after.Length == traced, $"lsp.log grew after the trace was turned off:\n{after[traced..]}");
         }
@@ -198,8 +198,7 @@ public sealed class LogsTests : IDisposable
             System.Text.RegularExpressions.Regex started = new($@"JSON language server \(process (\d+)\) started for {System.Text.RegularExpressions.Regex.Escape(window.Folder!)} ");
             Ui.WaitFor(() => started.IsMatch(Ui.IdeLog()), "the JSON language server to start on Node.js");
             servers.Add(int.Parse(started.Match(Ui.IdeLog()).Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
-            // Long enough to be a program a person waits on, had it been one.
-            Screenshot.Pump(TimeSpan.FromSeconds(1.5));
+            Ui.Hold(TimeSpan.FromSeconds(1.5), "long enough to be a program a person waits on, had it been one");
         }
         Passenger.App.Vcs.VcsOutcome checkout = Ui.Await(window.Vcs.CheckoutAsync("no-such-branch"), "git to refuse the checkout");
         Assert.False(checkout.Succeeded, "git checked out a branch the repository does not have");
@@ -208,8 +207,7 @@ public sealed class LogsTests : IDisposable
         {
             Assert.True(Processes.Gone(server), $"The language server (process {server}) went on after its window closed");
         }
-        // The end of each is told on another thread once it has gone.
-        Screenshot.Pump(TimeSpan.FromMilliseconds(500));
+        Ui.Hold(TimeSpan.FromMilliseconds(500), "for each server's end, told on another thread once it has gone, to reach the log were it logged");
 
         // This window's lines alone: a server's process id was another program's in a test before, Windows reusing ids soon.
         string[] log = Since(Ui.IdeLog(), opened);

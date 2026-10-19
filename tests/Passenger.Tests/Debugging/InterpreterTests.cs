@@ -123,7 +123,7 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         CancellationToken cancelled = TestContext.Current.CancellationToken;
         Task<EvaluateResponse> evaluating = host.Connection.RequestAsync<EvaluateResponse>("evaluate",
             new EvaluateArguments("Array.IndexOf<long>([.. System.Linq.Enumerable.Repeat(myInt, int.MaxValue)], 6L)", frame, "repl"), cancelled);
-        Assert.True(await Task.WhenAny(evaluating, Task.Delay(TimeSpan.FromSeconds(60), cancelled)) == evaluating,
+        Assert.True(await Waiting.Within(evaluating, TimeSpan.FromSeconds(60), cancelled),
             "An expression that loops without end was still evaluating after 60 s, holding the debugger until it ends, which it never does");
         Assert.Contains("The expression took too long to evaluate", (await evaluating).Result, StringComparison.Ordinal);
         // The program is as it was, and evaluates on.

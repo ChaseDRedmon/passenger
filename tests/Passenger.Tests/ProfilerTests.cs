@@ -284,12 +284,7 @@ public sealed class ProfilerTests : IDisposable
             Assert.Equal("A run is already being profiled", window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
 
             again = window.ProfileAsync();
-            DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-            while (!again.IsCompleted && DateTime.UtcNow < until)
-            {
-                Screenshot.Pump(TimeSpan.FromMilliseconds(50));
-            }
-            Assert.True(again.IsCompleted, $"A second Profile while the first program started went on to start it again ({Programs().Count} programs)");
+            Assert.True(Ui.Pumped(() => again.IsCompleted, TimeSpan.FromSeconds(10)), $"A second Profile while the first program started went on to start it again ({Programs().Count} programs)");
             Assert.Equal("A run is already being profiled", again.Result);
             Assert.Single(Programs());
             Assert.False(started.IsCompleted, $"The first profile's start ended: {(started.IsCompleted ? started.Result : null)}");
@@ -413,15 +408,11 @@ public sealed class ProfilerTests : IDisposable
         });
         using (InspectorFrames frames = new())
         {
-            for (int waited = 0; !frames.IsEnabled(); waited++)
-            {
-                Assert.True(waited < 500, "The EventPipe session never turned the frames' events on");
-                Thread.Sleep(10);
-            }
+            Assert.True(Waiting.Until(frames.IsEnabled, TimeSpan.FromSeconds(5)), "The EventPipe session never turned the frames' events on");
             for (int i = 0; i < times.Length; i++)
             {
                 frames.Frame(i + 1, times[i], 0, 1, 1, times[i] / 2, times[i] / 4, times[i] / 4, 1, 1);
-                Thread.Sleep(TimeSpan.FromMilliseconds(times[i] + 20));
+                Waiting.For(TimeSpan.FromMilliseconds(times[i] + 20), "each frame's time to pass before the next, as an app's frames take theirs");
             }
         }
         session.Stop();

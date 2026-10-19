@@ -235,7 +235,7 @@ public sealed class TerminalTests
             window.KeyTextInput($"{lines} 0 2");
             Ui.Press(window, "ENTER");
             Ui.WaitFor(() => shell.Screen.ScreenText().Contains("line 0000002", StringComparison.Ordinal), "the first lines on the screen");
-            Screenshot.Pump(TimeSpan.FromMilliseconds(100));
+            Ui.Settle();
             window.KeyTextInput("clear");
             Ui.Press(window, "ENTER");
             Ui.WaitFor(() => !shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the screen cleared");
@@ -249,10 +249,8 @@ public sealed class TerminalTests
                 // A second more of the flood, the window running as it does on a desktop, and on a machine slow to draw as
                 // long as it takes the window to answer enough looks to say how long a key waits.
                 Stopwatch flooding = Stopwatch.StartNew();
-                while (flooding.Elapsed < TimeSpan.FromSeconds(1) || (waits.Answered < 20 && flooding.Elapsed < TimeSpan.FromSeconds(20)))
-                {
-                    Screenshot.Pump(TimeSpan.FromMilliseconds(100));
-                }
+                Ui.Hold(TimeSpan.FromSeconds(1), "a second of seq's flood, in which every key's wait is measured");
+                Ui.Pumped(() => waits.Answered >= 20, TimeSpan.FromSeconds(19));
                 waits.Stop();
                 Assert.True(waits.Answered >= 20,
                     $"the window answered {waits.Answered} of {waits.Posted} looks at its thread in {flooding.Elapsed.TotalSeconds:F1} s of seq's output");
@@ -270,7 +268,7 @@ public sealed class TerminalTests
                     atCtrlC = LastLine(shell);
                 }
             }, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
-            Thread.Sleep(2000);
+            Ui.Stall(TimeSpan.FromSeconds(2), "the window behind on seq's output, as a heavy frame holds it");
             Ui.Press(window, "control C");
             window.KeyTextInput("echo after-$((6*7))");
             Ui.Press(window, "ENTER");
@@ -340,20 +338,22 @@ public sealed class TerminalTests
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
             // Every thread of the pool held, as a build, a debugger or tests waiting on processes hold them, and more waiting.
             ThreadPool.GetMinThreads(out int threads, out _);
+            int taken = 0;
             for (int i = 0; i < threads * 4; i++)
             {
-                ThreadPool.UnsafeQueueUserWorkItem(_ => release.Wait(TimeSpan.FromSeconds(60)), null);
+                ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                {
+                    Interlocked.Increment(ref taken);
+                    release.Wait(TimeSpan.FromSeconds(60));
+                }, null);
             }
-            Thread.Sleep(200);
+            Assert.True(Waiting.Until(() => Volatile.Read(ref taken) >= threads, TimeSpan.FromSeconds(10)), $"The pool took {Volatile.Read(ref taken)} of the {threads} jobs meant to hold its threads");
             Stopwatch typing = Stopwatch.StartNew();
             window.KeyTextInput("echo typed");
             window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
             window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
             // Frames pumped by hand: settling waits for background work, which the busy pool would hold.
-            while (!Screen(shell).Contains("\ntyped", StringComparison.Ordinal) && typing.Elapsed < TimeSpan.FromSeconds(30))
-            {
-                Screenshot.Pump(TimeSpan.FromMilliseconds(20));
-            }
+            Ui.Pumped(() => Screen(shell).Contains("\ntyped", StringComparison.Ordinal), TimeSpan.FromSeconds(30));
             TimeSpan answered = typing.Elapsed;
             release.Set();
             Assert.True(answered < TimeSpan.FromSeconds(5),

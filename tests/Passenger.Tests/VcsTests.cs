@@ -653,8 +653,7 @@ public sealed class VcsTests : IDisposable
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// one\n")]);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// two\n")]);
             Ui.Landed(() => shop.GutterAnnotations is ["Not committed yet", ..], "the typed lines blamed");
-            // Past the pause's length again, so a second blame of the same pause would have run.
-            Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1.5));
+            Ui.Hold(TimeSpan.FromSeconds(1.5), "past the pause's length again, so a second blame of the same pause would have run");
             Ui.Settle();
             Assert.True(Volatile.Read(ref blames) == 4, $"One pause in typing blamed the file {Volatile.Read(ref blames) - 3} times");
         }
@@ -698,7 +697,7 @@ public sealed class VcsTests : IDisposable
 
         // Nor does typing bring them back.
         window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// new\n")]);
-        Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
+        Ui.Hold(TimeSpan.FromSeconds(1), "past the pause after typing, which would blame the file were the annotations open");
         Ui.Settle();
         Assert.Empty(shop.GutterAnnotations);
         window.Close();
@@ -1022,7 +1021,7 @@ public sealed class VcsTests : IDisposable
         window.KeyTextInput("sealed ");
         window.Perform(AppActions.Save);
         Ui.Landed(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "the save seen");
-        Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(400));
+        Ui.Hold(TimeSpan.FromMilliseconds(400), "long enough for a refresh the save might set off to have run");
         Ui.Settle();
 
         Assert.Equal(chosen, window.ExplorerView.SelectedNodes);
@@ -1190,9 +1189,8 @@ public sealed class VcsTests : IDisposable
         Assert.True(committed.Result, window.Status);
 
         // The slow status ends after the commit's own: what it found before the commit never lands over it.
+        // What it found, background work until it lands, is in the Commit window once the IDE is quiet.
         Ui.Landed(() => File.Exists(slept), "the slow status ended");
-        Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
-        Ui.Settle();
         Assert.True(window.Vcs.Changes.Count == 0,
             $"The Commit window lists {string.Join(", ", window.Vcs.Changes.Select(c => c.Name))} after the commit: a status read before it landed after the commit's own");
         Assert.Empty(commit.Rows);
