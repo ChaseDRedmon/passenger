@@ -79,7 +79,6 @@ public sealed class MembersMoveDialog : RefactoringDialog
             ClipToBounds = true,
             Child = new DockPanel { Children = { headerFrame, new ScrollViewer { Content = rows, MaxHeight = 260, MinHeight = 100 } } },
         };
-        tableFrame.Bind(Border.BackgroundProperty, tableFrame.GetResourceObservable("Passenger.Editor.Background"));
         options.Children.Add(new TextBlock { Text = up ? "Members to pull up:" : "Members to push down:" });
         options.Children.Add(tableFrame);
         Options = options;

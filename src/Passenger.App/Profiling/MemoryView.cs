@@ -311,6 +311,7 @@ public sealed class MemoryView : DockPanel
             menu.Items.Add(item);
         }
         CompareMenu = menu;
+        menu.Placement = PlacementMode.BottomEdgeAlignedLeft;
         menu.ShowAt(actions.Children.OfType<Button>().First());
     }
 

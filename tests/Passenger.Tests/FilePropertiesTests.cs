@@ -24,9 +24,9 @@ public sealed class FilePropertiesTests : IDisposable
         string path = Write("One.cs", "class One\n{\n}\n");
         MainWindow window = Open("One.cs");
 
-        // The status bar's widget offers the others, its own disabled, as Rider's popup does.
+        // The status bar's widget offers the others, its own checked (not greyed), as Rider's popup does.
         Click(window, "LineSeparatorButton");
-        Assert.Equal(["CRLF - Windows (\\r\\n)", "LF - Unix and macOS (\\n) (disabled)", "CR - Classic Mac OS (\\r)"], Items(window.OpenContextMenu!));
+        Assert.Equal(["CRLF - Windows (\\r\\n)", "LF - Unix and macOS (\\n) (checked)", "CR - Classic Mac OS (\\r)"], Items(window.OpenContextMenu!));
         Choose(window, "CRLF - Windows (\\r\\n)");
         Assert.Equal("class One\r\n{\r\n}\r\n", File.ReadAllText(path));
         Assert.Equal("CRLF", Shown(window, "LineEndingText"));
@@ -42,7 +42,8 @@ public sealed class FilePropertiesTests : IDisposable
         // File, Line Separators makes it LF again.
         NativeMenu separators = Ui.Submenu(Ui.Submenu(window.MenuBar, "File"), "Line Separators");
         Assert.Equal(["CRLF - Windows (\\r\\n)", "LF - Unix and macOS (\\n)", "CR - Classic Mac OS (\\r)"], separators.Items.OfType<NativeMenuItem>().Select(i => i.Header));
-        Assert.False(separators.Items.OfType<NativeMenuItem>().First().IsEnabled, "File, Line Separators offers CRLF to a file that has it already");
+        NativeMenuItem own = separators.Items.OfType<NativeMenuItem>().First();
+        Assert.True(own.IsChecked && own.IsEnabled, "File, Line Separators does not check CRLF, the file's own, or greys it where Rider checks it");
         separators.Items.OfType<NativeMenuItem>().Single(i => i.Header == "LF - Unix and macOS (\\n)").Command!.Execute(null);
         Ui.Settle();
         Assert.Equal("class One\n\n{\n}\n", File.ReadAllText(path));
@@ -104,7 +105,7 @@ public sealed class FilePropertiesTests : IDisposable
 
         Click(window, "EncodingButton");
         Assert.Contains("windows-1252", Items(window.OpenContextMenu!));
-        Assert.Contains("ISO-8859-1 (disabled)", Items(window.OpenContextMenu!));
+        Assert.Contains("ISO-8859-1 (checked)", Items(window.OpenContextMenu!));
         Choose(window, "windows-1252");
         Answer(window, "Menu.txt: Reload or Convert to windows-1252", "Reload");
         Assert.Equal("Œuvre: “café” for 5 €\n", Text(window));
@@ -256,9 +257,9 @@ public sealed class FilePropertiesTests : IDisposable
         Assert.True(window.OpenContextMenu is not null, $"A click on the status bar's {name} opened no menu");
     }
 
-    /// <summary>The open menu's items, a disabled one marked so.</summary>
+    /// <summary>The open menu's items, a disabled one and the checked one marked so.</summary>
     private static string[] Items(ContextMenu menu) =>
-        [.. menu.Items.OfType<MenuItem>().Select(i => $"{i.Header}{(i.IsEnabled ? "" : " (disabled)")}")];
+        [.. menu.Items.OfType<MenuItem>().Select(i => $"{i.Header}{(i.IsEnabled ? "" : " (disabled)")}{(i.IsChecked ? " (checked)" : "")}")];
 
     /// <summary>Chooses an item of the open menu, or of its More.</summary>
     private static void Choose(MainWindow window, string item)

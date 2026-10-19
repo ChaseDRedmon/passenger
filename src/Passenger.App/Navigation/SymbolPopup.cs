@@ -49,7 +49,7 @@ public sealed class SymbolPopup : UserControl
         results = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = 26 * 15,
+            MaxHeight = PopupFrame.RowHeight * 15,
             Margin = new Thickness(0, 0, 0, 8),
             ItemTemplate = new FuncDataTemplate<SymbolRow>((row, _) => Row(row), supportsRecycling: false),
         };
@@ -81,7 +81,7 @@ public sealed class SymbolPopup : UserControl
             DockPanel.SetDock(this.option, Dock.Right);
             heading.Children.Add(this.option);
         }
-        heading.Children.Add(new TextBlock { Classes = { "paneTitle" }, Text = title, VerticalAlignment = VerticalAlignment.Center });
+        heading.Children.Add(new TextBlock { Classes = { "popupTitle" }, Text = title, VerticalAlignment = VerticalAlignment.Center });
         StackPanel top = new() { Margin = new Thickness(12, 10, 12, 8), Spacing = 8, Children = { heading, query } };
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(empty, Dock.Top);
@@ -89,7 +89,7 @@ public sealed class SymbolPopup : UserControl
         body.Children.Add(empty);
         body.Children.Add(results);
         Content = new Border { Classes = { "popup" }, Child = body };
-        Width = 720;
+        Width = PopupFrame.Wide;
         _ = Refresh();
         Dispatcher.UIThread.Post(() =>
         {
@@ -248,7 +248,7 @@ public sealed class SymbolPopup : UserControl
                 },
             },
         };
-        return new DockPanel { Height = 24, Margin = new Thickness(row.Depth * 16, 0, 0, 0), Children = { where, badge, name } };
+        return new DockPanel { Height = PopupFrame.RowHeight, Margin = new Thickness(row.Depth * 16, 0, 0, 0), Children = { where, badge, name } };
     }
 
     /// <summary>A kind's letter on its colour, as Rider marks a symbol or a kind of type.</summary>

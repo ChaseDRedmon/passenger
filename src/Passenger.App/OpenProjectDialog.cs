@@ -19,11 +19,10 @@ public sealed class OpenProjectDialog : Window
     public OpenProjectDialog(string name)
     {
         Title = "Open Solution";
-        Width = 440;
+        Width = 540;
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         Question = $"Where would you like to open the solution '{name}'?";
 
         Button here = new() { Content = ThisWindow, IsDefault = true, Classes = { "primary" } };
@@ -42,8 +41,8 @@ public sealed class OpenProjectDialog : Window
             {
                 new TextBlock { Text = Title, FontWeight = FontWeight.SemiBold },
                 new TextBlock { Text = Question, TextWrapping = TextWrapping.Wrap },
-                remember,
-                choices,
+                // Don't ask again beside the buttons, at the footer's left, as Rider's message dialogs put it.
+                DialogFooter.Row(choices, remember),
             },
         };
     }

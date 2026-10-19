@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Layout;
 using Passenger.Xaml.Features;
 
 namespace Passenger.App.Settings;
@@ -70,7 +69,7 @@ public sealed partial class SettingsDialog
 
     private static ComboBox Choices(string[] names, int chosen, Action<int> changed)
     {
-        ComboBox box = new() { ItemsSource = names, SelectedIndex = Math.Clamp(chosen, 0, names.Length - 1), Width = 260, HorizontalAlignment = HorizontalAlignment.Left };
+        ComboBox box = new() { ItemsSource = names, SelectedIndex = Math.Clamp(chosen, 0, names.Length - 1), Classes = { "form" } };
         box.SelectionChanged += (_, _) => changed(Math.Max(0, box.SelectedIndex));
         return box;
     }

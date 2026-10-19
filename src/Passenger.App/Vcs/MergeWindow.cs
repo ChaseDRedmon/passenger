@@ -27,7 +27,6 @@ public sealed class MergeWindow : Window
         MinWidth = 800;
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
         View = view;
 
         Button acceptLeft = Action("Accept Left", () => AcceptAsync(MergeSide.Left));
@@ -36,15 +35,10 @@ public sealed class MergeWindow : Window
         Button apply = Action("Apply Changes", ApplyAsync);
         apply.Classes.Add("primary");
         buttons = [acceptLeft, acceptRight, cancel, apply];
-        DockPanel bottom = new() { Margin = new Thickness(12, 10) };
+        // Accept Left and Accept Right at the footer's left, Cancel and Apply at its right, as Rider's merge dialog has them.
         StackPanel sides = new() { Classes = { "footer" }, Children = { acceptLeft, acceptRight } };
-        StackPanel close = DialogFooter.Of(apply, cancel);
-        DockPanel.SetDock(sides, Avalonia.Controls.Dock.Left);
-        bottom.Children.Add(sides);
-        bottom.Children.Add(close);
-        Border bar = new() { [DockPanel.DockProperty] = Avalonia.Controls.Dock.Bottom, BorderThickness = new Thickness(0, 1, 0, 0), Child = bottom };
-        bar.Bind(Border.BorderBrushProperty, bar.GetResourceObservable("Passenger.Divider"));
-        bar.Bind(Border.BackgroundProperty, bar.GetResourceObservable("Passenger.Chrome"));
+        Border bar = DialogFooter.Bar(DialogFooter.Of(apply, cancel), sides);
+        DockPanel.SetDock(bar, Avalonia.Controls.Dock.Bottom);
         Content = new DockPanel { Children = { bar, view } };
 
         KeyDown += (_, e) =>

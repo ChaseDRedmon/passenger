@@ -170,21 +170,7 @@ public sealed class GitView : DockPanel
 
     private ToggleButton Tab(string title, string? tip, GitLogView view)
     {
-        StackPanel content = new() { Orientation = Orientation.Horizontal, Children = { new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center } } };
-        if (view != Log)
-        {
-            PathIcon glyph = new() { Classes = { "small" } };
-            glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable("Icon.Close"));
-            Button close = new() { Classes = { "tabClose" }, Content = glyph, Margin = new Thickness(6, 0, 0, 0) };
-            ToolTip.SetTip(close, "Close");
-            close.Click += (_, e) =>
-            {
-                Close(view);
-                e.Handled = true;
-            };
-            content.Children.Add(close);
-        }
-        ToggleButton tab = new() { Classes = { "panelTab" }, IsChecked = view == Shown, Content = content };
+        ToggleButton tab = ToolTabs.Tab(title, view == Shown, view == Log ? null : () => Close(view));
         if (tip is not null)
         {
             ToolTip.SetTip(tab, tip);

@@ -86,7 +86,6 @@ public sealed partial class SettingsDialog : Window
         MinWidth = 640;
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         AddOptions(actions.Keymap);
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search settings", Margin = new Thickness(10, 10, 10, 6) };
@@ -110,8 +109,7 @@ public sealed partial class SettingsDialog : Window
         left.Children.Add(new Panel { Children = { pages, nothing } });
         Border leftPane = new() { BorderThickness = new Thickness(0, 0, 1, 0), Child = left };
         leftPane.Bind(Border.BorderBrushProperty, leftPane.GetResourceObservable("Passenger.Divider"));
-        StackPanel buttons = DialogFooter.Of(ok, cancel, applyButton);
-        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
+        Border bottom = DialogFooter.Bar(DialogFooter.Of(ok, cancel, applyButton));
         DockPanel right = new() { Margin = new Thickness(20, 16, 20, 0) };
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(pageTop, Dock.Top);
@@ -119,7 +117,6 @@ public sealed partial class SettingsDialog : Window
         right.Children.Add(pageTop);
         right.Children.Add(new ScrollViewer { Content = body });
         Border editorPane = new() { Child = right };
-        editorPane.Bind(Border.BackgroundProperty, editorPane.GetResourceObservable("Passenger.Editor.Background"));
 
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
@@ -209,7 +206,7 @@ public sealed partial class SettingsDialog : Window
 
     private void AddOptions(Keymap keymap)
     {
-        ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Width = 160 };
+        ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Classes = { "form" } };
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
         Add(Appearance, "Theme", theme, "colour color dark light");
         if (TitleBars.Offered)
@@ -329,7 +326,7 @@ public sealed partial class SettingsDialog : Window
             "build tool window open progress view start explicitly invoked solution rebuild clean toolset presentation");
         Add(BuildPage, "Tool Window: open the build progress view even when the build is invoked implicitly (i.e. Run/Debug)", implicitly,
             "build tool window open progress view start implicitly run debug profile before launch toolset presentation");
-        ComboBox results = new() { ItemsSource = BuildResultsChoices, SelectedIndex = (int)Working.ShowBuildResults, Width = 260 };
+        ComboBox results = new() { ItemsSource = BuildResultsChoices, SelectedIndex = (int)Working.ShowBuildResults, Classes = { "form" } };
         results.SelectionChanged += (_, _) => Change(s => s with { ShowBuildResults = (BuildResultsMode)Math.Max(0, results.SelectedIndex) });
         Add(BuildPage, "Showing build results after build completed", results,
             "build tool window results after completed finished failed errors warnings always never toolset presentation");
@@ -375,7 +372,7 @@ public sealed partial class SettingsDialog : Window
             + "NuGet and the terminal. Each agent asks before its first use of a tool that changes something.");
 
         // The JetBrains Discord plugins' options at their defaults (AppSettings says whose), changed only while it is on.
-        ComboBox shows = new() { ItemsSource = DiscordChoices, SelectedIndex = (int)Working.DiscordShows, Width = 240, IsEnabled = Working.ShowInDiscord };
+        ComboBox shows = new() { ItemsSource = DiscordChoices, SelectedIndex = (int)Working.DiscordShows, Classes = { "form" }, IsEnabled = Working.ShowInDiscord };
         shows.SelectionChanged += (_, _) => Change(s => s with { DiscordShows = (DiscordShown)Math.Max(0, shows.SelectedIndex) });
         NumericUpDown idleMinutes = Number(Working.DiscordIdleMinutes, AppSettings.MinDiscordIdleMinutes, AppSettings.MaxDiscordIdleMinutes, 1,
             v => Change(s => s with { DiscordIdleMinutes = (int)v }));

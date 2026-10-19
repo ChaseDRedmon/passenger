@@ -15,7 +15,6 @@ public sealed class DiffWindow : Window
         MinWidth = 600;
         MinHeight = 300;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
         View = view;
         Content = view;
         KeyDown += (_, e) =>

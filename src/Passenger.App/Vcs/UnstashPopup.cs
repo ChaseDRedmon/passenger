@@ -30,11 +30,11 @@ public sealed class UnstashPopup : UserControl
         this.drop = drop;
         this.confirm = confirm;
         Stashes = stashes;
-        Width = 520;
+        Width = PopupFrame.Medium;
         list = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = 26 * 10,
+            MaxHeight = PopupFrame.RowHeight * 10,
             ItemsSource = stashes,
             SelectedIndex = stashes.Count > 0 ? 0 : -1,
             ItemTemplate = new FuncDataTemplate<StashInfo>((stash, _) => stash is null ? new TextBlock() : Row(stash), supportsRecycling: false),
@@ -51,7 +51,7 @@ public sealed class UnstashPopup : UserControl
             {
                 Children =
                 {
-                    new TextBlock { Classes = { "paneTitle" }, Text = "Unstash Changes", Margin = new Thickness(12, 10, 12, 6) },
+                    new TextBlock { Classes = { "popupTitle" }, Text = "Unstash Changes", Margin = new Thickness(12, 10, 12, 6) },
                     stashes.Count == 0
                         ? new TextBlock { Classes = { "muted" }, Text = "Nothing is stashed", Margin = new Thickness(12, 0, 12, 10) }
                         : list,
@@ -179,7 +179,7 @@ public sealed class UnstashPopup : UserControl
     {
         TextBlock when = new() { Text = ToolWindows.GitLogView.When(stash.Time), VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Margin = new Thickness(12, 0, 4, 0) };
         when.Bind(TextBlock.ForegroundProperty, when.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = 24, Margin = new Thickness(8, 0) };
+        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(8, 0) };
         DockPanel.SetDock(when, Dock.Right);
         row.Children.Add(when);
         row.Children.Add(new TextBlock { Text = stash.Message, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });

@@ -30,10 +30,10 @@ public sealed class NamePopup : UserControl
         (string Text, bool On)? option = null)
     {
         this.attempt = attempt;
-        Width = 360;
+        Width = PopupFrame.Narrow;
         name = new TextBox { Classes = { "search" }, Text = initial };
         problem = new TextBlock { Classes = { "muted" }, FontSize = 12, IsVisible = false, TextWrapping = TextWrapping.Wrap };
-        StackPanel body = new() { Spacing = 8, Children = { new TextBlock { Classes = { "paneTitle" }, Text = title }, name } };
+        StackPanel body = new() { Spacing = 8, Children = { new TextBlock { Classes = { "popupTitle" }, Text = title }, name } };
         if (option is { } asked)
         {
             this.option = new CheckBox { Content = asked.Text, IsChecked = asked.On, Focusable = false, FontSize = 12, MinHeight = 0 };

@@ -30,7 +30,8 @@ public sealed partial class CodeEditor : Control
     private const double GutterPadRight = 22;
     private const double TextPadLeft = 6;
 
-    private readonly ScrollBar vertical = new() { Orientation = Orientation.Vertical, AllowAutoHide = false };
+    /// <summary>Drawn by the host's ScrollBar theme; "stripe" marks the bar that carries the error stripe.</summary>
+    private readonly ScrollBar vertical = new() { Orientation = Orientation.Vertical, AllowAutoHide = false, Classes = { "stripe" } };
     private readonly ScrollBar horizontal = new() { Orientation = Orientation.Horizontal, AllowAutoHide = true };
     private readonly DispatcherTimer blink;
     private TextDocument document = new();

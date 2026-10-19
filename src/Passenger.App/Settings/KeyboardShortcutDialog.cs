@@ -25,7 +25,6 @@ public sealed class KeyboardShortcutDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         Keys = new ShortcutPanel("Second stroke:");
         Keys.Changed += (_, _) => Update();

@@ -201,9 +201,7 @@ public partial class MainWindow
         foreach (string branch in await session.Vcs.Repository.BranchesAsync())
         {
             string chosen = branch;
-            MenuItem item = Item(branch == session.Vcs.Branch ? $"{branch}  (current)" : branch, () => _ = session.Vcs.CheckoutAsync(chosen));
-            item.IsEnabled = branch != session.Vcs.Branch;
-            menu.Items.Add(item);
+            menu.Items.Add(MenuChoice.Of(branch, branch == session.Vcs.Branch, () => _ = session.Vcs.CheckoutAsync(chosen)));
         }
         Open(menu, BranchButton);
     }

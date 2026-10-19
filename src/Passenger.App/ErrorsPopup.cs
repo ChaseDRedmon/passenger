@@ -17,7 +17,7 @@ public sealed class ErrorsPopup : UserControl
     /// <param name="unlisted">The errors that came once the list was full, which only the log has.</param>
     public ErrorsPopup(IReadOnlyList<IdeError> errors, int unlisted)
     {
-        Width = 720;
+        Width = PopupFrame.Wide;
         list = new ListBox
         {
             Classes = { "tree" },
@@ -62,7 +62,7 @@ public sealed class ErrorsPopup : UserControl
                 Spacing = 10,
                 Children =
                 {
-                    new TextBlock { Classes = { "paneTitle" }, Text = "IDE Internal Errors" },
+                    new TextBlock { Classes = { "popupTitle" }, Text = "IDE Internal Errors" },
                     new TextBlock
                     {
                         Classes = { "muted" },

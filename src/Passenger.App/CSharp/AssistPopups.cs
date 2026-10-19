@@ -297,7 +297,7 @@ internal sealed class ChoicePopup : Border
             Spacing = 4,
             Children =
             {
-                new TextBlock { Text = title, Classes = { "paneTitle" }, Margin = new Thickness(12, 2, 12, 2) },
+                new TextBlock { Text = title, Classes = { "popupTitle" }, Margin = new Thickness(12, 2, 12, 2) },
                 list,
             },
         };

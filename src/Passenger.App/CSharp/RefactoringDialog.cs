@@ -24,7 +24,6 @@ public abstract class RefactoringDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         NextButton = new Button { Content = "Next", IsDefault = true, Classes = { "primary" } };
         Button cancel = new() { Content = "Cancel", IsCancel = true };
@@ -45,13 +44,9 @@ public abstract class RefactoringDialog : Window
         Border top = new() { BorderThickness = new Thickness(0, 0, 0, 1), Child = header };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
 
-        DockPanel bottomBar = new();
-        StackPanel buttons = DialogFooter.Of(NextButton, cancel);
-        DockPanel.SetDock(buttons, Dock.Right);
-        bottomBar.Children.Add(buttons);
-        bottomBar.Children.Add(problem);
+        Border bottom = DialogFooter.Bar(DialogFooter.Of(NextButton, cancel), problem);
         // Inset as the page above it is, so Next ends where its fields do and a problem starts where its labels do.
-        Border bottom = new() { Classes = { "footerBar" }, Padding = new Thickness(20, 10), Child = bottomBar };
+        bottom.Padding = new Thickness(20, 10);
 
         DockPanel root = new();
         DockPanel.SetDock(top, Dock.Top);

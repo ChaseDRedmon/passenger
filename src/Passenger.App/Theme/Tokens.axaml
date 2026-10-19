@@ -18,6 +18,26 @@
             <SolidColorBrush x:Key="Passenger.BadgeText" Color="#1E1F22" />
             <!-- An unticked check box's edge: clearer than a field's, so it shows on a selected row's blue and in light. -->
             <SolidColorBrush x:Key="Passenger.CheckBorder" Color="#6F737A" />
+            <!-- A plain button's ground (Rider Dark's Button.startBackground, the panel's); its edge is the field's. -->
+            <SolidColorBrush x:Key="Passenger.Button" Color="#2B2D30" />
+            <!-- What cannot be used now: Rider Dark's disabledText and disabledBorderColor, a disabled button's words and edge
+                 whatever it is (the default one too). -->
+            <SolidColorBrush x:Key="Passenger.TextDisabled" Color="#5A5D63" />
+            <SolidColorBrush x:Key="Passenger.DisabledBorder" Color="#43454A" />
+            <!-- The ring round what has the keys (Rider's Component.focusColor). -->
+            <SolidColorBrush x:Key="Passenger.Focus" Color="#3574F0" />
+            <!-- A scrollbar's thumb at rest and under the pointer, and its track under the pointer, as IntelliJ's macOS
+                 scrollbar paints them over what scrolls. -->
+            <SolidColorBrush x:Key="Passenger.ScrollThumb" Color="#59808080" />
+            <SolidColorBrush x:Key="Passenger.ScrollThumbHover" Color="#8C808080" />
+            <SolidColorBrush x:Key="Passenger.ScrollTrackHover" Color="#1A808080" />
+            <!-- A menu's or a popup's ground and edge (Rider Dark's Popup.background and Popup.borderColor), and the shadow
+                 round it (Rider's Ide.Shadow: 16 px of #20 black). -->
+            <SolidColorBrush x:Key="Passenger.Popup" Color="#2B2D30" />
+            <SolidColorBrush x:Key="Passenger.PopupBorder" Color="#43454A" />
+            <BoxShadows x:Key="Passenger.PopupShadow">0 4 16 0 #66000000</BoxShadows>
+            <!-- A list or table in a dialog's page (Rider Dark's List.background, the panel's). -->
+            <SolidColorBrush x:Key="Passenger.List" Color="#2B2D30" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#DFE1E5" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#CED0D6" />
@@ -195,6 +215,21 @@
             <SolidColorBrush x:Key="Passenger.Syntax.Code" Color="#85C46C" />
             <SolidColorBrush x:Key="Passenger.Syntax.Quote" Color="#C9A26D" />
             <SolidColorBrush x:Key="Passenger.Syntax.LinkDestination" Color="#39CC9B" />
+
+            <!-- Fluent's own keys for its menus, read by every ContextMenu and MenuItem, as Rider's popup menus are: the
+                 popup's ground and edge, a chosen item on the list's selection, keys in the muted colour. -->
+            <StaticResource x:Key="MenuFlyoutPresenterBackground" ResourceKey="Passenger.Popup" />
+            <StaticResource x:Key="MenuFlyoutPresenterBorderBrush" ResourceKey="Passenger.PopupBorder" />
+            <StaticResource x:Key="MenuFlyoutItemForeground" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="MenuFlyoutItemForegroundPointerOver" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="MenuFlyoutItemForegroundPressed" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="MenuFlyoutItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPressed" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" ResourceKey="Passenger.TextMuted" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Passenger.TextMuted" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed" ResourceKey="Passenger.TextMuted" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <SolidColorBrush x:Key="Passenger.Chrome" Color="#F7F8FA" />
@@ -205,6 +240,17 @@
             <SolidColorBrush x:Key="Passenger.Separator" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.BadgeText" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.CheckBorder" Color="#A8ADBD" />
+            <SolidColorBrush x:Key="Passenger.Button" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.TextDisabled" Color="#A8ADBD" />
+            <SolidColorBrush x:Key="Passenger.DisabledBorder" Color="#DFE1E5" />
+            <SolidColorBrush x:Key="Passenger.Focus" Color="#3574F0" />
+            <SolidColorBrush x:Key="Passenger.ScrollThumb" Color="#33000000" />
+            <SolidColorBrush x:Key="Passenger.ScrollThumbHover" Color="#80000000" />
+            <SolidColorBrush x:Key="Passenger.ScrollTrackHover" Color="#1A808080" />
+            <SolidColorBrush x:Key="Passenger.Popup" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.PopupBorder" Color="#EBECF0" />
+            <BoxShadows x:Key="Passenger.PopupShadow">0 4 16 0 #29000000</BoxShadows>
+            <SolidColorBrush x:Key="Passenger.List" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#6C707E" />
@@ -372,6 +418,19 @@
             <SolidColorBrush x:Key="Passenger.Syntax.Code" Color="#3C7A2E" />
             <SolidColorBrush x:Key="Passenger.Syntax.Quote" Color="#9A5B0E" />
             <SolidColorBrush x:Key="Passenger.Syntax.LinkDestination" Color="#00785A" />
+
+            <StaticResource x:Key="MenuFlyoutPresenterBackground" ResourceKey="Passenger.Popup" />
+            <StaticResource x:Key="MenuFlyoutPresenterBorderBrush" ResourceKey="Passenger.PopupBorder" />
+            <StaticResource x:Key="MenuFlyoutItemForeground" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="MenuFlyoutItemForegroundPointerOver" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="MenuFlyoutItemForegroundPressed" ResourceKey="Passenger.Text" />
+            <StaticResource x:Key="MenuFlyoutItemForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPressed" ResourceKey="Passenger.RowSelected" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForeground" ResourceKey="Passenger.TextMuted" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver" ResourceKey="Passenger.TextMuted" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundPressed" ResourceKey="Passenger.TextMuted" />
+            <StaticResource x:Key="MenuFlyoutItemKeyboardAcceleratorTextForegroundDisabled" ResourceKey="Passenger.TextDisabled" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

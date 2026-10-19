@@ -8,6 +8,7 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="avares://Passenger/Theme/Tokens.axaml" />
                 <ResourceInclude Source="avares://Passenger/Theme/Icons.axaml" />
+                <ResourceInclude Source="avares://Passenger/Theme/ControlThemes.axaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

@@ -47,7 +47,6 @@ public sealed class ConflictsDialog : Window
         MinWidth = 520;
         MinHeight = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         description = new TextBlock { [DockPanel.DockProperty] = Avalonia.Controls.Dock.Top, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) };
         yoursColumn = Column(string.Empty, 1);

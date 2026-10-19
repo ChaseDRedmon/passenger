@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Debugging;
@@ -123,8 +124,64 @@ public sealed class DialogButtonsTests : IDisposable
                 $"In {title}, {Name(chosen)} stands {(chosenAt > cancelAt ? "right" : "left")} of {Name(cancel)}, where Rider puts the default "
                 + (OperatingSystem.IsMacOS() ? "rightmost, after Cancel" : "first, before Cancel"));
         }
+
+        // A plain button is Rider's: its own ground (white in light) inside a field's edge.
+        Color plain = Token(dialog, "Passenger.Button");
+        foreach (Button button in text.Where(b => !b.Classes.Contains("primary") && b.IsEffectivelyEnabled))
+        {
+            ContentPresenter frame = button.GetVisualDescendants().OfType<ContentPresenter>().First(p => p.Name == "PART_ContentPresenter");
+            Assert.True(frame.Background is ISolidColorBrush ground && ground.Color == plain && frame.BorderThickness.Left > 0,
+                $"In {title}, {Name(button)} is drawn on {(frame.Background as ISolidColorBrush)?.Color} with an edge of {frame.BorderThickness}, where Rider's plain button has its own ground and a field's edge");
+        }
+
+        // A default button that cannot be used looks disabled, not like the default it would be.
+        Color accent = Token(dialog, "Passenger.Accent");
+        foreach (Button idle in shown.Where(b => (b.IsDefault || b.Classes.Contains("primary")) && !b.IsEffectivelyEnabled))
+        {
+            ContentPresenter frame = idle.GetVisualDescendants().OfType<ContentPresenter>().First(p => p.Name == "PART_ContentPresenter");
+            Assert.False(frame.Background is ISolidColorBrush ground && ground.Color == accent,
+                $"In {title}, {Name(idle)} cannot be used now yet keeps the default button's accent, where Rider's looks disabled");
+        }
+
+        // The page is the chrome, as every page of Rider's dialogs is, never an editor's ground; a list or table framed in
+        // it stands on Rider's list ground (Border.framed), white in light as the editor is.
+        Assert.True(dialog.Background is ISolidColorBrush page && page.Color == Token(dialog, "Passenger.Chrome"),
+            $"{title}'s page is not the chrome, as every dialog's page is");
+        Color editor = Token(dialog, "Passenger.Editor.Background");
+        double area = dialog.Bounds.Width * dialog.Bounds.Height;
+        foreach (Border pane in dialog.GetVisualDescendants().OfType<Border>().Where(b => b.IsEffectivelyVisible && b.Background is ISolidColorBrush ground && ground.Color == editor
+            && b.TemplatedParent is null && !b.Classes.Contains("framed") && b.FindAncestorOfType<Passenger.Editor.CodeEditor>() is null))
+        {
+            Assert.True(pane.Bounds.Width * pane.Bounds.Height < area / 3,
+                $"{title} lays a third of its page on the editor's ground, where its page is the chrome");
+        }
+
+        // The drop-downs of a column (starting at one place) are one width, their right edges in line, as Rider's forms.
+        foreach (IGrouping<double, ComboBox> column in dialog.GetVisualDescendants().OfType<ComboBox>().Where(c => c.IsEffectivelyVisible && c.Bounds.Width > 0)
+            .GroupBy(c => Math.Round(c.TranslatePoint(default, dialog)!.Value.X)))
+        {
+            ComboBox first = column.First();
+            ComboBox? other = column.FirstOrDefault(c => Math.Abs(c.Bounds.Width - first.Bounds.Width) >= 0.5);
+            Assert.True(other is null, $"In {title}, drop-downs of one column are {first.Bounds.Width:0.#} and {other?.Bounds.Width:0.#} px wide, where a form's are one width");
+        }
+
+        // Don't ask again stands at the footer's left, beside the buttons, as Rider puts it.
+        foreach (CheckBox ask in dialog.GetVisualDescendants().OfType<CheckBox>().Where(c => c.IsEffectivelyVisible && c.Content is string words
+            && (words.StartsWith("Don't ask", StringComparison.Ordinal) || words.StartsWith("Do not ask", StringComparison.Ordinal))))
+        {
+            StackPanel? footer = ask.GetVisualParent() is DockPanel row && row.Classes.Contains("footerRow")
+                ? row.Children.OfType<StackPanel>().FirstOrDefault(s => s.Classes.Contains("footer")) : null;
+            Assert.True(footer is not null, $"In {title}, '{ask.Content}' is not in the footer's row beside the buttons, as Rider puts it");
+            Rect box = new(ask.TranslatePoint(default, dialog)!.Value, ask.Bounds.Size);
+            Rect buttons = new(footer!.TranslatePoint(default, dialog)!.Value, footer.Bounds.Size);
+            Assert.True(box.Right <= buttons.Left && Math.Abs(box.Center.Y - buttons.Center.Y) < 1.5,
+                $"In {title}, '{ask.Content}' is not at the footer's left, level with the buttons");
+        }
         return dialog;
     }
+
+    private static Color Token(Window dialog, string key) =>
+        dialog.TryFindResource(key, dialog.ActualThemeVariant, out object? found) && found is ISolidColorBrush brush ? brush.Color : default;
 
     private static string Name(Button button) => button.Content is string words ? $"'{words}'" : ToolTip.GetTip(button) is string tip ? $"'{tip}'" : "a button";
 

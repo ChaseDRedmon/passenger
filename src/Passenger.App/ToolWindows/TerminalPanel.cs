@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -51,15 +52,14 @@ public sealed class TerminalPanel : DockPanel
     public TerminalPanel(Func<string> folder)
     {
         this.folder = folder;
+        // The shells' tabs are in the window's header, after its title, then New Session, as Rider's Terminal has them.
         ItemsControl strip = new()
         {
             ItemsSource = tabs,
-            ItemsPanel = new FuncTemplate<Panel?>(() => new StackPanel { Orientation = Orientation.Horizontal }),
+            VerticalAlignment = VerticalAlignment.Center,
+            ItemsPanel = new FuncTemplate<Panel?>(() => new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 }),
             ItemTemplate = new FuncDataTemplate<TerminalTab>((tab, _) => tab is null ? new TextBlock() : Tab(tab), supportsRecycling: false),
         };
-        Border bar = new() { [DockProperty] = Dock.Top, Height = 30, BorderThickness = new Thickness(0, 0, 0, 1), Child = strip };
-        bar.Bind(Border.BorderBrushProperty, bar.GetResourceObservable("Passenger.Divider"));
-        Children.Add(bar);
         Children.Add(view);
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Terminal.Background"));
         AttachedToVisualTree += (_, _) =>
@@ -74,7 +74,7 @@ public sealed class TerminalPanel : DockPanel
         ((PathIcon)add.Content).Bind(PathIcon.DataProperty, add.GetResourceObservable("Icon.Add"));
         ToolTip.SetTip(add, "New Session");
         add.Click += (_, _) => _ = NewSessionAsync();
-        HeaderTools = add;
+        HeaderTools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Children = { strip, add } };
     }
 
     /// <summary>Raised when the last shell has ended, so the window can hide.</summary>
@@ -226,13 +226,9 @@ public sealed class TerminalPanel : DockPanel
 
     private Control Tab(TerminalTab tab)
     {
-        TextBlock name = new() { Text = tab.Name, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+        TextBlock name = new() { Text = tab.Name, VerticalAlignment = VerticalAlignment.Center };
         name.Classes.Set("muted", tab.HasEnded);
-        PathIcon closeGlyph = new() { Classes = { "small" } };
-        closeGlyph.Bind(PathIcon.DataProperty, closeGlyph.GetResourceObservable("Icon.Close"));
-        Button close = new() { Classes = { "tabClose" }, Content = closeGlyph };
-        ToolTip.SetTip(close, "Close Session");
-        close.Click += (_, e) =>
+        ToggleButton button = ToolTabs.Tab(name, tab.IsActive, () =>
         {
             if (tab.Run is { } run)
             {
@@ -243,33 +239,24 @@ public sealed class TerminalPanel : DockPanel
                 tab.Session.Kill();
             }
             Close(tab);
-            e.Handled = true;
-        };
-        Border border = new()
-        {
-            Classes = { "tab" },
-            Child = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { name, close } },
-        };
-        border.Classes.Set("active", tab.IsActive);
+        }, "Close Session");
         tab.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(TerminalTab.IsActive))
             {
-                border.Classes.Set("active", tab.IsActive);
+                button.IsChecked = tab.IsActive;
             }
             else if (e.PropertyName == nameof(TerminalTab.HasEnded))
             {
                 name.Classes.Set("muted", tab.HasEnded);
             }
         };
-        border.PointerPressed += (_, e) =>
+        // A press on the open tab leaves it open, where the toggle would let it go.
+        button.Click += (_, _) =>
         {
-            if (e.GetCurrentPoint(border).Properties.IsLeftButtonPressed)
-            {
-                Show(tab);
-                e.Handled = true;
-            }
+            Show(tab);
+            button.IsChecked = tab.IsActive;
         };
-        return border;
+        return button;
     }
 }

@@ -20,7 +20,6 @@ public sealed class AvailabilityDialog : Window
         MinWidth = 420;
         MinHeight = 280;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         StackPanel places = new() { Spacing = 6, Margin = new Thickness(16, 12) };
         places.Children.Add(new TextBlock { Text = "C#", FontWeight = Avalonia.Media.FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
         foreach ((TemplateAvailability place, _, string name) in LiveTemplatesPane.Places)
@@ -34,13 +33,12 @@ public sealed class AvailabilityDialog : Window
         OkButton.Click += (_, _) => Close(true);
         cancel.Click += (_, _) => Close(false);
         StackPanel buttons = DialogFooter.Of(OkButton, cancel);
-        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
+        Border bottom = DialogFooter.Bar(buttons);
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
         root.Children.Add(new ScrollViewer { Content = places });
         Border page = new() { Child = root };
-        page.Bind(Border.BackgroundProperty, page.GetResourceObservable("Passenger.Editor.Background"));
         Content = page;
     }
 

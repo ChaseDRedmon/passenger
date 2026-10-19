@@ -138,6 +138,7 @@ public partial class MainWindow
         menu.Items.Add(run);
         menu.Items.Add(debugIt);
         menu.Items.Add(untilFailure);
+        menu.Placement = Avalonia.Controls.PlacementMode.Pointer;
         menu.ShowAt(editor, showAtPointer: true);
     }
 

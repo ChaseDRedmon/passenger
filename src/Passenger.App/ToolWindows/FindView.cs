@@ -236,22 +236,7 @@ public sealed class FindView : DockPanel
         tabs.Children.Clear();
         foreach (Search search in searches)
         {
-            TextBlock name = new() { Text = search.Title, VerticalAlignment = VerticalAlignment.Center };
-            PathIcon glyph = new() { Classes = { "small" } };
-            glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable("Icon.Close"));
-            Button close = new() { Classes = { "tabClose" }, Content = glyph, Margin = new Thickness(6, 0, 0, 0) };
-            ToolTip.SetTip(close, "Close");
-            close.Click += (_, e) =>
-            {
-                Close(search);
-                e.Handled = true;
-            };
-            ToggleButton tab = new()
-            {
-                Classes = { "panelTab" },
-                IsChecked = search == current,
-                Content = new StackPanel { Orientation = Orientation.Horizontal, Children = { name, close } },
-            };
+            ToggleButton tab = ToolTabs.Tab(search.Title, search == current, () => Close(search));
             tab.Click += (_, _) => ShowSearch(search);
             tabs.Children.Add(tab);
         }

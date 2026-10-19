@@ -35,7 +35,6 @@ public sealed partial class CloneDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         url = new TextBox { Classes = { "search" }, PlaceholderText = "https://github.com/owner/repository.git" };
         parent = new TextBox { Classes = { "search" }, Text = folder };

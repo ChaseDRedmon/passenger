@@ -217,7 +217,7 @@ public sealed class BreakpointPopup : UserControl
                 Spacing = 10,
                 Children =
                 {
-                    new TextBlock { Text = breakpoint.Location, Classes = { "paneTitle" } },
+                    new TextBlock { Text = breakpoint.Location, Classes = { "popupTitle" } },
                     Properties,
                     new DockPanel
                     {
@@ -230,7 +230,7 @@ public sealed class BreakpointPopup : UserControl
                 },
             },
         };
-        Width = 480;
+        Width = PopupFrame.Medium;
     }
 
     public BreakpointProperties Properties { get; } = new();
@@ -265,7 +265,7 @@ public sealed class BreakpointsWindow : UserControl
     private readonly Func<Task<IReadOnlyList<string>>> exceptionTypes;
     private readonly ListBox list = new() { Classes = { "tree" } };
     private readonly BreakpointProperties properties = new();
-    private readonly TextBlock title = new() { Classes = { "paneTitle" } };
+    private readonly TextBlock title = new() { Classes = { "popupTitle" } };
     private readonly Button remove = new() { Content = "Remove" };
     private readonly Button goTo = new() { Content = "Go to Source" };
     private readonly Button removeTool = Tool("Icon.Minimize", "Remove");
@@ -361,7 +361,7 @@ public sealed class BreakpointsWindow : UserControl
                 Spacing = 10,
                 Children =
                 {
-                    new TextBlock { Text = "Breakpoints", Classes = { "paneTitle" } },
+                    new TextBlock { Text = "Breakpoints", Classes = { "popupTitle" } },
                     body,
                     new DockPanel
                     {
@@ -374,7 +374,7 @@ public sealed class BreakpointsWindow : UserControl
                 },
             },
         };
-        Width = 910;
+        Width = PopupFrame.Widest;
         Fill(chosen);
     }
 

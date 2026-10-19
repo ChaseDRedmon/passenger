@@ -63,7 +63,6 @@ public sealed class ChangeSignatureDialog : RefactoringDialog
             ClipToBounds = true,
             Child = new DockPanel { Children = { Docked(headerFrame, Dock.Top), new ScrollViewer { Content = table, MaxHeight = 220, MinHeight = 120 } } },
         };
-        tableFrame.Bind(Border.BackgroundProperty, tableFrame.GetResourceObservable("Passenger.Editor.Background"));
 
         Border previewFrame = new() { Classes = { "framed" }, Padding = new Thickness(10, 8), Child = preview };
         previewFrame.Bind(Border.BackgroundProperty, previewFrame.GetResourceObservable("Passenger.Editor.Background"));

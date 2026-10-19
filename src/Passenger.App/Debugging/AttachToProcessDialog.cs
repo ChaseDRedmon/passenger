@@ -40,7 +40,6 @@ public sealed class AttachToProcessDialog : Window
         MinWidth = 560;
         MinHeight = 300;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         Search = new TextBox { Classes = { "search" }, Text = search, PlaceholderText = "Search by name, process ID, user or command line" };
         Search.TextChanged += (_, _) => ShowRows();
@@ -90,7 +89,6 @@ public sealed class AttachToProcessDialog : Window
             ClipToBounds = true,
             Child = new DockPanel { Children = { headerFrame, new Panel { Children = { rows, empty } } } },
         };
-        table.Bind(Border.BackgroundProperty, table.GetResourceObservable("Passenger.Editor.Background"));
 
         attach = new Button { Content = "Attach with .NET Debugger", Classes = { "primary" }, IsEnabled = false };
         Button cancel = new() { Content = "Cancel", IsCancel = true };

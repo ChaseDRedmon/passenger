@@ -18,7 +18,6 @@ public sealed class ConfirmDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         Button confirm = new() { Content = yes, IsDefault = true, Classes = { "primary" } };
         Button cancel = new() { Content = no, IsCancel = true };

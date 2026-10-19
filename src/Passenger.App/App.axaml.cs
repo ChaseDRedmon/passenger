@@ -18,6 +18,7 @@ public partial class App : Application
     {
         AvaloniaXamlLoader.Load(this);
         TakeAccentFromTokens();
+        MenuShadow.Install();
         // Every in-window menu writes its keys as the keymap, Find Action and a chord's item do (Keystroke.Display: ⇧⌘R
         // on macOS), where Fluent wrote a KeyGesture its own way ("Shift+Cmd+R") beside them.
         TemplatedControl.TemplateAppliedEvent.AddClassHandler<MenuItem>((item, e) =>

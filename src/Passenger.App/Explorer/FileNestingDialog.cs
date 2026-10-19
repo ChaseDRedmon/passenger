@@ -18,7 +18,6 @@ public sealed class FileNestingDialog : Window
         MinWidth = 420;
         MinHeight = 300;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         NestBox = new CheckBox { Content = "Show files with the same names as nested", IsChecked = nest };
 
         Grid table = new() { ColumnDefinitions = new ColumnDefinitions("150,*"), Margin = new Thickness(8, 4) };
@@ -68,13 +67,12 @@ public sealed class FileNestingDialog : Window
         OkButton.Click += (_, _) => Close(true);
         cancel.Click += (_, _) => Close(false);
         StackPanel buttons = DialogFooter.Of(OkButton, cancel);
-        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
+        Border bottom = DialogFooter.Bar(buttons);
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
         root.Children.Add(body);
         Border page = new() { Child = root };
-        page.Bind(Border.BackgroundProperty, page.GetResourceObservable("Passenger.Editor.Background"));
         Content = page;
     }
 

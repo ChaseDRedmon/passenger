@@ -22,7 +22,6 @@ public sealed class ChangesWindow : Window
         MinWidth = 400;
         MinHeight = 240;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         Files = files;
         list = new ListBox
         {

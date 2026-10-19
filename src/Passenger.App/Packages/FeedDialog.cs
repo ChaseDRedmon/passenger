@@ -32,7 +32,6 @@ public sealed class FeedDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         name = new TextBox { Classes = { "search" }, Text = feed?.Name ?? "New feed" };
         url = new TextBox { Classes = { "search" }, Text = feed?.Value ?? string.Empty, PlaceholderText = "A feed's index.json, a v2 URL, or a folder" };

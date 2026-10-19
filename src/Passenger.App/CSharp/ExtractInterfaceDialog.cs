@@ -60,7 +60,6 @@ public sealed class ExtractInterfaceDialog : RefactoringDialog
             ClipToBounds = true,
             Child = new DockPanel { Children = { titleFrame, new ScrollViewer { Content = list, MaxHeight = 240, MinHeight = 100 } } },
         };
-        listFrame.Bind(Border.BackgroundProperty, listFrame.GetResourceObservable("Passenger.Editor.Background"));
 
         Options = new StackPanel
         {

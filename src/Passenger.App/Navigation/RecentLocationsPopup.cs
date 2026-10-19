@@ -42,7 +42,7 @@ public sealed class RecentLocationsPopup : UserControl
     public RecentLocationsPopup(Func<bool, IReadOnlyList<RecentLocation>> places, bool editedOnly)
     {
         this.places = places;
-        title = new TextBlock { Classes = { "paneTitle" }, VerticalAlignment = VerticalAlignment.Center };
+        title = new TextBlock { Classes = { "popupTitle" }, VerticalAlignment = VerticalAlignment.Center };
         // Not focusable: the keys stay with the query, as they do in Rider's popup.
         this.editedOnly = new CheckBox { Content = "Show edited only", IsChecked = editedOnly, Focusable = false, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         this.editedOnly.IsCheckedChanged += (_, _) => Reload();
@@ -70,7 +70,7 @@ public sealed class RecentLocationsPopup : UserControl
         body.Children.Add(empty);
         body.Children.Add(list);
         Content = new Border { Classes = { "popup" }, Child = body };
-        Width = 760;
+        Width = PopupFrame.Wide;
         Reload();
         Dispatcher.UIThread.Post(() => query.Focus(), DispatcherPriority.Loaded);
     }

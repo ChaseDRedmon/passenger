@@ -67,7 +67,7 @@ public sealed class FindInFilesPopup : UserControl
         this.search = search;
         this.textOf = textOf;
         projects = choices.Projects;
-        Width = 820;
+        Width = PopupFrame.Widest;
         query = new TextBox { Classes = { "search" }, PlaceholderText = "Text to find", Text = initial ?? string.Empty };
         // The find bar's own marks for the same options, where letters of their own told them apart.
         matchCase = Option(OptionGlyph("Icon.MatchCase"), "Match case (Alt+C)");
@@ -90,7 +90,7 @@ public sealed class FindInFilesPopup : UserControl
         DockPanel header = new() { Margin = new Thickness(12, 8, 10, 6) };
         DockPanel.SetDock(mask, Dock.Right);
         header.Children.Add(mask);
-        header.Children.Add(new TextBlock { Classes = { "paneTitle" }, Text = replace ? "Replace in Files" : "Find in Files", VerticalAlignment = VerticalAlignment.Center });
+        header.Children.Add(new TextBlock { Classes = { "popupTitle" }, Text = replace ? "Replace in Files" : "Find in Files", VerticalAlignment = VerticalAlignment.Center });
         StackPanel top = new() { Children = { header, find } };
         if (replace)
         {
@@ -126,7 +126,7 @@ public sealed class FindInFilesPopup : UserControl
         StackPanel kinds = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(0, 0, 8, 0) };
         foreach ((SearchScopeKind each, string name, Key key) in Kinds)
         {
-            ToggleButton tab = new() { Classes = { "panelTab" }, Content = name, FontSize = 12 };
+            ToggleButton tab = new() { Classes = { "segment" }, Content = name, FontSize = 12 };
             ToolTip.SetTip(tab, $"{name} (Alt+{key})");
             tab.Click += (_, _) => ScopeKind = each;
             tabs[each] = tab;
@@ -147,7 +147,7 @@ public sealed class FindInFilesPopup : UserControl
         results = new ListBox
         {
             Classes = { "tree" },
-            Height = 26 * 10,
+            Height = PopupFrame.RowHeight * 10,
             ItemTemplate = new FuncDataTemplate<SearchMatch>((match, _) => match is null ? new TextBlock() : Row(match), supportsRecycling: false),
         };
         results.SelectionChanged += (_, _) => ShowPreview();
@@ -551,7 +551,7 @@ public sealed class FindInFilesPopup : UserControl
         text.Inlines.Add(new Avalonia.Controls.Documents.Run(trimmed[Math.Min(trimmed.Length, start + Math.Max(0, length))..]));
         TextBlock where = new() { Text = $"{match.Name} {match.Line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 4, 0), FontSize = 12 };
         where.Bind(TextBlock.ForegroundProperty, where.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = 24, Margin = new Thickness(8, 0) };
+        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(8, 0) };
         DockPanel.SetDock(where, Dock.Right);
         row.Children.Add(where);
         row.Children.Add(text);

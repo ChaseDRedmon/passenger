@@ -47,7 +47,6 @@ public sealed class AddReferenceDialog : Window
         MinWidth = 360;
         MinHeight = 240;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         list = new ListBox
         {

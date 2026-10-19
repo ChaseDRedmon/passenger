@@ -24,12 +24,12 @@ public sealed class ChoicePopup : UserControl
     public ChoicePopup(string title, string placeholder, IReadOnlyList<Choice> choices, string nothing)
     {
         this.choices = choices;
-        Width = 560;
+        Width = PopupFrame.Medium;
         query = new TextBox { Classes = { "search" }, PlaceholderText = placeholder };
         results = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = 26 * 15,
+            MaxHeight = PopupFrame.RowHeight * 15,
             Margin = new Thickness(0, 0, 0, 8),
             ItemTemplate = new FuncDataTemplate<Choice>((choice, _) => choice is null ? new TextBlock() : Row(choice), supportsRecycling: false),
         };
@@ -44,7 +44,7 @@ public sealed class ChoicePopup : UserControl
             {
                 Children =
                 {
-                    new TextBlock { Classes = { "paneTitle" }, Text = title, Margin = new Thickness(12, 10, 12, 6) },
+                    new TextBlock { Classes = { "popupTitle" }, Text = title, Margin = new Thickness(12, 10, 12, 6) },
                     new Border { Margin = new Thickness(10, 0, 10, 8), Child = query },
                     results,
                     empty,
@@ -115,7 +115,7 @@ public sealed class ChoicePopup : UserControl
     {
         TextBlock detail = new() { Text = choice.Detail, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 4, 0) };
         detail.Bind(TextBlock.ForegroundProperty, detail.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = 26, Margin = new Thickness(4, 0) };
+        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(4, 0) };
         DockPanel.SetDock(detail, Dock.Right);
         row.Children.Add(detail);
         row.Children.Add(new TextBlock { Text = choice.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });

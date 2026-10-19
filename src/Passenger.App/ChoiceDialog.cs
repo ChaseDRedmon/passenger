@@ -19,7 +19,6 @@ public sealed class ChoiceDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         List<Button> answers = [];
         foreach (string choice in choices)

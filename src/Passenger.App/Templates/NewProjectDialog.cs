@@ -36,7 +36,7 @@ public sealed class NewProjectDialog : Window
     private readonly TextBox search = new() { Classes = { "search" }, PlaceholderText = "Search", Margin = new Thickness(8, 8, 8, 6) };
     private readonly ListBox list;
     private readonly TextBlock loading;
-    private readonly ComboBox typeChooser = new() { MinWidth = 240 };
+    private readonly ComboBox typeChooser = new() { Classes = { "form" } };
     private readonly Control typeRow;
     private readonly TextBlock heading;
     private readonly TextBlock description;
@@ -44,13 +44,13 @@ public sealed class NewProjectDialog : Window
     private readonly TextBox projectName = new() { Classes = { "search" } };
     private readonly TextBox directory = new() { Classes = { "search" } };
     private readonly CheckBox sameDirectory = new() { Content = "Put solution and project in the same directory" };
-    private readonly ComboBox format = new() { MinWidth = 160 };
+    private readonly ComboBox format = new() { Classes = { "form" } };
     private readonly Control projectRow;
     private readonly Control sameRow;
     private readonly Control? formatRow;
     private readonly TextBlock where = new() { Classes = { "muted" }, FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly ComboBox framework = new() { MinWidth = 160 };
-    private readonly ComboBox language = new() { MinWidth = 160 };
+    private readonly ComboBox framework = new() { Classes = { "form" } };
+    private readonly ComboBox language = new() { Classes = { "form" } };
     private readonly Control languageRow;
     private readonly StackPanel options = new() { Spacing = 10 };
     private readonly TextBlock command = new() { Classes = { "muted" }, FontSize = 12, TextWrapping = TextWrapping.Wrap };
@@ -107,7 +107,6 @@ public sealed class NewProjectDialog : Window
         MinWidth = 720;
         MinHeight = 480;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         list = new ListBox
         {
@@ -196,7 +195,6 @@ public sealed class NewProjectDialog : Window
             Children = { new StackPanel { Children = { heading, description }, Margin = new Thickness(0, 0, 0, 8) }, fields, Rule(), typeRow, details, offer },
         };
         Border rightPane = new() { Child = new ScrollViewer { Content = right } };
-        rightPane.Bind(Border.BackgroundProperty, rightPane.GetResourceObservable("Passenger.Editor.Background"));
 
         problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
         working = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, IsVisible = false, Children = { bar, progress } };
@@ -212,12 +210,7 @@ public sealed class NewProjectDialog : Window
         Action changed = () => _ = RefreshAsync();
         ProjectTemplates.Changed += changed;
         Closed += (_, _) => ProjectTemplates.Changed -= changed;
-        StackPanel buttons = DialogFooter.Of(create, cancel);
-        DockPanel bottomRow = new();
-        DockPanel.SetDock(buttons, Dock.Right);
-        bottomRow.Children.Add(buttons);
-        bottomRow.Children.Add(new Panel { Margin = new Thickness(0, 0, 16, 0), Children = { problem, working } });
-        Border bottom = new() { Classes = { "footerBar" }, Child = bottomRow };
+        Border bottom = DialogFooter.Bar(DialogFooter.Of(create, cancel), new Panel { Children = { problem, working } });
 
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
@@ -953,7 +946,7 @@ public sealed class NewProjectDialog : Window
                     row = Row(null, box);
                     break;
                 case TemplateOptionKind.Choice:
-                    ComboBox choices = new() { MinWidth = 240, ItemsSource = option.Choices.Select(c => c.Label).ToList() };
+                    ComboBox choices = new() { Classes = { "form" }, ItemsSource = option.Choices.Select(c => c.Label).ToList() };
                     choices.SelectedIndex = Math.Max(0, option.Choices.ToList().FindIndex(c => c.Value.Equals(value, StringComparison.OrdinalIgnoreCase)));
                     choices.SelectionChanged += (_, _) =>
                     {

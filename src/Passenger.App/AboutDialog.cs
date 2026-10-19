@@ -24,7 +24,6 @@ public sealed class AboutDialog : Window
         SizeToContent = SizeToContent.Height;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         string commit = Product.Commit is { } hash ? $"Commit {hash[..Math.Min(12, hash.Length)]}" : "Built outside a Git repository";
         Text = $"Passenger {Product.Version}\n{(Product.Commit is { } full ? $"Commit {full}" : commit)}\nRuntime version: {Product.Runtime}\n{RuntimeInformation.OSDescription}";

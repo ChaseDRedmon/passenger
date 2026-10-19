@@ -1,29 +1,50 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Layout;
 
 namespace Passenger.App;
 
-/// <summary>A dialog's buttons at its foot, at its right, in the two orders Rider lays them in. Shell.axaml's
-/// <c>StackPanel.footer</c> spaces them and gives each one minimum width.</summary>
+/// <summary>A dialog's buttons at its foot, at its right, in the two orders Rider lays them in, and what goes beside them
+/// (Don't ask again, a problem the page has) at the row's left, where Rider puts it. Shell.axaml's <c>StackPanel.footer</c>
+/// spaces the buttons and gives each one minimum width.</summary>
 public static class DialogFooter
 {
     /// <summary>A dialog's OK, Cancel and Apply: the default first and Cancel after it on Windows and Linux, the default
     /// rightmost with Cancel beside it on macOS, any other (Apply) after Cancel.</summary>
     public static StackPanel Of(Button chosen, Button? cancel, params Button[] more) =>
-        Row((OperatingSystem.IsMacOS() ? [cancel, .. more, chosen] : (Button?[])[chosen, cancel, .. more]).OfType<Button>());
+        Buttons((OperatingSystem.IsMacOS() ? [cancel, .. more, chosen] : (Button?[])[chosen, cancel, .. more]).OfType<Button>());
 
     /// <summary>Buttons as Rider's DialogWrapper lists them (its createActions): in that order on Windows and Linux, and on
     /// macOS the same with the default moved to the end (sortActionsOnMac), as Reload, Convert, Cancel stand.</summary>
     public static StackPanel Listed(params Button?[] buttons)
     {
         Button[] shown = [.. buttons.OfType<Button>()];
-        return Row(OperatingSystem.IsMacOS() ? [.. shown.Where(b => !b.IsDefault), .. shown.Where(b => b.IsDefault)] : shown);
+        return Buttons(OperatingSystem.IsMacOS() ? [.. shown.Where(b => !b.IsDefault), .. shown.Where(b => b.IsDefault)] : shown);
     }
 
     /// <summary>A question's answers as Rider's message dialogs (its AlertDialog) lay them: in the order asked, Cancel last,
     /// on Windows and Linux, and the whole row reversed on macOS, as This Window, New Window, Cancel stand.</summary>
-    public static StackPanel Answers(params Button[] answers) => Row(OperatingSystem.IsMacOS() ? [.. answers.Reverse()] : answers);
+    public static StackPanel Answers(params Button[] answers) => Buttons(OperatingSystem.IsMacOS() ? [.. answers.Reverse()] : answers);
 
-    private static StackPanel Row(IEnumerable<Button> buttons)
+    /// <summary>The footer's row: its buttons at the right, and at the left what goes beside them.</summary>
+    public static DockPanel Row(StackPanel buttons, Control? left = null)
+    {
+        DockPanel row = new() { Classes = { "footerRow" } };
+        DockPanel.SetDock(buttons, Dock.Right);
+        row.Children.Add(buttons);
+        if (left is not null)
+        {
+            left.VerticalAlignment = VerticalAlignment.Center;
+            left.Margin = new Thickness(0, 0, 16, 0);
+            row.Children.Add(left);
+        }
+        return row;
+    }
+
+    /// <summary>The bar under a dialog's page that its footer's row stands in (Shell.axaml's <c>Border.footerBar</c>).</summary>
+    public static Border Bar(StackPanel buttons, Control? left = null) => new() { Classes = { "footerBar" }, Child = Row(buttons, left) };
+
+    private static StackPanel Buttons(IEnumerable<Button> buttons)
     {
         StackPanel footer = new() { Classes = { "footer" } };
         footer.Children.AddRange(buttons);

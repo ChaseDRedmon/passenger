@@ -100,21 +100,7 @@ public sealed class LocalHistoryView : DockPanel
 
     private ToggleButton Tab(string title, string tip, HistoryTab tab)
     {
-        PathIcon glyph = new() { Classes = { "small" } };
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable("Icon.Close"));
-        Button close = new() { Classes = { "tabClose" }, Content = glyph, Margin = new Thickness(6, 0, 0, 0) };
-        ToolTip.SetTip(close, "Close");
-        close.Click += (_, e) =>
-        {
-            Close(tab);
-            e.Handled = true;
-        };
-        StackPanel content = new()
-        {
-            Orientation = Orientation.Horizontal,
-            Children = { new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center }, close },
-        };
-        ToggleButton button = new() { Classes = { "panelTab" }, IsChecked = tab == Shown, Content = content };
+        ToggleButton button = ToolWindows.ToolTabs.Tab(title, tab == Shown, () => Close(tab));
         ToolTip.SetTip(button, tip);
         button.Click += (_, _) => Show(tab);
         return button;

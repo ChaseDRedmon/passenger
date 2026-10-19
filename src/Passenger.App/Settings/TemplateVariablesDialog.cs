@@ -29,7 +29,6 @@ public sealed class TemplateVariablesDialog : Window
         MinWidth = 480;
         MinHeight = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         Button up = Tool("Icon.ArrowUp", "Up");
         Button down = Tool("Icon.ArrowDown", "Down");
@@ -64,13 +63,12 @@ public sealed class TemplateVariablesDialog : Window
         body.Children.Add(left);
         body.Children.Add(chosen);
         StackPanel buttons = DialogFooter.Of(DoneButton, null);
-        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
+        Border bottom = DialogFooter.Bar(buttons);
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
         root.Children.Add(body);
         Border page = new() { Child = root };
-        page.Bind(Border.BackgroundProperty, page.GetResourceObservable("Passenger.Editor.Background"));
         Content = page;
         List();
         names.SelectedIndex = 0;
@@ -183,7 +181,6 @@ public sealed class ChooseMacroDialog : Window
         MinWidth = 360;
         MinHeight = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         list.ItemsSource = (string[])[NoMacro, .. LiveTemplates.Macros.Select(m => m.Description)];
         list.SelectedIndex = LiveTemplates.Macros.ToList().FindIndex(m => m.Name == current) + 1;
         list.DoubleTapped += (_, _) => Close(true);
@@ -192,13 +189,12 @@ public sealed class ChooseMacroDialog : Window
         OkButton.Click += (_, _) => Close(true);
         cancel.Click += (_, _) => Close(false);
         StackPanel buttons = DialogFooter.Of(OkButton, cancel);
-        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
+        Border bottom = DialogFooter.Bar(buttons);
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
         root.Children.Add(new Border { Classes = { "framed" }, Margin = new Thickness(12), Child = list });
         Border page = new() { Child = root };
-        page.Bind(Border.BackgroundProperty, page.GetResourceObservable("Passenger.Editor.Background"));
         Content = page;
     }
 

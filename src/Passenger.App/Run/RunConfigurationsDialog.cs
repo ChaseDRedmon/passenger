@@ -44,7 +44,6 @@ public sealed class RunConfigurationsDialog : Window
         MinWidth = 700;
         MinHeight = 440;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         AddButton = Tool("Icon.Add", "Add New Configuration");
         CopyButton = Tool("Icon.Copy", "Copy Configuration");
@@ -62,9 +61,9 @@ public sealed class RunConfigurationsDialog : Window
         };
 
         NameBox = Field();
-        ProjectBox = new ComboBox { MinWidth = 280 };
-        FrameworkBox = new ComboBox { MinWidth = 160 };
-        ProfileBox = new ComboBox { MinWidth = 220 };
+        ProjectBox = new ComboBox { Classes = { "form" } };
+        FrameworkBox = new ComboBox { Classes = { "form" } };
+        ProfileBox = new ComboBox { Classes = { "form" } };
         ProjectBox.ItemTemplate = new FuncDataTemplate<object>((item, _) => new TextBlock { Text = item is ProjectModel p ? p.Name : item?.ToString() });
         ProgramBox = Field("The project's own program");
         ArgumentsBox = Field();
@@ -132,14 +131,8 @@ public sealed class RunConfigurationsDialog : Window
         {
             Child = new ScrollViewer { Content = new Panel { Margin = new Thickness(20, 16, 20, 16), Children = { form, nothing } } },
         };
-        editorPane.Bind(Border.BackgroundProperty, editorPane.GetResourceObservable("Passenger.Editor.Background"));
 
-        DockPanel bottomBar = new();
-        StackPanel buttons = DialogFooter.Of(OkButton, cancel, applyButton);
-        DockPanel.SetDock(buttons, Dock.Right);
-        bottomBar.Children.Add(buttons);
-        bottomBar.Children.Add(problem);
-        Border bottom = new() { Classes = { "footerBar" }, Child = bottomBar };
+        Border bottom = DialogFooter.Bar(DialogFooter.Of(OkButton, cancel, applyButton), problem);
 
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
