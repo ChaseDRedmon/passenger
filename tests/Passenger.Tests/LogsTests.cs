@@ -131,6 +131,62 @@ public sealed class LogsTests : IDisposable
         }
     }
 
+    /// <summary>The IDE's log names the programs that failed, and no others: not git answering no (a file opened that the
+    /// last commit lacks, which git show exits 128 for), nor a language server the IDE ended with its window, however long
+    /// it ran and however it went (Node's 141 as the pipes it writes to close); a git command that failed is there.</summary>
+    [AvaloniaFact]
+    public void The_ides_log_names_programs_that_failed_not_git_answering_no_nor_servers_ended_with_their_window()
+    {
+        // Named for the test's folder, since the log is the whole run's.
+        string untracked = $"Untracked{Path.GetFileName(folder)}";
+        File.WriteAllText(Path.Combine(folder, "Logs.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "Tracked.cs"), "class Tracked { }\n");
+        Restore.Run(folder);
+        TestGit.Init(folder);
+        File.WriteAllText(Path.Combine(folder, $"{untracked}.cs"), "class Untracked { }\n");
+        File.WriteAllText(Path.Combine(folder, $"{untracked}.json"), "{ \"name\": \"logs\" }\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile($"{untracked}.cs");
+        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to start ({window.CSharpService?.State})");
+        Ui.Landed(() => window.Vcs.HeadReads > 0, "the untracked file's last committed text to be asked of git");
+        // A file opened once the rest were read asks git show for its own, which has none to give.
+        window.OpenFile($"{untracked}.json");
+        Ui.Landed(() => window.Vcs.HeadReads > 1, "the second untracked file's last committed text to be asked of git");
+        List<int> servers = [window.CSharpService!.Session!.Server.ProcessId];
+        if (Passenger.Core.Programs.Node() is not null)
+        {
+            System.Text.RegularExpressions.Regex started = new($@"JSON language server \(process (\d+)\) started for {System.Text.RegularExpressions.Regex.Escape(window.Folder!)} ");
+            Ui.WaitFor(() => started.IsMatch(Ui.IdeLog()), "the JSON language server to start on Node.js");
+            servers.Add(int.Parse(started.Match(Ui.IdeLog()).Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
+            // Long enough to be a program a person waits on, had it been one.
+            Screenshot.Pump(TimeSpan.FromSeconds(1.5));
+        }
+        Passenger.App.Vcs.VcsOutcome checkout = Ui.Await(window.Vcs.CheckoutAsync("no-such-branch"), "git to refuse the checkout");
+        Assert.False(checkout.Succeeded, "git checked out a branch the repository does not have");
+        window.Close();
+        foreach (int server in servers)
+        {
+            Assert.True(Processes.Gone(server), $"The language server (process {server}) went on after its window closed");
+        }
+        // The end of each is told on another thread once it has gone.
+        Screenshot.Pump(TimeSpan.FromMilliseconds(500));
+
+        string[] log = Ui.IdeLog().Split('\n');
+        string[] noes = [.. log.Where(line => line.Contains("exited with code", StringComparison.Ordinal) && line.Contains(" show ", StringComparison.Ordinal)
+            && line.Contains($":{untracked}.", StringComparison.Ordinal))];
+        Assert.True(noes.Length == 0, $"The IDE's log takes git's no, for a file the last commit lacks, for a failure:\n{string.Join('\n', noes)}");
+        foreach (int server in servers)
+        {
+            string[] ended = [.. log.Where(line => line.Contains($"Process {server} ", StringComparison.Ordinal) && line.Contains("exited", StringComparison.Ordinal))];
+            Assert.True(ended.Length == 0, $"The IDE's log tells of a language server it ended with its window as of a program that failed or kept it waiting:\n{string.Join('\n', ended)}");
+        }
+        Assert.True(log.Any(line => line.Contains("exited with code", StringComparison.Ordinal) && line.Contains("no-such-branch", StringComparison.Ordinal)),
+            $"The IDE's log does not have the git checkout that failed:\n{string.Join('\n', log.Where(l => l.Contains("exited with code", StringComparison.Ordinal)).TakeLast(20))}");
+    }
+
     /// <summary>A log in the logs folder, as a person opening it would find it.</summary>
     private static string Logged(string name)
     {

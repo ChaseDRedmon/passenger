@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
@@ -6,8 +7,10 @@ namespace Passenger.Core;
 
 /// <summary>Every program Passenger starts is started here, one way: no shell and no window, an input of its own (never
 /// the IDE's terminal, nor an agent's pipe), UTF-8 streams, none of a git hook's repository variables, and a line in the
-/// log when it fails or takes a while, or for every one with the debug log on (<see cref="Started"/>, <see cref="Ended"/>).
-/// None outlives the IDE, however the IDE ends (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's,
+/// log when it fails or takes a while, or for every one with the debug log on (<see cref="Started"/>, <see cref="Ended"/>):
+/// one the IDE ended itself (<see cref="Kill"/>, <see cref="Ending"/>) did not fail, nor did a question whose exit code is
+/// its answer (<c>git show</c> of a file the commit lacks). None outlives the IDE, however the IDE ends
+/// (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's,
 /// ended by its pseudo-terminal's hangup), a program run in the terminal (Porta.Pty's, then taken on: <see cref="Adopt"/>),
 /// vstest.console (VSTest's, which ends with the process that started it) and on Windows Velopack's Update.exe, which
 /// installs an update once Passenger has ended and so must outlive it.</summary>
@@ -28,6 +31,9 @@ public static class ChildProcesses
 
     /// <summary>A child ended; raised on any thread, for the IDE's log.</summary>
     public static event EventHandler<ChildEnd>? Ended;
+
+    /// <summary>The children the IDE is ending, by process id, until their end is told.</summary>
+    private static readonly ConcurrentDictionary<int, byte> EndedHere = new();
 
     /// <summary>A program and its arguments, to run in a folder (the IDE's own when none is given).</summary>
     public static ProcessStartInfo Command(string program, IEnumerable<string> arguments, string? folder = null)
@@ -70,7 +76,10 @@ public static class ChildProcesses
     /// <summary>Starts a child that ends with the IDE. Its input is the caller's to write when it asked for it, and is
     /// otherwise closed at once, so the child reads nothing of the IDE's. The start is the child's from then on (another
     /// run needs another); what <see cref="Process.Start()"/> throws when it cannot start, this throws.</summary>
-    public static Process Start(ProcessStartInfo start)
+    public static Process Start(ProcessStartInfo start) => Start(start, answers: null);
+
+    /// <summary><see cref="Start(ProcessStartInfo)"/>, with the exit codes that are the child's answer, not its failure.</summary>
+    private static Process Start(ProcessStartInfo start, IReadOnlyCollection<int>? answers)
     {
         start.UseShellExecute = false;
         start.CreateNoWindow = true;
@@ -89,7 +98,7 @@ public static class ChildProcesses
         string command = Display(start);
         long began = Stopwatch.GetTimestamp();
         Process process = new() { StartInfo = start, EnableRaisingEvents = true };
-        process.Exited += (_, _) => OnExited(process, command, began);
+        process.Exited += (_, _) => OnExited(process, command, began, answers);
         try
         {
             process.Start();
@@ -100,6 +109,8 @@ public static class ChildProcesses
             throw;
         }
         Lifeline.Adopt(process);
+        // An id the IDE ended before, whose end went untold (its process disposed first), is another child's now.
+        EndedHere.TryRemove(process.Id, out _);
         Started?.Invoke(null, new ChildStart(process.Id, command, start.WorkingDirectory));
         if (closeInput)
         {
@@ -116,22 +127,42 @@ public static class ChildProcesses
     public static void Adopt(int processId, ProcessStartInfo start)
     {
         Lifeline.AdoptGroup(processId);
+        EndedHere.TryRemove(processId, out _);
         Started?.Invoke(null, new ChildStart(processId, Display(start), start.WorkingDirectory));
     }
 
     /// <summary>An adopted program's end, for the IDE's log as a child's is told.</summary>
     public static void Exited(int processId, ProcessStartInfo start, int exitCode, TimeSpan time) =>
-        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time));
+        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time, EndedHere.TryRemove(processId, out _)));
 
-    /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first.
-    /// Canceled, or still running after <paramref name="limit"/>, it is killed with all it started, and the task is
-    /// canceled or fails with a <see cref="TimeoutException"/>.</summary>
-    public static async Task<ChildResult> RunAsync(ProcessStartInfo start, string? input = null, TimeSpan? limit = null, CancellationToken cancel = default)
+    /// <summary>Says the IDE is ending a child by asking it to (an exit request, its input closed): however it then exits,
+    /// a pipe it still writes to closed under it included (SIGPIPE's 141), it did not fail. <see cref="Kill"/> says it too.</summary>
+    public static void Ending(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                EndedHere[process.Id] = 0;
+            }
+        }
+        catch (Exception error) when (error is InvalidOperationException or Win32Exception)
+        {
+            // It had ended, or was never started.
+        }
+    }
+
+    /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first; an
+    /// exit code among <paramref name="answers"/> is its answer (git's "no such file"), not a failure to log. Canceled, or
+    /// still running after <paramref name="limit"/>, it is killed with all it started, and the task is canceled or fails
+    /// with a <see cref="TimeoutException"/>.</summary>
+    public static async Task<ChildResult> RunAsync(ProcessStartInfo start, string? input = null, TimeSpan? limit = null, CancellationToken cancel = default,
+        IReadOnlyCollection<int>? answers = null)
     {
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        using Process process = Start(start);
+        using Process process = Start(start, answers);
         Task<string> output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
         Task<string> errors = process.StandardError.ReadToEndAsync(CancellationToken.None);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
@@ -157,7 +188,15 @@ public static class ChildProcesses
         }
         catch (OperationCanceledException) when (ending.IsCancellationRequested)
         {
-            Kill(process);
+            // One given up on was ended, not failed; one that outran its limit hung, and its end says so.
+            if (cancel.IsCancellationRequested)
+            {
+                Kill(process);
+            }
+            else
+            {
+                KillTree(process);
+            }
             // Disposing the process ends the reads; their ends are nobody's to report.
             Forget(output);
             Forget(errors);
@@ -173,6 +212,13 @@ public static class ChildProcesses
     /// runtime's tree kill there: it stops each process before killing it, and .NET 11 on macOS handles a child's end in a
     /// loop that never ends while another child is stopped, holding the lock that the tree kill then waits on.</summary>
     public static void Kill(Process process)
+    {
+        Ending(process);
+        KillTree(process);
+    }
+
+    /// <summary><see cref="Kill"/>, its end told as the child's own: one that hung past its limit.</summary>
+    private static void KillTree(Process process)
     {
         try
         {
@@ -237,11 +283,14 @@ public static class ChildProcesses
     private static string Quote(string word) =>
         word.Length > 0 && !word.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'') ? word : $"\"{word.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
-    private static void OnExited(Process process, string command, long began)
+    private static void OnExited(Process process, string command, long began, IReadOnlyCollection<int>? answers)
     {
         try
         {
-            Ended?.Invoke(null, new ChildEnd(process.Id, command, process.ExitCode, Stopwatch.GetElapsedTime(began)));
+            int id = process.Id;
+            bool ended = EndedHere.TryRemove(id, out _);
+            int code = process.ExitCode;
+            Ended?.Invoke(null, new ChildEnd(id, command, code, Stopwatch.GetElapsedTime(began), ended, answers?.Contains(code) == true));
         }
         catch (InvalidOperationException)
         {
@@ -265,12 +314,14 @@ public sealed record ChildStart(int ProcessId, string Command, string Folder)
     public override string ToString() => $"Process {ProcessId} started{(Folder.Length > 0 ? $" in {Folder}" : string.Empty)}: {Command}";
 }
 
-/// <summary>A child's end: its process, the command, its exit code and how long it ran.</summary>
-public sealed record ChildEnd(int ProcessId, string Command, int ExitCode, TimeSpan Time)
+/// <summary>A child's end: its process, the command, its exit code and how long it ran, whether the IDE ended it, and
+/// whether its exit code is its answer to the question it was asked.</summary>
+public sealed record ChildEnd(int ProcessId, string Command, int ExitCode, TimeSpan Time, bool EndedByIde = false, bool Answered = false)
 {
-    /// <summary>Worth a line in the IDE's log: it failed, or ran long enough for a person to wait on it. Git's quick
-    /// reads run on every save, and would bury the rest.</summary>
-    public bool Notable => ExitCode != 0 || Time >= TimeSpan.FromSeconds(1);
+    /// <summary>Worth a line in the IDE's log: the IDE did not end it, and it failed or ran long enough for a person to wait
+    /// on it. Git's quick reads run on every save, and would bury the rest.</summary>
+    public bool Notable => !EndedByIde && ((ExitCode != 0 && !Answered) || Time >= TimeSpan.FromSeconds(1));
 
-    public override string ToString() => $"Process {ProcessId} exited with code {ExitCode} after {Time.TotalSeconds:0.00} s: {Command}";
+    public override string ToString() =>
+        $"Process {ProcessId} {(EndedByIde ? "ended by the IDE, " : string.Empty)}exited with code {ExitCode} after {Time.TotalSeconds:0.00} s: {Command}";
 }

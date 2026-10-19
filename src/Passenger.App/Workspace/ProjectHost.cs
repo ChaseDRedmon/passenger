@@ -311,6 +311,7 @@ public sealed class ProjectHost : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         gone = true;
+        ChildProcesses.Ending(process);
         try
         {
             process.StandardInput.Close();

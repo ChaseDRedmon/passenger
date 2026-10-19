@@ -586,6 +586,8 @@ public sealed class LanguageServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         disposing = true;
+        // However it goes, a write into the pipes closed under it included (Node's SIGPIPE, 141), it did not fail.
+        ChildProcesses.Ending(process);
         watch.Dispose();
         try
         {

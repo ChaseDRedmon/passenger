@@ -118,7 +118,7 @@ public sealed class Git
     /// <summary>The working tree a folder is in, or null when it is in none (or git is not there).</summary>
     public static async Task<Git?> OpenAsync(string folder)
     {
-        GitResult top = await RunAsync(folder, ["rev-parse", "--show-toplevel", "--absolute-git-dir"]);
+        GitResult top = await RunAsync(folder, ["rev-parse", "--show-toplevel", "--absolute-git-dir"], answers: [NotThere]);
         string[] lines = top.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return top.Succeeded && lines.Length == 2
             ? new Git(PathNames.Canonical(lines[0]), PathNames.Canonical(lines[1]))
@@ -494,7 +494,7 @@ public sealed class Git
     /// <summary>The commit HEAD names, as the log reads it, or null before the first commit.</summary>
     public async Task<CommitInfo?> HeadAsync()
     {
-        GitResult log = await RunAsync(Root, ["log", "-1", CommitFormat, "HEAD", "--"]);
+        GitResult log = await RunAsync(Root, ["log", "-1", CommitFormat, "HEAD", "--"], answers: [NotThere]);
         return log.Succeeded ? Commits(log.Output).FirstOrDefault() : null;
     }
 
@@ -750,7 +750,8 @@ public sealed class Git
     /// <summary>A file's text at a revision (a hash, a branch, HEAD), or null when it had no such file.</summary>
     public async Task<string?> TextAtAsync(string revision, string path)
     {
-        GitResult show = await RunAsync(Root, ["show", "--end-of-options", $"{revision}:{Relative(path)}"]);
+        // Its 128 for a file the revision lacks (untracked, ignored, new) is its answer, asked of every such file opened.
+        GitResult show = await RunAsync(Root, ["show", "--end-of-options", $"{revision}:{Relative(path)}"], answers: [NotThere]);
         return show.Succeeded ? show.Output : null;
     }
 
@@ -860,7 +861,7 @@ public sealed class Git
     /// <summary>The last commit's message, or null before the first commit.</summary>
     public async Task<string?> LastMessageAsync()
     {
-        GitResult log = await RunAsync(Root, ["log", "-1", "--format=%B"]);
+        GitResult log = await RunAsync(Root, ["log", "-1", "--format=%B"], answers: [NotThere]);
         return log.Succeeded ? log.Output.TrimEnd() : null;
     }
 
@@ -905,7 +906,7 @@ public sealed class Git
     /// <summary>Pushes the branch, setting its upstream on the first push.</summary>
     public async Task<GitResult> PushAsync()
     {
-        GitResult upstream = await RunAsync(Root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+        GitResult upstream = await RunAsync(Root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], answers: [NotThere]);
         if (upstream.Succeeded)
         {
             return await RunAsync(Root, ["push"]);
@@ -944,7 +945,7 @@ public sealed class Git
     public Task<GitResult> DeleteTagAsync(string name) => RunAsync(Root, ["tag", "-d", "--end-of-options", name]);
 
     /// <summary>Whether every commit of a branch is in HEAD's history.</summary>
-    public async Task<bool> IsMergedAsync(string branch) => (await RunAsync(Root, ["merge-base", "--is-ancestor", branch, "HEAD"])).Succeeded;
+    public async Task<bool> IsMergedAsync(string branch) => (await RunAsync(Root, ["merge-base", "--is-ancestor", branch, "HEAD"], answers: [1])).Succeeded;
 
     /// <summary>A local branch that is not checked out brought up to date with the remote's branch it tracks, as Rider's
     /// Update of a branch fetches it: forward only, refused where the two went apart.</summary>
@@ -1088,7 +1089,8 @@ public sealed class Git
 
     private string Full(string relative) => System.IO.Path.GetFullPath(System.IO.Path.Combine(Root, relative));
 
-    private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null, IReadOnlyDictionary<string, string>? environment = null)
+    private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null, IReadOnlyDictionary<string, string>? environment = null,
+        IReadOnlyCollection<int>? answers = null)
     {
         // What git answers is what the window shows next (the branch, the bars, the log, a blame): a screenshot waits for it.
         using IDisposable held = BackgroundWork.Scope();
@@ -1102,7 +1104,7 @@ public sealed class Git
         }
         try
         {
-            ChildResult result = await ChildProcesses.RunAsync(start, input);
+            ChildResult result = await ChildProcesses.RunAsync(start, input, answers: answers);
             return new GitResult(result.ExitCode, result.Output, result.Error);
         }
         catch (System.ComponentModel.Win32Exception missing)
@@ -1145,6 +1147,10 @@ public sealed class Git
 
     private static GitResult NotInstalled =>
         new(127, string.Empty, OperatingSystem.IsMacOS() ? "git is not installed: xcode-select --install installs it" : "git is not installed");
+
+    /// <summary>What git exits with when what it is asked for is not there (a file at a revision, an upstream, a first
+    /// commit, a working tree): the answer no to a question, which the log leaves out.</summary>
+    private const int NotThere = 128;
 
     /// <summary>How git is started for every call, or null when it is not installed.</summary>
     private static ProcessStartInfo? Start(string folder, IReadOnlyList<string> arguments)
