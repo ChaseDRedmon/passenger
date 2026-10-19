@@ -145,10 +145,7 @@ public sealed class NewProjectDialog : Window
         description = new TextBlock { Classes = { "muted" }, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
         directory.Text = folder;
         browse.Click += (_, _) => _ = BrowseAsync();
-        DockPanel folderRow = new();
-        DockPanel.SetDock(browse, Dock.Right);
-        folderRow.Children.Add(browse);
-        folderRow.Children.Add(directory);
+        Grid folderRow = BrowseRow.Of(directory, browse);
         solutionName.TextChanged += (_, _) => NameChanged(solution: true);
         projectName.TextChanged += (_, _) => NameChanged(solution: false);
         directory.TextChanged += (_, _) => ShowWhere();

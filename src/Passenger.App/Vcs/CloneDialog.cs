@@ -58,10 +58,8 @@ public sealed partial class CloneDialog : Window
         Grid fields = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*"), RowDefinitions = new RowDefinitions("Auto,Auto,Auto") };
         Add(fields, new TextBlock { Text = "URL:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) }, 0, 0);
         Add(fields, url, 0, 1);
-        DockPanel where = new() { Margin = new Thickness(0, 10, 0, 0) };
-        DockPanel.SetDock(browse, Dock.Right);
-        where.Children.Add(browse);
-        where.Children.Add(parent);
+        Grid where = BrowseRow.Of(parent, browse);
+        where.Margin = new Thickness(0, 10, 0, 0);
         Add(fields, new TextBlock { Text = "Directory:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 10, 12, 0) }, 1, 0);
         Add(fields, where, 1, 1);
         Add(fields, into, 2, 1);

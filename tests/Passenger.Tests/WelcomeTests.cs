@@ -266,6 +266,22 @@ public sealed class WelcomeTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Tab_from_the_clone_URL_goes_to_the_directory_to_clone_into_and_then_to_Browse()
+    {
+        using IDisposable theme = TestsTheme();
+        MainWindow window = Started(LaunchOptions.Empty);
+        CloneDialog dialog = window.ShowCloneRepository();
+        Ui.Settle();
+        Ui.Press(dialog, "Tab");
+        Assert.True(dialog.FocusManager?.GetFocusedElement() is TextBox { Text: { } typed } && typed == dialog.Folder,
+            $"Tab from the URL went to {dialog.FocusManager?.GetFocusedElement()?.GetType().Name ?? "nothing"} rather than the directory to clone into");
+        Ui.Press(dialog, "Tab");
+        Assert.True(dialog.FocusManager?.GetFocusedElement() is Button { Content: "Browse..." }, "Tab from the directory did not go on to Browse...");
+        dialog.Close();
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Clone_Repository_says_why_a_URL_could_not_be_cloned_and_leaves_nothing_behind()
     {
         using IDisposable theme = TestsTheme();
