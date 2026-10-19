@@ -1009,6 +1009,36 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     [AvaloniaFact]
+    public void The_run_windows_rerun_while_the_program_runs_stops_it_and_runs_it_again()
+    {
+        string started = Path.Combine(folder, "program.pids");
+        Write("src/Hello/Program.cs", $"File.AppendAllText(@\"{started}\", Environment.ProcessId + \"\\n\");\nThread.Sleep(Timeout.Infinite);\n");
+        MainWindow window = Open();
+        try
+        {
+            window.Perform(AppActions.RunProgram);
+            Ui.WaitFor(() => Runs(started).Length == 1, "the program to start", TimeSpan.FromMinutes(2));
+            int first = Runs(started)[0];
+
+            // Rider's Rerun is there while the program runs: it stops it and runs it again, the way to restart after an edit.
+            Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
+            Assert.True(rerun.IsEffectivelyEnabled, "The Run window's Rerun is greyed while its program runs");
+            rerun.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.WaitFor(() => Runs(started).Length == 2, "the program to run again", TimeSpan.FromMinutes(2));
+            Assert.True(Processes.Gone(first), $"Rerun left the first run going: {Processes.Describe(first)}");
+            Assert.True(window.IsRunning, "The program Rerun started again is not running");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static int[] Runs(string file) => File.Exists(file)
+            ? [.. Ui.Shared(file).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse)]
+            : [];
+    }
+
+    [AvaloniaFact]
     public void A_program_still_running_when_the_window_closes_ends_with_it()
     {
         string started = Path.Combine(folder, "program.pid");

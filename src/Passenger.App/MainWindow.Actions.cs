@@ -196,7 +196,8 @@ public partial class MainWindow
         Add(A.Debug, "Debug", "Run", _ => DebugSelected(), _ => Unconfigured("debug"), ("Run", 0, 1));
         // Rider's Run menu has it after Run, Debug and Attach to Process, with no key in its Visual Studio keymaps.
         Add(A.EditConfigurations, "Edit Configurations...", "Run", _ => ShowRunConfigurations(), NeedsFolder, ("Run", 0, 5));
-        // Rerun runs the last session again, under the debugger when that is how it runs, attached again when it was attached.
+        // Rerun runs the last session again, under the debugger when that is how it runs, attached again when it was attached:
+        // as Rider's, one still running is stopped first, where Run said it was already running.
         Add(A.Rerun, "Rerun", "Run", c =>
         {
             if (session.Debug.Session is { } debugged && debugged == attachSession)
@@ -209,7 +210,7 @@ public partial class MainWindow
             }
             else
             {
-                RunSelected();
+                _ = RerunAsync();
             }
         }, _ => session.Debug.Session is { } debugged && debugged == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
         Add(A.Stop, "Stop", "Run", _ => buildRun.Stop(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));

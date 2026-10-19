@@ -10,7 +10,7 @@ public sealed class ToolViews
     }
 
     public OutputView Build { get; } = new();
-    public OutputView Run { get; } = new();
+    public OutputView Run { get; } = new() { RerunsWhileRunning = true };
     public ProblemsView Problems { get; } = new();
     public DebugView Debug { get; } = new();
 

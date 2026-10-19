@@ -201,7 +201,7 @@ public partial class MainWindow : Window
         Bind(session);
         Bottom.Build.RerunClicked += (_, _) => buildRun.Rebuild();
         Bottom.Build.StopClicked += (_, _) => session.Builder.Stop();
-        Bottom.Run.RerunClicked += (_, _) => Request(AppActions.RunProgram);
+        Bottom.Run.RerunClicked += (_, _) => _ = RerunAsync();
         Bottom.Run.StopClicked += (_, _) => session.Runner.Stop();
         Bottom.Run.HotReloadClicked += (_, _) => Request(AppActions.ApplyHotReloadChanges);
         AddUnitTests();

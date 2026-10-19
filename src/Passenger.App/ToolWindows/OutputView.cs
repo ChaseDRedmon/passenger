@@ -233,10 +233,14 @@ public sealed class OutputView : DockPanel
             : string.Concat(batch.Runs.Where(r => r.Stream != ConsoleStream.System).Select(r => batch.Text.Substring(r.Start, r.Length))));
     }
 
+    /// <summary>Whether Rerun stays there while what it reruns runs, as the Run window's does (Rider's stops the program and
+    /// runs it again); the Build window's waits for its build.</summary>
+    public bool RerunsWhileRunning { get; init; }
+
     public void SetRunning(bool running)
     {
         stop.IsEnabled = running;
-        rerun.IsEnabled = !running;
+        rerun.IsEnabled = !running || RerunsWhileRunning;
     }
 
     /// <summary>Puts text in before the line being typed (at the end when there is none), its error runs coloured, and
