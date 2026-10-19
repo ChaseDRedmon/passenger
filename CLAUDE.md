@@ -874,7 +874,13 @@ window answers, a profile's samples, the debugger's evaluation limit), or that d
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
 written before each test, and a file a test adds goes through `project.Write`. A class whose tests each restore a fresh
-folder takes it from `RestoredFolders`. CI splits each system's suite into shards, a runner each (#206), so a class
+folder takes it from `RestoredFolders`. A `SharedProject` leaves a repository's `.git` alone (a class whose tests change the
+repository puts it back itself) and keeps bin and obj between tests, so a window that never saves launches on an
+up-to-date build (`HotReloadEditsTests`); its `Dispose` is virtual for a fixture that holds more (`ProjectFileHelpTests`'
+stand-in feed). A rule held under both looks is checked in one window, the look switched in place through the window's
+settings (`UiRulesTests.UnderEachLook`), a failure naming the look. `RestoredFolders` saves nothing for classes whose
+tests change their folder throughout (`ExplorerFilesTests`, `PackagesTests`, `FileNestingTests`): share a
+`SharedProject` where the tests mostly read. CI splits each system's suite into shards, a runner each (#206), so a class
 never counts on another having run before it: each shard lists the suite (`tools/test-shards.py list`, listed again while a
 listing names no test or says discovery failed: xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo,
 xunit #3576) and `tools/test-shards.py` deals the classes
