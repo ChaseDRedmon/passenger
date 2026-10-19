@@ -395,6 +395,54 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
+    /// <summary>The Debug window's toolbar down its left keeps every button inside the window, as Rider's does: at 1400 by
+    /// 880 its last went under the status bar. A window too short for them all puts the rest behind More, which lists them.</summary>
+    [AvaloniaFact]
+    public void The_debug_windows_toolbar_fits_inside_it_and_puts_what_has_no_room_behind_More()
+    {
+        MainWindow window = Open(1400, 880);
+        try
+        {
+            Assert.True(window.Perform(AppActions.ShowDebug), "Debug did not show");
+            Ui.Settle();
+            Passenger.App.ToolWindows.DebugView debug = window.DockHost.GetVisualDescendants().OfType<Passenger.App.ToolWindows.DebugView>().First(v => v.IsEffectivelyVisible);
+            Passenger.App.ToolWindows.ToolColumn tools = debug.GetVisualDescendants().OfType<Passenger.App.ToolWindows.ToolColumn>().Single();
+            // A button with no room is put above the column, which clips it away.
+            static bool Drawn(Control button) => button.IsVisible && button.Bounds.Bottom > 0;
+            void Fits()
+            {
+                Rect room = Placed(window, debug);
+                foreach (Button button in tools.Children.OfType<Button>().Where(Drawn))
+                {
+                    Rect at = Placed(window, button);
+                    Assert.True(at.Bottom <= room.Bottom + 0.5, $"The Debug window's {ToolTip.GetTip(button)} reaches {at.Bottom:0.#}, past the window's foot at {room.Bottom:0.#}");
+                }
+            }
+            Fits();
+            Assert.Equal(tools.Overflowing.Count > 0, Drawn(tools.More));
+
+            // The bottom tool windows dragged short, as a small screen leaves them.
+            window.DockHost.Apply(window.DockHost.Capture() with { BottomHeight = 150 });
+            Ui.Settle();
+            Fits();
+            Assert.NotEmpty(tools.Overflowing);
+            Assert.True(Drawn(tools.More), "The Debug window's toolbar has buttons with no room and no More to reach them");
+            string[] cut = [.. tools.Overflowing.Select(b => (string)ToolTip.GetTip(b)!)];
+            Point centre = tools.More.TranslatePoint(new Point(tools.More.Bounds.Width / 2, tools.More.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(centre, MouseButton.Left);
+            window.MouseUp(centre, MouseButton.Left);
+            Ui.Settle();
+            ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(m => m.IsOpen)
+                ?? throw new Xunit.Sdk.XunitException("More opened no menu of the buttons it holds");
+            Assert.Equal(cut, menu.Items.OfType<MenuItem>().Select(i => (string)i.Header!));
+            menu.Close();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void At_the_smallest_width_the_status_bars_path_never_draws_under_its_widgets()
     {

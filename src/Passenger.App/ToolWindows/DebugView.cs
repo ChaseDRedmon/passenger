@@ -149,11 +149,11 @@ public sealed class DebugView : DockPanel
         ((PathIcon)mute.Content).Bind(PathIcon.DataProperty, mute.GetResourceObservable("Icon.MuteBreakpoints"));
         mute.Click += (_, _) => ActionRequested?.Invoke(this, AppActions.MuteBreakpoints);
 
-        StackPanel left = new()
+        // A Debug window too short for its buttons (at 1400 by 880 the last went under the status bar) puts the rest behind More.
+        ToolColumn left = new()
         {
             Spacing = 2,
             Margin = new Thickness(0, 6),
-            HorizontalAlignment = HorizontalAlignment.Center,
             Children =
             {
                 Tool(AppActions.Rerun, "Icon.Rerun", "Rerun"),
