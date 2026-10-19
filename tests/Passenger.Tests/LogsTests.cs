@@ -182,6 +182,7 @@ public sealed class LogsTests : IDisposable
         TestGit.Init(folder);
         File.WriteAllText(Path.Combine(folder, $"{untracked}.cs"), "class Untracked { }\n");
         File.WriteAllText(Path.Combine(folder, $"{untracked}.json"), "{ \"name\": \"logs\" }\n");
+        DateTime opened = DateTime.Now;
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
@@ -210,7 +211,8 @@ public sealed class LogsTests : IDisposable
         // The end of each is told on another thread once it has gone.
         Screenshot.Pump(TimeSpan.FromMilliseconds(500));
 
-        string[] log = Ui.IdeLog().Split('\n');
+        // This window's lines alone: a server's process id was another program's in a test before, Windows reusing ids soon.
+        string[] log = Since(Ui.IdeLog(), opened);
         string[] noes = [.. log.Where(line => line.Contains("exited with code", StringComparison.Ordinal) && line.Contains(" show ", StringComparison.Ordinal)
             && line.Contains($":{untracked}.", StringComparison.Ordinal))];
         Assert.True(noes.Length == 0, $"The IDE's log takes git's no, for a file the last commit lacks, for a failure:\n{string.Join('\n', noes)}");
@@ -221,6 +223,28 @@ public sealed class LogsTests : IDisposable
         }
         Assert.True(log.Any(line => line.Contains("exited with code", StringComparison.Ordinal) && line.Contains("no-such-branch", StringComparison.Ordinal)),
             $"The IDE's log does not have the git checkout that failed:\n{string.Join('\n', log.Where(l => l.Contains("exited with code", StringComparison.Ordinal)).TakeLast(20))}");
+    }
+
+    /// <summary>The lines of the IDE's log written from a moment on, by the local time each entry begins with (to the
+    /// millisecond, as IdeLog writes it), with the lines that go on an entry written then.</summary>
+    private static string[] Since(string log, DateTime from)
+    {
+        DateTime after = from - TimeSpan.FromMilliseconds(1);
+        List<string> since = [];
+        bool taking = false;
+        foreach (string line in log.Split('\n'))
+        {
+            if (line.Length >= 23 && DateTime.TryParseExact(line[..23], "yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out DateTime written))
+            {
+                taking = written >= after;
+            }
+            if (taking)
+            {
+                since.Add(line);
+            }
+        }
+        return [.. since];
     }
 
     /// <summary>A log in the logs folder, as a person opening it would find it.</summary>
