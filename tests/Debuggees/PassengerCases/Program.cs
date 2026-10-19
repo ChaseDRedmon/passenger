@@ -117,6 +117,7 @@ static class Displays
 		Dictionary<string, Point> byName = new() { ["origin"] = new Point(0, 0) };
 		LiftedObject lifted = new();
 		Angry angry = new();
+		Unprintable unprintable = new();
 		Console.WriteLine("displays");
 	}
 }
@@ -166,6 +167,13 @@ sealed class AngryProxy
 {
 	public AngryProxy(Angry target) => throw new InvalidOperationException("no");
 	public int Doubled => 2;
+}
+
+// A ToString that throws, as one under debugging may: the value is still there to open.
+sealed class Unprintable
+{
+	public int Kept = 5;
+	public override string ToString() => throw new InvalidOperationException("no text");
 }
 
 // What the debugger's IL interpreter must get right (upstream #30).

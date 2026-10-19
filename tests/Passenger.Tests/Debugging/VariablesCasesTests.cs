@@ -80,4 +80,24 @@ public class VariablesCasesTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("1", Assert.Single(angry, v => v.Name == "Real").Value);
         Assert.DoesNotContain(angry, v => v.Name is "_message" or "StackTrace");
     }
+
+    /// <summary>A value whose ToString throws shows its type, as Visual Studio shows it, and still opens to its members;
+    /// the row had been the exception's words alone, with nothing to open.</summary>
+    [Fact]
+    public async Task A_value_whose_ToString_throws_shows_its_type_and_opens_to_its_members()
+    {
+        int line = Debuggees.Line("PassengerCases", "Console.WriteLine(\"displays\");");
+        using DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases", line, []);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal(line, stop.ReadStopInfo().line);
+        DapVariable unprintable = Assert.Single(host.Locals(stop), v => v.Name == "unprintable");
+        Assert.True(unprintable.Value == "{Unprintable}" && unprintable.VariablesReference > 0,
+            $"The value whose ToString throws shows \"{unprintable.Value}\" with {(unprintable.VariablesReference > 0 ? "" : "no ")}members to open");
+        host.WithVariablesRequest(unprintable.VariablesReference, out List<DapVariable> members);
+        Assert.Equal("5", Assert.Single(members, v => v.Name == "Kept").Value);
+
+        // Evaluated, it is the same value, not a failure.
+        host.WithEvaluateRequest(host.GetTopStackFrame(stop.ThreadId!.Value).Id, "unprintable", out EvaluateResponse evaluated);
+        Assert.Equal("{Unprintable}", evaluated.Result);
+    }
 }

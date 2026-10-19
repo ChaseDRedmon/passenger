@@ -81,9 +81,10 @@ public partial class ManagedDebugger
             {
                 result = await thread.CreateEval().CallParameterizedFunctionAsync(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, toStringFunction, typeParameters.Length, typeParameters, 1, [valueToFormat], throwOnException: true) ?? throw new InvalidOperationException($"ToString returned no value for {friendlyTypeName}");
             }
-            catch (EvalRefusedException)
+            catch (EvalException)
             {
-                // A thread a pause caught in the runtime's optimized code runs no ToString: its type, its fields still there to open.
+                // A ToString that throws or never returns, or one a pause caught in the runtime's optimized code cannot run:
+                // its type, as Visual Studio shows it, its fields still there to open.
                 return new FormattedValue(friendlyTypeName, $"{{{friendlyTypeName}}}", debuggerProxyTypeName, false);
             }
             try
