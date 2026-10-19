@@ -110,9 +110,6 @@ public sealed class CSharpService : IAsyncDisposable
     /// says to see the log is about.</summary>
     private (string Text, long At)? unsaid;
 
-    /// <summary>The title of the work under way, from its begin: the reports that follow give only how far it is.</summary>
-    private string? progressTitle;
-
     /// <summary>The solution's problems changed (solution-wide analysis, or an open file's); raised on the UI thread.</summary>
     public event EventHandler? SolutionProblemsChanged;
 
@@ -508,7 +505,8 @@ public sealed class CSharpService : IAsyncDisposable
     {
         EventHandler<LogMessageParams> logged = (_, message) =>
         {
-            if (message.Type is 1 or 2)
+            // The server's own project for files no project holds yet is restored as it is made: not a problem of the person's.
+            if (message.Type == 1 || (message.Type == 2 && !CanonicalProject.IsAbout(message.Message)))
             {
                 IdeErrors.Write($"C# language server (process {server.ProcessId}) {(message.Type == 1 ? "error" : "warning")}: {message.Message}");
             }
@@ -625,6 +623,8 @@ public sealed class CSharpService : IAsyncDisposable
         ? Path.GetRelativePath(open.Folder, project)
         : Path.GetFileName(project);
 
+    /// <summary>The status bar's word on the server's work, each piece by its token: its title, and whether it is held back
+    /// from the person, as the canonical project's restore is (a restore is held until it names a project of theirs).</summary>
     private void OnProgress(LanguageServer from, WorkProgress progress)
     {
         if (disposed || (session is { } current && current.Server != from))
@@ -633,17 +633,70 @@ public sealed class CSharpService : IAsyncDisposable
         }
         if (progress.Ended)
         {
-            progressTitle = null;
+            works.Remove(progress.Token, out Work? ended);
+            if (ended is { Held: true } || (shownWork is not null && shownWork != progress.Token))
+            {
+                return;
+            }
+            shownWork = null;
             Progress = null;
+            StateChanged?.Invoke(this, EventArgs.Empty);
+            return;
         }
-        else
+        if (!works.TryGetValue(progress.Token, out Work? work))
         {
-            progressTitle = progress.Title ?? progressTitle;
-            string what = (progressTitle ?? progress.Message ?? "Working").TrimEnd('.', '…');
-            Progress = progress.Percentage is { } percent ? $"{what}… {percent}%" : $"{what}…";
+            // A restore's start names no project: what it then restores says whose it is.
+            work = new Work(progress.Title) { Held = progress.Title == RestoreTitle };
+            works[progress.Token] = work;
         }
+        else if (progress.Message is { Length: > 0 })
+        {
+            work.Held = false;
+        }
+        if (progress.Message is { Length: > 0 } said)
+        {
+            work.Said = said;
+            work.Held |= CanonicalProject.IsNamedIn(said, ProjectNames);
+        }
+        if (work.Held)
+        {
+            if (shownWork == progress.Token)
+            {
+                shownWork = null;
+                Progress = null;
+                StateChanged?.Invoke(this, EventArgs.Empty);
+            }
+            return;
+        }
+        shownWork = progress.Token;
+        // A restore is said by the project it restores ("Restoring App.csproj"), any other work by its title.
+        string what = ((work.Title == RestoreTitle ? work.Said : null) ?? work.Title ?? work.Said ?? "Working").TrimEnd('.', '…');
+        Progress = progress.Percentage is { } percent ? $"{what}… {percent}%" : $"{what}…";
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>The title Roslyn's server gives a restore, whose start names no project yet: its English resource.</summary>
+    private const string RestoreTitle = "Restore";
+
+    /// <summary>The server's work under way, by its progress token.</summary>
+    private readonly Dictionary<string, Work> works = new(StringComparer.Ordinal);
+
+    /// <summary>The token of the work the status bar shows.</summary>
+    private string? shownWork;
+
+    /// <summary>A piece of the server's work: its title, said as it began, what it last said it was doing, and whether the
+    /// person is not shown it.</summary>
+    private sealed class Work(string? title)
+    {
+        public string? Title { get; } = title;
+
+        public string? Said { get; set; }
+
+        public bool Held { get; set; }
+    }
+
+    /// <summary>The file names of the folder's projects, against which a project the server names is told from its own.</summary>
+    private IEnumerable<string> ProjectNames => workspace?.Projects.Select(p => Path.GetFileName(p.Path)) ?? [];
 
     /// <summary>The last phase of a start the log times: the first colours the server gives an open file.</summary>
     private async Task TimeFirstColoursAsync(RoslynSession started, long began)
@@ -734,7 +787,8 @@ public sealed class CSharpService : IAsyncDisposable
     {
         session = null;
         Progress = null;
-        progressTitle = null;
+        works.Clear();
+        shownWork = null;
         unsaid = null;
         ForgetLoadProblems();
         analysing?.Cancel();

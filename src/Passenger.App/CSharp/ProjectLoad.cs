@@ -13,6 +13,25 @@ public sealed record ServerSaid(string Text, ProblemSeverity? Severity);
 /// file.</summary>
 public sealed record ProjectLoadProblem(string Project, ProblemSeverity Severity, string Message);
 
+/// <summary>The project Roslyn's server makes for the C# files no project of the folder holds (one opened before its project
+/// loads, or outside every project): <c>Canonical.csproj</c> in a folder of its own under the temp folder's
+/// <c>roslyn-canonical-misc</c>, restored as it is made. The server's own detail, never shown or logged as the person's.</summary>
+internal static class CanonicalProject
+{
+    private const string FileName = "Canonical.csproj";
+
+    private const string Folder = "roslyn-canonical-misc";
+
+    /// <summary>Whether what the server logged names it, by its path.</summary>
+    public static bool IsAbout(string logged) =>
+        logged.Contains(Folder, StringComparison.Ordinal) && logged.Contains(FileName, StringComparison.Ordinal);
+
+    /// <summary>Whether the server's words name it: by its path, or by its file name alone (a restore's progress) unless a
+    /// project of the folder has that name.</summary>
+    public static bool IsNamedIn(string text, IEnumerable<string> projects) =>
+        IsAbout(text) || (text.Contains(FileName, StringComparison.Ordinal) && !projects.Contains(FileName, StringComparer.OrdinalIgnoreCase));
+}
+
 /// <summary>What a line of the server's project system says of a load.</summary>
 internal enum LoadReportKind
 {
@@ -33,9 +52,13 @@ internal enum LoadReportKind
 internal sealed partial record LoadReport(LoadReportKind Kind, ProjectLoadProblem? Problem, string? Project)
 {
     /// <summary>The report a logged line is, its path canonical (read on the server's thread, where the file system may be
-    /// asked); null for any other line.</summary>
+    /// asked); null for any other line, and for one of the server's own project (<see cref="CanonicalProject"/>).</summary>
     public static LoadReport? Read(string logged)
     {
+        if (CanonicalProject.IsAbout(logged))
+        {
+            return null;
+        }
         if (ProblemLine().Match(logged) is { Success: true } problem)
         {
             string given = problem.Groups["path"].Value;

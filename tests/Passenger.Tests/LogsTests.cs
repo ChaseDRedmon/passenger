@@ -48,6 +48,42 @@ public sealed class LogsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A file no project holds is in the server's own project (Canonical.csproj, in the temp folder), which it
+    /// restores as it makes it: the status bar shows the restore of the person's project, never the server's, and the log
+    /// does not take the server's for a project of theirs with unresolved dependencies.</summary>
+    [AvaloniaFact]
+    public void The_status_bar_shows_a_projects_restore_but_never_the_language_servers_own_project_for_loose_files()
+    {
+        Directory.CreateDirectory(Path.Combine(folder, "App"));
+        Directory.CreateDirectory(Path.Combine(folder, "Scripts"));
+        File.WriteAllText(Path.Combine(folder, "App", "App.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "App", "App.cs"), "class App { }\n");
+        File.WriteAllText(Path.Combine(folder, "Scripts", "Loose.cs"), "class Loose { }\n");
+        MainWindow window = new() { Width = 1400, Height = 800 };
+        window.Show();
+        List<string> languageShown = [];
+        using IDisposable watching = window.FindControl<TextBlock>("LanguageText")!.GetObservable(TextBlock.TextProperty)
+            .Subscribe(new Watcher(text => languageShown.Add(text ?? string.Empty)));
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine("Scripts", "Loose.cs"));
+        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to finish loading ({window.CSharpService?.State})");
+        int server = window.CSharpService!.Session!.Server.ProcessId;
+        // The loose file's colours are the server's once its own project for it is restored and loaded.
+        Ui.WaitFor(() => Ui.IdeLog().Contains($"(process {server}) gave an open file its colours", StringComparison.Ordinal), "the loose file's colours from the server");
+        Ui.WaitFor(() => window.FindControl<TextBlock>("LanguageText")!.Text == "C#", "the server's work to leave the status bar");
+
+        // Every restore it showed was the folder's project's, by name.
+        string shown = string.Join(" | ", languageShown.Distinct());
+        Assert.True(languageShown.Where(t => t.Contains("Restor", StringComparison.Ordinal)).All(t => t.Contains("App.csproj", StringComparison.Ordinal)),
+            $"The status bar showed a restore of a project the folder does not have, the language server's own: {shown}");
+        Assert.True(languageShown.Any(t => t.Contains("Restoring App.csproj…", StringComparison.Ordinal)),
+            $"The status bar never showed App.csproj, which had never been restored, being restored: {shown}");
+        string[] named = [.. Ui.IdeLog().Split('\n').Where(line => line.Contains($"(process {server})", StringComparison.Ordinal) && line.Contains("Canonical.csproj", StringComparison.Ordinal))];
+        Assert.True(named.Length == 0, $"The IDE's log tells of the language server's own project as of a project of the folder's:\n{string.Join('\n', named)}");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Tracing_writes_the_language_servers_messages_to_lsp_log_and_every_program_to_the_ides_log_until_turned_off()
     {
