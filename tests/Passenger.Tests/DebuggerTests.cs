@@ -16,27 +16,46 @@ namespace Passenger.Tests;
 
 /// <summary>Debugging from the window, as a person does it: F9 on a line, Alt+F5, the stop shown where
 /// it is with its values, then stepping, resuming and stopping with the keys Rider's keymap gives
-/// them. Debugged, and the console's answers timed, so run alone.</summary>
+/// them. The tests on Sum as written share it (<see cref="Sum"/>): restored once, its warm language server and the build
+/// the last test left, so each one's Debug finds nothing to compile; a test that changes the program takes a folder of its
+/// own (<see cref="Fresh"/>). Debugged, and the console's answers timed, so run alone.</summary>
 [Collection(Alone.Name)]
-public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
+public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder;
-    private readonly string program;
+    private readonly Sum sum;
+    private readonly RestoredFolders folders;
 
-    public DebuggerTests(RestoredFolders folders)
+    /// <summary>The test's own folder, once it has taken one.</summary>
+    private string? fresh;
+
+    public DebuggerTests(Sum sum, RestoredFolders folders)
     {
-        folder = folders.Take("debug-", made =>
-        {
-            File.WriteAllText(Path.Combine(made, "Sum.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-            File.WriteAllText(Path.Combine(made, "Program.cs"),
-                "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n");
-            return made;
-        });
-        program = Path.Combine(PathNames.Canonical(folder), "Program.cs");
+        this.sum = sum;
+        this.folders = folders;
+        sum.Reset();
     }
 
-    public void Dispose() => TestFolders.Delete(folder);
+    public void Dispose()
+    {
+        if (fresh is not null)
+        {
+            TestFolders.Delete(fresh);
+        }
+    }
+
+    /// <summary>The folder the test debugs: its own once it has taken one, else the class's Sum.</summary>
+    private string Folder => fresh ?? sum.Folder;
+
+    /// <summary>The folder's Program.cs, as the breakpoints name it.</summary>
+    private string Program => Path.Combine(PathNames.Canonical(Folder), "Program.cs");
+
+    /// <summary>A folder of the test's own, Sum as written and restored, for a test that changes the program or leaves a file
+    /// of its own there: taken the first time it is asked for, and removed as the test ends.</summary>
+    private string Fresh() => fresh ??= folders.Take("debug-", made =>
+    {
+        Sum.WriteTo(made);
+        return made;
+    });
 
     [AvaloniaFact]
     public void A_breakpoint_set_with_F9_stops_the_program_there_with_its_locals()
@@ -165,16 +184,16 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         editor.Focus();
         Ui.Press(window, "Enter");
         Ui.Press(window, "Enter");
-        Assert.Equal(5, Assert.Single(window.Debugger.Breakpoints.In(program)).Line);
+        Assert.Equal(5, Assert.Single(window.Debugger.Breakpoints.In(Program)).Line);
         Assert.Contains(new LineMark(5, LineMarkKind.Breakpoint), editor.LineMarks);
 
         Ui.Press(window, "Back");
-        Assert.Equal(4, Assert.Single(window.Debugger.Breakpoints.In(program)).Line);
+        Assert.Equal(4, Assert.Single(window.Debugger.Breakpoints.In(Program)).Line);
 
         // F9 again on its line takes it away.
         editor.GoTo(new TextPosition(4, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Assert.Empty(window.Debugger.Breakpoints.In(program));
+        Assert.Empty(window.Debugger.Breakpoints.In(Program));
         Assert.Empty(editor.LineMarks);
         window.Close();
     }
@@ -201,7 +220,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         editor.GoTo(new TextPosition(0, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
         Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(0, LineMarkKind.BreakpointInvalid)), "the new line's breakpoint refused");
-        Assert.Contains("written after the program being debugged was built", window.Debugger.Breakpoints.In(program)[0].Message, StringComparison.Ordinal);
+        Assert.Contains("written after the program being debugged was built", window.Debugger.Breakpoints.In(Program)[0].Message, StringComparison.Ordinal);
 
         // Resumed, the program stops on the loop's next turn at the statement the breakpoint was bound to, shown where it now is.
         // Hot Reload applied the moved lines as it went on, so the debugger names the line as it now is too.
@@ -234,7 +253,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         const string said = "The hit count \"3 times\" is not one the debugger can read";
         Assert.Contains(popup.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text?.StartsWith(said, StringComparison.Ordinal) == true);
         Ui.Press(window, "Enter");
-        LineBreakpoint breakpoint = window.Debugger.Breakpoints.In(program)[0];
+        LineBreakpoint breakpoint = window.Debugger.Breakpoints.In(Program)[0];
         Assert.Equal("3 times", breakpoint.HitCondition);
 
         // The debugger refuses it in the same words, and the loop runs through to the breakpoint after it.
@@ -259,7 +278,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         string settings = TestFolders.Create("settings-");
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
-        window.OpenFolder(folder);
+        window.OpenFolder(Fresh());
         Ui.Settle();
         try
         {
@@ -418,7 +437,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.KeyTextInput("i == 2");
         Ui.Press(window, "Enter");
         Assert.Null(window.Popup);
-        LineBreakpoint breakpoint = Assert.Single(window.Debugger.Breakpoints.In(program));
+        LineBreakpoint breakpoint = Assert.Single(window.Debugger.Breakpoints.In(Program));
         Assert.Equal("i == 2", breakpoint.Condition);
         Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint, Conditional: true), editor.LineMarks);
 
@@ -450,7 +469,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Press(window, "Tab");
         window.KeyTextInput("i is {i}, total {total}");
         Ui.Press(window, "Enter");
-        Assert.Equal("i is {i}, total {total}", Assert.Single(window.Debugger.Breakpoints.In(program)).LogMessage);
+        Assert.Equal("i is {i}, total {total}", Assert.Single(window.Debugger.Breakpoints.In(Program)).LogMessage);
 
         StartDebugging(window);
         WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end without stopping");
@@ -476,7 +495,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal(["Program.cs:4", "Program.cs:6", ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         CheckBox first = breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => c.Content is null);
         first.IsChecked = false;
-        Assert.False(window.Debugger.Breakpoints.In(program)[0].Enabled);
+        Assert.False(window.Debugger.Breakpoints.In(Program)[0].Enabled);
         Assert.Contains(new LineMark(3, LineMarkKind.BreakpointDisabled), editor.LineMarks);
         Ui.Press(window, "Escape");
         Assert.Null(window.Popup);
@@ -587,7 +606,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.True(MuteItem(window).IsChecked, "Run > Mute Breakpoints shows no check while the breakpoints are muted");
         Assert.Contains(new LineMark(2, LineMarkKind.Breakpoint, Muted: true), editor.LineMarks);
         Assert.True(window.BottomPanel.Debug.ShowsMuted, "The Debug window's Mute Breakpoints does not show pressed while they are muted");
-        Assert.Single(window.Debugger.Breakpoints.In(program));
+        Assert.Single(window.Debugger.Breakpoints.In(Program));
         Assert.Equal(2, window.Debugger.Breakpoints.Exceptions.Count);
 
         StartDebugging(window);
@@ -669,14 +688,15 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
-    /// <summary>The window a person uses, keeping its folders' state in a store of its own, over the folder.</summary>
+    /// <summary>The window a person uses, keeping its folders' state in a store of its own, over Sum, on the server the last
+    /// window on it left.</summary>
     private MainWindow Keeping(string settings)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, WarmServer = sum.Server };
         window.Show();
         window.KeepLayout();
-        window.OpenFolder(folder);
-        window.OpenFile(program);
+        window.OpenFolder(sum.Folder);
+        window.OpenFile(Program);
         Ui.Settle();
         return window;
     }
@@ -1170,7 +1190,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     [AvaloniaFact]
     public void A_debugger_killed_while_its_program_is_paused_takes_the_program_with_it()
     {
-        string started = Path.Combine(folder, "program.pid");
+        string started = Path.Combine(Fresh(), "program.pid");
         Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nConsole.WriteLine(\"stopped here\");\nThread.Sleep(Timeout.Infinite);\n");
         MainWindow window = Open();
         int debuggee = 0;
@@ -1204,7 +1224,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     [AvaloniaFact]
     public void Closing_the_window_while_debugging_leaves_no_program_debugger_or_language_server_running()
     {
-        string started = Path.Combine(folder, "program.pid");
+        string started = Path.Combine(Fresh(), "program.pid");
         Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
         MainWindow window = Open();
         int debuggee = 0;
@@ -1237,7 +1257,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     [Fact]
     public async Task Stop_and_the_windows_close_on_a_program_the_debugger_cannot_end_leave_no_failed_request_once_the_windows_loop_is_gone()
     {
-        string started = Path.Combine(folder, "program.pid");
+        string started = Path.Combine(Fresh(), "program.pid");
         Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
         List<DapException> unheard = [];
         EventHandler<UnobservedTaskExceptionEventArgs> finalized = (_, e) =>
@@ -1625,7 +1645,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.SetConfigurations([new Passenger.App.Run.RunConfiguration
         {
             Name = "Sum held",
-            Project = Path.Combine(PathNames.Canonical(folder), "Sum.csproj"),
+            Project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj"),
             Environment = new Dictionary<string, string>(hold.Environment),
         }], "Sum held");
         Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
@@ -1679,7 +1699,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.SetConfigurations([new Passenger.App.Run.RunConfiguration
         {
             Name = "Sum in the terminal",
-            Project = Path.Combine(PathNames.Canonical(folder), "Sum.csproj"),
+            Project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj"),
             Arguments = arguments,
             Console = Passenger.App.Run.ConsoleKind.Terminal,
         }], "Sum in the terminal");
@@ -1690,12 +1710,18 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     private static string TerminalText(Passenger.App.Run.TerminalRun run) =>
         string.Join('\n', run.Session.Screen.Scrollback.Select(l => l.Text()).Concat(run.Session.Screen.Lines.Select(l => l.Text())));
 
+    /// <summary>A window on the folder with its Program.cs open: on Sum, the server the last window on it left, never saving
+    /// what the test types, so the build stays the one the files were built into.</summary>
     private MainWindow Open()
     {
+        if (fresh is null)
+        {
+            return sum.Open(Program);
+        }
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
-        window.OpenFolder(folder);
-        window.OpenFile(program);
+        window.OpenFolder(fresh);
+        window.OpenFile(Program);
         Ui.Settle();
         return window;
     }
@@ -1743,11 +1769,31 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             + $"and the console ends \"{console[Math.Max(0, console.Length - 400)..]}\"";
     }
 
+    /// <summary>A file written into the test's own folder, which it takes for a program of its own.</summary>
     private string Write(string relative, string text)
     {
-        string path = Path.Combine(PathNames.Canonical(folder), relative);
+        string path = Path.Combine(PathNames.Canonical(Fresh()), relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
         return path;
+    }
+
+    /// <summary>Sum as written, a loop adding one to three and the total printed, which the tests that leave it so share.</summary>
+    public sealed class Sum : SharedProject
+    {
+        public Sum()
+            : base("debug-")
+        {
+            WriteTo(Folder);
+            Prepare();
+        }
+
+        public static void WriteTo(string folder)
+        {
+            File.WriteAllText(Path.Combine(folder, "Sum.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(folder, "Program.cs"),
+                "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n");
+        }
     }
 }

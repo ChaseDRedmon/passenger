@@ -380,13 +380,7 @@ public static class TestFolders
     /// runs is removed when it ends, however it ends, after its windows (<see cref="TestsLeaveNothingBehindAttribute"/>).</summary>
     public static string Create(string name)
     {
-        string path;
-        do
-        {
-            path = Path.Combine(TestRun.Root, name + Guid.NewGuid().ToString("N")[..8]);
-        }
-        while (Directory.Exists(path));
-        Directory.CreateDirectory(path);
+        string path = Unowned(name);
         if (TestContext.Current.Test?.UniqueID is { } test && Made.TryGetValue(test, out List<string>? made))
         {
             lock (made)
@@ -394,6 +388,20 @@ public static class TestFolders
                 made.Add(path);
             }
         }
+        return path;
+    }
+
+    /// <summary>A new, empty folder that is no test's own, however late in a test it is made: one a class's fixture makes
+    /// for its tests to take (<see cref="RestoredFolders"/>), which whoever takes it removes.</summary>
+    public static string Unowned(string name)
+    {
+        string path;
+        do
+        {
+            path = Path.Combine(TestRun.Root, name + Guid.NewGuid().ToString("N")[..8]);
+        }
+        while (Directory.Exists(path));
+        Directory.CreateDirectory(path);
         return path;
     }
 
@@ -970,8 +978,9 @@ public static class Restore
 }
 
 /// <summary>A test class's folders, each made as its constructor would make it and restored at its own path, a few at a
-/// time: the first test of a few waits for their restores together rather than each test for its own. Every test still
-/// has a fresh folder of its own, which its class removes; those no test took go with the class (a class fixture).</summary>
+/// time: the first test of a few waits for their restores together rather than each test for its own. Every test that
+/// takes one has a fresh folder of its own, which its class removes; those no test took go with the class (a class
+/// fixture).</summary>
 public sealed class RestoredFolders : IDisposable
 {
     /// <summary>How many are made and restored at once.</summary>
@@ -980,7 +989,8 @@ public sealed class RestoredFolders : IDisposable
     private readonly Queue<string> ready = new();
 
     /// <summary>A folder whose name starts with <paramref name="name"/>, written by <paramref name="write"/> (which gives what
-    /// to restore in it) and restored; from a test class's constructor, before its test begins making folders of its own.</summary>
+    /// to restore in it) and restored; from a test class's constructor or its test, since those made with it for later
+    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>).</summary>
     public string Take(string name, Func<string, string> write)
     {
         if (ready.Count == 0)
@@ -991,7 +1001,7 @@ public sealed class RestoredFolders : IDisposable
                 List<string> targets = [];
                 for (int i = 0; i < Batch; i++)
                 {
-                    string folder = TestFolders.Create(name);
+                    string folder = TestFolders.Unowned(name);
                     made.Add(folder);
                     targets.Add(write(folder));
                 }
