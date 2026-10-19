@@ -2016,6 +2016,8 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 + "        var (first, second) = (total, \"two\");\n        return first + second.Length + kept.Count;\n    }\n\n"
                 + "    private static int Count(List<int> values) => values.Count;\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(PathOf("bin"));
             Prepare();
         }
 

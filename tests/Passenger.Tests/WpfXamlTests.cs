@@ -400,6 +400,8 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
             : base("wpf-")
         {
             TestFolders.Prepare(() => Make(Folder), Folder);
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(PathOf("bin"));
             Prepare();
         }
 

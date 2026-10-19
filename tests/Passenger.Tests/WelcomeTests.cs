@@ -483,6 +483,11 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
                 "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"AppA\", \"AppA\\AppA.csproj\", \"{0F7C6F3B-9D31-4B0B-8B9C-3E2B1D3F0A11}\"\nEndProject\n");
             File.WriteAllText(Path.Combine(folder, "B.slnx"), "<Solution>\n  <Project Path=\"AppB/AppB.csproj\" />\n</Solution>\n");
             File.WriteAllText(PathOf("All.slnx"), "<Solution>\n  <Project Path=\"A/AppA/AppA.csproj\" />\n  <Project Path=\"A/AppB/AppB.csproj\" />\n  <Project Path=\"A/Tool.csproj\" />\n</Solution>\n");
+            // A build makes each project's bin, which a reset would take for a file the test added: made now, the folders stay as reset.
+            foreach (string made in (string[])[folder, Path.Combine(folder, "AppA"), Path.Combine(folder, "AppB")])
+            {
+                Directory.CreateDirectory(Path.Combine(made, "bin"));
+            }
             Prepare();
         }
     }
