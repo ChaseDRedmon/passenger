@@ -16,34 +16,20 @@ namespace Passenger.Tests;
 /// left to itself), a directory with or without its subdirectories, or a named scope; a mask of wildcards with commas,
 /// a ! leaving files out; the Solution view's Edit menu opening Find and Replace in Files on a row's folder, project or
 /// file; and the scope and mask coming back the next time, and after a restart.</summary>
-public sealed class FindInFilesScopeTests : IDisposable
+public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.Shop>, IDisposable
 {
-    private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
-
-    private readonly string folder = TestFolders.Create("scope-");
+    private readonly Shop shop;
+    private readonly string folder;
     private readonly string settings = TestFolders.Create("settings-");
 
-    public FindInFilesScopeTests()
+    public FindInFilesScopeTests(Shop shop)
     {
-        Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"App/Plugins/Plugins.csproj\" />\n  <Project Path=\"Lib/Lib.csproj\" />\n</Solution>\n");
-        Write("App/App.csproj", Project);
-        Write("App/Main.cs", "// the total of the app\nclass Main { int total; }\n");
-        Write("App/Models/Order.cs", "class Order { decimal total; }\n");
-        Write("App/Models/Lines/Line.cs", "class Line { decimal total; }\n");
-        Write("App/Models/notes.md", "the total, in words\n");
-        Write("App/Plugins/Plugins.csproj", Project);
-        Write("App/Plugins/Plugin.cs", "class Plugin { int total; }\n");
-        Write("Lib/Lib.csproj", Project);
-        Write("Lib/Money.cs", "record Money(decimal Total);\n");
-        Write("Lib/Money.g.cs", "// generated: total\n");
-        Write("docs/total.md", "total\n");
+        this.shop = shop;
+        shop.Reset();
+        folder = shop.Folder;
     }
 
-    public void Dispose()
-    {
-        TestFolders.Delete(folder);
-        TestFolders.Delete(settings);
-    }
+    public void Dispose() => TestFolders.Delete(settings);
 
     [AvaloniaFact]
     public void A_search_in_one_project_finds_only_its_files_and_leaves_a_project_nested_in_it_to_itself()
@@ -268,9 +254,10 @@ public sealed class FindInFilesScopeTests : IDisposable
         return Assert.IsType<FindInFilesPopup>(window.Popup);
     }
 
+    /// <summary>A window on the solution, on the server the class's last window left.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, WarmServer = shop.Server };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -280,7 +267,7 @@ public sealed class FindInFilesScopeTests : IDisposable
     /// <summary>The window a person uses, as the app makes it: one that keeps its state, here in the test's own folder.</summary>
     private MainWindow Keeping(string open)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, WarmServer = shop.Server };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(open);
@@ -290,10 +277,35 @@ public sealed class FindInFilesScopeTests : IDisposable
 
     private string Full(string relative) => PathNames.Canonical(Path.Combine(folder, relative));
 
-    private void Write(string relative, string text)
+    /// <summary>A solution of three projects, one nested in another's folder, with "total" in code, notes, generated code and
+    /// docs outside every project; restored once for every test, and the warm server they share on it.</summary>
+    public sealed class Shop : SharedProject
     {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
+        private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+
+        public Shop()
+            : base("scope-")
+        {
+            Put("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"App/Plugins/Plugins.csproj\" />\n  <Project Path=\"Lib/Lib.csproj\" />\n</Solution>\n");
+            Put("App/App.csproj", Project);
+            Put("App/Main.cs", "// the total of the app\nclass Main { int total; }\n");
+            Put("App/Models/Order.cs", "class Order { decimal total; }\n");
+            Put("App/Models/Lines/Line.cs", "class Line { decimal total; }\n");
+            Put("App/Models/notes.md", "the total, in words\n");
+            Put("App/Plugins/Plugins.csproj", Project);
+            Put("App/Plugins/Plugin.cs", "class Plugin { int total; }\n");
+            Put("Lib/Lib.csproj", Project);
+            Put("Lib/Money.cs", "record Money(decimal Total);\n");
+            Put("Lib/Money.g.cs", "// generated: total\n");
+            Put("docs/total.md", "total\n");
+            Prepare();
+        }
+
+        private void Put(string relative, string text)
+        {
+            string path = PathOf(relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
+        }
     }
 }
