@@ -766,15 +766,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   `--uninstall`), the desktop entry and the file types it opens. CI runs the suite on Ubuntu 24.04 too, and installs,
   uses and uninstalls the archive. ClrMD's DAC stays loaded once used (`HeapGraph.Runtime`): unloading it crashed the
   IDE on Linux. Linux's file systems tell letter case apart, so a test of another letter case skips there.
-- `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
-  touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its pictures are
+- `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` when run by hand
+  (`gh workflow run Site --ref main`). Its downloads are the latest GitHub release's assets, by fixed names (#56); its pictures are
   `just site-shots`' (each scene in both themes, a `<picture>` choosing by `prefers-color-scheme`, as the README's do);
   its share card, `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment)
   after the pictures.
 - `.github/workflows`: `test.yml` is every test on macOS, Windows and Linux, each system's suite in four shards run at
   once (jobs named as "macOS (arm64), shard 1 of 4"), then a summary job per system named as the system ("macOS
-  (arm64)", the check that stands for it). It is called by `ci.yml` (each push and pull request, with the packages'
-  and notices' jobs) and by `release.yml`, which a pushed `vX.Y.Z` tag runs: the tests, then both disk images and both
+  (arm64)", the check that stands for it). Every workflow runs only when started by hand (the owner's
+  choice, to spend Actions' minutes on purpose): `ci.yml` (`gh workflow run CI --ref main`, with the packages' and
+  notices' jobs) calls it, and so does `release.yml`, run from a `vX.Y.Z` tag with dry run unticked: the tests, then both disk images and both
   Windows installers at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
   names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing. ci.yml
   makes its two disk images one after the other (`max-parallel: 1`), so they and the four macOS shards fit GitHub's

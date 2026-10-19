@@ -1,13 +1,15 @@
-# A release (#56): a vX.Y.Z tag pushed runs every test on macOS, Windows and Linux (test.yml), then makes the macOS disk
-# images (tools/package-mac.sh), the Windows installers (tools/package-win.sh) and the Linux archives
-# (tools/package-linux.sh, #57) at the tag's version, checks that each build says that version, and publishes them as
-# the tag's GitHub release with SHA256SUMS, notes from the tag (tools/release-notes.sh) and Velopack's update feed for
-# each Windows channel. The site's download buttons and site/linux.html take releases/latest/download/NAME, and an
-# installed Passenger's update check looks for its own system's by name (Updates/Releases.cs), so the packages' names
-# never change: Passenger-macos-arm64.dmg, Passenger-macos-x64.dmg, Passenger-windows-x64.exe,
-# Passenger-windows-arm64.exe, Passenger-linux-x64.tar.gz and Passenger-linux-arm64.tar.gz. A Linux archive is one
-# passenger/ folder with its install.sh, as site/linux.html tells people to use it; it is not signed, and Passenger on
-# Linux does not update itself: its update notice downloads the newer archive, whose install.sh replaces the old.
+# A release (#56), run by hand from a vX.Y.Z tag with Dry run unticked (Actions > Release > Run workflow, or
+# `gh workflow run Release --ref vX.Y.Z -f dry_run=false`; pushing the tag alone runs nothing): every test on macOS,
+# Windows and Linux (test.yml), then the macOS disk images (tools/package-mac.sh), the Windows installers
+# (tools/package-win.sh) and the Linux archives (tools/package-linux.sh, #57) at the tag's version, checks that each
+# build says that version, and publishes them as the tag's GitHub release with SHA256SUMS, notes from the tag
+# (tools/release-notes.sh) and Velopack's update feed for each Windows channel. The site's download buttons and
+# site/linux.html take releases/latest/download/NAME, and an installed Passenger's update check looks for its own
+# system's by name (Updates/Releases.cs), so the packages' names never change: Passenger-macos-arm64.dmg,
+# Passenger-macos-x64.dmg, Passenger-windows-x64.exe, Passenger-windows-arm64.exe, Passenger-linux-x64.tar.gz and
+# Passenger-linux-arm64.tar.gz. A Linux archive is one passenger/ folder with its install.sh, as site/linux.html tells
+# people to use it; it is not signed, and Passenger on Linux does not update itself: its update notice downloads the
+# newer archive, whose install.sh replaces the old.
 #
 # Signed only when the repository's secrets hold the credentials, and otherwise unsigned, as the owner decided the MVP
 # may ship (#34, #36):
@@ -28,8 +30,6 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -73,7 +73,7 @@ jobs:
       - name: The version released
         id: version
         env:
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag=$GITHUB_REF_NAME

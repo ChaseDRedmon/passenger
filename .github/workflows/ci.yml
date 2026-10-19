@@ -1,4 +1,5 @@
-# Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
+# Run by hand only, as the owner decided to spend Actions' minutes (Actions > CI > Run workflow, or
+# `gh workflow run CI --ref main`; a pull request's branch the same way): the solution built (warnings are errors) and every test run, on macOS
 # (arm64), Windows and Linux, as `just build` and `just test` run them (test.yml, which a release runs first too); the
 # macOS disk images made and checked, as `just package-mac` makes them; the Windows installer and the Linux archive
 # built, installed, used and uninstalled, as `just package-win` and `just package-linux` build them; and on Linux, the
@@ -7,15 +8,12 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A pull request's newer push replaces its run; every commit to main keeps its own.
+# A run started again on the same commit replaces the one still going; each commit keeps its own.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
