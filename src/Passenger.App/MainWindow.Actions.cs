@@ -276,10 +276,12 @@ public partial class MainWindow
         context.File?.Syntax is { } syntax ? Testing.TestsAtCaret.At(syntax.Current, context.Caret.Line) : null;
 
     /// <summary>Adds one of the window's actions, listed in one place of the menus if given.</summary>
-    private void Add(string id, string title, string group, Action<ActionContext> run, Func<ActionContext, string?>? whyNot = null, (string Path, int Group, int Order)? menu = null) =>
+    private void Add(string id, string title, string group, Action<ActionContext> run, Func<ActionContext, string?>? whyNot = null, (string Path, int Group, int Order)? menu = null,
+        IReadOnlyList<string>? words = null) =>
         actions!.Add(new IdeAction(id, title, group, run)
         {
             WhyNot = whyNot ?? (_ => null),
             Menus = menu is { } at ? [new MenuPlace(at.Path, at.Group, at.Order)] : [],
+            Words = words ?? [],
         });
 }

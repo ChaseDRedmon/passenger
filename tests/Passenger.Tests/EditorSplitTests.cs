@@ -183,6 +183,24 @@ public sealed class EditorSplitTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Find_action_finds_split_right_and_down_by_riders_older_names_split_vertically_and_horizontally()
+    {
+        MainWindow window = Open("One.cs");
+        foreach ((string typed, string action, int groups) in (ReadOnlySpan<(string, string, int)>)[("Split Vertically", AppActions.SplitRight, 2), ("split horiz", AppActions.SplitDown, 3)])
+        {
+            Ui.Run(window, AppActions.FindAction);
+            Passenger.App.Navigation.ActionPopup popup = Assert.IsType<Passenger.App.Navigation.ActionPopup>(window.Popup);
+            popup.Query = typed;
+            Ui.Settle();
+            Assert.True(popup.Rows.Count > 0 && popup.Rows[0].Id == action,
+                $"Find Action offered [{string.Join(", ", popup.Rows.Take(3).Select(r => r.Title))}] for '{typed}', Rider's older name for {action}");
+            Ui.Press(window, "ENTER");
+            Assert.Equal(groups, window.EditorArea.Groups.Count);
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void The_splits_their_tabs_and_carets_come_back_when_the_folder_opens_again_and_go_when_another_opens()
     {
         File.WriteAllText(Path.Combine(folder, "Three.cs"), "class Three\n{\n    int x;\n}\n");

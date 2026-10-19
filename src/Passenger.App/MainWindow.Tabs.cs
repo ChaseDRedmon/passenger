@@ -60,8 +60,9 @@ public partial class MainWindow
                 status.Text = why;
             }
         }, _ => Editors.CanReopen ? null : "No tab has been closed", (2, 0));
-        Tab(A.SplitRight, "Split Right", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Horizontal, move: false), NeedsFile, (2, 1));
-        Tab(A.SplitDown, "Split Down", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Vertical, move: false), NeedsFile, (2, 2));
+        // Found by Rider's older names too, which its users still type.
+        Tab(A.SplitRight, "Split Right", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Horizontal, move: false), NeedsFile, (2, 1), ["Split Vertically"]);
+        Tab(A.SplitDown, "Split Down", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Vertical, move: false), NeedsFile, (2, 2), ["Split Horizontally"]);
         Tab(A.Unsplit, "Unsplit", c => Editors.Unsplit(GroupOf(c), all: false), NotSplit, (2, 3));
         Tab(A.UnsplitAll, "Unsplit All", c => Editors.Unsplit(GroupOf(c), all: true), NotSplit, (2, 4));
 
@@ -92,8 +93,8 @@ public partial class MainWindow
     private bool Pinned(ActionContext context) => TabOf(context) is { } tab && tab.Group.IsPinned(tab.File);
 
     /// <summary>A tab action listed in Window > Editor Tabs at a place.</summary>
-    private void Tab(string id, string title, Action<ActionContext> run, Func<ActionContext, string?> whyNot, (int Group, int Order) at) =>
-        Add(id, title, Tabs, run, whyNot, (TabsMenu, at.Group, at.Order));
+    private void Tab(string id, string title, Action<ActionContext> run, Func<ActionContext, string?> whyNot, (int Group, int Order) at, IReadOnlyList<string>? words = null) =>
+        Add(id, title, Tabs, run, whyNot, (TabsMenu, at.Group, at.Order), words);
 
     /// <summary>Rider's tab menu, its items run on the tab it opened on.</summary>
     private void FillTabMenu(TabMenu opening)

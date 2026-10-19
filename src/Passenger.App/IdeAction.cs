@@ -37,6 +37,10 @@ public sealed record IdeAction(string Id, string Title, string Group, Action<Act
     /// keys, and anywhere else go on to whatever has them; a menu runs it where the keys are, a text box included.</summary>
     public bool InEditor { get; init; }
 
+    /// <summary>Other names Find Action finds it by, as Rider's search words do: the older names a Rider user still types
+    /// (Split Vertically for Split Right).</summary>
+    public IReadOnlyList<string> Words { get; init; } = [];
+
     public bool CanRun(ActionContext context) => WhyNot(context) is null;
 
     /// <summary>Its title in a menu opened in this context.</summary>

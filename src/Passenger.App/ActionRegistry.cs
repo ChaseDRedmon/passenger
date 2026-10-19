@@ -66,7 +66,8 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         }
     };
 
-    /// <summary>The actions whose title, group or id has every word typed, the titles that start with the query first.</summary>
+    /// <summary>The actions whose title, group, id or other names have every word typed, those whose title or other name
+    /// starts with the query first.</summary>
     public IReadOnlyList<IdeAction> Find(string query)
     {
         string[] words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -74,9 +75,13 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         {
             return All;
         }
+        string typed = query.Trim();
+        IEnumerable<string> Names(IdeAction action) => [action.Title, .. action.Words];
         return [.. All
-            .Where(a => words.All(w => a.Title.Contains(w, StringComparison.OrdinalIgnoreCase) || a.Group.Contains(w, StringComparison.OrdinalIgnoreCase) || a.Id.Contains(w, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(a => a.Title.StartsWith(query.Trim(), StringComparison.OrdinalIgnoreCase) ? 0 : words.All(w => a.Title.Contains(w, StringComparison.OrdinalIgnoreCase)) ? 1 : 2)
+            .Where(a => words.All(w => Names(a).Any(n => n.Contains(w, StringComparison.OrdinalIgnoreCase)) || a.Group.Contains(w, StringComparison.OrdinalIgnoreCase)
+                || a.Id.Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(a => Names(a).Any(n => n.StartsWith(typed, StringComparison.OrdinalIgnoreCase)) ? 0
+                : Names(a).Any(n => words.All(w => n.Contains(w, StringComparison.OrdinalIgnoreCase))) ? 1 : 2)
             .ThenBy(a => a.Title.Length)];
     }
 
