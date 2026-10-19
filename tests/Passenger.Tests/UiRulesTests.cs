@@ -286,6 +286,47 @@ public sealed class UiRulesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void At_the_smallest_width_the_status_bars_path_never_draws_under_its_widgets()
+    {
+        string deep = Path.Combine(folder, "Source", "Features", "Payments", "Processing");
+        Directory.CreateDirectory(deep);
+        File.WriteAllText(Path.Combine(deep, "RefundCalculator.cs"), "class RefundCalculator\n{\n}\n");
+        MainWindow window = Open(MainWindow.SmallestWidth, MainWindow.SmallestHeight);
+        try
+        {
+            window.OpenFile(Path.Combine(deep, "RefundCalculator.cs"));
+            Ui.Settle();
+            Rect widgets = Placed(window, (Visual)Named<TextBlock>(window, "CaretText").Parent!);
+            Button[] crumbs = [.. Named<Control>(window, "BreadcrumbHost").GetVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible)];
+            Assert.NotEmpty(crumbs);
+            foreach (Button crumb in crumbs)
+            {
+                Rect seen = Visible(window, crumb);
+                Assert.True(seen.Width <= 0 || seen.Right <= widgets.Left + 0.5,
+                    $"The status bar's path shows {crumb.Content} under its widgets ({seen.Left:0.#} to {seen.Right:0.#}, the widgets from {widgets.Left:0.#})");
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>What of a control is drawn: its place cut to each ancestor that clips what it holds.</summary>
+    private static Rect Visible(Visual window, Visual control)
+    {
+        Rect seen = Placed(window, control);
+        for (Visual? up = control.GetVisualParent(); up is not null && up != window; up = up.GetVisualParent())
+        {
+            if (up.ClipToBounds)
+            {
+                seen = seen.Intersect(Placed(window, up));
+            }
+        }
+        return seen;
+    }
+
+    [AvaloniaFact]
     public void Focus_is_Rider_s_rounded_ring_centred_on_what_has_the_keys_a_check_box_s_round_its_box_alone()
     {
         string other = TestFolders.Create("ui-rules-other-");
