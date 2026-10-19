@@ -574,7 +574,9 @@ public partial class MainWindow
         Editors.CodeEditor.ApplyEdits([diff.Restore(hunk)]);
     }
 
-    /// <summary>Rider's Add to .gitignore: the file's path from the repository's top, a line of its .gitignore.</summary>
+    /// <summary>Rider's Add to .gitignore: the file's path from the repository's top, a line of its .gitignore, which keeps
+    /// its encoding, byte order mark and line breaks and is written as a save writes (through a temporary file, to Local
+    /// History); open with unsaved edits, it is saved first, and shows the line after.</summary>
     private void Ignore(string path)
     {
         if (session.Vcs.Repository is not { } repository)
@@ -583,8 +585,25 @@ public partial class MainWindow
         }
         string ignore = Path.Combine(repository.Root, ".gitignore");
         string line = Path.GetRelativePath(repository.Root, path).Replace('\\', '/');
-        string before = File.Exists(ignore) ? File.ReadAllText(ignore) : string.Empty;
-        File.WriteAllText(ignore, before + (before.Length > 0 && !before.EndsWith('\n') ? "\n" : string.Empty) + line + "\n");
+        if (SaveBeforeWriting([ignore]) is { } unsaved)
+        {
+            status.Text = $".gitignore was not changed: {unsaved}";
+            return;
+        }
+        try
+        {
+            FileText? file = File.Exists(ignore) ? FileText.Load(ignore) ?? throw new IOException(".gitignore is not a text file") : null;
+            string before = file?.Text ?? string.Empty;
+            string eol = TextDocument.DetectLineEnding(before);
+            FileText.Save(ignore, before + (before.Length > 0 && !before.EndsWith('\n') ? eol : string.Empty) + line + eol,
+                file?.Encoding ?? new System.Text.UTF8Encoding(false), file?.HasBom ?? false, file?.CrBreaks ?? false);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            status.Text = $".gitignore was not changed: {error.Message}";
+            return;
+        }
+        FollowWritten([ignore]);
         status.Text = $"Added {line} to .gitignore";
         _ = session.Vcs.RefreshAsync();
     }

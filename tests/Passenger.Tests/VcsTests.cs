@@ -855,6 +855,33 @@ public sealed class VcsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Add_to_gitignore_keeps_the_files_byte_order_mark_its_windows_line_breaks_and_an_unsaved_edit_to_it()
+    {
+        // As Visual Studio's template writes one: a byte order mark and CRLF, its last line with no break.
+        string ignore = Path.Combine(folder, ".gitignore");
+        File.WriteAllBytes(ignore, [0xEF, 0xBB, 0xBF, .. "bin/\r\nobj/"u8]);
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "scratch\n");
+        MainWindow window = Open();
+        window.OpenFile(ignore);
+        Ui.Settle();
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
+        window.KeyTextInput("# out ");
+        Ui.Settle();
+
+        window.Perform(AppActions.ShowCommit);
+        Avalonia.Controls.ListBox changes = Find(window.CommitView, window.CommitView.Rows);
+        Ui.Landed(() => window.CommitView.Rows.OfType<CommitRow>().Any(r => r.Change.Name == "notes.txt"), "the unversioned file listed");
+        changes.SelectedItem = window.CommitView.Rows.OfType<CommitRow>().First(r => r.Change.Name == "notes.txt");
+        Ui.ChooseFromMenu(changes, "Add to .gitignore");
+        Assert.Equal([0xEF, 0xBB, 0xBF, .. "# out bin/\r\nobj/\r\nnotes.txt\r\n"u8], File.ReadAllBytes(ignore));
+        Ui.Landed(() => window.Vcs.Changes.All(c => c.Name != "notes.txt"), "the ignored file gone from the changes");
+        Passenger.App.Workspace.OpenDocument shown = window.EditorArea.Documents.Single(d => d.Name == ".gitignore");
+        Assert.Equal("# out bin/\r\nobj/\r\nnotes.txt\r\n", shown.Text.Snapshot.ToString());
+        Assert.False(shown.IsModified, "The open .gitignore shows unsaved changes it does not have");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void The_commit_and_log_menus_ignore_a_file_revert_a_commit_and_branch_from_one()
     {
         File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("count++", "count += 2", StringComparison.Ordinal));
