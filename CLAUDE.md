@@ -445,7 +445,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   brings the Build window forward as Showing build results says (errors only by default). Every build holds the host's
   generating design-time builds off while it runs (`ProjectBuilds.HoldAsync`, released in `FinishBuild`), its dotnet command
   starting once the host answers (`ProcessRunner.StartDotnet`'s `after`), so a test reads `Builder.ProcessId` only once
-  it has started; dotnet watch's own builds aren't held. A test project's first Project launch profile gives its variables to its tests. A configuration that
+  it has started; dotnet watch's own builds aren't held, and Run with Hot Reload is never refused for the working folder
+  its build makes (`LaunchPlan.WorksWhereBuilt`: a project never built gets its output folder made before dotnet watch
+  starts there). A test project's first Project launch profile gives its variables to its tests. A configuration that
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
   `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
   (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
@@ -866,14 +868,17 @@ window answers, a profile's samples, the debugger's evaluation limit), or that d
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
 written before each test, and a file a test adds goes through `project.Write`. A class whose tests each restore a fresh
 folder takes it from `RestoredFolders`. CI splits each system's suite into shards, a runner each (#206), so a class
-never counts on another having run before it: each shard lists the suite and `tools/test-shards.py` deals the classes
+never counts on another having run before it: each shard lists the suite (`tools/test-shards.py list`, listed again while a
+listing names no test or says discovery failed: xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo,
+xunit #3576) and `tools/test-shards.py` deals the classes
 by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one it lacks by its budget), the same deal in
 every shard, checked before any test runs to put every test in exactly one; inside a shard the collections keep their
 order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
 `tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 22 minutes fails (the
 whole run was an hour in one job a system; 20 until the MVP's last week grew macOS's classes to 72 minutes, which four
 shards deal at about 19.6 each, and a fifth macOS shard would queue behind the disk images for GitHub's five macOS
-runners). Each system's summary job fails unless every shard succeeded and every test
+runners; on e258c203 macOS's classes came to 87 minutes, about 21.8 a shard, so the budget has little to spare). Each
+system's summary job fails unless every shard succeeded and every test
 has exactly one result, and warns when its run's own times would deal a slowest shard two minutes shorter: `just
 test-times RUN` writes them to TestTimes.json, for committing. Raise a budget, or add a shard, knowing why. The run
 sets its own nice value to 0 when it starts below it (GitHub's macOS
