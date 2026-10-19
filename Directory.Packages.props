@@ -27,6 +27,9 @@
     <!-- NuGet's own reading of its configuration (the NuGet window's package sources), as the CLI reads it. -->
     <PackageVersion Include="NuGet.Configuration" Version="7.9.0" />
     <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
+    <!-- StreamJsonRpc's MessagePack, raised past the 2.5.302 it asks for, which GHSA-qhrr-8q5h-9q3h names (NuGet's audit
+         fails the restore on it); drop it once a StreamJsonRpc asks for 2.5.303 or later. -->
+    <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="Porta.Pty" Version="2.2.2" />
     <!-- TextMate grammars' tokenizer, with Oniguruma's regular expressions (Onigwrap, a native per system): colour for
          the files beside the C#. -->
