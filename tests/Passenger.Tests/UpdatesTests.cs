@@ -22,8 +22,9 @@ namespace Passenger.Tests;
 /// checks its SHA-256 (refusing one that does not match, saying why), offers Restart to Update and installs it as it ends;
 /// any other copy says once per version that it is out, never of an older one, a pre-release, a draft or a failure. Check
 /// for Updates asks whenever a person wants; the setting off, nothing is asked or downloaded. A stand-in on a loopback
-/// port answers for GitHub and its downloads, which no test reaches; each installed copy is in a test folder.</summary>
-public sealed class UpdatesTests : IDisposable
+/// port answers for GitHub and its downloads, which no test reaches; each installed copy is in a test folder, and each
+/// version's disk image is made once for the class (<see cref="DiskImages"/>).</summary>
+public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisposable
 {
     /// <summary>The downloads #56's release workflow publishes with every release, by fixed names.</summary>
     private static readonly string[] Downloads =
@@ -34,6 +35,9 @@ public sealed class UpdatesTests : IDisposable
 
     private readonly string settings = TestFolders.Create("updates-");
     private readonly StandIn github = new();
+    private readonly DiskImages images;
+
+    public UpdatesTests(DiskImages images) => this.images = images;
 
     public void Dispose()
     {
@@ -228,7 +232,7 @@ public sealed class UpdatesTests : IDisposable
     public void An_installed_Passenger_downloads_a_newer_release_in_the_background_checks_it_and_offers_Restart_to_Update()
     {
         using IDisposable theme = TestsTheme();
-        InstalledCopy copy = InstalledCopy.Make(TestFolders.Create("installed-"));
+        InstalledCopy copy = InstalledCopy.Make(images, TestFolders.Create("installed-"));
         string newer = Bumped(1, 0);
         IReadOnlyDictionary<string, byte[]> update = copy.Update(newer);
         github.Answer = Release($"v{newer}", files: update);
@@ -278,7 +282,7 @@ public sealed class UpdatesTests : IDisposable
     public void A_download_that_does_not_match_the_SHA_256_its_release_gives_is_refused_and_the_person_told_why()
     {
         using IDisposable theme = TestsTheme();
-        InstalledCopy copy = InstalledCopy.Make(TestFolders.Create("installed-"));
+        InstalledCopy copy = InstalledCopy.Make(images, TestFolders.Create("installed-"));
         string newer = Bumped(1, 0);
         // The package changed after its checksum was taken, as a corrupted download or a tampered release brings it.
         Dictionary<string, byte[]> update = new(copy.Update(newer));
@@ -313,7 +317,7 @@ public sealed class UpdatesTests : IDisposable
     public void With_Check_for_updates_off_nothing_is_downloaded_and_turning_it_off_drops_a_download_made()
     {
         using IDisposable theme = TestsTheme();
-        InstalledCopy copy = InstalledCopy.Make(TestFolders.Create("installed-"));
+        InstalledCopy copy = InstalledCopy.Make(images, TestFolders.Create("installed-"));
         string newer = Bumped(1, 0);
         IReadOnlyDictionary<string, byte[]> update = copy.Update(newer);
         github.Answer = Release($"v{newer}", files: update);
@@ -380,7 +384,7 @@ public sealed class UpdatesTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsMacOS(),
             "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
         using IDisposable theme = TestsTheme();
-        AppBundle copy = new(TestFolders.Create("installed-"));
+        AppBundle copy = new(images, TestFolders.Create("installed-"));
         string newer = Bumped(1, 0);
         github.Answer = Release($"v{newer}", files: copy.Update(newer));
         MainWindow window = Started(copy.Updater());
@@ -421,7 +425,7 @@ public sealed class UpdatesTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsMacOS(),
             "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
         using IDisposable theme = TestsTheme();
-        AppBundle copy = new(TestFolders.Create("installed-"));
+        AppBundle copy = new(images, TestFolders.Create("installed-"));
         string newer = Bumped(1, 0);
         github.Answer = Release($"v{newer}", files: copy.Update(newer));
         MainWindow window = Started(copy.Updater());
@@ -462,7 +466,7 @@ public sealed class UpdatesTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsMacOS(),
             "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
         using IDisposable theme = TestsTheme();
-        AppBundle copy = new(TestFolders.Create("installed-"));
+        AppBundle copy = new(images, TestFolders.Create("installed-"));
         string newer = Bumped(1, 0);
         github.Answer = Release($"v{newer}", files: copy.Update(newer));
         MainWindow window = Started(copy.Updater());
@@ -509,7 +513,7 @@ public sealed class UpdatesTests : IDisposable
         Tool("/usr/bin/hdiutil", "attach", disk, "-nobrowse", "-noautoopen", "-mountpoint", volume, "-quiet");
         try
         {
-            AppBundle copy = new(folder, volume);
+            AppBundle copy = new(images, folder, volume);
             string newer = Bumped(1, 0);
             github.Answer = Release($"v{newer}", files: copy.Update(newer));
             MainWindow window = Started(copy.Updater());
@@ -658,10 +662,10 @@ public sealed class UpdatesTests : IDisposable
     /// version, and the files a newer release carries for its update.</summary>
     private abstract class InstalledCopy
     {
-        public static InstalledCopy Make(string folder)
+        public static InstalledCopy Make(DiskImages images, string folder)
         {
             Assert.SkipUnless(OperatingSystem.IsMacOS() || OperatingSystem.IsWindows(), "Passenger installs updates itself on macOS and Windows alone");
-            return OperatingSystem.IsMacOS() ? new AppBundle(folder) : new VelopackInstall(folder);
+            return OperatingSystem.IsMacOS() ? new AppBundle(images, folder) : new VelopackInstall(folder);
         }
 
         /// <summary>The copy's updater, as a start of the copy makes it.</summary>
@@ -691,12 +695,15 @@ public sealed class UpdatesTests : IDisposable
     [SupportedOSPlatform("macos")]
     private sealed class AppBundle : InstalledCopy
     {
+        private readonly DiskImages images;
         private readonly string folder;
 
+        /// <param name="images">The class's disk images, which the updates are.</param>
         /// <param name="folder">The test's folder, which holds Passenger's state and, unless another is given, its Applications.</param>
         /// <param name="applications">Where the app is installed, when not in the folder's Applications.</param>
-        public AppBundle(string folder, string? applications = null)
+        public AppBundle(DiskImages images, string folder, string? applications = null)
         {
+            this.images = images;
             this.folder = folder;
             Applications = Directory.CreateDirectory(applications ?? Path.Combine(folder, "Applications")).FullName;
             Bundle = Path.Combine(Applications, "Passenger.app");
@@ -710,7 +717,7 @@ public sealed class UpdatesTests : IDisposable
 
         public string Staging { get; }
 
-        /// <summary>Where each start of the app writes its version.</summary>
+        /// <summary>Where each start of the app writes its version: in the folder above the one it is in, the test's own.</summary>
         public string Started => Path.Combine(folder, "started.txt");
 
         public override string? InstalledVersion => Version(Bundle);
@@ -721,11 +728,7 @@ public sealed class UpdatesTests : IDisposable
 
         public override IReadOnlyDictionary<string, byte[]> Update(string version)
         {
-            string stage = Path.Combine(folder, $"image-{version}");
-            Make(Path.Combine(stage, "Passenger.app"), version);
-            string image = Path.Combine(folder, $"image-{version}.dmg");
-            Tool("/usr/bin/hdiutil", "create", "-volname", $"Passenger {version}", "-srcfolder", stage, "-fs", "HFS+", "-format", "UDZO", "-ov", image, "-quiet");
-            byte[] bytes = File.ReadAllBytes(image);
+            byte[] bytes = images.Of(version);
             string sums = $"{Convert.ToHexStringLower(SHA256.HashData(bytes))}  {Package(version)}\n"
                 + $"{Convert.ToHexStringLower(SHA256.HashData((byte[])[1, 2, 3]))}  Passenger-windows-x64.exe\n";
             return new Dictionary<string, byte[]> { [Package(version)] = bytes, ["SHA256SUMS"] = Encoding.UTF8.GetBytes(sums) };
@@ -761,7 +764,9 @@ public sealed class UpdatesTests : IDisposable
         public bool SignatureHolds() =>
             Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/codesign", ["--verify", "--deep", "--strict", Bundle]))).GetAwaiter().GetResult().Succeeded;
 
-        private void Make(string bundle, string version)
+        /// <summary>The app of a version at a bundle's path, signed; its start is written down in the folder above the one it
+        /// is put in, so one disk image serves every test's folder.</summary>
+        public static void Make(string bundle, string version)
         {
             string macOS = Directory.CreateDirectory(Path.Combine(bundle, "Contents", "MacOS")).FullName;
             File.WriteAllText(Path.Combine(bundle, "Contents", "Info.plist"), $"""
@@ -778,7 +783,7 @@ public sealed class UpdatesTests : IDisposable
                 </plist>
                 """);
             string executable = Path.Combine(macOS, "Passenger");
-            File.WriteAllText(executable, $"#!/bin/sh\necho started {version} >> '{Started}'\n");
+            File.WriteAllText(executable, $"#!/bin/sh\necho started {version} >> \"$(dirname \"$0\")/../../../../started.txt\"\n");
             File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead
                 | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
             Tool("/usr/bin/codesign", "--force", "--options", "runtime", "--sign", "-", bundle);
@@ -798,6 +803,30 @@ public sealed class UpdatesTests : IDisposable
 
         private static async Task StartAsync(string bundle) =>
             await ChildProcesses.RunAsync(ChildProcesses.Command(Path.Combine(bundle, "Contents", "MacOS", "Passenger"), []), limit: TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>The disk image of each version a test updates to, made the first time one asks for it and kept for the class:
+    /// hdiutil takes seconds over each, and the app in it is the same for every test (<see cref="AppBundle.Make"/>).</summary>
+    public sealed class DiskImages : IDisposable
+    {
+        private readonly string folder = TestFolders.Unowned("update-images-");
+        private readonly Dictionary<string, byte[]> made = new(StringComparer.Ordinal);
+
+        [SupportedOSPlatform("macos")]
+        public byte[] Of(string version)
+        {
+            if (!made.TryGetValue(version, out byte[]? bytes))
+            {
+                string stage = Path.Combine(folder, $"image-{version}");
+                AppBundle.Make(Path.Combine(stage, "Passenger.app"), version);
+                string image = Path.Combine(folder, $"image-{version}.dmg");
+                Tool("/usr/bin/hdiutil", "create", "-volname", $"Passenger {version}", "-srcfolder", stage, "-fs", "HFS+", "-format", "UDZO", "-ov", image, "-quiet");
+                bytes = made[version] = File.ReadAllBytes(image);
+            }
+            return bytes;
+        }
+
+        public void Dispose() => TestFolders.Delete(folder);
     }
 
     /// <summary>Passenger as its Windows installer (Velopack's) puts it, in a test folder: the install's folder with
