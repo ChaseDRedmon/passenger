@@ -575,7 +575,7 @@ public static class Ui
     {
         if (!Settled(DateTime.UtcNow + SettleLimit))
         {
-            throw new TimeoutException($"Background work never finished.{ServerLogTail()}");
+            throw new TimeoutException($"Background work never finished.{IdeLogTail()}{ServerLogTail()}");
         }
     }
 
@@ -594,6 +594,13 @@ public static class Ui
         }
         while (DateTime.UtcNow < limit);
         return false;
+    }
+
+    /// <summary>The end of the IDE's own log, which names an exception that left background work waiting for good.</summary>
+    private static string IdeLogTail()
+    {
+        string[] lines = IdeLog().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return lines.Length == 0 ? string.Empty : $"\nThe IDE's log ends:\n{string.Join('\n', lines.TakeLast(25))}";
     }
 
     /// <summary>The end of the newest language server's log, which says where a project load that never ended stopped. The
@@ -629,7 +636,7 @@ public static class Ui
             DateTime settling = DateTime.UtcNow + SettleLimit;
             if (!Settled(settling > until ? settling : until))
             {
-                throw new TimeoutException($"Background work never finished while waiting {within.TotalSeconds} s for {what}.{ServerLogTail()}");
+                throw new TimeoutException($"Background work never finished while waiting {within.TotalSeconds} s for {what}.{IdeLogTail()}{ServerLogTail()}");
             }
         }
     }
