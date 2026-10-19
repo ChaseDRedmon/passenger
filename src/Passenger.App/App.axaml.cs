@@ -17,6 +17,8 @@ public partial class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+        // Before Fluent takes its accent from the tokens, which a direction changes.
+        Directions.Apply(this);
         TakeAccentFromTokens();
         MenuShadow.Install();
         // Every in-window menu writes its keys as the keymap, Find Action and a chord's item do (Keystroke.Display: ⇧⌘R

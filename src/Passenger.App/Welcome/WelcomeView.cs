@@ -5,6 +5,8 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
@@ -12,8 +14,9 @@ using Passenger.Text;
 
 namespace Passenger.App.Welcome;
 
-/// <summary>Rider's Welcome screen, in the window while nothing is open: the folders, solutions and projects opened lately,
-/// newest first and narrowed as a search is typed, beside New Solution, Open, Open Folder and Clone Repository. Up and Down
+/// <summary>The Welcome screen, a start page in the window while nothing is open: Passenger's mark and version, New
+/// Solution, Open, Open Folder and Clone Repository, and the folders, solutions and projects opened lately (each with what
+/// it opens as), newest first and narrowed as a search is typed. Up and Down
 /// choose one from the search box or the list, Enter opens it, and Delete (Backspace on the Mac) or its menu removes it.
 /// One gone from disk is marked, and the window says so when it is opened (<see cref="Say"/>).</summary>
 public sealed class WelcomeView : UserControl
@@ -26,55 +29,50 @@ public sealed class WelcomeView : UserControl
 
     public WelcomeView()
     {
-        this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
-        TextBlock title = new() { Text = "Welcome to Passenger", FontSize = 22, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 4) };
-        title.Bind(TextBlock.ForegroundProperty, title.GetResourceObservable("Passenger.Text"));
+        Classes.Add("welcome");
+        // The app's own mark beside its name heads the page, as the start page of the IDE it is.
+        Image mark = new() { Classes = { "welcomeMark" }, Source = new Bitmap(AssetLoader.Open(new Uri("avares://Passenger/Assets/passenger.png"))) };
+        RenderOptions.SetBitmapInterpolationMode(mark, BitmapInterpolationMode.HighQuality);
+        TextBlock title = new() { Classes = { "welcomeTitle" }, Text = "Welcome to Passenger" };
         TextBlock subtitle = new()
         {
-            Classes = { "muted" },
-            Text = "Start a new solution, open a solution, project or folder, or clone a repository.",
+            Classes = { "welcomeSubtitle" },
+            Text = $"Version {Product.Version}. Start a new solution, open a solution, project or folder, or clone a repository.",
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 20),
+        };
+        Grid hero = new() { Classes = { "welcomeHero" }, ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        hero.Children.Add(mark);
+        hero.Children.Add(new StackPanel { [Grid.ColumnProperty] = 1, VerticalAlignment = VerticalAlignment.Center, Children = { title, subtitle } });
+
+        // New Solution goes first, as Rider's does.
+        NewSolutionButton = Action("Icon.Add", "New Solution", "From a template");
+        NewSolutionButton.Click += (_, _) => NewSolutionRequested?.Invoke(this, EventArgs.Empty);
+        Button open = Action("Icon.Solution", "Open", "A solution or project");
+        open.Click += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
+        Button openFolder = Action("Icon.FolderOpen", "Open Folder", "A folder of code");
+        openFolder.Click += (_, _) => OpenFolderRequested?.Invoke(this, EventArgs.Empty);
+        Button clone = Action("Icon.Branch", "Clone Repository", "From a Git URL");
+        clone.Click += (_, _) => CloneRequested?.Invoke(this, EventArgs.Empty);
+        WrapPanel actions = new() { Classes = { "welcomeActions" }, Children = { NewSolutionButton, open, openFolder, clone } };
+        // Four across, two or one in a narrow page, each as wide as the others: never cut off at the page's edge.
+        actions.SizeChanged += (_, e) =>
+        {
+            double gap = actions.ItemSpacing;
+            int across = e.NewSize.Width >= 4 * ActionWidth + 3 * gap ? 4 : e.NewSize.Width >= 2 * ActionWidth + gap ? 2 : 1;
+            actions.ItemWidth = Math.Floor((e.NewSize.Width - (across - 1) * gap) / across);
         };
 
-        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search recent solutions" };
+        TextBlock recent = new() { Classes = { "welcomeSection" }, Text = "Recent solutions", VerticalAlignment = VerticalAlignment.Center };
+        search = new TextBox { Classes = { "search", "welcomeSearch" }, PlaceholderText = "Search recent solutions", [Grid.ColumnProperty] = 1 };
         search.TextChanged += (_, _) => Filter();
         search.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
-        Button open = new() { Content = "Open", MinWidth = 72 };
-        open.Click += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
-        Button openFolder = new() { Content = "Open Folder" };
-        openFolder.Click += (_, _) => OpenFolderRequested?.Invoke(this, EventArgs.Empty);
-        Button clone = new() { Content = "Clone Repository" };
-        clone.Click += (_, _) => CloneRequested?.Invoke(this, EventArgs.Empty);
-        // New Solution goes first, as Rider's does.
-        NewSolutionButton = new Button { Content = "New Solution" };
-        NewSolutionButton.Click += (_, _) => NewSolutionRequested?.Invoke(this, EventArgs.Empty);
-        WrapPanel buttons = new() { ItemSpacing = 8, LineSpacing = 8, Children = { NewSolutionButton, open, openFolder, clone } };
-        Grid bar = new() { Margin = new Thickness(0, 0, 0, 12), ColumnDefinitions = new ColumnDefinitions("*,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto") };
-        bar.Children.Add(search);
-        bar.Children.Add(buttons);
-        // Too narrow for the field and the buttons side by side, the buttons go under it, wrapping as they must: beside
-        // it they were drawn over it, and cut off at the page's edge.
-        bar.SizeChanged += (_, e) =>
-        {
-            buttons.Measure(Size.Infinity);
-            bool under = e.NewSize.Width < buttons.DesiredSize.Width + 12 + 240;
-            Grid.SetRow(buttons, under ? 1 : 0);
-            Grid.SetColumn(buttons, under ? 0 : 1);
-            Grid.SetColumnSpan(buttons, under ? 2 : 1);
-            Grid.SetColumnSpan(search, under ? 2 : 1);
-            search.Margin = under ? default : new Thickness(0, 0, 12, 0);
-            buttons.Margin = under ? new Thickness(0, 8, 0, 0) : default;
-        };
-        search.Margin = new Thickness(0, 0, 12, 0);
-        Grid.SetColumn(buttons, 1);
+        Grid bar = new() { Classes = { "welcomeRecentBar" }, ColumnDefinitions = new ColumnDefinitions("Auto,*"), Children = { recent, search } };
 
         notice = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(4, 0, 4, 10) };
         notice.Bind(TextBlock.ForegroundProperty, notice.GetResourceObservable("Passenger.Editor.Warning"));
         list = new ListBox
         {
-            Classes = { "tree" },
-            Padding = new Thickness(0),
+            Classes = { "tree", "welcomeList" },
             // A container let go of is given no row.
             ItemTemplate = new FuncDataTemplate<RecentRow?>((row, _) => row is null ? new Panel() : Row(row), supportsRecycling: false),
         };
@@ -88,17 +86,36 @@ public sealed class WelcomeView : UserControl
             new Separator(),
             ListMenus.Item("Remove from Recent Solutions", OperatingSystem.IsMacOS() ? "Back" : "Delete", () => RemoveRequested?.Invoke(this, chosen)),
         ]);
-        empty = new TextBlock { Classes = { "muted" }, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 24, 0, 0) };
+        empty = new TextBlock { Classes = { "emptyText", "welcomeEmpty" } };
 
-        DockPanel page = new() { MaxWidth = 760, Margin = new Thickness(32, 56, 32, 24) };
-        foreach (Control top in (Control[])[title, subtitle, bar, notice])
+        DockPanel page = new() { Classes = { "welcomePage" } };
+        foreach (Control top in (Control[])[hero, actions, bar, notice])
         {
             DockPanel.SetDock(top, Dock.Top);
             page.Children.Add(top);
         }
-        page.Children.Add(new Panel { Children = { list, empty } });
+        page.Children.Add(new Border { Classes = { "welcomeRecent" }, Child = new Panel { Children = { list, empty } } });
         Content = page;
         Filter();
+    }
+
+    /// <summary>The narrowest an action's tile is before the tiles go two or one across.</summary>
+    private const double ActionWidth = 160;
+
+    /// <summary>One of the page's actions: its icon, its name, and in a few words what it opens.</summary>
+    private static Button Action(string icon, string name, string hint)
+    {
+        PathIcon glyph = new() { Classes = { "welcomeActionIcon" } };
+        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
+        Border chip = new() { Classes = { "welcomeActionChip" }, Child = glyph, VerticalAlignment = VerticalAlignment.Center };
+        TextBlock label = new() { Classes = { "welcomeActionTitle" }, Text = name, TextTrimming = TextTrimming.CharacterEllipsis };
+        TextBlock what = new() { Classes = { "welcomeActionHint" }, Text = hint, TextTrimming = TextTrimming.CharacterEllipsis };
+        DockPanel.SetDock(chip, Dock.Left);
+        return new Button
+        {
+            Classes = { "welcomeAction" },
+            Content = new DockPanel { Children = { chip, new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { label, what } } } },
+        };
     }
 
     /// <summary>New Solution, as File, New Solution does.</summary>
@@ -166,7 +183,7 @@ public sealed class WelcomeView : UserControl
         list.ItemsSource = shown;
         int chosen = was is null ? -1 : shown.FindIndex(r => r.Path == was.Path);
         list.SelectedIndex = shown.Count == 0 ? -1 : chosen >= 0 ? chosen : Math.Min(at, shown.Count - 1);
-        empty.Text = all.Count == 0 ? "No recent solutions yet" : "Nothing matches";
+        empty.Text = all.Count == 0 ? "No recent solutions yet\nThe solutions, projects and folders you open are listed here" : "Nothing matches";
         empty.IsVisible = shown.Count == 0;
         if (focused && list.SelectedIndex >= 0)
         {
@@ -243,20 +260,20 @@ public sealed class WelcomeView : UserControl
         }
     }
 
-    /// <summary>A row as Rider's: the badge with its initials, the name over where it is, and Missing for one gone.</summary>
+    /// <summary>A row: the badge with its initials, the name over where it is, what it opens as (a solution, a project or a
+    /// folder), and Missing for one gone.</summary>
     private static Control Row(RecentRow row)
     {
-        TextBlock letters = new() { Text = MainWindow.Initials(row.Name), FontSize = 11, FontWeight = FontWeight.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        letters.Bind(TextBlock.ForegroundProperty, letters.GetResourceObservable(row.Missing ? "Passenger.TextMuted" : "Passenger.AccentText"));
-        Border badge = new() { Width = 28, Height = 28, CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 10, 0), Child = letters, VerticalAlignment = VerticalAlignment.Center };
-        badge.Bind(Border.BackgroundProperty, badge.GetResourceObservable(row.Missing ? "Passenger.Hover" : "Passenger.Badge"));
-        TextBlock name = new() { Text = row.Name, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
+        TextBlock letters = new() { Classes = { "welcomeBadgeText" }, Text = MainWindow.Initials(row.Name), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        Border badge = new() { Classes = { "welcomeBadge" }, Child = letters, VerticalAlignment = VerticalAlignment.Center };
+        badge.Classes.Set("missing", row.Missing);
+        TextBlock name = new() { Classes = { "welcomeRowName" }, Text = row.Name, TextTrimming = TextTrimming.CharacterEllipsis };
         if (row.Missing)
         {
             name.Classes.Add("muted");
         }
-        TextBlock where = new() { Classes = { "muted" }, Text = row.Shown, FontSize = 12, TextTrimming = TextTrimming.PathSegmentEllipsis };
-        DockPanel line = new() { Height = 44 };
+        TextBlock where = new() { Classes = { "muted", "welcomeRowPath" }, Text = row.Shown, TextTrimming = TextTrimming.PathSegmentEllipsis };
+        DockPanel line = new() { Classes = { "welcomeRow" } };
         DockPanel.SetDock(badge, Dock.Left);
         line.Children.Add(badge);
         if (row.Missing)
@@ -266,7 +283,18 @@ public sealed class WelcomeView : UserControl
             DockPanel.SetDock(gone, Dock.Right);
             line.Children.Add(gone);
         }
+        Border kind = new() { Classes = { "welcomeKind" }, Child = new TextBlock { Classes = { "welcomeKindText" }, Text = Kind(row.Path) }, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(kind, Dock.Right);
+        line.Children.Add(kind);
         line.Children.Add(new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2, Children = { name, where } });
         return line;
     }
+
+    /// <summary>What a recent path opens as: a solution file, a project opened alone, or a folder.</summary>
+    private static string Kind(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".sln" or ".slnx" => "Solution",
+        ".csproj" => "Project",
+        _ => "Folder",
+    };
 }

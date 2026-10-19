@@ -74,13 +74,10 @@ public sealed class EditorGroup : DockPanel
         };
         tabBar = new Border
         {
+            Classes = { "tabStrip" },
             [DockProperty] = Dock.Top,
-            Height = 36,
-            BorderThickness = new Thickness(0, 0, 0, 1),
             Child = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = strip },
         };
-        tabBar.Bind(Border.BackgroundProperty, tabBar.GetResourceObservable("Passenger.Chrome"));
-        tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
         // Rider's editor notification: what a file is when it is not the project's own.
         bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
         // What the notice offers to do, at the banner's right, as Rider's notifications put their links.

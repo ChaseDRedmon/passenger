@@ -57,9 +57,11 @@ internal sealed class Stripe : Border
         Child = new DockPanel { Margin = new Thickness(0, 6), Children = { sides, groups[bottom] } };
         SizeChanged += (_, _) => FitButtons();
         BorderThickness = border;
-        this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
-        this.Bind(BorderBrushProperty, this.GetResourceObservable("Passenger.Divider"));
+        Classes.Add("stripeBar");
     }
+
+    /// <summary>Styled as a Border of its own class (Shell.axaml's stripeBar), its look the theme's.</summary>
+    protected override Type StyleKeyOverride => typeof(Border);
 
     /// <summary>Puts each group's windows' buttons in their order, pressed as their windows are shown; a group already
     /// in order is left as it is.</summary>

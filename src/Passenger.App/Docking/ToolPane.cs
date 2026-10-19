@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
-using Avalonia.Media;
 using Avalonia.VisualTree;
 
 namespace Passenger.App.Docking;
@@ -11,7 +10,7 @@ namespace Passenger.App.Docking;
 internal sealed class ToolPane : DockPanel
 {
     private readonly DockHost host;
-    private readonly TextBlock title = new() { FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+    private readonly TextBlock title = new() { Classes = { "toolTitle" }, VerticalAlignment = VerticalAlignment.Center };
     private readonly ContentControl body = new();
     private readonly ContentControl tools = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
     private readonly Border header;
@@ -39,9 +38,8 @@ internal sealed class ToolPane : DockPanel
         };
         header = new Border
         {
+            Classes = { "toolHeader" },
             [DockProperty] = Dock.Top,
-            Height = 32,
-            Background = Brushes.Transparent,
             Child = new DockPanel
             {
                 Children =
@@ -75,9 +73,12 @@ internal sealed class ToolPane : DockPanel
         header.PointerReleased += (_, e) => host.Drag.End(e);
         Children.Add(header);
         Children.Add(body);
-        this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
+        Classes.Add("toolPane");
         IsVisible = false;
     }
+
+    /// <summary>Styled as a DockPanel of its own class (Shell.axaml's toolPane), its look the theme's.</summary>
+    protected override Type StyleKeyOverride => typeof(DockPanel);
 
     /// <summary>The window of its own it stands in, floating or windowed, if any: its header then moves that window.</summary>
     public Window? Floating { get; init; }

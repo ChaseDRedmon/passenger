@@ -906,7 +906,7 @@ public sealed partial class CodeEditor
         }
         if (!runProperties.TryGetValue(kind, out TextRunProperties? props))
         {
-            runProperties[kind] = props = kind switch
+            runProperties[kind] = props = palette.Style(kind) is { } style ? StyledRunWith(palette.Syntax(kind), style) : kind switch
             {
                 TokenKind.UserInput or TokenKind.Italic => ItalicRunWith(palette.Syntax(kind)),
                 TokenKind.Heading or TokenKind.Bold => BoldRunWith(palette.Syntax(kind)),
@@ -928,6 +928,20 @@ public sealed partial class CodeEditor
     private GenericTextRunProperties BoldRunWith(IBrush brush) =>
         new(new Typeface(FontFamily, FontStyle.Normal, FontWeight.Bold), FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
 
+    /// <summary>A kind the scheme gives a style of its own (JetBrains Mono's bold and italic keep its columns).</summary>
+    private GenericTextRunProperties StyledRunWith(IBrush brush, SyntaxStyle style) =>
+        new(new Typeface(FontFamily, style.HasFlag(SyntaxStyle.Italic) ? FontStyle.Italic : FontStyle.Normal,
+            style.HasFlag(SyntaxStyle.Bold) ? FontWeight.Bold : FontWeight.Normal), FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
+
+    /// <summary>How a kind's text is set beside its colour, from the theme's <c>Passenger.SyntaxStyle.{Kind}</c>: "Bold",
+    /// "Italic" or "Bold Italic".</summary>
+    [Flags]
+    private enum SyntaxStyle
+    {
+        Bold = 1,
+        Italic = 2,
+    }
+
 
     /// <summary>Every brush the editor paints with, from the theme's <c>Passenger.Editor.*</c> and
     /// <c>Passenger.Syntax.*</c> resources, or a dark default for one the theme leaves out; and the problem counts'
@@ -935,6 +949,7 @@ public sealed partial class CodeEditor
     private sealed class Palette
     {
         private readonly Dictionary<TokenKind, IBrush> syntax = [];
+        private readonly Dictionary<TokenKind, SyntaxStyle> styles = [];
 
         public static Palette Default { get; } = new();
 
@@ -996,6 +1011,9 @@ public sealed partial class CodeEditor
         public Geometry? PassedIcon { get; private init; }
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
+
+        /// <summary>The style the theme sets a kind in, or null for the kind's own.</summary>
+        public SyntaxStyle? Style(TokenKind kind) => styles.TryGetValue(kind, out SyntaxStyle style) ? style : null;
 
         public static Palette From(Control control)
         {
@@ -1064,6 +1082,11 @@ public sealed partial class CodeEditor
                 if (Find(control, $"Passenger.Syntax.{kind}") is { } brush)
                 {
                     palette.syntax[kind] = brush;
+                }
+                if (control.TryFindResource($"Passenger.SyntaxStyle.{kind}", control.ActualThemeVariant, out object? set) && set is string named)
+                {
+                    palette.styles[kind] = (named.Contains("Bold", StringComparison.Ordinal) ? SyntaxStyle.Bold : 0)
+                        | (named.Contains("Italic", StringComparison.Ordinal) ? SyntaxStyle.Italic : 0);
                 }
             }
             return palette;

@@ -28,10 +28,7 @@
 
         <!-- The toolbar, which is the window's title bar too (MainWindow.TitleBar.cs): its empty space moves the window and
              a double click on it maximizes, while what is on it takes its own clicks (the role User, where Windows asks). -->
-        <Border Name="Toolbar" Grid.Row="0" Height="40"
-                Background="{DynamicResource Passenger.Chrome}"
-                BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,0,1"
-                PointerPressed="OnToolbarPressed">
+        <Border Name="Toolbar" Classes="titleBar" Grid.Row="0" Height="40" PointerPressed="OnToolbarPressed">
             <DockPanel Name="ToolbarContent" Margin="8,0">
                 <!-- The window's buttons at the bar's right, Rider's on Windows and Linux; macOS's own stand at its left.
                      Their roles make Windows treat them as its caption buttons (its snap layouts on the maximize one). -->
@@ -66,7 +63,7 @@
                         </StackPanel>
                     </Button>
                     <Button Name="RunButton" Classes="tool" ToolTip.Tip="Run" Click="OnRunClicked">
-                        <PathIcon Data="{StaticResource Icon.Run}" Foreground="{DynamicResource Passenger.Run}" />
+                        <PathIcon Classes="toolbarRun" Data="{StaticResource Icon.Run}" />
                     </Button>
                     <Button Name="DebugButton" Classes="tool" ToolTip.Tip="Debug" Click="OnDebugClicked">
                         <PathIcon Data="{StaticResource Icon.Debug}" />
@@ -75,12 +72,12 @@
                         <PathIcon Data="{StaticResource Icon.Profile}" />
                     </Button>
                     <Button Name="HotReloadButton" Classes="tool" ToolTip.Tip="Apply Hot Reload Changes" IsVisible="False" Click="OnHotReloadClicked">
-                        <PathIcon Data="{StaticResource Icon.HotReload}" Foreground="{DynamicResource Passenger.HotReload}" />
+                        <PathIcon Classes="toolbarHotReload" Data="{StaticResource Icon.HotReload}" />
                     </Button>
                     <Button Name="StopButton" Classes="tool" ToolTip.Tip="Stop" IsVisible="False" Click="OnStopClicked">
-                        <PathIcon Data="{StaticResource Icon.Stop}" Foreground="{DynamicResource Passenger.Editor.Error}" />
+                        <PathIcon Classes="toolbarStop" Data="{StaticResource Icon.Stop}" />
                     </Button>
-                    <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource Passenger.Hover}" />
+                    <Border Classes="toolbarRule" />
                     <Button Classes="tool" ToolTip.Tip="Search everywhere" Click="OnSearchClicked">
                         <PathIcon Data="{StaticResource Icon.Search}" />
                     </Button>
@@ -97,14 +94,11 @@
                     </Button>
                     <Button Name="ProjectButton" Classes="widget" Margin="0,0,2,0" MinWidth="60" ToolTip.Tip="Open a solution, project or folder" Click="OnProjectClicked">
                         <DockPanel>
-                            <Border Name="ProjectBadge" DockPanel.Dock="Left" Margin="0,0,7,0" IsVisible="False" Width="20" Height="20" CornerRadius="4"
-                                    Background="{DynamicResource Passenger.Badge}">
-                                <TextBlock Name="ProjectBadgeText" FontSize="10" FontWeight="Bold"
-                                           Foreground="{DynamicResource Passenger.AccentText}"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Border Name="ProjectBadge" Classes="projectBadge" DockPanel.Dock="Left" Margin="0,0,7,0" IsVisible="False" Width="20" Height="20">
+                                <TextBlock Name="ProjectBadgeText" Classes="projectBadgeText" HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <PathIcon DockPanel.Dock="Right" Margin="7,0,0,0" Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
-                            <TextBlock Name="ProjectName" Text="No solution" FontWeight="SemiBold" VerticalAlignment="Center"
+                            <TextBlock Name="ProjectName" Classes="projectName" Text="No solution" VerticalAlignment="Center"
                                        MaxWidth="240" TextTrimming="CharacterEllipsis" />
                         </DockPanel>
                     </Button>
@@ -127,8 +121,7 @@
         </docking:DockHost>
 
         <!-- The status bar: where the caret is and how the file is stored. -->
-        <Border Grid.Row="2" Height="26" Background="{DynamicResource Passenger.Chrome}"
-                BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,1,0,0">
+        <Border Classes="statusBar" Grid.Row="2">
             <DockPanel Margin="12,0">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
                     <!-- A newer release: its download under way, Restart to Update once it is ready, or (for a copy that
