@@ -37,11 +37,16 @@ public sealed class TemplateFamiliesTests : IDisposable
         // The templates were read as the window started: the dialog lists them as it opens, before any read of its own.
         Assert.True(window.Perform(AppActions.NewSolution));
         NewProjectDialog dialog = Assert.Single(window.OwnedWindows.OfType<NewProjectDialog>());
+        // Rider's types first, in Rider's order: Desktop where WPF builds, MAUI where dotnet new has its workload's templates
+        // (GitHub's Windows runner has them, from Visual Studio); then every other family by name, Avalonia's among them.
         string[] atOnce = [.. dialog.Families.Select(f => f.Name)];
-        string[] riders = OperatingSystem.IsWindows()
-            ? ["Console", "Class Library", "Desktop", "Web", "Services", "AI Extensions", "Unit Test", "Aspire", "Azure Functions", "Avalonia"]
-            : ["Console", "Class Library", "Web", "Services", "AI Extensions", "Unit Test", "Aspire", "Azure Functions", "Avalonia"];
-        Assert.Equal(riders, atOnce);
+        bool maui = Lists("MAUI");
+        string[] riders = ["Console", "Class Library", .. OperatingSystem.IsWindows() ? ["Desktop"] : Array.Empty<string>(), "Web", "AI Extensions",
+            "Services", "Unit Test", "Aspire", "Azure Functions", .. maui ? ["MAUI"] : Array.Empty<string>()];
+        Assert.Equal(riders, atOnce.Take(riders.Length));
+        string[] others = atOnce[riders.Length..];
+        Assert.Contains("Avalonia", others);
+        Assert.Equal(others.Order(StringComparer.OrdinalIgnoreCase), others);
         Assert.True(dialog.Chosen is { Name: "Console App" } && dialog.Family?.Name == "Console", $"The dialog opened on {dialog.Family?.Name}, {dialog.Chosen?.Name}");
         Assert.Empty(dialog.TypeNames);
 
@@ -54,12 +59,18 @@ public sealed class TemplateFamiliesTests : IDisposable
         // Families by the templates' classifications (a test template is a Unit Test), each Type named for what it adds.
         Assert.All(dialog.Templates.Where(t => t.Classifications.Contains("Test") && !t.Classifications.Contains("Aspire")),
             t => Assert.True(t.Family == "Unit Test", $"{t.Name}, a test template, is in {t.Family}"));
+        Assert.All(dialog.Templates.Where(t => t.Classifications.Contains("MAUI") && !t.Classifications.Contains("Aspire")),
+            t => Assert.True(t.Family == "MAUI", $"{t.Name}, a MAUI template, is in {t.Family}"));
         Assert.Equal(["xUnit", "NUnit", "MSTest"], Family(dialog, "Unit Test").Types.Take(3).Select(t => t.TypeName));
         Assert.Equal(["Web App (Razor Pages)", "Web App (Model-View-Controller)", "Web API", "Empty"], Family(dialog, "Web").Types.Take(4).Select(t => t.TypeName));
         Assert.Contains("Blazor Web App", Family(dialog, "Web").Types.Select(t => t.TypeName));
         Assert.Equal(["Class Library", "Blazor Web Worker"], Family(dialog, "Class Library").Types.Take(2).Select(t => t.TypeName));
         Assert.Equal(["Worker Service"], Family(dialog, "Services").Types.Select(t => t.Name));
-        Assert.True(Family(dialog, "Aspire").NotInstalled, "Aspire's family is not marked not installed though dotnet new has none of it");
+        // Not installed unless a workload brought one of its templates (MAUI 10's Aspire service defaults).
+        bool aspire = Lists("Aspire");
+        Assert.True(Family(dialog, "Aspire").NotInstalled != aspire, aspire
+            ? "Aspire's family is marked not installed though dotnet new has some of it"
+            : "Aspire's family is not marked not installed though dotnet new has none of it");
         Assert.Equal(["App", "MVVM App", "Cross Platform Application"], Family(dialog, "Avalonia").Types.Select(t => t.TypeName));
 
         // The search finds a family by a Type's name, opened on that Type; each family found opens on the one it names.
@@ -232,6 +243,16 @@ public sealed class TemplateFamiliesTests : IDisposable
     {
         ChildResult ran = Task.Run(() => ChildProcesses.RunAsync(ProjectTemplates.NewCommand(arguments, place), limit: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
         Assert.True(ran.Succeeded, $"dotnet new {string.Join(' ', arguments)} failed:\n{ran.Output}{ran.Error}");
+    }
+
+    /// <summary>Whether dotnet new, in the run's own template home, lists a project template of this classification (its
+    /// tag), asked apart from Passenger's reading: it exits 103 when none matches.</summary>
+    private bool Lists(string classification)
+    {
+        ChildResult ran = Task.Run(() => ChildProcesses.RunAsync(ProjectTemplates.NewCommand(["list", "--tag", classification, "--type", "project"], place),
+            limit: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
+        Assert.True(ran.Succeeded || ran.ExitCode == 103, $"dotnet new list --tag {classification} failed:\n{ran.Output}{ran.Error}");
+        return ran.Succeeded;
     }
 
     /// <summary>A search put in the search box, as typing it there would.</summary>

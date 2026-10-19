@@ -55,9 +55,10 @@ public static class TemplateFamilies
         new("Console", c => c.Contains("Console"), [], []),
     ];
 
-    /// <summary>Rider's order of its project types in New Solution: the .NET group's (Console 10, Class Library 20, Desktop
-    /// 30, Web 40, Services and AI Extensions 50, Unit Test 70, MAUI 90), then the Other group's (Aspire, Azure Functions).</summary>
-    private static readonly string[] RiderOrder = ["Console", "Class Library", "Desktop", "Web", "Services", "AI Extensions", "Unit Test", "MAUI", "Aspire", "Azure Functions"];
+    /// <summary>Rider's order of its project types in New Solution, which sorts them by their order, then by name: the .NET
+    /// group's (Console 10, Class Library 20, Desktop 30, Web 40, AI Extensions and Services 50, Unit Test 70), then the
+    /// Other group's (Aspire, Azure Functions and MAUI, each 90).</summary>
+    private static readonly string[] RiderOrder = ["Console", "Class Library", "Desktop", "Web", "AI Extensions", "Services", "Unit Test", "Aspire", "Azure Functions", "MAUI"];
 
     /// <summary>The families of these templates, in Rider's order, each one's Types in its order.</summary>
     public static IReadOnlyList<TemplateFamily> Of(IEnumerable<ProjectTemplate> templates)
