@@ -5,6 +5,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.Tests;
@@ -68,6 +69,40 @@ public sealed class NavigationTests : IDisposable
         Assert.False(window.IsPopupOpen);
         Assert.Equal(new TextPosition(24, 5), window.EditorArea.CodeEditor.CaretPosition);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Going_to_a_line_of_a_file_that_fits_the_view_keeps_its_first_line_shown_and_to_a_long_files_end_shows_its_last_at_the_foot()
+    {
+        Write("Long.txt", string.Join('\n', Enumerable.Range(1, 300).Select(i => $"line number {i}")));
+        MainWindow window = Open();
+        window.OpenFile("Long.txt");
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        GoToLine(window, "299");
+        double foot = 300 * editor.LineHeight - editor.Bounds.Height;
+        Assert.True(Math.Abs(editor.ScrollOffset.Y - foot) < 1,
+            $"Going to line 299 of 300 scrolled to {editor.ScrollOffset.Y / editor.LineHeight:0.#} lines down, not to the last line at the view's foot ({foot / editor.LineHeight:0.#}), leaving the view empty below the file's end");
+
+        // A file a line shorter than the view holds, gone to near its end.
+        int fits = (int)(editor.Bounds.Height / editor.LineHeight) - 1;
+        Write("Short.txt", string.Join('\n', Enumerable.Range(1, fits).Select(i => $"line number {i}")));
+        window.OpenFile("Short.txt");
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        GoToLine(window, (fits - 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.True(editor.ScrollOffset.Y == 0,
+            $"Going to line {fits - 1} of a file of {fits}, which fits the view, scrolled its first {editor.ScrollOffset.Y / editor.LineHeight:0.#} lines out of sight");
+        window.Close();
+    }
+
+    private static void GoToLine(MainWindow window, string line)
+    {
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToLine));
+        window.KeyTextInput(line);
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
     }
 
     [AvaloniaFact]

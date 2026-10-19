@@ -452,7 +452,8 @@ public sealed partial class CodeEditor : Control
     private Size Viewport => new(Math.Max(0, Bounds.Width - GutterWidth), Bounds.Height);
 
     /// <summary>Puts the primary caret at a line and column (from zero) and scrolls it into the middle
-    /// of the view, as opening a file at a position does.</summary>
+    /// of the view, as opening a file at a position does; never past where the last line stands at the view's foot, as
+    /// IntelliJ's centring stops there, so a file that fits the view shows from its first line.</summary>
     public void GoTo(TextPosition position)
     {
         int offset = document.Snapshot.GetOffset(position);
@@ -464,7 +465,8 @@ public sealed partial class CodeEditor : Control
             return;
         }
         double y = RowOfOffset(document.Snapshot, offset, LeansBack(offset)).Row * metrics.LineHeight;
-        ScrollTo(new Vector(scroll.X, y - Viewport.Height / 3));
+        double lastAtFoot = Math.Max(0, RowCount * metrics.LineHeight - Viewport.Height);
+        ScrollTo(new Vector(scroll.X, Math.Min(y - Viewport.Height / 3, lastAtFoot)));
         Reveal(offset);
     }
 
