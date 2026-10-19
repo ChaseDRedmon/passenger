@@ -200,6 +200,11 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
     public Task<T> ExtensionAsync<T>(string handler, object message, CancellationToken cancel = default) =>
         RoslynExtension.AskWorkspaceAsync<T>(Server, handler, message, cancel);
 
+    /// <summary>The texts the server holds for files of the solution, by their fingerprints (null for one it has no
+    /// document of), which an edit placed by its lines and columns needs the disk to match.</summary>
+    public async Task<IReadOnlyList<Roslyn.Extension.TextHeld>> HeldTextsAsync(IReadOnlyList<string> paths, CancellationToken cancel = default) =>
+        (await ExtensionAsync<Roslyn.Extension.TextsHeld>(Roslyn.Extension.Handlers.DocumentTexts, new Roslyn.Extension.TextsAsked(paths), cancel).ConfigureAwait(false)).Texts;
+
     /// <summary>A message to Passenger's extension about the solution that nothing waits on, as a debugging session ends.</summary>
     public void TellExtension(string handler, object message) => RoslynExtension.TellWorkspace(Server, handler, message);
 
@@ -448,6 +453,11 @@ public sealed class LspDocument : IDisposable
     /// (<see cref="RoslynExtension"/>).</summary>
     public Task<T> ExtensionAsync<T>(string handler, object message, CancellationToken cancel = default) =>
         RoslynExtension.AskAsync<T>(Server, handler, message, Identifier, cancel);
+
+    /// <summary>The texts the document's server holds for files of its solution, by their fingerprints (null for one it
+    /// has no document of), which an edit placed by its lines and columns needs the disk to match.</summary>
+    public async Task<IReadOnlyList<Roslyn.Extension.TextHeld>> HeldTextsAsync(IReadOnlyList<string> paths, CancellationToken cancel = default) =>
+        (await RoslynExtension.AskWorkspaceAsync<Roslyn.Extension.TextsHeld>(Server, Roslyn.Extension.Handlers.DocumentTexts, new Roslyn.Extension.TextsAsked(paths), cancel).ConfigureAwait(false)).Texts;
 
     /// <summary>An offset as the extension's messages give a place.</summary>
     public Roslyn.Extension.Place PlaceOf(int offset)

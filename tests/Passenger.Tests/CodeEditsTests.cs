@@ -257,6 +257,45 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_rename_reaching_a_file_not_open_that_changed_on_disk_a_moment_before_is_refused_and_once_the_server_has_it_lands_right()
+    {
+        string calc = project.PathOf("Calc.cs");
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string program = editor.Document.Snapshot.ToString();
+
+        // An agent, or a checkout, writes Calc.cs, its lines two further down, as the rename is asked for.
+        string written = "// Checked out again\n// by another program\n" + File.ReadAllText(calc);
+        PlaceAfter(editor, "Calc.Twi");
+        Ui.Run(window, AppActions.Rename);
+        Ui.Settle();
+        window.KeyTextInput("Double");
+        File.WriteAllText(calc, written);
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => window.Status?.StartsWith("Rename was not applied", StringComparison.Ordinal) == true, "the rename to be refused");
+        Assert.Equal("Rename was not applied: Calc.cs changed on disk as the language server worked this out, so the places it gave there may be where they were before: nothing was changed; try again in a moment", window.Status);
+        Assert.Equal(written, File.ReadAllText(calc));
+        Assert.Equal(program, editor.Document.Snapshot.ToString());
+
+        // Asked again once the server has read the file, it lands where the name is now.
+        DateTime until = DateTime.UtcNow.AddSeconds(60);
+        while (File.ReadAllText(calc) == written && DateTime.UtcNow < until)
+        {
+            System.Diagnostics.Stopwatch waiting = System.Diagnostics.Stopwatch.StartNew();
+            Ui.PumpUntil(() => waiting.Elapsed > TimeSpan.FromSeconds(1), "a second to pass");
+            editor.Selections = SelectionSet.Single(editor.Document.Snapshot.ToString().IndexOf("Calc.Twi", StringComparison.Ordinal) + "Calc.Twi".Length);
+            Ui.Run(window, AppActions.Rename);
+            Ui.Settle();
+            window.KeyTextInput("Double");
+            Ui.Press(window, "ENTER");
+            Ui.Settle();
+        }
+        Assert.Equal(written.Replace("Twice", "Double", StringComparison.Ordinal), File.ReadAllText(calc));
+        Assert.Contains("Calc.Double(2)", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Safe_delete_in_a_file_not_open_whose_lines_end_in_carriage_returns_keeps_them()
     {
         string halve = project.Write("Halve.cs", "static class Halve\r{\r    public static int Of(int value) => value / 2;\r\r    public static int Two() => 1;\r}\r");

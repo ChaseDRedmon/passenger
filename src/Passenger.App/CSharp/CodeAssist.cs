@@ -1233,7 +1233,13 @@ public sealed partial class CodeAssist
             Message?.Invoke(this, $"{what} was not applied: {failed.Reason}");
             return false;
         }
-        bool applied = chosen.Edit is { } edit && ApplyWorkspace(edit, resolving ?? listed, what);
+        Asked? asked = resolving ?? listed;
+        if (chosen.Edit is { } changes && await StaleAsync(document, changes, asked) is { } stale)
+        {
+            Message?.Invoke(this, $"{what} was not applied: {stale}");
+            return false;
+        }
+        bool applied = chosen.Edit is { } edit && ApplyWorkspace(edit, asked, what);
         if (chosen.Command is { } command)
         {
             Message?.Invoke(this, NotRun(what, command));
@@ -1244,6 +1250,11 @@ public sealed partial class CodeAssist
         }
         return applied;
     }
+
+    /// <summary>Why a server's edit must not be applied to the files not open it changes (<see cref="WorkspaceEdits.StaleAsync"/>):
+    /// the C# server is asked what it holds of them; another server's files are judged by when they changed alone.</summary>
+    private Task<string?> StaleAsync(OpenDocument document, System.Text.Json.JsonElement edit, Asked? asked) =>
+        WorkspaceEdits.StaleAsync(editors, service()?.For(document)?.Lsp, edit, asked?.Since);
 
     /// <summary>What the status bar says of a command left unrun: Roslyn's own are run, and it registers no other.</summary>
     private static string NotRun(string what, LspCommand command) => $"{what} needs {command.Command}, which Passenger cannot run";
@@ -1332,6 +1343,11 @@ public sealed partial class CodeAssist
                 // Asked of the server running now: the one there as the box opened may have been started again since.
                 if (await Now(document).RenameAsync(at, name) is { } edit)
                 {
+                    if (await StaleAsync(document, edit, asked) is { } stale)
+                    {
+                        Message?.Invoke(this, $"Rename was not applied: {stale}");
+                        return;
+                    }
                     List<string> dropped = [];
                     List<(string From, string To)> moves = box.RenamesFiles ? [.. box.Files.Select(f => (f, TypeRename.Renamed(f, name)))] : [];
                     int files = TypeRename.Apply(editors, edit, moves, $"Rename {old} to {name}", asked, dropped);

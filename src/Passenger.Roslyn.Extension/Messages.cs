@@ -19,12 +19,33 @@ public static class Handlers
     public const string DescribeHierarchy = "Passenger.Roslyn.Extension.DescribeHierarchy";
     public const string PullMembersUp = "Passenger.Roslyn.Extension.PullMembersUp";
     public const string PushMembersDown = "Passenger.Roslyn.Extension.PushMembersDown";
+    public const string DocumentTexts = "Passenger.Roslyn.Extension.DocumentTexts";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
-        DescribeHierarchy, PullMembersUp, PushMembersDown,
+        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts,
     ];
+}
+
+/// <summary>Files the solution has, by their paths, whose texts as the server holds them are asked for: an edit to a file
+/// not open is placed by the server's lines and columns, so it lands where meant only on the text the server read.</summary>
+public sealed record TextsAsked([property: JsonPropertyName("paths")] IReadOnlyList<string> Paths);
+
+/// <summary>Each file asked for, with its text's <see cref="TextHash"/> as the server holds it, or null when the server
+/// has no document of that path.</summary>
+public sealed record TextsHeld([property: JsonPropertyName("texts")] IReadOnlyList<TextHeld> Texts);
+
+public sealed record TextHeld(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("hash")] string? Hash);
+
+/// <summary>A text's fingerprint as both sides make it: SHA-256 of its characters with every line break as '\n', since a
+/// server's line and column are the same whichever break a line ends in (and Passenger holds a CR file's as '\n').</summary>
+public static class TextHash
+{
+    public static string Of(string text) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.Unicode.GetBytes(text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'))));
 }
 
 /// <summary>A place in a document as the server counts it: a line and a UTF-16 column, from zero.</summary>

@@ -65,3 +65,22 @@ public sealed class PushMembersDown : IExtensionDocumentMessageHandler<MembersMo
     public Task<Refactored> ExecuteAsync(MembersMove message, ExtensionMessageContext context, Document document, CancellationToken cancellationToken) =>
         MemberMoves.PushDownAsync(document, message, cancellationToken);
 }
+
+/// <summary>The files' texts as the server holds them, by their fingerprints: a file changed on disk that the server has
+/// not read again since differs from the disk, and an edit placed by the server's lines would land elsewhere in it.</summary>
+public sealed class DocumentTexts : IExtensionWorkspaceMessageHandler<TextsAsked, TextsHeld>
+{
+    public async Task<TextsHeld> ExecuteAsync(TextsAsked message, ExtensionMessageContext context, CancellationToken cancellationToken)
+    {
+        List<TextHeld> held = [];
+        foreach (string path in message.Paths)
+        {
+            Solution solution = context.Solution;
+            TextDocument? document = solution.GetDocumentIdsWithFilePath(path)
+                .Select(id => (TextDocument?)solution.GetDocument(id) ?? solution.GetAdditionalDocument(id) ?? solution.GetAnalyzerConfigDocument(id))
+                .FirstOrDefault(d => d is not null);
+            held.Add(new TextHeld(path, document is null ? null : TextHash.Of((await document.GetTextAsync(cancellationToken).ConfigureAwait(false)).ToString())));
+        }
+        return new TextsHeld(held);
+    }
+}

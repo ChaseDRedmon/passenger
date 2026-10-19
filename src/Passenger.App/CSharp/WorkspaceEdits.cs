@@ -17,6 +17,69 @@ public static class WorkspaceEdits
     /// <summary>Every open document followed from now, for a request about to be sent; disposed once its answer is applied.</summary>
     public static Asked Track(EditorArea editors) => new(editors.Documents.ToDictionary(d => d, d => new ChangeTracker(d.Text)));
 
+    /// <summary>How long after a file changes on disk the language server may still hold it as it was: it reads a file
+    /// not open again only once its own watcher hears of the change.</summary>
+    private static readonly TimeSpan Catching = TimeSpan.FromSeconds(2);
+
+    /// <summary>Why an edit the language server worked out must not be applied to the files not open it changes, found
+    /// before any is written: one written on disk since the request was sent (<paramref name="since"/>) or a moment before
+    /// it (an agent's write, a checkout), which the server may not have read again, or one whose text the server holds is
+    /// not the disk's (a change it never heard of). The server's lines and columns place its edit in the text it read, so
+    /// in another they land elsewhere. Null when each is as the server read it.</summary>
+    public static Task<string?> StaleAsync(EditorArea editors, LspDocument? server, JsonElement edit, DateTime? since) =>
+        StaleAsync(editors, server is null ? null : paths => server.HeldTextsAsync(paths), edit, since);
+
+    /// <summary>As <see cref="StaleAsync(EditorArea, LspDocument?, JsonElement, DateTime?)"/>, the server's texts asked
+    /// of its session (<paramref name="held"/>, null for a server with none to tell).</summary>
+    public static async Task<string?> StaleAsync(EditorArea editors, Func<IReadOnlyList<string>, Task<IReadOnlyList<Roslyn.Extension.TextHeld>>>? held, JsonElement edit, DateTime? since)
+    {
+        List<string> closed = [.. Shapes.WorkspaceEdit(edit).Where(c => c.Operation is null).Select(c => DocumentUris.ToPath(c.Uri)).Distinct()
+            .Where(p => editors.Documents.All(d => d.Path != p) && File.Exists(p))];
+        foreach (string path in closed)
+        {
+            if (since is { } sent && File.GetLastWriteTimeUtc(path) > sent - Catching)
+            {
+                return $"{Path.GetFileName(path)} changed on disk as the language server worked this out, so the places it gave there may be "
+                    + "where they were before: nothing was changed; try again in a moment";
+            }
+        }
+        if (closed.Count == 0 || held is null)
+        {
+            return null;
+        }
+        IReadOnlyList<Roslyn.Extension.TextHeld> texts;
+        try
+        {
+            texts = await held(closed);
+        }
+        catch (LanguageServerFailed)
+        {
+            // A server without Passenger's extension: the files' times are all there is to go by.
+            return null;
+        }
+        foreach (Roslyn.Extension.TextHeld text in texts.Where(t => t.Hash is not null))
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = FileText.Read(text.Path);
+            }
+            catch (Exception gone) when (gone is IOException or UnauthorizedAccessException)
+            {
+                // Applying says why it cannot write it.
+                continue;
+            }
+            // Read as Passenger reads it, or as the server may: as UTF-8 whatever the bytes (Roslyn's fallback off Windows).
+            if (FileText.FromBytes(bytes, null, () => EditorConfig.For(text.Path).Charset) is { } disk && Roslyn.Extension.TextHash.Of(disk.Text) != text.Hash
+                && Roslyn.Extension.TextHash.Of(new System.Text.UTF8Encoding(false).GetString(bytes).TrimStart('﻿')) != text.Hash)
+            {
+                return $"{Path.GetFileName(text.Path)} on disk is not the text the language server read, so the places it gave there would be the "
+                    + "wrong ones: nothing was changed; try again once the server has read it";
+            }
+        }
+        return null;
+    }
+
     /// <summary>The edit applied; the number of files it changed. Throws <see cref="WorkspaceEditFailed"/> when its
     /// file operations cannot all be made, found before anything changed, or when the disk refuses one on the way, an
     /// operation or a file not open being written.</summary>
@@ -273,6 +336,10 @@ public sealed class WorkspaceEditFailed(string message) : InvalidOperationExcept
 public sealed class Asked(Dictionary<OpenDocument, ChangeTracker> trackers) : IDisposable
 {
     public IReadOnlyDictionary<OpenDocument, ChangeTracker> Trackers => trackers;
+
+    /// <summary>When the request was about to be sent: a file not open written after it, or a moment before, may be one
+    /// the server answered for as it was (<see cref="WorkspaceEdits.StaleAsync"/>).</summary>
+    public DateTime Since { get; } = DateTime.UtcNow;
 
     public void Dispose()
     {

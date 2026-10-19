@@ -184,6 +184,11 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, $"{name} changed nothing");
                 return null;
             }
+            System.Text.Json.JsonElement edit = RoslynExtension.WorkspaceEdit(made);
+            if (await WorkspaceEdits.StaleAsync(editors, lsp, edit, asked.Since) is { } stale)
+            {
+                return $"{name} was not applied: {stale}";
+            }
             List<string> dropped = [];
             using (CommandHistory.Recording recording = editors.Commands.Record(name))
             {
@@ -191,7 +196,7 @@ public sealed partial class CodeAssist
                 {
                     recording.Watch(PathNames.Canonical(change.Path));
                 }
-                _ = WorkspaceEdits.Apply(editors, RoslynExtension.WorkspaceEdit(made), asked, dropped);
+                _ = WorkspaceEdits.Apply(editors, edit, asked, dropped);
             }
             FilesChanged?.Invoke(this, EventArgs.Empty);
             // Counted by file: a file made is its creation and its text, which the edit counts apart.

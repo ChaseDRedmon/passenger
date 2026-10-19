@@ -206,9 +206,14 @@ public sealed partial class PassengerTools(MainWindow window)
         int offset = Offset(document, line, column);
         (string Type, IReadOnlyList<string> Files)? named = Session.CSharp?.Session?.Folder is { } folder
             ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
+        DateTime asked = DateTime.UtcNow;
         if (await lsp.RenameAsync(offset, newName) is not { } edit)
         {
             return "This can't be renamed";
+        }
+        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked) is { } stale)
+        {
+            throw new InvalidOperationException($"Nothing was renamed: {stale}");
         }
         IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => DocumentUris.ToPath(f.Uri)).Distinct()];
         List<(string From, string To)> moves = renameFiles && named is { } type ? [.. type.Files.Select(f => (f, TypeRename.Renamed(f, newName)))] : [];
@@ -231,6 +236,8 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
         [Description("For an action that offers choices, the one to take")] string? choice = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        // Listed now, with any edit the server gives them as it lists them.
+        DateTime asked = DateTime.UtcNow;
         (LspDocument lsp, IReadOnlyList<CodeAction> actions) = await Actions(path, line, column, endLine, endColumn, cancel);
         CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
             ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", actions.Select(a => a.Title))}");
@@ -252,6 +259,10 @@ public sealed partial class PassengerTools(MainWindow window)
         if (chosen.Edit is not { } edit)
         {
             return $"{what} changes nothing it can apply{unrun}";
+        }
+        if (await WorkspaceEdits.StaleAsync(Editors, lsp, edit, asked) is { } stale)
+        {
+            throw new InvalidOperationException($"{what} was not applied: {stale}");
         }
         int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title);
         Editors.SaveAll();

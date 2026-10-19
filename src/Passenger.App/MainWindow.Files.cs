@@ -348,6 +348,10 @@ public partial class MainWindow
             {
                 return $"{type.Name} can't be renamed";
             }
+            if (await WorkspaceEdits.StaleAsync(Editors, paths => server.HeldTextsAsync(paths), made, asked.Since) is { } stale)
+            {
+                return $"{type.Name} was not renamed: {stale}";
+            }
             List<(string From, string To)> moves = [(path, target)];
             if (named is { } parts)
             {
