@@ -50,7 +50,7 @@
        publish it) at the Microsoft.CodeAnalysis version above, which it must match. -->
   <ItemGroup>
     <PackageVersion Include="ICSharpCode.Decompiler" Version="11.0.0.9375" />
-    <PackageVersion Include="Krafs.Publicizer" Version="2.3.0" />
+    <PackageVersion Include="Krafs.Publicizer" Version="2.3.2" />
     <PackageVersion Include="Microsoft.Diagnostics.DbgShim" Version="10.0.750501" />
     <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.750501" />
     <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.0" />
