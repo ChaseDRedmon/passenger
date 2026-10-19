@@ -340,6 +340,71 @@ public sealed class ProfilerTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_frames_median_of_an_even_count_is_halfway_between_the_middle_two()
+    {
+        // A snapshot of an Avalonia app's two frames, of 10 and 30 ms, as its inspector tells them.
+        string trace = Path.Combine(folder, "TwoFrames.nettrace");
+        Task recording = Task.Run(() => RecordFrames(trace, [10, 30]));
+        Ui.WaitFor(() => recording.IsCompleted, "the two frames' trace");
+        recording.GetAwaiter().GetResult();
+        MainWindow window = new() { Width = 1300, Height = 900 };
+        window.Show();
+        try
+        {
+            Snapshot snapshot = Ui.Await(window.OpenSnapshotAsync(trace), "the snapshot to open") ?? throw new InvalidOperationException($"The snapshot did not open: {window.Status}");
+            Assert.Equal(2, snapshot.UiFrames.Count);
+            window.ProfilerView.ShowPage(Passenger.App.Profiling.ProfilerPage.Frames);
+            Ui.Settle();
+            string summary = window.ProfilerView.FramesPage.Summary;
+            Assert.True(summary.StartsWith("2 frames: 20.0 ms on the UI thread at the median, 30.0 ms at the longest", StringComparison.Ordinal),
+                $"The Frames page's median of a 10 ms and a 30 ms frame is not 20 ms: {summary}");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Frames of these times on the UI thread, told by this process as the Live Visual Tree's inspector tells an
+    /// app's, recorded by an EventPipe session of its own into a .nettrace.</summary>
+    private static void RecordFrames(string trace, double[] times)
+    {
+        Microsoft.Diagnostics.NETCore.Client.DiagnosticsClient client = new(Environment.ProcessId);
+        using Microsoft.Diagnostics.NETCore.Client.EventPipeSession session = client.StartEventPipeSession(
+            [new Microsoft.Diagnostics.NETCore.Client.EventPipeProvider(UiFrames.Provider, System.Diagnostics.Tracing.EventLevel.Informational)], requestRundown: false);
+        Task copying = Task.Run(() =>
+        {
+            using FileStream file = File.Create(trace);
+            session.EventStream.CopyTo(file);
+        });
+        using (InspectorFrames frames = new())
+        {
+            for (int waited = 0; !frames.IsEnabled(); waited++)
+            {
+                Assert.True(waited < 500, "The EventPipe session never turned the frames' events on");
+                Thread.Sleep(10);
+            }
+            for (int i = 0; i < times.Length; i++)
+            {
+                frames.Frame(i + 1, times[i], 0, 1, 1, times[i] / 2, times[i] / 4, times[i] / 4, 1, 1);
+                Thread.Sleep(TimeSpan.FromMilliseconds(times[i] + 20));
+            }
+        }
+        session.Stop();
+        Assert.True(copying.Wait(TimeSpan.FromSeconds(30)), "The EventPipe session's trace never ended");
+    }
+
+    /// <summary>The inspector's frame event (Passenger.Inspector's FrameEvents), by the number and names the profiler reads.</summary>
+    [System.Diagnostics.Tracing.EventSource(Name = UiFrames.Provider)]
+    private sealed class InspectorFrames : System.Diagnostics.Tracing.EventSource
+    {
+        [System.Diagnostics.Tracing.Event(3, Level = System.Diagnostics.Tracing.EventLevel.Informational)]
+        public void Frame(int frame, double durationMs, double endedMsAgo, int measurePasses, int arrangePasses, double measureMs, double arrangeMs,
+            double renderMs, int measures, int arranges) =>
+            WriteEvent(3, frame, durationMs, endedMsAgo, measurePasses, arrangePasses, measureMs, arrangeMs, renderMs, measures, arranges);
+    }
+
     /// <summary>A console project restored in the tests' folder, with this as its Program.cs and anything more its project
     /// file is to hold.</summary>
     private string Project(string name, string program, string more = "")

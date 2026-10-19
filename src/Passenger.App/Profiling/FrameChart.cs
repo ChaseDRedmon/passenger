@@ -71,7 +71,7 @@ public sealed class FrameChart : Control
         double top = 6;
         double bottom = Bounds.Height - 4;
         double[] totals = [.. frames.Select(Total).Order()];
-        double span = Math.Max(Budget * 2, Math.Min(totals[^1], totals[(int)(totals.Length * 0.9)] * 1.5));
+        double span = Math.Max(Budget * 2, Math.Min(totals[^1], UiFrames.Percentile(totals, 0.9) * 1.5));
         double scale = (bottom - top) / span;
         IBrush muted = Brush("Passenger.TextMuted", Brushes.Gray);
         Typeface face = new("Inter");

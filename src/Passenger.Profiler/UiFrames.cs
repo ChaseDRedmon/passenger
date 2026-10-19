@@ -53,6 +53,23 @@ public static class UiFrames
     /// <summary>How soon after one window's drawing ends another's begins in the same tick of the render loop.</summary>
     private const double SameTick = 2;
 
+    /// <summary>The frames' median time on the UI thread: of an even count, halfway between the two in the middle.</summary>
+    public static double MedianMs(IEnumerable<UiFrame> frames) => Percentile([.. frames.Select(f => f.DurationMs).Order()], 0.5);
+
+    /// <summary>The value a fraction of the way through some sorted values, between the two either side of it in proportion
+    /// (linear interpolation, as NumPy's default), so a small count's percentile is never simply its next value up.</summary>
+    public static double Percentile(IReadOnlyList<double> sorted, double fraction)
+    {
+        if (sorted.Count == 0)
+        {
+            throw new ArgumentException("No values to take a percentile of", nameof(sorted));
+        }
+        double at = Math.Clamp(fraction, 0, 1) * (sorted.Count - 1);
+        int below = (int)Math.Floor(at);
+        int above = Math.Min(below + 1, sorted.Count - 1);
+        return sorted[below] + ((sorted[above] - sorted[below]) * (at - below));
+    }
+
     /// <summary>The layout of some frames by control type, the heaviest by its own time first, each with its controls, the
     /// heaviest first.</summary>
     public static IReadOnlyList<LayoutCost> ByType(IEnumerable<UiFrame> frames)

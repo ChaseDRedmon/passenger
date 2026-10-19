@@ -181,9 +181,8 @@ public sealed class FramesView : DockPanel
         {
             return string.Empty;
         }
-        double[] times = [.. all.Select(f => f.DurationMs).Order()];
         UiFrame longest = all.MaxBy(f => f.DurationMs)!;
-        return $"{all.Count:N0} frame{(all.Count == 1 ? "" : "s")}: {times[times.Length / 2]:0.0} ms on the UI thread at the median, {longest.DurationMs:0.0} ms at the longest (frame {longest.Number}); "
+        return $"{all.Count:N0} frame{(all.Count == 1 ? "" : "s")}: {UiFrames.MedianMs(all):0.0} ms on the UI thread at the median, {longest.DurationMs:0.0} ms at the longest (frame {longest.Number}); "
             + $"measuring {all.Sum(f => f.MeasureMs):N1} ms, arranging {all.Sum(f => f.ArrangeMs):N1} ms, rendering {all.Sum(f => f.RecordMs):N1} ms, the compositor {all.Sum(f => f.CompositeMs):N1} ms in all. "
             + "Choose a frame for its own.";
     }

@@ -298,7 +298,7 @@ public sealed partial class PassengerTools
         }
         double[] times = [.. frames.Select(f => f.DurationMs).Order()];
         IEnumerable<Passenger.Profiler.LayoutCost> controls = Passenger.Profiler.UiFrames.ByType(frames).SelectMany(type => type.Controls);
-        return new UiFramesInfo(frames.Count, Math.Round(times[times.Length / 2], 1), Math.Round(times[^1], 1), Math.Round(frames.Sum(f => f.LayoutMs), 1),
+        return new UiFramesInfo(frames.Count, Math.Round(Passenger.Profiler.UiFrames.Percentile(times, 0.5), 1), Math.Round(times[^1], 1), Math.Round(frames.Sum(f => f.LayoutMs), 1),
             Math.Round(frames.Sum(f => f.RecordMs + f.CompositeMs), 1),
             [.. controls.OrderByDescending(c => c.Work.SelfMs).Take(top).Select(c => new ControlLayoutInfo(c.Name, c.Work.Measures, Math.Round(c.Work.MeasureMs, 1),
                 c.Work.Arranges, Math.Round(c.Work.ArrangeMs, 1), Math.Round(c.Work.SelfMs, 1),
