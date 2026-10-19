@@ -182,8 +182,9 @@ public sealed class ProfilerCommands
             run.Clear();
             ConsoleSink console = run.Sink;
             ProfilingSession running;
-            // Kill is there while the program starts, as Stop is while the debugger waits for one.
+            // Kill is there while the program starts, as Stop is while the debugger waits for one; the folder's end ends it too.
             starting = stop;
+            profiled.ProfileStarting = stop;
             View.Starting(chosen.Name);
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
             using (BackgroundWork.Scope())
@@ -223,8 +224,17 @@ public sealed class ProfilerCommands
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
-            // Killed as it started: the start ended the program and its port.
+            // Killed as it started, or its folder closed: the start ended the program and its port.
             inspected?.Dispose();
+            if (profiled.IsEnded)
+            {
+                // Its Kill goes, unless the next folder's Profile has started since.
+                if (starting == stop)
+                {
+                    View.Stopped();
+                }
+                return "The solution was closed";
+            }
             profiled.Profiling = null;
             string stopped = $"Profiling {chosen.Name} was stopped as it started";
             View.Stopped(stopped);
@@ -244,6 +254,10 @@ public sealed class ProfilerCommands
             if (starting == stop)
             {
                 starting = null;
+            }
+            if (profiled.ProfileStarting == stop)
+            {
+                profiled.ProfileStarting = null;
             }
         }
     }

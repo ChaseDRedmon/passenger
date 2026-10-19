@@ -192,6 +192,10 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The run being profiled, or null.</summary>
     public ProfilingSession? Profiling { get; set; }
 
+    /// <summary>Ends the Profile still starting (its program running, not yet at the profiler, so not yet <see cref="Profiling"/>),
+    /// with the folder as Kill ends it; null when none is.</summary>
+    public CancellationTokenSource? ProfileStarting { get; set; }
+
     /// <summary>The folder's unit tests: those its test projects declare, their runs and their results.</summary>
     public TestController Tests { get; }
 
@@ -664,6 +668,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Runner.Stop();
         Builder.Stop();
         InTerminal?.Stop();
+        ProfileStarting?.Cancel();
         Profiling?.Kill();
         LiveApp?.Dispose();
         RunApp?.Dispose();

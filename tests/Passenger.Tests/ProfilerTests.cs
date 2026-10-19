@@ -226,6 +226,41 @@ public sealed class ProfilerTests : IDisposable
         }
     }
 
+    /// <summary>Close Solution while a profiled program starts ends it with the folder's other programs, rather than when the
+    /// profiler gives up on it 30 s later: the folder ended only the run handed over, which a start is not yet.</summary>
+    [AvaloniaFact]
+    public void Closing_the_folder_ends_a_profiled_program_that_has_not_reached_the_profiler()
+    {
+        string written = Path.Combine(folder, "closed.pid");
+        string project = Project("Closed", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.ReadLine();\n");
+        Directory.CreateDirectory(Path.Combine(project, "Properties"));
+        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
+            "{ \"profiles\": { \"Undiagnosed\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_EnableDiagnostics\": \"0\" } } } }");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<string> before = Ports();
+        Task<string?> started = window.ProfileAsync();
+        int program = 0;
+        try
+        {
+            program = Processes.WrittenId(written, "the program to run as the profiler waits for it");
+            Assert.False(started.IsCompleted, $"The profiler gave up on the program before the folder was closed: {(started.IsCompleted ? started.Result : null)}");
+
+            Assert.Null(window.CloseSolution());
+            Ui.PumpUntil(() => started.IsCompleted, "the profile's start to end with its folder", TimeSpan.FromSeconds(10));
+            Assert.Equal("The solution was closed", started.Result);
+            Assert.True(Processes.Gone(program), $"Closing the folder left the program being profiled running: {Processes.Describe(program)}");
+            Assert.Equal(before, Ports());
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+        }
+    }
+
     /// <summary>Profile is refused while a profiled program is still starting, as it is while one runs: pressed again (the
     /// program's window slow to come), it started the program a second time, and the first, no longer the window's run,
     /// could be neither snapshotted nor killed until the profiler gave up on it.</summary>
