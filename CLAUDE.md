@@ -219,7 +219,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   projects as a build sees them, `Workspace/ProjectModels`, cached in the folder's `projectModels.json`), `build`
   (Roslyn's design-time builds, written as its build host writes ProjectFileInfo, `Workspace/ProjectBuilds`, cached
   Brotli-compressed in `projectBuilds.json`) and `cancel` (a request given up: no more projects started, the build's
-  submissions cancelled, so a left folder never holds the host) and `inspect` (one project evaluated for the code help
+  submissions cancelled, so a left folder never holds the host), `hold` (a build of the IDE's own: no design-time build
+  running WPF's markup compilation starts until it is cancelled, answered once those running have ended, since both
+  write `obj/…/App.g.cs` and Windows lets one writer have it) and `inspect` (one project evaluated for the code help
   in its MSBuild files, `Inspection.cs`: the open files' unsaved text fed to MSBuild in place of the disk's; properties
   with the places that set them, items, targets, imports, the SDK's frameworks and the evaluation's errors (a skipped
   import as MSB4019), places by a file table, answered from its cache while the inputs hold). Off Windows a project
@@ -393,7 +395,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
-  brings the Build window forward as Showing build results says (errors only by default). A test project's first Project launch profile gives its variables to its tests. A configuration that
+  brings the Build window forward as Showing build results says (errors only by default). Every build holds the host's
+  WPF design-time builds off while it runs (`ProjectBuilds.HoldAsync`, released in `FinishBuild`), its dotnet command
+  starting once the host answers (`ProcessRunner.StartDotnet`'s `after`), so a test reads `Builder.ProcessId` only once
+  it has started; dotnet watch's own builds aren't held. A test project's first Project launch profile gives its variables to its tests. A configuration that
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
   `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
   (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
@@ -505,6 +510,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   expression-compiler aliases, as `$exception` is, typed by the program's own assemblies. Smart Step Into matches the
   statement's IL calls to its Roslyn syntax by name, in order, and steps over it with a breakpoint at the chosen
   method's first line; the editor's choice mode is `CodeEditor.Choices`.
+- Async stepping (`AsyncStepper`): a step over an await ends its stepper at the await's yield point (which Roslyn puts
+  before the awaiter is told to go on) and goes on from the resume breakpoint on whichever thread the run resumes, the
+  return-value watches following it there. The run is told by its state machine object (a class in a Debug build, read
+  with nothing run); only a struct state machine's is asked of its builder (`ObjectIdForDebugger`, an evaluation, which
+  runs its thread alone and can wait for good on what a paused thread holds), and one not told takes the method's first
+  resume. Nothing may leave `_stepper` set but inactive: `HandleBreakpoint` reads such a stepper as one whose
+  StepComplete is queued, and lets the breakpoint go.
 - `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
@@ -554,7 +566,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   evaluate is read as the value's property by that metadata name (Roslyn's `{System.Collections.ICollection.Count}`).
   configurationDone's answer comes before any of the program's events: the adapter launches or attaches under the
   engine's lock and keeps it until the answer is written (its `then`, or `AbortAsync` when the client went), and
-  `DebugSession.StartAsync` leaves a stop told before that answer standing, as `Resume` does.
+  `DebugSession.StartAsync` leaves a stop told before that answer standing, as `Resume` does. A launch or attach waits
+  for the runtime's handshake as long as the program lives and the session lasts (a runtime's first start on a fresh
+  runner reads it off a cold disk); disconnect, terminate and the client's going call `ManagedDebugger.Ending()` before
+  asking for the engine's lock, and a failed configurationDone's answer is written under the lock too
+  (`DapConnection.Handle`'s `evenIfFailed`).
   Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
   `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit
   text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; the
@@ -771,7 +787,11 @@ debugs Passenger.App; it finds its breakpoint by the code `status.Text = why;` i
 that line means changing the test. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
-tests' sessions and the IDE's alike. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
+tests' sessions and the IDE's alike. LaunchTests hold a program's runtime at its start by pointing
+`DOTNET_DiagnosticPorts=…,connect,suspend` at a port of the test's own (`StartHold`), which comes before the runtime
+starts its debugger; LoopingConsoleApp's `waiting` and `waiting first` modes give an async method a builder whose
+`ObjectIdForDebugger` waits on the paused passing thread, and `elsewhere` awaits something that goes on on a thread of
+its own. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
 for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErrorsApp` (written the same way), whose
 caption binds a misspelt Name; "rebind" typed into its console makes it fail again. `XamlBreakpointsTests` debug
