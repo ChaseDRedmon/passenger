@@ -288,7 +288,7 @@ public sealed partial class PassengerTools
     });
 
     /// <summary>An Avalonia app's frames as the profile tool says them, the heaviest controls first; null with none.</summary>
-    private static UiFramesInfo? UiFramesOf(IReadOnlyList<Passenger.Profiler.UiFrame> frames, int top)
+    private UiFramesInfo? UiFramesOf(IReadOnlyList<Passenger.Profiler.UiFrame> frames, int top)
     {
         if (frames.Count == 0)
         {
@@ -300,7 +300,7 @@ public sealed partial class PassengerTools
             Math.Round(frames.Sum(f => f.RecordMs + f.CompositeMs), 1),
             [.. controls.OrderByDescending(c => c.Work.SelfMs).Take(top).Select(c => new ControlLayoutInfo(c.Name, c.Work.Measures, Math.Round(c.Work.MeasureMs, 1),
                 c.Work.Arranges, Math.Round(c.Work.ArrangeMs, 1), Math.Round(c.Work.SelfMs, 1),
-                c.Control?.File is { } file ? $"{file}:{c.Control.Line}" : null))]);
+                c.Control?.File is { } file ? $"{Relative(file)}:{c.Control.Line}" : null))]);
     }
 
     // The terminal

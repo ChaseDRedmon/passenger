@@ -143,6 +143,19 @@ public sealed partial class McpTests
         await Call(client, "stop");
     }
 
+    [Fact]
+    public async Task An_agent_profiling_an_avalonia_app_reads_its_frames_heaviest_controls_by_their_lines_in_the_folders_xaml()
+    {
+        await using McpClient client = await Start(["--mcp", appFolder]);
+        JsonElement profiled = await Call(client, "profile", new() { ["seconds"] = 3 });
+        JsonElement frames = profiled.GetProperty("frames");
+        Assert.True(frames.GetProperty("count").GetInt32() > 0, $"The profile of an Avalonia app has no frames: {frames}");
+        string[] places = [.. frames.GetProperty("heaviest").EnumerateArray().Select(c => c.TryGetProperty("xaml", out JsonElement at) ? at.GetString() : null).OfType<string>()];
+        Assert.NotEmpty(places);
+        Assert.All(places, place => Assert.True(place.StartsWith("MainWindow.axaml:", StringComparison.Ordinal),
+            $"A control's XAML place is {place}, not the folder's MainWindow.axaml and a line, as every other path a tool gives"));
+    }
+
     [AvaloniaFact]
     public void An_agent_on_the_persons_window_is_asked_before_it_first_clicks_or_presses_keys_in_their_avalonia_app_or_in_passenger()
     {
