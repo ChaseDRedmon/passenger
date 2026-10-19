@@ -271,7 +271,10 @@ public sealed class IdeErrorsTests : IDisposable
     public void A_language_server_that_stops_answering_is_reported_not_responding_and_started_again()
     {
         MainWindow window = OpenProgram();
-        int first = window.CSharpService!.Session!.Server.ProcessId;
+        Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+        int first = server.ProcessId;
+        // Its 5 s and 10 s, shortened for this server alone: on any other a slow answer would end it.
+        (server.SlowRequest, server.ResponseLimit) = (TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
 
         Processes.Suspend(first, "The language server");
         bool replaced = false;

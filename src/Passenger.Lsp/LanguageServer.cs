@@ -14,12 +14,13 @@ namespace Passenger.Lsp;
 public sealed class LanguageServer : IAsyncDisposable
 {
     /// <summary>How long a request waits before the server is checked: one this old may be slow work (usages across a
-    /// large solution) or a server that will never answer.</summary>
-    private static readonly TimeSpan SlowRequest = TimeSpan.FromSeconds(5);
+    /// large solution) or a server that will never answer. Settable, with <see cref="ResponseLimit"/>, for a test that
+    /// holds a server to them, so it waits them out quickly.</summary>
+    public TimeSpan SlowRequest { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>How long the check may go unanswered before the server is called not responding. Roslyn answers it in
     /// milliseconds, through the queue every request goes through, even while it loads projects or runs a long request.</summary>
-    private static readonly TimeSpan ResponseLimit = TimeSpan.FromSeconds(10);
+    public TimeSpan ResponseLimit { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>The check: the folding ranges of a document never opened, which Roslyn answers with none.</summary>
     private static readonly FoldingRangeParams Check = new(new TextDocumentIdentifier("file:///passenger-is-the-server-answering.cs"));
