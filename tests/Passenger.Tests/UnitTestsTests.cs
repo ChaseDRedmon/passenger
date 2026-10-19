@@ -419,6 +419,8 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
         Assert.True(window.Perform(AppActions.RunAllTests));
         Assert.True(window.IsBuilding, "Run All did not build first");
+        // The build's dotnet command starts once the project host has held its design-time builds off.
+        Ui.PumpUntil(() => window.Builder.ProcessId is not null, "the build's dotnet command to start");
         int? build = window.Builder.ProcessId;
         Assert.True(window.Perform(AppActions.StopTests));
         Ui.WaitFor(() => !window.Tests.IsBusy, "the run to stop while it builds");

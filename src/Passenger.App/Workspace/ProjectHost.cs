@@ -156,6 +156,39 @@ public sealed class ProjectHost : IAsyncDisposable
         (await AskAsync(HostMethods.Inspect, new InspectParams(project, properties, texts), null, cancel)).Deserialize<ProjectInsight>(HostJson.Options)
             ?? throw new ProjectHostFailed("the project host gave no answer for the project's evaluation");
 
+    /// <summary>Holds the host's design-time builds of WPF projects off for a build of the IDE's own: done once none runs,
+    /// those still running named to <paramref name="waiting"/> first (on the reader's thread), and none starts again until
+    /// <paramref name="release"/> is cancelled.</summary>
+    public async Task HoldAsync(Action<IReadOnlyList<string>> waiting, CancellationToken release)
+    {
+        TaskCompletionSource held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<JsonElement> asked = AskAsync(HostMethods.Hold, new HoldParams(), partial =>
+        {
+            HoldState state = partial.Deserialize<HoldState>(HostJson.Options)!;
+            if (state.Held)
+            {
+                held.TrySetResult();
+            }
+            else
+            {
+                waiting(state.Running);
+            }
+        }, release);
+        // Answered only as it ends: released, or with the host.
+        _ = asked.ContinueWith(ended =>
+        {
+            if (ended.Exception?.InnerException is { } failed)
+            {
+                held.TrySetException(failed);
+            }
+            else
+            {
+                held.TrySetCanceled(release);
+            }
+        }, TaskScheduler.Default);
+        await held.Task;
+    }
+
     private async Task<JsonElement> AskAsync(string method, object parameters, Action<JsonElement>? partial, CancellationToken cancel)
     {
         TaskCompletionSource<JsonElement> answered = new(TaskCreationOptions.RunContinuationsAsynchronously);

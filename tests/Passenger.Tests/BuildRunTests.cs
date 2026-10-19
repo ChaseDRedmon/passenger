@@ -354,7 +354,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         try
         {
             window.Perform(AppActions.Build);
-            int command = window.Builder.ProcessId ?? 0;
+            int command = BuildCommand(window, null);
             Assert.True(Processes.Gone(command, TimeSpan.FromMinutes(2)), "The build's dotnet command never ended");
             Ui.PumpUntil(() => !window.IsBuilding,
                 "the Build window to stop saying it is building once the build's dotnet command ended (a node MSBuild started holding its output open keeps it building)",
@@ -396,8 +396,9 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
                 </Project>
                 """);
             string[] projects = ["Hello", "Tools"];
+            int? first = window.Builder.ProcessId;
             window.Perform(AppActions.Build);
-            int command = window.Builder.ProcessId ?? 0;
+            int command = BuildCommand(window, first);
             // Both projects build at once; one that waits for the other would never start, its step never ending.
             _ = Processes.WrittenId([.. projects.Select(p => Path.Combine(folder, "src", p, "step.pid"))], "a project's step to start");
             // PowerShell on a loaded Windows runner can take more than a second to write its first line. Pumped, not settled:
@@ -473,6 +474,73 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
             window.Close();
         }
+    }
+
+    /// <summary>A WPF app built the moment it opens, while the project host's design-time build of it (the language
+    /// server's) is writing its generated code: both write obj/…/App.g.cs, and on Windows the build's MarkupCompile failed
+    /// with MC1000 when the other had it open (#218). The build waits for the design-time build, the Build window saying
+    /// so, and runs alone. Here the design-time build holds App.g.cs as MarkupCompile does while it writes it, until the
+    /// test lets it go; a build's MarkupCompile begun meanwhile says so.</summary>
+    [AvaloniaFact]
+    public void A_build_begun_while_a_wpf_apps_design_time_build_writes_its_generated_code_waits_for_it_and_succeeds()
+    {
+        string app = PathNames.Canonical(TestFolders.Create("wpf-build-"));
+        string release = Path.Combine(app, "release");
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                WpfApp.Create(app, "Overlap");
+                File.WriteAllText(Path.Combine(app, "Directory.Build.targets"), """
+                    <Project>
+                      <Target Name="Hold" BeforeTargets="MarkupCompilePass1" Condition="'$(DesignTimeBuild)' == 'true' And !Exists('release')">
+                        <MakeDir Directories="$(IntermediateOutputPath)" />
+                        <Exec Condition="'$(OS)' == 'Windows_NT'" Timeout="120000" Command="powershell -NoProfile -Command &quot;$held = [IO.File]::Open('$(IntermediateOutputPath)App.g.cs', 'OpenOrCreate', 'Write', 'Read'); Set-Content -Path held -Value held; while (-not (Test-Path release)) { Start-Sleep -Milliseconds 100 }; $held.Dispose()&quot;" />
+                        <Exec Condition="'$(OS)' != 'Windows_NT'" Timeout="120000" Command="echo held &gt; held; while [ ! -f release ]; do sleep 0.1; done" />
+                      </Target>
+                      <Target Name="Overlap" BeforeTargets="MarkupCompilePass1" Condition="'$(DesignTimeBuild)' != 'true' And Exists('held') And !Exists('release')">
+                        <WriteLinesToFile File="overlapped" Lines="begun" />
+                      </Target>
+                    </Project>
+                    """);
+                Restore.Run(Path.Combine(app, "Overlap.csproj"));
+            }, app);
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            window.OpenFolder(app);
+            try
+            {
+                // Pumped, not settled: the language server's load waits for the design-time build.
+                Ui.PumpUntil(() => File.Exists(Path.Combine(app, "held")), "the design-time build to hold App.g.cs", TimeSpan.FromMinutes(2));
+                Assert.True(window.Perform(AppActions.Build));
+                const string waiting = "Waiting for the design-time build of Overlap to end";
+                Ui.PumpUntil(() => !window.IsBuilding || window.BottomPanel.Build.Document.Snapshot.ToString().Contains(waiting, StringComparison.Ordinal),
+                    "the build to wait for the design-time build or end", TimeSpan.FromMinutes(2));
+                File.WriteAllText(release, "go");
+                Ui.PumpUntil(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(3));
+                string built = window.BottomPanel.Build.Document.Snapshot.ToString();
+                Assert.False(File.Exists(Path.Combine(app, "overlapped")), $"The build's MarkupCompile ran while the design-time build had App.g.cs open ({window.Status}):\n{built}");
+                Assert.True(window.Status == "Build succeeded", $"The WPF app did not build once its design-time build had ended ({window.Status}):\n{built}");
+                Assert.Contains(waiting, built, StringComparison.Ordinal);
+            }
+            finally
+            {
+                File.WriteAllText(release, "go");
+                window.Close();
+            }
+        }
+        finally
+        {
+            TestFolders.Delete(app);
+        }
+    }
+
+    /// <summary>The dotnet command of the build just begun, once it has started: a build starts it once the project host
+    /// has held its design-time builds off. Pumped, not settled, as the build holds background work until it ends.</summary>
+    private static int BuildCommand(MainWindow window, int? before)
+    {
+        Ui.PumpUntil(() => window.Builder.ProcessId is { } started && started != before, "the build's dotnet command to start");
+        return window.Builder.ProcessId!.Value;
     }
 
     /// <summary>The MSBuild worker nodes in a process group (the language server's), by the group ps lists for each process;

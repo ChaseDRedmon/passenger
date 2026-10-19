@@ -39,6 +39,9 @@ public sealed class ProjectBuilds
     /// <summary>Ends the folder's round in the host as the folder is let go, so the next folder's builds need not wait.</summary>
     private CancellationTokenSource ending = new();
 
+    /// <summary>The hold on the host's design-time builds that a build of the IDE's own has until it ends.</summary>
+    private CancellationTokenSource? holding;
+
     /// <param name="projects">The open workspace's projects to load, those of the file shown (and those it references)
     /// apart, asked on the UI thread as the server is ready for them.</param>
     /// <param name="solution">The global properties the open solution gives its projects, as a build of it would.</param>
@@ -93,6 +96,7 @@ public sealed class ProjectBuilds
     public void Close()
     {
         UiThread.Check();
+        Release();
         ending.Cancel();
         ending = new CancellationTokenSource();
         reading = null;
@@ -109,6 +113,39 @@ public sealed class ProjectBuilds
             waiter.TrySetResult(new BuiltProject(string.Empty, "[]", [], "the folder was closed"));
         }
         waiting.Clear();
+    }
+
+    /// <summary>Holds the project host's design-time builds of WPF projects off (every window's on that host) for a build of
+    /// the IDE's own, which writes the generated code they write in obj/: done once those running, named to
+    /// <paramref name="waiting"/>, have ended, and none starts until <see cref="Release"/>. Done at once without a host.</summary>
+    public async Task HoldAsync(Action<IReadOnlyList<string>> waiting, CancellationToken cancel)
+    {
+        UiThread.Check();
+        Release();
+        if (folder is not { } following)
+        {
+            return;
+        }
+        CancellationTokenSource hold = holding = CancellationTokenSource.CreateLinkedTokenSource(ending.Token, cancel);
+        CancellationToken released = hold.Token;
+        try
+        {
+            ProjectHost host = await Task.Run(() => ProjectHosts.ForAsync(following, released));
+            await host.HoldAsync(running => UiThread.Post(() => waiting(running)), released);
+        }
+        catch (ProjectHostFailed)
+        {
+            // No host for the folder, or it ended: it builds nothing meanwhile.
+        }
+    }
+
+    /// <summary>Lets the host's design-time builds go on once the IDE's own build has ended.</summary>
+    public void Release()
+    {
+        UiThread.Check();
+        holding?.Cancel();
+        holding?.Dispose();
+        holding = null;
     }
 
     /// <summary>The projects the server is to load: each with its builds when they stand, the rest built now, those the

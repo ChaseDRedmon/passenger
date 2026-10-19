@@ -44,6 +44,17 @@ internal static class DesignTimeBuilds
     /// <summary>One build session at a time: MSBuild's build manager is the process's.</summary>
     private static readonly SemaphoreSlim Session = new(1, 1);
 
+    /// <summary>The design-time builds running WPF's markup compilation and the IDE's own builds holding them off
+    /// (<see cref="HoldAsync"/>), which take turns, as Visual Studio's builds and design-time builds take its build manager:
+    /// both write the project's obj/…/App.g.cs, which Windows lets one writer open at a time, and rewrite it under the other's
+    /// compiler. Other design-time builds write nothing a build reads, and never wait.</summary>
+    private static readonly object Turns = new();
+
+    private static readonly List<string> Running = [];
+    private static int holds;
+    private static TaskCompletionSource unheld = Completed();
+    private static TaskCompletionSource idle = Completed();
+
     private static StringComparer PathComparer => OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
 
     private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
@@ -74,7 +85,7 @@ internal static class DesignTimeBuilds
             {
                 using CancellationTokenRegistration stopping = cancel.Register(BuildManager.DefaultBuildManager.CancelAllSubmissions);
                 await Parallel.ForEachAsync(asked.Projects, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancel },
-                    async (path, _) => built(await Build(path, collection, context, global, diagnostics).ConfigureAwait(false))).ConfigureAwait(false);
+                    async (path, _) => built(await Build(path, collection, context, global, diagnostics, cancel).ConfigureAwait(false))).ConfigureAwait(false);
             }
             finally
             {
@@ -89,7 +100,91 @@ internal static class DesignTimeBuilds
         }
     }
 
-    private static async Task<BuiltProject> Build(string path, ProjectCollection collection, EvaluationContext context, Dictionary<string, string> global, DiagnosticLogger diagnostics)
+    /// <summary>Holds markup-compiling design-time builds off for a build of the IDE's own until <paramref name="release"/>
+    /// is cancelled: told first of those running, if any, then that they are held once none runs.</summary>
+    public static async Task HoldAsync(Action<HoldState> told, CancellationToken release)
+    {
+        string[] running;
+        Task drained;
+        lock (Turns)
+        {
+            if (holds++ == 0)
+            {
+                unheld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            if (Running.Count > 0 && idle.Task.IsCompleted)
+            {
+                idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            running = [.. Running];
+            drained = running.Length == 0 ? Task.CompletedTask : idle.Task;
+        }
+        try
+        {
+            if (running.Length > 0)
+            {
+                told(new HoldState(running, false));
+            }
+            await drained.WaitAsync(release).ConfigureAwait(false);
+            told(new HoldState([], true));
+            await Task.Delay(Timeout.Infinite, release).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (Turns)
+            {
+                if (--holds == 0)
+                {
+                    unheld.TrySetResult();
+                }
+            }
+        }
+    }
+
+    /// <summary>A markup-compiling design-time build's turn, begun once no build of the IDE's holds them off; disposed as
+    /// it ends.</summary>
+    private static async Task<IDisposable> TurnAsync(string path, CancellationToken cancel)
+    {
+        while (true)
+        {
+            Task heldOff;
+            lock (Turns)
+            {
+                if (holds == 0)
+                {
+                    Running.Add(path);
+                    return new Turn(path);
+                }
+                heldOff = unheld.Task;
+            }
+            await heldOff.WaitAsync(cancel).ConfigureAwait(false);
+        }
+    }
+
+    private static TaskCompletionSource Completed()
+    {
+        TaskCompletionSource completed = new();
+        completed.SetResult();
+        return completed;
+    }
+
+    private sealed class Turn(string path) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (Turns)
+            {
+                Running.Remove(path);
+                if (Running.Count == 0)
+                {
+                    idle.TrySetResult();
+                }
+            }
+        }
+    }
+
+    private static async Task<BuiltProject> Build(string path, ProjectCollection collection, EvaluationContext context, Dictionary<string, string> global, DiagnosticLogger diagnostics,
+        CancellationToken cancel)
     {
         Stamp file = Stamps.File(path);
         IReadOnlyList<Stamp> folders = Evaluation.Walked([Path.GetDirectoryName(path)!]);
@@ -118,7 +213,7 @@ internal static class DesignTimeBuilds
             HashSet<string> assets = new(PathComparer);
             foreach (Project project in each)
             {
-                (ProjectInstance instance, IReadOnlyList<BuildDiagnostic> logged) = await BuildAsync(project, diagnostics).ConfigureAwait(false);
+                (ProjectInstance instance, IReadOnlyList<BuildDiagnostic> logged) = await BuildAsync(project, diagnostics, cancel).ConfigureAwait(false);
                 said.AddRange(logged.Where(d => !said.Contains(d)));
                 RoslynProjectFileInfo info = Read(language, path, instance, globs);
                 if (info.CommandLineArgs.Length == 0 && !logged.Any(d => d.Error))
@@ -177,8 +272,9 @@ internal static class DesignTimeBuilds
     }
 
     /// <summary>Compile and CoreCompile, and XAML's markup compilation where a project has it, as Roslyn's build host runs,
-    /// with the errors and warnings the build logged, which the server reports as its build host's.</summary>
-    private static async Task<(ProjectInstance Built, IReadOnlyList<BuildDiagnostic> Logged)> BuildAsync(Project project, DiagnosticLogger diagnostics)
+    /// with the errors and warnings the build logged, which the server reports as its build host's. One with markup
+    /// compilation takes its turn with the IDE's own builds (<see cref="HoldAsync"/>).</summary>
+    private static async Task<(ProjectInstance Built, IReadOnlyList<BuildDiagnostic> Logged)> BuildAsync(Project project, DiagnosticLogger diagnostics, CancellationToken cancel)
     {
         ProjectInstance instance = project.CreateProjectInstance();
         if (!instance.Targets.ContainsKey("Compile") || !instance.Targets.ContainsKey("CoreCompile"))
@@ -186,10 +282,12 @@ internal static class DesignTimeBuilds
             return (instance, []);
         }
         List<string> targets = ["Compile", "CoreCompile"];
-        if (instance.Targets.ContainsKey("DesignTimeMarkupCompilation"))
+        bool markup = instance.Targets.ContainsKey("DesignTimeMarkupCompilation");
+        if (markup)
         {
             targets.Add("DesignTimeMarkupCompilation");
         }
+        using IDisposable? turn = markup ? await TurnAsync(project.FullPath, cancel).ConfigureAwait(false) : null;
         BuildRequestData request = new(instance, [.. targets], null, BuildRequestDataFlags.ProvideProjectStateAfterBuild);
         TaskCompletionSource<BuildResult> done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         BuildSubmission submission = BuildManager.DefaultBuildManager.PendBuildRequest(request);

@@ -56,6 +56,7 @@ public sealed class Server(TextWriter protocol, HostReady ready)
                 HostMethods.Build => await Build(request.Id, Read<BuildParams>(request), cancel.Token),
                 HostMethods.Cancel => Cancel(Read<CancelParams>(request)),
                 HostMethods.Inspect => Inspection.Run(Read<InspectParams>(request), cancel.Token),
+                HostMethods.Hold => await Hold(request.Id, cancel.Token),
                 _ => throw new InvalidOperationException($"the host has no method {request.Method}"),
             };
             Write(new HostReply { Id = request.Id, Result = JsonSerializer.SerializeToElement(result, result.GetType(), HostJson.Options) });
@@ -108,6 +109,13 @@ public sealed class Server(TextWriter protocol, HostReady ready)
             Write(new HostReply { Id = id, Partial = JsonSerializer.SerializeToElement(built, HostJson.Options) });
         }, cancel);
         return new BuildDone(count, Stopwatch.GetElapsedTime(began).TotalSeconds);
+    }
+
+    /// <summary>Held until cancelled, which answers the request as cancelled.</summary>
+    private async Task<bool> Hold(int id, CancellationToken release)
+    {
+        await DesignTimeBuilds.HoldAsync(state => Write(new HostReply { Id = id, Partial = JsonSerializer.SerializeToElement(state, HostJson.Options) }), release);
+        return true;
     }
 
     private void Write(HostReply reply)

@@ -34,15 +34,20 @@ public static class HostMethods
     /// then <see cref="BuildDone"/>.</summary>
     public const string Build = "build";
 
-    /// <summary><see cref="CancelParams"/>: ends a request still running (an evaluation or a build round) that the app gave
-    /// up on, so the host's one build session is free for the next folder's; answered once it is asked, the request
-    /// itself answering that it was cancelled once it has stopped.</summary>
+    /// <summary><see cref="CancelParams"/>: ends a request still running (an evaluation, a build round, a hold) that the
+    /// app gave up on, so the host's one build session is free for the next folder's; answered once it is asked, the
+    /// request itself answering that it was cancelled once it has stopped.</summary>
     public const string Cancel = "cancel";
 
     /// <summary><see cref="InspectParams"/> to <see cref="ProjectInsight"/>: one project evaluated for the code help in its
     /// MSBuild files (its properties with where each was set, its items, targets and imports, its evaluation's errors and
     /// warnings), the open files' unsaved text taken in place of what is on disk; cached while what it read holds.</summary>
     public const string Inspect = "inspect";
+
+    /// <summary><see cref="HoldParams"/>: a build of the IDE's own is to run, so no design-time build that runs WPF's markup
+    /// compilation starts until the request is cancelled; a <see cref="HoldState"/> partial says it is held once none runs,
+    /// after one naming those still running, if any.</summary>
+    public const string Hold = "hold";
 }
 
 public static class HostJson
@@ -135,6 +140,12 @@ public sealed record BuiltProject(string Path, string Infos, IReadOnlyList<Stamp
 
 /// <summary>An error or warning a design-time build logged, with the project file it was logged for.</summary>
 public sealed record BuildDiagnostic(bool Error, string Message, string Project);
+
+/// <summary>What a hold is asked with: nothing.</summary>
+public sealed record HoldParams;
+
+/// <summary>A hold's progress: the projects whose design-time builds it waits for, or that it holds them off.</summary>
+public sealed record HoldState(IReadOnlyList<string> Running, bool Held);
 
 /// <summary>A file's last write (UTC ticks) and length, 0 and -1 for one not there; for a folder, the hash of its names and
 /// how many (<see cref="Stamps.Folder"/>).</summary>

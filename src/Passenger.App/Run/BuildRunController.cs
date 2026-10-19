@@ -192,7 +192,7 @@ public sealed class BuildRunController
         }
         building = new TaskCompletionSource();
         BackgroundWork.Track(building.Task);
-        BuildNext();
+        BuildNext(first: true);
     }
 
     /// <summary>Whether a build opens the Build window as it starts, as Rider's Presentation settings have it: a test run's
@@ -219,16 +219,31 @@ public sealed class BuildRunController
         _ => false,
     };
 
-    private void BuildNext()
+    /// <summary>Starts the next project's build, the first once the design-time builds it would meet have ended
+    /// (<see cref="HoldDesignTimeBuildsAsync"/>).</summary>
+    private void BuildNext(bool first = false)
     {
         string target = buildQueue.Dequeue();
         string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
         parts.Say($"{verb} {Path.GetFileName(target)}…");
-        if (session.Builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework, BuildOutput.WindowsTargeting(target, session.Projects)), session.Folder!) is { } problem)
+        if (session.Builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework, BuildOutput.WindowsTargeting(target, session.Projects)), session.Folder!,
+            after: first ? HoldDesignTimeBuildsAsync : null) is { } problem)
         {
             FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
         }
     }
+
+    /// <summary>Waits for the project host's design-time builds of WPF projects under way, the Build window saying which,
+    /// and holds the rest off until the build ends (<see cref="FinishBuild"/>): both write a project's obj/…/App.g.cs, and
+    /// on Windows the second writer's MarkupCompile fails (MC1000).</summary>
+    private Task HoldDesignTimeBuildsAsync(CancellationToken stop) => session.DesignTimeBuilds.HoldAsync(running =>
+    {
+        if (session.Builder.IsRunning)
+        {
+            string which = running.Count == 1 ? $"build of {Path.GetFileNameWithoutExtension(running[0])}" : $"builds of {running.Count} projects";
+            parts.Views.Build.Append($"Waiting for the design-time {which} to end\n");
+        }
+    }, stop);
 
     /// <summary>Puts the problem being read in Problems, unless it is there already.</summary>
     private void ReadProblem()
@@ -243,6 +258,11 @@ public sealed class BuildRunController
     private void OnBuilt(int code)
     {
         ReadProblem();
+        if (session.Builder.Unstarted is { } unstarted)
+        {
+            FinishBuild(new BuildOutcome(BuildStatus.NotStarted, unstarted));
+            return;
+        }
         if (code == 0 && buildQueue.Count > 0 && !session.Builder.WasStopped)
         {
             parts.Views.Build.Append("\n");
@@ -269,6 +289,7 @@ public sealed class BuildRunController
         afterBuild = null;
         TaskCompletionSource? held = building;
         building = null;
+        session.DesignTimeBuilds.Release();
         parts.Views.Build.SetRunning(false);
         ShowProblems();
         session.Xaml.Built(session.Problems);

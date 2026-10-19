@@ -18,6 +18,9 @@ public sealed class ProcessRunner : IDisposable
     private readonly bool takesInput;
     private Process? process;
     private bool running;
+
+    /// <summary>The wait of a run whose process has yet to start, which Stop ends.</summary>
+    private CancellationTokenSource? waiting;
     private TaskCompletionSource<int> ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ProcessRunner(OutputView console, bool takesInput = false)
@@ -60,6 +63,9 @@ public sealed class ProcessRunner : IDisposable
     /// <summary>Whether the last run ended because Stop was pressed.</summary>
     public bool WasStopped { get; private set; }
 
+    /// <summary>Why the last run's process could not start once its wait was over; null for one that started.</summary>
+    public string? Unstarted { get; private set; }
+
     /// <summary>The process last started (dotnet run, dotnet watch, a build), for a test to see it gone.</summary>
     public int? ProcessId => process?.Id;
 
@@ -67,8 +73,11 @@ public sealed class ProcessRunner : IDisposable
     /// whatever starts after it.</summary>
     public Task<int> Ended => ended.Task;
 
-    /// <summary>Starts the .NET command line; why it could not, or null once it runs.</summary>
-    public string? StartDotnet(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
+    /// <summary>Starts the .NET command line; why it could not, or null once it runs. Given a wait, it runs from now as its
+    /// callers see it (<see cref="IsRunning"/>, <see cref="Stop"/>, <see cref="Ended"/>) and its process starts once the
+    /// wait is over; stopped meanwhile, or unable to start then (<see cref="Unstarted"/>), it ends with exit code -1.</summary>
+    public string? StartDotnet(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null,
+        Func<CancellationToken, Task>? after = null)
     {
         ProcessStartInfo start;
         try
@@ -80,14 +89,14 @@ public sealed class ProcessRunner : IDisposable
             console.Append($"{missing.Message}\n", error: true);
             return missing.Message;
         }
-        return Start(start, environment);
+        return Start(start, environment, after);
     }
 
     /// <summary>Starts a program; why it could not (a working folder gone, a missing program), or null once it runs.</summary>
     public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
         Start(ChildProcesses.Command(file, arguments, folder), environment);
 
-    private string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment)
+    private string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment, Func<CancellationToken, Task>? after = null)
     {
         UiThread.Check();
         if (IsRunning)
@@ -95,6 +104,7 @@ public sealed class ProcessRunner : IDisposable
             throw new InvalidOperationException("The process is still running.");
         }
         WasStopped = false;
+        Unstarted = null;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         // Otherwise ChildProcesses closes it as the program starts.
@@ -103,6 +113,48 @@ public sealed class ProcessRunner : IDisposable
         {
             start.Environment[key] = value;
         }
+        if (after is null)
+        {
+            return Launch(start, null);
+        }
+        running = true;
+        _ = LaunchAfterAsync(start, after, ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
+        return null;
+    }
+
+    /// <summary>The process started once its wait is over, unless it was stopped meanwhile.</summary>
+    private async Task LaunchAfterAsync(ProcessStartInfo start, Func<CancellationToken, Task> after, TaskCompletionSource<int> ending)
+    {
+        using (CancellationTokenSource stopping = waiting = new())
+        {
+            try
+            {
+                await after(stopping.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                WasStopped = true;
+            }
+            catch (Exception error)
+            {
+                // What it waited for is a courtesy to others: the process starts anyway.
+                IdeErrors.Report(error);
+            }
+            finally
+            {
+                waiting = null;
+            }
+        }
+        if (WasStopped || (Unstarted = Launch(start, ending)) is not null)
+        {
+            running = false;
+            ending.TrySetResult(-1);
+            Exited?.Invoke(this, -1);
+        }
+    }
+
+    private string? Launch(ProcessStartInfo start, TaskCompletionSource<int>? waited)
+    {
         console.Append($"{ChildProcesses.Display(start)}\n");
         Process started;
         try
@@ -118,7 +170,7 @@ public sealed class ProcessRunner : IDisposable
         }
         process = started;
         running = true;
-        TaskCompletionSource<int> ending = ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<int> ending = waited ?? (ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
         if (takesInput)
         {
             console.Input = ProgramInput.Of(started.StandardInput);
@@ -152,7 +204,12 @@ public sealed class ProcessRunner : IDisposable
     public void Stop()
     {
         UiThread.Check();
-        if (running && process is { } started)
+        if (running && waiting is { } wait)
+        {
+            WasStopped = true;
+            wait.Cancel();
+        }
+        else if (running && process is { } started)
         {
             WasStopped = true;
             ChildProcesses.Kill(started);
