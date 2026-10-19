@@ -7,7 +7,6 @@
     const releases = `https://github.com/${repository}/releases`;
     const builds = {
         "mac-arm64": { asset: "Passenger-macos-arm64.dmg", label: "macOS, Apple Silicon" },
-        "mac-x64": { asset: "Passenger-macos-x64.dmg", label: "macOS, Intel" },
         "windows-x64": { asset: "Passenger-windows-x64.exe", label: "Windows x64" },
         "windows-arm64": { asset: "Passenger-windows-arm64.exe", label: "Windows Arm64" },
         "linux-x64": { asset: "Passenger-linux-x64.tar.gz", label: "Linux x64" },
@@ -27,8 +26,11 @@
         if (os === null) {
             return null;
         }
-        // Every Mac browser says Intel, so Apple Silicon unless Chromium's hints say otherwise.
-        let arch = os === "mac" ? "arm64" : /aarch64|arm64/i.test(agent) ? "arm64" : "x64";
+        // Passenger is built for Apple Silicon Macs only (and every Mac browser says Intel either way).
+        if (os === "mac") {
+            return "mac-arm64";
+        }
+        let arch = /aarch64|arm64/i.test(agent) ? "arm64" : "x64";
         try {
             const hints = await navigator.userAgentData?.getHighEntropyValues(["architecture"]);
             if (hints?.architecture === "arm") {

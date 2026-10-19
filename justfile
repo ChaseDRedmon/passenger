@@ -31,13 +31,13 @@ screenshot path *args:
     dotnet run --project {{app}} -- --screenshot {{path}} {{args}}
 
 # A self-contained Release build for one platform, precompiled with ReadyToRun for startup:
-# just publish osx-arm64 | osx-x64 | win-x64 | win-arm64 | linux-x64 | linux-arm64
+# just publish osx-arm64 | win-x64 | win-arm64 | linux-x64 | linux-arm64 (no Intel Mac build ships)
 publish rid:
     dotnet publish {{app}} -c Release -r {{rid}} --self-contained -p:PublishReadyToRun=true
 
-# The macOS disk image, artifacts/package/Passenger-macos-arm64.dmg (or -x64): the app signed ad hoc, or with
+# The macOS disk image, artifacts/package/Passenger-macos-arm64.dmg (Apple Silicon only): the app signed ad hoc, or with
 # PASSENGER_SIGN_IDENTITY and then, with PASSENGER_NOTARY_PROFILE, the app and the image notarized and stapled; checked
-# mounted. --dry-run writes what those two would run instead: just package-mac [osx-arm64|osx-x64] [--dry-run]
+# mounted. --dry-run writes what those two would run instead: just package-mac [osx-arm64] [--dry-run]
 package-mac *args:
     tools/package-mac.sh {{args}}
 

@@ -1,10 +1,11 @@
 # Run by hand only, as the owner decided to spend Actions' minutes (Actions > CI > Run workflow, or
-# `gh workflow run CI --ref main`; a pull request's branch the same way): the solution built (warnings are errors) and every test run, on macOS
-# (arm64), Windows and Linux, as `just build` and `just test` run them (test.yml, which a release runs first too); the
-# macOS disk images made and checked, as `just package-mac` makes them; the Windows installer and the Linux archive
-# built, installed, used and uninstalled, as `just package-win` and `just package-linux` build them; and on Linux, the
-# solution restored from nothing and every package checked against THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI,
-# which Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
+# `gh workflow run CI --ref main`; a pull request's branch the same way): the solution built (warnings are errors) and
+# every test run, on macOS (arm64), Windows and Linux, as `just build` and `just test` run them (test.yml, which a
+# release runs first too); the macOS disk image (Apple Silicon) made and checked, as `just package-mac` makes it;
+# the Windows installer and the Linux archive built, installed, used and uninstalled, as `just package-win` and
+# `just package-linux` build them; and on Linux, the solution restored from nothing and every package checked against
+# THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
+# Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
 on:
@@ -40,11 +41,9 @@ jobs:
     name: Disk image (${{ matrix.rid }})
     strategy:
       fail-fast: false
-      # One image after the other: GitHub runs five macOS jobs at once, four of them the test shards, so a second image
-      # beside the first left a shard waiting for one to end (#206); the two take about as long as Windows' shards.
-      max-parallel: 1
+      # Apple Silicon only: the owner dropped Intel Macs from the release.
       matrix:
-        rid: [osx-arm64, osx-x64]
+        rid: [osx-arm64]
     runs-on: macos-latest
     timeout-minutes: 40
     steps:

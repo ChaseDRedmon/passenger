@@ -16,8 +16,8 @@ Rider is installed at `~/Applications/Rider.app`.
 just build                 # Debug build of the solution (Passenger.slnx); warnings are errors
 just run [PATH] [args]     # run the IDE on a folder or file (--file F, --caret L:C, --theme dark|light)
 just screenshot X.png ...  # the main window drawn off-screen to a PNG, after the steps given
-just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
-just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dmg (or -x64), checked mounted; signed
+just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, win-x64, win-arm64, linux-x64, linux-arm64)
+just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dmg (Apple Silicon only), checked mounted; signed
                            # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc;
                            # its window's background is tools/dmg-background.svg, drawn by sips at 1x and 2x into one TIFF
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
@@ -82,7 +82,7 @@ Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources.
 `Directory.Packages.props` (Roslyn's server's too, as `RoslynServerVersion`); shared properties only in
 `Directory.Build.props`. Packages come from nuget.org alone, as nuget.org signed them (`nuget.config`), at what each
 project's `packages.lock.json` pins: a restore that adds or changes a package rewrites the lock file, committed with
-the change, and CI restores in locked mode. Every lock file holds all six published systems, even a project carried
+the change, and CI restores in locked mode. Every lock file holds all six systems of `RuntimeIdentifiers` (osx-x64 restores, though no Intel Mac build ships), even a project carried
 only on Windows (`Passenger.Inspector.Wpf`, `Passenger.WpfPreview`): a publish's RuntimeIdentifier reaches the restore
 of every project it references (`GlobalPropertiesToRemove` keeps it out of the build only). Every `just` recipe and CI set `AVALONIA_TELEMETRY_OPTOUT=1`, which
 Avalonia's build task reads only from the environment. `Directory.Build.targets` gives every
@@ -775,11 +775,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   once (jobs named as "macOS (arm64), shard 1 of 4"), then a summary job per system named as the system ("macOS
   (arm64)", the check that stands for it). Every workflow runs only when started by hand (the owner's
   choice, to spend Actions' minutes on purpose): `ci.yml` (`gh workflow run CI --ref main`, with the packages' and
-  notices' jobs) calls it, and so does `release.yml`, run from a `vX.Y.Z` tag with dry run unticked: the tests, then both disk images and both
-  Windows installers at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
+  notices' jobs) calls it, and so does `release.yml`, run from a `vX.Y.Z` tag with dry run unticked: the tests, then the Apple Silicon disk image (no
+  Intel Mac build, the owner's call), both Windows installers and both Linux archives at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
   names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing. ci.yml
-  makes its two disk images one after the other (`max-parallel: 1`), so they and the four macOS shards fit GitHub's
-  five macOS runners at once.
+  makes one disk image, so it and the four macOS shards fit GitHub's five macOS runners at once.
 
 ## Rules
 

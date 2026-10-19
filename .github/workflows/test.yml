@@ -33,7 +33,7 @@ jobs:
         system: [macOS, Windows, Linux]
         # A system's number of shards is its `shards` below, and these numbers up to it (a system with fewer excludes
         # its others). With four, about 13 to 15 minutes of tests each; GitHub runs five macOS jobs at once, the fifth
-        # CI's disk images, one after the other.
+        # CI's disk image.
         shard: [1, 2, 3, 4]
         include:
           - system: macOS

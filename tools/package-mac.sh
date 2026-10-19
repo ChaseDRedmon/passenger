@@ -1,6 +1,6 @@
 #!/bin/sh
-# Passenger's macOS disk image: `just package-mac [osx-arm64|osx-x64] [--dry-run]` makes
-# artifacts/package/Passenger-macos-arm64.dmg (or -x64), the names a release keeps from one to the next (#56). The
+# Passenger's macOS disk image: `just package-mac [osx-arm64] [--dry-run]` makes
+# artifacts/package/Passenger-macos-arm64.dmg (Apple Silicon only: no Intel Mac build ships), the name a release keeps from one to the next (#56). The
 # Release publish (self-contained, ReadyToRun, the debugger and Roslyn's server beside it) becomes Passenger.app, signed
 # under the hardened runtime with the entitlements below: by PASSENGER_SIGN_IDENTITY (a Developer ID Application
 # identity), else ad hoc, which Apple Silicon needs to run it at all and which a person opens once through System
@@ -16,9 +16,9 @@ rid=osx-arm64
 dry_run=
 for arg in "$@"; do
     case $arg in
-        osx-arm64 | osx-x64) rid=$arg ;;
+        osx-arm64) rid=$arg ;;
         --dry-run) dry_run=1 ;;
-        *) fail "'$arg' is neither osx-arm64, osx-x64 nor --dry-run" ;;
+        *) fail "'$arg' is neither osx-arm64 nor --dry-run (no Intel Mac build ships)" ;;
     esac
 done
 arch=${rid#osx-}
