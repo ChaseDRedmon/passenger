@@ -350,9 +350,10 @@ public sealed class LspDocument : IDisposable
     {
         int version = Text.Version;
         CompletionContext context = incomplete ? new CompletionContext(3) : trigger is null ? new CompletionContext(1) : new CompletionContext(2, trigger);
+        // Sent now, in order with the changes before it; read where the answer came, or on the thread pool should it be in
+        // already, never on the caller's thread: a statement's list is every type in reach, each with the server's data.
         JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/completion",
-            new CompletionParams(Identifier, PositionOf(offset), context), cancel).ConfigureAwait(false);
-        // Read where the answer came, not on the caller's thread: a statement's list is every type in reach, each with data.
+            new CompletionParams(Identifier, PositionOf(offset), context), cancel).ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         return (Shapes.CompletionList(result), version);
     }
 

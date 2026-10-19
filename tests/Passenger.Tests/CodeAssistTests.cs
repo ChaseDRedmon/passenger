@@ -1905,8 +1905,8 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     /// <summary>The server's completion list is read where its answer arrives, never on the UI thread: a statement's list
     /// is every type and keyword in reach, each item with the server's data, which the key's frames waited for while it was
     /// read there. What the window allocates is the count, not a time a busy machine stretches: a list of hundreds more
-    /// items (a file with the usings a project's implicit ones bring, against one with none) costs the frame it opens in
-    /// less than a third of what reading those items takes.</summary>
+    /// items (a file with the usings a project's implicit ones bring, against one with none) costs the UI thread, from the
+    /// key to the list open, less than a third of what reading those items takes.</summary>
     [AvaloniaFact]
     public void A_statements_completion_list_is_read_off_the_UI_thread()
     {
@@ -1918,10 +1918,10 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         (int fewItems, long fewRead, long fewFrame) = StatementCompletion(window, bare);
         (int manyItems, long manyRead, long manyFrame) = StatementCompletion(window, used);
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"{fewItems} items: read in {fewRead / 1024} KB, opened in a frame of {fewFrame / 1024} KB; {manyItems} items: {manyRead / 1024} KB, {manyFrame / 1024} KB");
+            $"{fewItems} items: read in {fewRead / 1024} KB, opened from the key in {fewFrame / 1024} KB; {manyItems} items: {manyRead / 1024} KB, {manyFrame / 1024} KB");
         Assert.True(manyItems > fewItems + 300, $"With the usings a statement's completion listed {manyItems} items, against {fewItems} without");
         Assert.True(manyFrame - fewFrame < (manyRead - fewRead) / 3,
-            $"A list of {manyItems} items opened in a frame that allocated {manyFrame / 1024} KB on the UI thread, against {fewFrame / 1024} KB for {fewItems} items: "
+            $"A list of {manyItems} items opened with {manyFrame / 1024} KB allocated on the UI thread from the key, against {fewFrame / 1024} KB for {fewItems} items: "
             + $"a third or more of the {(manyRead - fewRead) / 1024} KB reading the extra items takes, so they were read there");
         window.Close();
         File.Delete(bare);
@@ -1929,8 +1929,9 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     /// <summary>A statement's completion in a file: how many items it lists, what reading its answer allocates (the same
-    /// list asked for from the thread pool, the window's thread waiting), and what the UI thread allocates in the frame the
-    /// list opens in, the one its answer lands in; the least of three.</summary>
+    /// list asked for from the thread pool, the window's thread waiting), and what the UI thread allocates from the key
+    /// until the list is open, whichever of its frames the answer lands in (a quick one lands in the jobs the key's own
+    /// input runs, which a count of the frames after it alone took for nothing); the least of three.</summary>
     private static (int Items, long Read, long Frame) StatementCompletion(MainWindow window, string path)
     {
         window.OpenFile(path);
@@ -1953,16 +1954,14 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         long frame = long.MaxValue;
         for (int round = 0; round < 3; round++)
         {
+            long before = GC.GetAllocatedBytesForCurrentThread();
             window.KeyTextInput("S");
-            long opening = 0;
             DateTime limit = DateTime.UtcNow.AddSeconds(60);
             while (!window.Assist.IsCompletionOpen && DateTime.UtcNow < limit)
             {
-                long before = GC.GetAllocatedBytesForCurrentThread();
                 Screenshot.Pump(TimeSpan.FromMilliseconds(10));
-                opening = GC.GetAllocatedBytesForCurrentThread() - before;
             }
-            frame = Math.Min(frame, opening);
+            frame = Math.Min(frame, GC.GetAllocatedBytesForCurrentThread() - before);
             Assert.True(window.Assist.IsCompletionOpen, $"Completion never opened for a statement in {Path.GetFileName(path)}");
             Ui.Press(window, "ESCAPE");
             Ui.Press(window, "BACK_SPACE");
