@@ -319,7 +319,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, Find in Files' scope, whether agents are let in unasked (`agents.json`), `localHistory/`, the
+  configurations, Find in Files' scope, `localHistory/`, the
   profiler's `snapshots/`), with the debugger's decompiled
   symbols in `cache/symbols/` at the root. A Passenger that Run, Debug or
   Profile launch (Passenger.App, or any program named Passenger) keeps its state in the launcher's `sandbox/`
@@ -617,11 +617,23 @@ window or takes the focus; it shows everything but the system's own window chrom
   window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
   through the process's `PID.open` socket (`AppSocket`, `PassengerApp.OpenProject`), else starts Passenger (`open -a` on
   the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Every call on a
-  window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder's
-  Always for this folder (`agents.json`), else the person's answer to `AgentAdmissionDialog` within
-  `MainWindow.AgentAnswerLimit`; turning the setting off ends the connections (`AgentSocket.ShutOut`). On a person's
+  window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
+  `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
+  else the person's answer to `AgentAdmissionDialog` within `MainWindow.AgentAnswerLimit`; turning the setting off, or
+  the window's folder taken off the list, ends the connections (`AgentSocket.ShutOut`). On a person's
   window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`),
-  and `open` asks before it replaces their folder.
+  and `open` asks before it replaces their folder. Settings' MCP Server page (`SettingsDialog.Mcp.cs`) lists the
+  folders, each taken back by Remove, and each agent's setup (`AgentSetup`: Claude Code's and Codex's commands, a
+  repository's `.mcp.json`, Codex's config.toml, Claude Desktop's with the window's folder after `--mcp-attach`) naming
+  this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy. `McpHost.Instructions` tell an agent to
+  begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
+  asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
+  angle brackets never unicode escapes). `edit` replaces text in one file as the editor does (found once as written, else refused saying where it is; one Undo
+  step, saved, the changed lines said back). `run` returns once an inspected app's UI is up; `build` gives MSBuild's
+  output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
+  for first. Usability pass (#236): an agent's `--mcp-attach` with no window open starts the person's Passenger in a
+  window they see, so a pass drives `--mcp FOLDER` (or `--mcp-attach` with `PASSENGER_START=headless` and a state
+  folder short enough for its socket, as `TestRun` sets).
 - Attach to Process: `MainWindow.Attach.cs` (`Debugging/AttachToProcessDialog`, Reattach, the recently attached);
   `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
   on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows). An attached session is
