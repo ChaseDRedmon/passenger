@@ -58,9 +58,14 @@ public sealed class FoldScan : IFoldFinder, IDisposable
         }
     }
 
+    /// <summary>Scans until a scan's text is still the document's, then tells of its regions. Never inside the change that
+    /// started it, even when a small file's scan is done before it is awaited: the document's later listeners (the open
+    /// file, which moves its regions with the change) have yet to hear of the change, and the first scan's listener of
+    /// being added.</summary>
     private async Task ScanAsync()
     {
         scanning = true;
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             while (!disposed)
@@ -68,7 +73,8 @@ public sealed class FoldScan : IFoldFinder, IDisposable
                 int scanned = version;
                 TextSnapshot text = document.Snapshot;
                 int count = Folds.Count;
-                IReadOnlyList<FoldRegion> found = await BackgroundWork.Run(() => Scan(text, count));
+                IReadOnlyList<FoldRegion> found = await BackgroundWork.Run(() => Scan(text, count))
+                    .ConfigureAwait(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.ForceYielding);
                 if (disposed)
                 {
                     return;
