@@ -44,11 +44,11 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         // The list opens in the frame that has the server's answer, where the syntax at the dot is read.
         window.KeyTextInput(".");
         long opening = 0;
-        DateTime limit = DateTime.UtcNow.AddSeconds(60);
+        DateTime limit = DateTime.UtcNow + TimeSpan.FromSeconds(60).Scaled();
         while (!window.Assist.IsCompletionOpen && DateTime.UtcNow < limit)
         {
             before = GC.GetAllocatedBytesForCurrentThread();
-            Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "one frame, whose allocations are measured");
             opening = GC.GetAllocatedBytesForCurrentThread() - before;
         }
         Assert.True(window.Assist.IsCompletionOpen, "Completion never opened after the dot");
@@ -93,7 +93,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
             window.KeyTextInput(Digits[i].ToString());
-            Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key, whose allocations are measured");
             keys = Math.Max(keys, GC.GetAllocatedBytesForCurrentThread() - before);
             Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
         }
@@ -105,12 +105,12 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         int fresh = editor.Selections.Primary.Caret - "value0;".Length;
         int moved = Digits.Length + Statement.Length;
         long landing = 0;
-        DateTime limit = DateTime.UtcNow.AddSeconds(90);
+        DateTime limit = DateTime.UtcNow + TimeSpan.FromSeconds(90).Scaled();
         while ((KindAt(fresh) != TokenKind.Local || BackgroundWork.Pending > 0) && DateTime.UtcNow < limit)
         {
             Assert.True(KindAt(near + moved) == TokenKind.Local, $"While the server's colours were out the local's use below lost its colour: {KindAt(near + moved)}");
             long before = GC.GetAllocatedBytesForCurrentThread();
-            Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "one frame, whose allocations are measured");
             landing = Math.Max(landing, GC.GetAllocatedBytesForCurrentThread() - before);
         }
         Assert.True(KindAt(fresh) == TokenKind.Local, "The local used in the statement put in never took the server's colour");
@@ -123,7 +123,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         for (int i = 0; i < Digits.Length; i++)
         {
             window.KeyTextInput(Digits[i].ToString());
-            Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key");
             Assert.True(KindAt(far + moved + i + 1) == TokenKind.Local, $"After {i + 1} more keys the local's use at the end of the file lost its colour: {KindAt(far + moved + i + 1)}");
         }
         Ui.Settle();
@@ -177,7 +177,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
             long before = Passenger.Lsp.ServerLines.CharactersRead;
             window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
             window.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
-            Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+            Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame after the key");
             read += Passenger.Lsp.ServerLines.CharactersRead - before;
             OnTheirWords($"After {i + 1} lines went in above them");
         }
@@ -247,7 +247,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
                 window.KeyTextInput($" int fresh{i} = value0;");
                 int used = editor.Selections.Primary.Caret - "value0;".Length;
                 Ui.PumpUntil(() => KindAt(used) == TokenKind.Local, $"the screen's colours on the local used in statement {i + 1}");
-                Screenshot.Pump(TimeSpan.FromMilliseconds(300));
+                Ui.Hold(TimeSpan.FromMilliseconds(300), "a pause in typing, shorter than the idle after which the whole file's colours are asked for");
             }
             Assert.True(screens > 0, "The screen's colours were never asked for as the statements were typed");
             Assert.True(whole == 0, $"The whole file's colours were asked for {whole} times while typing went on with pauses:\n{string.Join('\n', wire)}");
@@ -255,8 +255,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
             // Once typing stops, the whole file's, once.
             Ui.PumpUntil(() => Volatile.Read(ref whole) > 0, "the whole file's colours once typing stopped");
             Ui.Settle();
-            // Past the idle a needless second ask would wait out after the screen's colours, which no settle waits for.
-            Screenshot.Pump(TimeSpan.FromSeconds(3));
+            Ui.Hold(TimeSpan.FromSeconds(3), "past the idle a needless second ask would wait out after the screen's colours, which no settle waits for");
             Ui.Settle();
             int refreshes = Volatile.Read(ref refreshedSince);
             Assert.True(whole <= 1 + refreshes,

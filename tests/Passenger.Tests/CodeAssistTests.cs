@@ -228,7 +228,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             {
                 Ui.Press(window, "BACK_SPACE");
             }
-            Screenshot.Pump(TimeSpan.FromMilliseconds(250));
+            Ui.Hold(TimeSpan.FromMilliseconds(250), "a pause before the dot is typed again, as a person retries");
             window.KeyTextInput(".");
             Ui.Settle();
             return false;
@@ -627,7 +627,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                     Assert.True(carried.PositionOf(offset) == fresh.PositionOf(offset),
                         $"{what}: offset {offset} is at {carried.PositionOf(offset)} on the server's lines as they were carried, at {fresh.PositionOf(offset)} on the file's: every position sent from here on is off");
                 }
-                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                Ui.Hold(TimeSpan.FromMilliseconds(10), "a frame between edits, as keys come");
             }
 
             Edit("A lone carriage return put in", new TextEdit(At("one,"), 0, "\r"));
@@ -1961,11 +1961,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
             window.KeyTextInput("S");
-            DateTime limit = DateTime.UtcNow.AddSeconds(60);
-            while (!window.Assist.IsCompletionOpen && DateTime.UtcNow < limit)
-            {
-                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
-            }
+            Ui.Pumped(() => window.Assist.IsCompletionOpen, TimeSpan.FromSeconds(60));
             frame = Math.Min(frame, GC.GetAllocatedBytesForCurrentThread() - before);
             Assert.True(window.Assist.IsCompletionOpen, $"Completion never opened for a statement in {Path.GetFileName(path)}");
             Ui.Press(window, "ESCAPE");
