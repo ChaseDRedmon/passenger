@@ -124,6 +124,12 @@ public sealed class CSharpService : IAsyncDisposable
     private CancellationTokenSource? analysing;
     private bool solutionWide;
 
+    /// <summary>How long after a pull the server refused it is asked again, doubled while the server keeps refusing, up
+    /// to <see cref="RefusedPullsAtMost"/>.</summary>
+    private static readonly TimeSpan RefusedPull = TimeSpan.FromSeconds(1);
+
+    private static readonly TimeSpan RefusedPullsAtMost = TimeSpan.FromSeconds(30);
+
     /// <summary>Rider's solution-wide analysis: every file's errors and warnings across the solution, kept current as code
     /// changes, without a build. Roslyn is asked to analyse every document, and its workspace diagnostics are pulled
     /// again after each change; an open file's are its own pull's, as they are typed.</summary>
@@ -231,9 +237,13 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
+    /// <summary>One source's pulls, each asked again as the last answers, until the analysis is turned off or the session
+    /// ends (a server started again is analysed afresh once it has loaded). A pull the server refuses or cuts short (Roslyn
+    /// cancels one a change made stale) is asked again after a pause that grows while it keeps refusing.</summary>
     private async Task AnalyseAsync(RoslynSession running, string? source, CancellationToken cancel)
     {
         bool first = true;
+        TimeSpan pause = RefusedPull;
         BackgroundWork.Begin();
         try
         {
@@ -243,7 +253,19 @@ public sealed class CSharpService : IAsyncDisposable
                     .Where(r => r.Key.Source == source && r.Value.ResultId is not null)
                     .Select(r => new PreviousResultId(r.Key.Uri, r.Value.ResultId!))];
                 DateTime asked = DateTime.UtcNow;
-                IReadOnlyList<WorkspaceDocumentDiagnosticReport> reports = await running.Server.WorkspaceDiagnosticsAsync(source, previous, cancel);
+                IReadOnlyList<WorkspaceDocumentDiagnosticReport> reports;
+                try
+                {
+                    reports = await running.Server.WorkspaceDiagnosticsAsync(source, previous, cancel);
+                }
+                catch (LanguageServerFailed failed) when (!running.Server.HasExited)
+                {
+                    IdeErrors.Write($"Solution-wide analysis ({source ?? "every source"}) asks again in {pause.TotalSeconds:0} s: {failed.Message}");
+                    await Task.Delay(pause, cancel);
+                    pause = TimeSpan.FromTicks(Math.Min(pause.Ticks * 2, RefusedPullsAtMost.Ticks));
+                    continue;
+                }
+                pause = RefusedPull;
                 if (cancel.IsCancellationRequested)
                 {
                     return;
@@ -275,7 +297,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
         catch (LanguageServerFailed)
         {
-            // The server went: one started again is analysed afresh once it has loaded.
+            // The server went for good: one started again is analysed afresh once it has loaded.
         }
         finally
         {

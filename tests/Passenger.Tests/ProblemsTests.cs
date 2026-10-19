@@ -74,6 +74,45 @@ public sealed class ProblemsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A pull the server refuses or cuts short (Roslyn cancels one a change made stale) is asked again, so the
+    /// solution's problems go on following edits, where one refusal had ended the analysis for good.</summary>
+    [AvaloniaFact]
+    public void Solution_wide_analysis_goes_on_following_edits_after_the_server_refuses_a_pull()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("Helper.cs");
+        Ui.Settle();
+        ProblemsView problems = window.BottomPanel.Problems;
+        window.Perform(AppActions.ToggleSolutionAnalysis);
+        Ui.WaitFor(() => problems.SolutionProblems?.Any(p => p.Code == "CS0029") == true, "the closed file's error");
+
+        // The pulls held open answer the edit, and the next pull of every source is refused.
+        Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+        Task refused = server.RefuseNext("workspace/diagnostic", server.WorkspaceDiagnosticSources.Count);
+        Rename(window, "Twice", "Thrice");
+        bool CallerBroken() => problems.SolutionProblems?.Any(p => p.Path?.EndsWith("Caller.cs", StringComparison.Ordinal) == true) == true;
+        Ui.WaitFor(CallerBroken, "the broken caller's error", TimeSpan.FromMinutes(1));
+        Ui.WaitFor(() => refused.IsCompleted, "the server to refuse the next pull of every source", TimeSpan.FromMinutes(1));
+
+        // The edit after the refusals is followed too: the caller compiles again, and says so without a build.
+        Rename(window, "Thrice", "Twice");
+        Ui.WaitFor(() => problems.SolutionProblems is { } listed && !CallerBroken(), "the mended caller's error to go, after the server refused a pull",
+            TimeSpan.FromMinutes(1));
+        Assert.Equal(server, window.CSharpService.Session?.Server);
+        window.Close();
+    }
+
+    /// <summary>The open file's word typed over, as a person selecting it and typing does.</summary>
+    private static void Rename(MainWindow window, string from, string to)
+    {
+        string text = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+        int at = text.IndexOf(from, StringComparison.Ordinal);
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(new Selection(at, at + from.Length));
+        window.KeyTextInput(to);
+    }
+
     /// <summary>Lines typed above a file's problems move them, and the File tab says where they are now after every key,
     /// each row's place shown on its own line of the list as it was: the list's rows are not made again for every key, as
     /// they were while the file had problems (every row's controls made, styled and laid out again a key).</summary>

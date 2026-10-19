@@ -32,6 +32,7 @@ public sealed class LanguageServer : IAsyncDisposable
     private readonly ClientTarget client;
     private readonly ServerLog log;
     private readonly Dictionary<long, (string Method, long Since)> waiting = [];
+    private readonly Dictionary<string, (int Left, TaskCompletionSource Spent)> refusing = [];
     private readonly Timer watch;
     private long requests;
     private long checkedAt;
@@ -437,11 +438,41 @@ public sealed class LanguageServer : IAsyncDisposable
         }
     }
 
+    /// <summary>Has the server refuse the next requests of a method, as Roslyn refuses one or cancels it unanswered (a pull
+    /// a change made stale): for a test of what follows, which it cannot make the server do. Done once all are refused.</summary>
+    public Task RefuseNext(string method, int requests)
+    {
+        lock (refusing)
+        {
+            TaskCompletionSource spent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            refusing[method] = (requests, spent);
+            return spent.Task;
+        }
+    }
+
+    private bool Refused(string method)
+    {
+        lock (refusing)
+        {
+            if (!refusing.TryGetValue(method, out (int Left, TaskCompletionSource Spent) next) || next.Left == 0)
+            {
+                return false;
+            }
+            refusing[method] = (next.Left - 1, next.Spent);
+            if (next.Left == 1)
+            {
+                next.Spent.SetResult();
+            }
+            return true;
+        }
+    }
+
     private async Task<T?> InvokeAsync<T>(string method, object parameters, CancellationToken cancel)
     {
         try
         {
-            return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel).ConfigureAwait(false);
+            return Refused(method) ? throw new LanguageServerFailed("the language server refused it: as a test asked", method)
+                : await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel).ConfigureAwait(false);
         }
         catch (Exception error) when (Failure(method, error, cancel) is { } failed)
         {
