@@ -115,7 +115,11 @@ public sealed class TestRun : IDisposable
     /// its credential providers and its HTTP cache are the run's, so no test reads the person's feeds or credentials or
     /// writes their nuget.config, nor reads the machine's. The run's nuget.config names nuget.org and the person's package
     /// cache, as theirs did by default, so a restore downloads nothing new, and a folder's own nuget.config still says
-    /// otherwise. dotnet's first run in that home leaves the certificate store and PATH alone.</summary>
+    /// otherwise. The cache is named as NuGet names its default, ending in a separator, so a restore of a project the
+    /// person built (the repository's own, which SelfDebuggingTests' IDE builds) writes the same NuGetPackageRoot into its
+    /// nuget.g.props as theirs did: named without it, every project's props changed, and with them every compile's inputs,
+    /// so that build compiled Passenger's 21 projects again, and so did the person's next build. dotnet's first run in that
+    /// home leaves the certificate store and PATH alone.</summary>
     private static void NuGetHome()
     {
         if (OperatingSystem.IsWindows())
@@ -128,7 +132,7 @@ public sealed class TestRun : IDisposable
         string personal = Environment.GetEnvironmentVariable("DOTNET_CLI_HOME") is { Length: > 0 } given ? given : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         string home = Directory.CreateDirectory(Path.Combine(Root, "home")).FullName;
         string settings = Directory.CreateDirectory(Path.Combine(home, ".nuget", "NuGet")).FullName;
-        string cache = System.Security.SecurityElement.Escape(Path.Combine(personal, ".nuget", "packages"));
+        string cache = System.Security.SecurityElement.Escape(Path.Combine(personal, ".nuget", "packages") + Path.DirectorySeparatorChar);
         File.WriteAllText(Path.Combine(settings, "NuGet.Config"), $"""
             <?xml version="1.0" encoding="utf-8"?>
             <configuration>
