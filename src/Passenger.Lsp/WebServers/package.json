@@ -4,6 +4,7 @@
   "private": true,
   "description": "The language servers Passenger carries under web/ for JavaScript, TypeScript, HTML, CSS and JSON (WebServers.targets).",
   "license": "MIT",
+  "//": "typescript stays on 6 (6.0.3, the newest 6): 7 is TypeScript's native port, which has no tsserver for typescript-language-server to run.",
   "dependencies": {
     "typescript": "6.0.3",
     "typescript-language-server": "6.0.2",
