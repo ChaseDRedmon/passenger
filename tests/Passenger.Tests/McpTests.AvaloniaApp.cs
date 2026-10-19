@@ -143,11 +143,17 @@ public sealed partial class McpTests
         await Call(client, "stop");
     }
 
+    /// <summary>Profiled until it ends by itself once its window has been drawn ("--quit-once-drawn"), not for a time that
+    /// a loaded machine's app may not have drawn in; and an app that draws nothing says so, its frames' count 0 and why.</summary>
     [Fact]
     public async Task An_agent_profiling_an_avalonia_app_reads_its_frames_heaviest_controls_by_their_lines_in_the_folders_xaml()
     {
         await using McpClient client = await Start(["--mcp", appFolder]);
-        JsonElement profiled = await Call(client, "profile", new() { ["seconds"] = 3 });
+        JsonElement undrawn = (await Call(client, "profile", new() { ["arguments"] = "--quit-at-once" })).GetProperty("frames");
+        Assert.True(undrawn.GetProperty("count").GetInt32() == 0 && undrawn.GetProperty("why").GetString() is { Length: > 0 },
+            $"The profile of an Avalonia app that drew nothing did not say why it has no frames: {undrawn}");
+
+        JsonElement profiled = await Call(client, "profile", new() { ["arguments"] = "--quit-once-drawn" });
         JsonElement frames = profiled.GetProperty("frames");
         Assert.True(frames.GetProperty("count").GetInt32() > 0, $"The profile of an Avalonia app has no frames: {frames}");
         string[] places = [.. frames.GetProperty("heaviest").EnumerateArray().Select(c => c.TryGetProperty("xaml", out JsonElement at) ? at.GetString() : null).OfType<string>()];

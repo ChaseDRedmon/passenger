@@ -233,7 +233,8 @@ public sealed partial class PassengerTools
         "Builds and runs a run configuration (the chosen one if none is named) under the sampling profiler from its first instruction, as " +
         "Profile does, until it ends by itself or, with seconds, for that long (then the snapshot is taken and the program goes on). " +
         "Returns the run's length, the hot spots by their own time, and the hot path of the busiest thread, and for an Avalonia app its frames " +
-        "(their UI thread's time, layout and rendering) with the controls heaviest in layout by their own measure and arrange time; the " +
+        "(their UI thread's time, layout and rendering) with the controls heaviest in layout by their own measure and arrange time, or a " +
+        "count of 0 and why when it drew none in that time; the " +
         "Performance Profiler window shows the whole snapshot.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
@@ -248,6 +249,8 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(problem);
         }
         Passenger.Profiler.ProfilingSession running = Session.Profiling!;
+        // An Avalonia app's inspector, which records its frames; null for any other program.
+        LiveTree.LiveApp? inspected = Session.ProfiledApp;
         IReadOnlyList<HeapTypeInfo>? heap = null;
         if (seconds is { } limit)
         {
@@ -282,19 +285,25 @@ public sealed partial class PassengerTools
             snapshot.TracePath,
             heap)
         {
-            Frames = UiFramesOf(snapshot.UiFrames, Math.Clamp(top, 1, 200)),
+            Frames = UiFramesOf(snapshot.UiFrames, Math.Clamp(top, 1, 200), inspected),
         };
 
         ProfileFrame Frame(string method, int total, int self) =>
             new(method, (int)Math.Round(snapshot.Milliseconds(total)), (int)Math.Round(snapshot.Milliseconds(self)));
     });
 
-    /// <summary>An Avalonia app's frames as the profile tool says them, the heaviest controls first; null with none.</summary>
-    private UiFramesInfo? UiFramesOf(IReadOnlyList<Passenger.Profiler.UiFrame> frames, int top)
+    /// <summary>An Avalonia app's frames as the profile tool says them, the heaviest controls first; for an app the
+    /// inspector was given that recorded none, none and why; null for any other program.</summary>
+    private UiFramesInfo? UiFramesOf(IReadOnlyList<Passenger.Profiler.UiFrame> frames, int top, LiveTree.LiveApp? inspected)
     {
         if (frames.Count == 0)
         {
-            return null;
+            return inspected is null ? null : new UiFramesInfo(0, 0, 0, 0, 0, [])
+            {
+                Why = inspected?.ProcessId is null
+                    ? "The app's inspector never connected: it had not started its UI when the snapshot was taken"
+                    : "The app drew no frame while it was profiled: profile it for longer, or until it has shown its window",
+            };
         }
         double[] times = [.. frames.Select(f => f.DurationMs).Order()];
         IEnumerable<Passenger.Profiler.LayoutCost> controls = Passenger.Profiler.UiFrames.ByType(frames).SelectMany(type => type.Controls);
@@ -430,7 +439,11 @@ public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IR
 
 /// <summary>An Avalonia app's frames in a profile: how many, their UI thread's time at the median and at the longest, the time
 /// measuring and arranging and recording what to render in all, and the controls heaviest in layout by their own time.</summary>
-public sealed record UiFramesInfo(int Count, double MedianMs, double LongestMs, double LayoutMs, double RenderMs, IReadOnlyList<ControlLayoutInfo> Heaviest);
+public sealed record UiFramesInfo(int Count, double MedianMs, double LongestMs, double LayoutMs, double RenderMs, IReadOnlyList<ControlLayoutInfo> Heaviest)
+{
+    /// <summary>Why there are none, when there are none.</summary>
+    public string? Why { get; init; }
+}
 
 /// <summary>A control's layout in a profile: Type#Name, its measures and arranges with their time, its own time without
 /// what it measured or arranged in turn, and its XAML's file:line when the app's build recorded it.</summary>
