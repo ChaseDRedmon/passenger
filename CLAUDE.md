@@ -611,7 +611,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   console, and `profile` takes `attach`. The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
-  agent joins), a window's own socket under the state folder (`AgentSocket`, open from the window's start but for
+  agent joins), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
+  folder, macOS's by `confstr` whatever TMPDIR an agent has, else XDG_RUNTIME_DIR or /tmp, named by a hash of the user and
+  the state folder, mode 0700 and used only once its mode is the user's to set, so a socket's path stays within macOS's
+  104 bytes whatever PASSENGER_SETTINGS is, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
   `--no-mcp` and a screenshot without `--agent`), and `--mcp-attach [PID] [FOLDER]` (`McpProxy`: the agent's server for
   its whole session, answering initialize and tools/list from `McpHost.ToolMethods` and joining, at a tool call, only a
   window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
@@ -628,16 +631,23 @@ window or takes the focus; it shows everything but the system's own window chrom
   this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy. `McpHost.Instructions` tell an agent to
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
-  angle brackets never unicode escapes). `edit` replaces text in one file as the editor does (found once as written,
+  angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
+  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after), so it says each thing once: the
+  element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
+  own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
   editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
   there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
   (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
   names its errors (`WithBuildErrors`); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
-  for first. Usability pass (#236): an agent's `--mcp-attach` with no window open starts the person's Passenger in a
-  window they see, so a pass drives `--mcp FOLDER` (or `--mcp-attach` with `PASSENGER_START=headless` and a state
-  folder short enough for its socket, as `TestRun` sets).
+  for first. `nuget_install`/`nuget_remove` answer a `PackageChange`: the version installed and the files that changed
+  (the project, the nearest Directory.Packages.props). `profile`'s hot spots in the folder's code carry `source`
+  (path:line of the method's first sequence point: `Profiler/MethodSources` reads the module's PDB by the trace's
+  module path and method token, `HotSpot.Code`). A resume of a debugged test run (`debug_continue`, `debug_step`)
+  whose host ends waits for the run and answers its tally as `tests_run` does (`DebugSnapshot.Tests`). Usability pass
+  (#236): an agent's `--mcp-attach` with no window open starts the person's Passenger in a window they see, so a pass
+  drives `--mcp FOLDER` (or `--mcp-attach` with `PASSENGER_START=headless` and a state of its own, as `TestRun` sets).
 - Attach to Process: `MainWindow.Attach.cs` (`Debugging/AttachToProcessDialog`, Reattach, the recently attached);
   `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
   on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows). An attached session is
@@ -905,7 +915,8 @@ by hand, a lone `TextDocument`, `LineDiff`, `CommitGraph`, `Snippet.Parse`); the
 exception.
 
 A run keeps to a folder of its own (`TestRun`, set up by a module initializer before anything starts): the IDE's state
-(`PASSENGER_SETTINGS`: its log, the language servers' logs, agents' sockets, profiler snapshots), every test's
+(`PASSENGER_SETTINGS`: its log, the language servers' logs, profiler snapshots; agents' sockets in the folder named
+for it), every test's
 folders (`TestFolders.Create`) and the shells' history, with an empty Git configuration in place of the person's
 (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`); on macOS and Linux NuGet's home is the run's too, its package cache named
 as NuGet names the default, ending in a separator, so a restore of the repository's own projects (SelfDebuggingTests')
@@ -1038,7 +1049,7 @@ the tests check against the version the SDK's KnownFrameworkReference gives the 
 pin when an SDK changes it; off Windows the app sets EnableWindowsTargeting and MarkupCompile builds it there too.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
-project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
+project through it, others attach to a window with `--mcp-attach` (its sockets in the folder named for the run's
 `PASSENGER_SETTINGS`) and change what the window shows, once it lets them in and the person answers its questions.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
 client can drop its own when the call's token is cancelled. `McpTests.AvaloniaApp.cs` drive `tests/Debuggees/AgentApp`
