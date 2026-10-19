@@ -209,6 +209,56 @@ public sealed class IndentationTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Enter_in_xaml_and_html_indents_by_the_tags_a_level_in_from_a_start_tag_back_after_a_closed_one_and_under_a_first_attribute()
+    {
+        Write("Entering.axaml", "<Window xmlns=\"https://github.com/avaloniaui\"\n        Title=\"Enter\">\n    <StackPanel>\n"
+            + "        <Button Content=\"One\"\n                Width=\"80\" />\n        <Border></Border>\n    </StackPanel>\n</Window>\n");
+        MainWindow window = Open("Entering.axaml");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+
+        // Between a start tag and its end tag: a line a level in, the end tag on its own at the element's indentation.
+        PlaceAfter(editor, "<Border>");
+        Ui.Press(window, "ENTER");
+        Assert.True(Text(editor).Contains("        <Border>\n            \n        </Border>\n", StringComparison.Ordinal),
+            $"Enter between <Border> and </Border> did not open a line a level in with the end tag below:\n{Text(editor)}");
+        Assert.Equal(new TextPosition(6, 12), editor.CaretPosition);
+
+        // After a self-closing tag whose attributes line up under its first, a sibling's indentation, not the attributes'.
+        PlaceAfter(editor, "Width=\"80\" />");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<Separator />");
+        Assert.True(Text(editor).Contains("                Width=\"80\" />\n        <Separator />\n", StringComparison.Ordinal),
+            $"Enter after a self-closing tag lined the next element up under its attributes:\n{Text(editor)}");
+
+        // Inside a tag, under its first attribute; and Shift+Enter on a start tag's line opens a line a level in.
+        PlaceAfter(editor, "<Button Content=\"One\"");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("Height=\"20\"");
+        Assert.True(Text(editor).Contains("        <Button Content=\"One\"\n                Height=\"20\"\n                Width=\"80\" />", StringComparison.Ordinal),
+            $"Enter after a tag's attribute did not line the next up under the first:\n{Text(editor)}");
+        PlaceAfter(editor, "    <Stack");
+        Ui.Press(window, "shift ENTER");
+        window.KeyTextInput("<TextBlock />");
+        Assert.True(Text(editor).Contains("    <StackPanel>\n        <TextBlock />\n        <Button", StringComparison.Ordinal),
+            $"Shift+Enter on <StackPanel>'s line did not open a line a level in:\n{Text(editor)}");
+        window.Close();
+
+        // HTML's void elements never close, so the line after one stays beside it.
+        Write("page.html", "<html>\n<head>\n    <meta charset=\"utf-8\">\n</head>\n</html>\n");
+        window = Open("page.html");
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<head>");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<base href=\"/\">");
+        PlaceAfter(editor, "<meta charset=\"utf-8\">");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<title>Page</title>");
+        Assert.True(Text(editor).Contains("<head>\n    <base href=\"/\">\n    <meta charset=\"utf-8\">\n    <title>Page</title>\n</head>", StringComparison.Ordinal),
+            $"Enter in the HTML's head did not indent its elements a level in from <head>, each beside the last:\n{Text(editor)}");
+        window.Close();
+    }
+
     private void Write(string name, string text)
     {
         string path = Path.Combine(folder, name);

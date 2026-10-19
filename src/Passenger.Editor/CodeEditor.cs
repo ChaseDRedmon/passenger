@@ -340,6 +340,9 @@ public sealed partial class CodeEditor : Control
     /// no line comment comments a line with it.</summary>
     public (string Start, string End)? BlockComment { get; set; } = ("/*", "*/");
 
+    /// <summary>Which markup this document's language is, whose tags Enter's indentation follows; none for code.</summary>
+    public MarkupKind Markup { get; set; }
+
     public bool IsReadOnly { get; set; }
 
     /// <summary>Whether the gutter shows line numbers; a console's output goes without.</summary>

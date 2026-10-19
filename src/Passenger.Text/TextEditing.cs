@@ -155,8 +155,9 @@ public static class TextEditing
     /// <summary>Enter: a line break carrying the line's indentation, one level more after an opening
     /// bracket, and the closer pushed to its own line when the caret sat between a pair. Spaces right
     /// after the caret go, up to the next caret, so the new line starts at its indentation; from inside the
-    /// indentation, that is the whole line's, which the text moved down keeps.</summary>
-    public static EditPlan NewLine(TextSnapshot text, SelectionSet selections, string eol, IndentOptions indent)
+    /// indentation, that is the whole line's, which the text moved down keeps. In <paramref name="markup"/> the tags
+    /// decide instead: a level in after a start tag, its end tag pushed to a line of its own at the element's.</summary>
+    public static EditPlan NewLine(TextSnapshot text, SelectionSet selections, string eol, IndentOptions indent, MarkupKind markup = MarkupKind.None)
     {
         List<Replacement> replacements = [];
         for (int i = 0; i < selections.Count; i++)
@@ -178,7 +179,13 @@ public static class TextEditing
             int opener = before > line.Start ? Openers.IndexOf(text[before - 1]) : -1;
             string extra = opener >= 0 ? indent.Unit : string.Empty;
 
-            if (opener >= 0 && next == Closers[opener])
+            if (markup != MarkupKind.None && MarkupIndent.ForNewLine(text, s.Start, end, limit, markup, indent) is { } tags)
+            {
+                string inserted = eol + tags.Indent + (tags.EndTagIndent is { } endTag ? eol + endTag : string.Empty);
+                int caret = eol.Length + tags.Indent.Length;
+                replacements.Add(new Replacement(s.Start, end, inserted, caret, caret, i));
+            }
+            else if (opener >= 0 && next == Closers[opener])
             {
                 string inserted = eol + lineIndent + extra + eol + lineIndent;
                 int caret = eol.Length + lineIndent.Length + extra.Length;
@@ -194,8 +201,9 @@ public static class TextEditing
     }
 
     /// <summary>Shift+Enter (<paramref name="above"/> false) or Ctrl+Enter: a new indented line below
-    /// or above the caret's line, wherever on it the caret is.</summary>
-    public static EditPlan StartNewLine(TextSnapshot text, SelectionSet selections, string eol, IndentOptions indent, bool above)
+    /// or above the caret's line, wherever on it the caret is; below one in <paramref name="markup"/>, indented as Enter
+    /// at the line's end indents it.</summary>
+    public static EditPlan StartNewLine(TextSnapshot text, SelectionSet selections, string eol, IndentOptions indent, bool above, MarkupKind markup = MarkupKind.None)
     {
         List<Replacement> replacements = [];
         HashSet<int> lines = [];
@@ -216,7 +224,9 @@ public static class TextEditing
             {
                 int trimmed = TextNavigation.WhitespaceBefore(text, line, line.End);
                 bool opens = trimmed > line.Start && Openers.Contains(text[trimmed - 1]);
-                string inserted = eol + lineIndent + (opens ? indent.Unit : string.Empty);
+                string inserted = markup != MarkupKind.None && MarkupIndent.ForNewLine(text, line.End, line.End, line.End, markup, indent) is { } tags
+                    ? eol + tags.Indent
+                    : eol + lineIndent + (opens ? indent.Unit : string.Empty);
                 replacements.Add(new Replacement(line.End, line.End, inserted, inserted.Length, inserted.Length, i));
             }
         }

@@ -250,6 +250,7 @@ public sealed class EditorGroup : DockPanel
         (SelectionSet selections, Vector scroll) = views.TryGetValue(document, out var view) ? view : (document.Selections, document.Scroll);
         Editor.LineCommentPrefix = document.Language.LineComment;
         Editor.BlockComment = document.Language.BlockComment;
+        Editor.Markup = document.Language.Markup;
         Editor.Indent = document.Indentation.Options;
         Editor.ReindentsPaste = document.Language.ReindentsPaste;
         Editor.ShowWhitespaces = document.ShowWhitespaces;
@@ -434,6 +435,7 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.Path):
                 Editor.LineCommentPrefix = document.Language.LineComment;
                 Editor.BlockComment = document.Language.BlockComment;
+                Editor.Markup = document.Language.Markup;
                 Editor.ReindentsPaste = document.Language.ReindentsPaste;
                 break;
             case nameof(OpenDocument.Indentation):

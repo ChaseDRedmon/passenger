@@ -805,9 +805,17 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
     /// code blocks, plain text).</summary>
     public bool ReindentsPaste => Name is not ("Text" or "Markdown");
 
+    /// <summary>Which markup the language is, whose tags indentation follows: XML's (XAML, MSBuild) or HTML's.</summary>
+    public MarkupKind Markup => Name switch
+    {
+        "XML" => MarkupKind.Xml,
+        "HTML" => MarkupKind.Html,
+        _ => MarkupKind.None,
+    };
+
     /// <summary>The indentation a file's own lines show, read as tags where the language is markup.</summary>
     public IndentOptions? Detect(ReadOnlySpan<char> text) =>
-        Passenger.Text.Indentation.Detect(text, Indent.TabWidth, markup: Name is "XML" or "HTML");
+        Passenger.Text.Indentation.Detect(text, Indent.TabWidth, markup: Markup != MarkupKind.None);
 
     private static readonly Language Xml = new("XML", null, 2, "<!--", "-->");
 
