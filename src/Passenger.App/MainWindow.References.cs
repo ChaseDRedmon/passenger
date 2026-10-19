@@ -51,6 +51,11 @@ public partial class MainWindow
         {
             return null;
         }
+        if (SaveBeforeWriting([project]) is { } unsaved)
+        {
+            status.Text = $"{name} could not be changed: {unsaved}";
+            return unsaved;
+        }
         List<string> said = [];
         try
         {
@@ -66,10 +71,12 @@ public partial class MainWindow
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             said.Add($"{name} could not be changed: {error.Message}");
+            FollowWritten([project]);
             ReloadSolution();
             status.Text = string.Join("; ", said);
             return error.Message;
         }
+        FollowWritten([project]);
         ReloadSolution();
         status.Text = string.Join("; ", said);
         return null;
@@ -84,15 +91,16 @@ public partial class MainWindow
         {
             return false;
         }
-        string? problem;
+        string? problem = SaveBeforeWriting([project]);
         try
         {
-            problem = ProjectEdits.RemoveReference(project, referenced);
+            problem ??= ProjectEdits.RemoveReference(project, referenced);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             problem = error.Message;
         }
+        FollowWritten([project]);
         if (problem is null)
         {
             ReloadSolution();

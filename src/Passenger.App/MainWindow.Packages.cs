@@ -21,7 +21,13 @@ public partial class MainWindow
             HeaderTools = nuget.Tabs,
             Menus = [new MenuPlace("Tools", 0, 0)],
         });
-        nuget.Changed += (_, _) => ReloadSolution();
+        nuget.SaveFirst = () => Editors.SaveAll();
+        nuget.Changed += (_, _) =>
+        {
+            // dotnet add package wrote the project, and Directory.Packages.props under central management.
+            FollowWritten(Editors.Documents.Select(d => d.Path).Where(MSBuild.MSBuildFiles.Is));
+            ReloadSolution();
+        };
         nuget.LinkClicked += (_, link) => Browse(link);
     }
 

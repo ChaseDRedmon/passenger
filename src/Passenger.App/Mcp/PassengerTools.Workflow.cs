@@ -208,6 +208,8 @@ public sealed partial class PassengerTools
         PackageManager manager = new();
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
+        // What dotnet add package rewrites holds the open files' edits, as the NuGet window's install does.
+        Editors.SaveAll();
         bool done = await manager.InstallAsync(chosen.Path, id, at);
         window.FollowWritten(PackageFiles(chosen));
         Session.ReadAgain();
@@ -221,6 +223,7 @@ public sealed partial class PassengerTools
         PackageManager manager = new();
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
+        Editors.SaveAll();
         bool done = await manager.RemoveAsync(chosen.Path, id);
         window.FollowWritten(PackageFiles(chosen));
         Session.ReadAgain();

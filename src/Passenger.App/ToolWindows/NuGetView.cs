@@ -158,6 +158,10 @@ public sealed class NuGetView : DockPanel
     /// <summary>Raised after a project's packages changed, so the solution is read again.</summary>
     public event EventHandler? Changed;
 
+    /// <summary>Saves the open files before a change rewrites a project or a nuget.config, so what is rewritten holds their
+    /// edits.</summary>
+    public Action? SaveFirst { get; set; }
+
     /// <summary>An advisory's link clicked, for the browser.</summary>
     public event EventHandler<Uri>? LinkClicked;
 
@@ -525,6 +529,7 @@ public sealed class NuGetView : DockPanel
         bool done;
         try
         {
+            SaveFirst?.Invoke();
             done = await change();
         }
         finally

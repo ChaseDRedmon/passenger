@@ -94,6 +94,22 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Files the IDE itself is about to write on disk (a project's references or items, the solution's entries):
+    /// those open with unsaved edits are saved first, so what is written holds the edits and no File Cache Conflict asks
+    /// afterwards which of the two to keep, losing the other. Null once saved, else why not, and nothing is to be written.</summary>
+    private string? SaveBeforeWriting(IEnumerable<string> paths)
+    {
+        HashSet<string> writing = new(paths.Select(PathNames.Canonical), StringComparer.FromComparison(PathNames.Comparison));
+        foreach (OpenDocument document in Editors.Documents.Where(d => d.IsModified && writing.Contains(d.Path)).ToList())
+        {
+            if (!Editors.Save(document))
+            {
+                return $"{document.Name} could not be saved first";
+            }
+        }
+        return null;
+    }
+
     /// <summary>An open file changed on disk: its text is taken, or with unsaved edits the person is asked which to keep.</summary>
     private void FollowDisk(OpenDocument document)
     {

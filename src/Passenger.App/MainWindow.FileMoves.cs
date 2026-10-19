@@ -184,7 +184,15 @@ public partial class MainWindow
             recording?.Watch(project.Path);
             try
             {
-                ProjectEdits.MoveItems(project.Path, moved);
+                if (SaveBeforeWriting([project.Path]) is { } unsaved)
+                {
+                    return $"{Path.GetFileName(project.Path)} could not follow the files moved: {unsaved}";
+                }
+                if (ProjectEdits.MoveItems(project.Path, moved))
+                {
+                    // Open, it takes the text now, inside the command, so the command's undo takes it back too.
+                    FollowWritten([project.Path]);
+                }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {

@@ -270,6 +270,69 @@ public sealed class SolutionViewTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_project_file_and_the_solution_open_with_unsaved_edits_keep_them_through_add_reference_and_new_solution_folder_with_no_question()
+    {
+        string app = Path.Combine(folder, "Shop.App", "Shop.App.csproj");
+        string core = Path.Combine(folder, "Shop.Core", "Shop.Core.csproj");
+        string solution = Path.Combine(folder, "Shop.slnx");
+        // The project names a file of its own, which a rename makes it follow.
+        Write("Shop.App/Shop.App.csproj", Executable.Replace("</Project>", "  <ItemGroup>\r\n    <None Update=\"notes.txt\" CopyToOutputDirectory=\"PreserveNewest\" />\r\n  </ItemGroup>\r\n\r\n</Project>", StringComparison.Ordinal));
+        Write("Shop.App/notes.txt", "notes\n");
+        MainWindow window = Open();
+        List<string> conflicts = [];
+        // Were it asked, Keep Memory Changes: what the person typed is what they would keep.
+        window.AskConflict = document =>
+        {
+            conflicts.Add(document.Name);
+            return Task.FromResult(false);
+        };
+
+        // The project file edited and not saved, then Add, Reference... on its project.
+        window.OpenFile(app);
+        Typing.Replace(window, ">Exe<", ">WinExe<");
+        OpenDocument project = window.EditorArea.Active!;
+        Assert.True(project.IsModified);
+        Heard(window, app, () => Assert.Null(window.SetReferences(app, [core])));
+        Quiet(window);
+        string written = File.ReadAllText(app);
+        Assert.True(conflicts.Count == 0, $"Passenger's own Add Reference asked which to keep of {string.Join(", ", conflicts)}, as if another program had changed it");
+        Assert.True(written.Contains("<OutputType>WinExe</OutputType>", StringComparison.Ordinal), $"The unsaved edit to the project file is not in it after Add Reference:\n{written}");
+        Assert.True(written.Contains("<ProjectReference Include=\"..\\Shop.Core\\Shop.Core.csproj\" />", StringComparison.Ordinal), $"The reference added is not in the project file:\n{written}");
+        Assert.Equal(written.TrimStart('﻿'), project.Text.Snapshot.ToString());
+        Assert.False(project.IsModified, "The project file shows unsaved changes it does not have");
+
+        // The solution edited and not saved, then New Solution Folder.
+        window.OpenFile(solution);
+        Typing.Replace(window, "<Solution>", "<Solution><!-- shop -->");
+        OpenDocument slnx = window.EditorArea.Active!;
+        Heard(window, solution, () => Assert.Null(window.AddSolutionFolder(null, "docs")));
+        Quiet(window);
+        written = File.ReadAllText(solution);
+        Assert.True(conflicts.Count == 0, $"Passenger's own New Solution Folder asked which to keep of {string.Join(", ", conflicts)}");
+        Assert.True(written.Contains("<Solution><!-- shop -->", StringComparison.Ordinal), $"The unsaved edit to the solution is not in it after New Solution Folder:\n{written}");
+        Assert.True(written.Contains("<Folder Name=\"/docs/\" />", StringComparison.Ordinal), $"The folder added is not in the solution:\n{written}");
+        Assert.Equal(written, slnx.Text.Snapshot.ToString());
+        Assert.False(slnx.IsModified, "The solution shows unsaved changes it does not have");
+
+        // The project file shown, a file it names renamed: its item follows in the open file, and Undo takes both back.
+        window.OpenFile(app);
+        List<string> undoing = Answer(window);
+        string notes = Path.Combine(folder, "Shop.App", "notes.txt");
+        Heard(window, app, () => Assert.Null(window.Rename(notes, "readme.txt")));
+        Quiet(window);
+        Assert.Empty(conflicts);
+        Assert.Contains("<None Update=\"readme.txt\"", project.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(["Undo"], undoing);
+        Assert.True(File.Exists(notes), $"Undo did not rename readme.txt back: {window.Status}");
+        window.EditorArea.SaveAll();
+        Assert.True(File.ReadAllText(app).Contains("<None Update=\"notes.txt\"", StringComparison.Ordinal),
+            $"Undoing the rename left the project naming readme.txt, which is gone:\n{File.ReadAllText(app)}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Add_class_interface_writes_each_of_Riders_kinds_of_type_in_its_folders_namespace()
     {
         string models = Path.Combine(folder, "Shop.App", "Models");

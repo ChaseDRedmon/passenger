@@ -255,6 +255,7 @@ public sealed class NuGetSourcesView : Grid
         problem.IsVisible = false;
         try
         {
+            owner.SaveFirst?.Invoke();
             await BackgroundWork.Run(change);
         }
         catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or XmlException or InvalidOperationException)

@@ -131,6 +131,11 @@ public partial class MainWindow
         {
             return null;
         }
+        if (SaveBeforeWriting([solution.Path]) is { } unsaved)
+        {
+            status.Text = $"{solution.Name} could not be changed: {unsaved}";
+            return null;
+        }
         List<string> added = [];
         List<string> refused = [];
         foreach (string path in picked.Select(PathNames.Canonical))
@@ -144,6 +149,7 @@ public partial class MainWindow
                 added.Add(path);
             }
         }
+        FollowWritten([solution.Path]);
         if (added.Count > 0)
         {
             ReloadSolution();
@@ -172,7 +178,8 @@ public partial class MainWindow
         {
             return "No solution is open";
         }
-        string? problem = Change(() => edit(solution.Path), solution.Name);
+        string? problem = SaveBeforeWriting([solution.Path]) is { } unsaved ? $"{solution.Name} could not be changed: {unsaved}" : Change(() => edit(solution.Path), solution.Name);
+        FollowWritten([solution.Path]);
         if (problem is null)
         {
             ReloadSolution();
