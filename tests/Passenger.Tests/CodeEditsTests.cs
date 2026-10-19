@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -213,6 +214,45 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Ui.WaitFor(() => !Text().Contains("Twice(int", StringComparison.Ordinal), "the used method to be deleted anyway");
         Assert.Equal("static class Calc\n{\n    public static int Four() => Twice(2);\n}\n", Text());
         Assert.Equal("Deleted the method 'Twice', leaving 2 usages to fix", window.Status);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Safe_delete_from_a_usage_of_a_method_declared_in_a_file_not_open_is_undone_from_the_solution_view()
+    {
+        string calc = project.PathOf("Calc.cs");
+        string before = File.ReadAllText(calc);
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        List<string> asked = [];
+        PlaceAfter(editor, "Calc.Twi");
+        editor.Focus();
+        Ui.Run(window, AppActions.SafeDelete);
+        Click(Asked(window), "Delete Anyway");
+        Ui.WaitFor(() => !File.ReadAllText(calc).Contains("Twice(int", StringComparison.Ordinal), "Twice deleted from Calc.cs, which is not open");
+        Assert.DoesNotContain(window.EditorArea.Documents, d => d.Name == "Calc.cs");
+
+        // Undo in the Solution view puts the declaration back, once asked.
+        window.Confirm = (title, _, _) =>
+        {
+            asked.Add(title);
+            return Task.FromResult(true);
+        };
+        window.ExplorerView.Reveal(Passenger.Core.PathNames.Canonical(calc));
+        Ui.Settle();
+        Passenger.App.Explorer.ExplorerNode row = Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Calc.cs");
+        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
+        rows.ScrollIntoView(row);
+        Ui.Settle();
+        Control item = rows.ContainerFromItem(row)!;
+        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(["Undo"], asked);
+        string after = File.ReadAllText(calc);
+        Assert.True(after == before, $"Undo did not put back what Safe Delete took out of Calc.cs, which was not open, so only Local History has it:\n{after}");
         window.Close();
     }
 

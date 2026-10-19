@@ -76,6 +76,26 @@ public static class WorkspaceEdits
         return files;
     }
 
+    /// <summary>The edit applied as one command of <see cref="EditorArea.Commands"/> under a name (a fix all's title): the
+    /// files not open that it writes or makes are followed, so Undo takes all of it back at once, as Rider's global undo
+    /// does, where they could otherwise come back only from Local History. The number of files changed.</summary>
+    public static int ApplyAsCommand(EditorArea editors, JsonElement edit, string name, Asked? asked = null, List<string>? dropped = null)
+    {
+        using CommandHistory.Recording recording = editors.Commands.Record(name);
+        foreach (FileEdits change in Shapes.WorkspaceEdit(edit))
+        {
+            if (change.Operation is not { } operation)
+            {
+                recording.Watch(DocumentUris.ToPath(change.Uri));
+            }
+            else if (Resource.Read(operation) is { Kind: "create" } made)
+            {
+                recording.Watch(made.Path);
+            }
+        }
+        return Apply(editors, edit, asked, dropped);
+    }
+
     /// <summary>Edits in an open file's text as it is now: through the active editor when it is the file shown there, so
     /// its carets follow as typing's would, else to the document, one undo step.</summary>
     public static void ApplyTo(EditorArea editors, OpenDocument open, IReadOnlyList<TextEdit> edits)

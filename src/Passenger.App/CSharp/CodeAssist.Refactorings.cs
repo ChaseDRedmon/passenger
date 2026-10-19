@@ -294,6 +294,9 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, $"Safe Delete was not applied: {Path.GetFileName(doomed.Path)} changed meanwhile");
                 return;
             }
+            // A command of its own, as the file has no undo: Undo in the Solution view puts the declaration back.
+            using Editors.CommandHistory.Recording recording = editors.Commands.Record("Safe Delete");
+            recording.Watch(doomed.Path);
             _ = FileText.Save(doomed.Path, doomed.Text.Replace(removal.Range.Start, removal.Range.Length, string.Empty).ToString(), file.Encoding, file.HasBom);
         }
         Message?.Invoke(this, $"Deleted the {removal.Kind} '{removal.Name}'{uses}");

@@ -253,7 +253,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return $"{what} changes nothing it can apply{unrun}";
         }
-        int files = WorkspaceEdits.Apply(Editors, edit);
+        int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title);
         Editors.SaveAll();
         return $"Applied {what} to {files} file{(files == 1 ? "" : "s")}{unrun}";
     });

@@ -1808,14 +1808,15 @@ public sealed partial class CodeAssist
         return await Apply(document, action, null, title, asked);
     }
 
-    /// <summary>A workspace edit applied, its open files' edits carried through what was typed since the request; one
-    /// whose edited text changed meanwhile is left alone and named in the status bar. Whether every file took it.</summary>
+    /// <summary>A workspace edit applied, its open files' edits carried through what was typed since the request, as one
+    /// command that Undo takes back whole (a fix all's files not open with it); one whose edited text changed meanwhile is
+    /// left alone and named in the status bar. Whether every file took it.</summary>
     private bool ApplyWorkspace(System.Text.Json.JsonElement edit, Asked? asked, string what)
     {
         List<string> dropped = [];
         try
         {
-            WorkspaceEdits.Apply(editors, edit, asked, dropped);
+            WorkspaceEdits.ApplyAsCommand(editors, edit, what, asked, dropped);
         }
         catch (WorkspaceEditFailed failed)
         {

@@ -1272,6 +1272,43 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Fix_all_in_the_solution_reaching_a_file_not_open_is_undone_in_every_file_it_changed_at_once()
+    {
+        const string Casts = "static class Casts\n{\n    public static int Three() => (int)3;\n}\n";
+        string closed = project.Write("Casts.cs", Casts);
+        MainWindow window = project.Open("Loop.cs");
+        List<string> asked = [];
+        window.Confirm = (title, _, _) =>
+        {
+            asked.Add(title);
+            return Task.FromResult(true);
+        };
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument loop = window.EditorArea.Active!;
+        PlaceAfter(editor, "int total = 0;");
+        window.KeyTextInput(" int one = (int)1;");
+        string typed = editor.Document.Snapshot.ToString();
+        Ui.WaitFor(() => window.CSharpService!.For(loop)!.Diagnostics.Any(d => d.Code?.ToString() == "IDE0004"), "the cast found redundant");
+        PlaceAfter(editor, "(in");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Fix All: Remove Unnecessary Cast"), "the offer to remove every such cast");
+        Choose(window, "Fix All: Remove Unnecessary Cast");
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Solution"), "the scopes Fix All may cover");
+        Choose(window, "Solution");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("int one = 1;", StringComparison.Ordinal)
+            && File.ReadAllText(closed).Contains("=> 3;", StringComparison.Ordinal), "the cast removed in the open file and in the one not open");
+
+        // Undo in the editor takes the whole Fix All back, the file not open with it, once asked.
+        editor.Focus();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(["Undo"], asked);
+        Assert.Equal(typed, editor.Document.Snapshot.ToString());
+        string after = File.ReadAllText(closed);
+        Assert.True(after == Casts, $"Undo left the Fix All's change in Casts.cs, which was not open, with no way back but Local History:\n{after}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Through_mcp_an_action_with_choices_lists_them_asks_for_one_and_applies_the_one_named()
     {
         string source = File.ReadAllText(project.PathOf("Program.cs"));

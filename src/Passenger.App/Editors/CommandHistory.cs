@@ -9,8 +9,8 @@ namespace Passenger.App.Editors;
 /// <summary>Rider's undo of a command that changed more than one file, moved one or made one, as a rename or an extracted
 /// interface does: Undo where the command is the last change (an editor of one of its files, or the Solution view) takes
 /// all of it back at once, the files it moved going back, every file's text as it was and the files it made gone, and Redo
-/// makes all of it again, each only while every file is still as the command left it. A command that changed one file's
-/// text alone is that file's own undo step.</summary>
+/// makes all of it again, each only while every file is still as the command left it. A command that changed one open
+/// file's text alone is that file's own undo step; one file not open, which has no undo of its own, is a command.</summary>
 public sealed class CommandHistory
 {
     /// <summary>The most commands kept, the oldest going first, as IntelliJ's registry has undo.globalUndoLimit.</summary>
@@ -24,7 +24,7 @@ public sealed class CommandHistory
 
     /// <summary>Follows what a command changes from now until the recording is disposed: the open files' text, the files
     /// not open it is told it writes or makes (<see cref="Recording.Watch"/>) and the files moved. Kept as a command of its
-    /// own when it changed more than one file, moved one or made one.</summary>
+    /// own when it changed more than one file or one not open, moved one or made one.</summary>
     public Recording Record(string name) => new(this, editors, name);
 
     /// <summary>The command Undo takes back there: in a file's editor, the one whose change is that file's next undo
@@ -273,7 +273,7 @@ public sealed class CommandHistory
     public sealed record TextChange(OpenDocument? Document, string Path, TextSnapshot Before, TextSnapshot After, object? Step);
 
     /// <summary>A command being made: what it changes is followed until it is disposed, then kept when it is one of
-    /// several files or a move.</summary>
+    /// several files, a file not open or a move.</summary>
     public sealed class Recording : IDisposable
     {
         private readonly CommandHistory history;
@@ -336,7 +336,7 @@ public sealed class CommandHistory
                     texts.Add(new TextChange(null, path, before, TextSnapshot.From(after), null));
                 }
             }
-            if (texts.Count > 1 || moves.Count > 0 || created.Count > 0)
+            if (texts.Count > 1 || texts.Any(t => t.Document is null) || moves.Count > 0 || created.Count > 0)
             {
                 history.Keep(new Command(name, texts, made.Moves, created));
             }
