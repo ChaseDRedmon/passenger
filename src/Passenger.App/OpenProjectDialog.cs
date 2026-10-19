@@ -41,7 +41,7 @@ public sealed class OpenProjectDialog : Window
             {
                 new TextBlock { Text = Title, FontWeight = FontWeight.SemiBold },
                 new TextBlock { Text = Question, TextWrapping = TextWrapping.Wrap },
-                // Don't ask again beside the buttons, at the footer's left, as Rider's message dialogs put it.
+                // Don't ask again at the footer's left, beside the buttons, where every dialog of Passenger's has it.
                 DialogFooter.Row(choices, remember),
             },
         };

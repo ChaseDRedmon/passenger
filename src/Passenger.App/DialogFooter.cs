@@ -5,7 +5,7 @@ using Avalonia.Layout;
 namespace Passenger.App;
 
 /// <summary>A dialog's buttons at its foot, at its right, in the two orders Rider lays them in, and what goes beside them
-/// (Don't ask again, a problem the page has) at the row's left, where Rider puts it. Shell.axaml's <c>StackPanel.footer</c>
+/// (Don't ask again, a problem the page has) at the row's left in every dialog. Shell.axaml's <c>StackPanel.footer</c>
 /// spaces the buttons and gives each one minimum width.</summary>
 public static class DialogFooter
 {
