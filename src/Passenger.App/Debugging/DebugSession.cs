@@ -50,6 +50,9 @@ public sealed class DebugSession
     /// <summary>The function breakpoints' last request, until its answer (their new ids) has been read.</summary>
     private Task functionsAnswered = Task.CompletedTask;
 
+    /// <summary>The breakpoint requests a change made while the program runs or is paused sent, until each is answered.</summary>
+    private readonly List<Task> breakpointsSending = [];
+
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Queue<string> errors = new();
@@ -667,8 +670,27 @@ public sealed class DebugSession
         // nothing new: only what changes the request goes back to it.
         if (State is DebugState.Running or DebugState.Paused && disconnected is null && (!sent.TryGetValue(path, out string? last) || last != Signature(path)))
         {
-            _ = SendBreakpointsAsync(path);
+            Sending(SendBreakpointsAsync(path));
         }
+    }
+
+    /// <summary>Every breakpoint change made while the program runs or is paused, answered: the program has them once this
+    /// is done (a request the debugger refused, or the session's end, ends it too). What an agent's breakpoint_set waits for,
+    /// since its next step may come before the request's answer.</summary>
+    public Task BreakpointsAnswered
+    {
+        get
+        {
+            UiThread.Check();
+            breakpointsSending.RemoveAll(t => t.IsCompleted);
+            return Task.WhenAll(breakpointsSending.Append(functionsAnswered).Select(t => t.ContinueWith(_ => { }, TaskScheduler.Default)));
+        }
+    }
+
+    private void Sending(Task request)
+    {
+        breakpointsSending.RemoveAll(t => t.IsCompleted);
+        breakpointsSending.Add(request);
     }
 
     /// <summary>What a file's breakpoints ask of the debugger, at their built lines, to tell a change worth sending.</summary>
@@ -706,7 +728,7 @@ public sealed class DebugSession
         // A report from the debugger raises it too: only what changes the request goes back to it.
         if (State is DebugState.Running or DebugState.Paused && disconnected is null && exceptionsSent != ExceptionSignature())
         {
-            _ = SendExceptionBreakpointsAsync();
+            Sending(SendExceptionBreakpointsAsync());
         }
     }
 
@@ -746,7 +768,7 @@ public sealed class DebugSession
         // A report from the debugger raises it too: only what changes the request goes back to it.
         if (State is DebugState.Running or DebugState.Paused && disconnected is null && DataBreakpointsUnavailable is null && dataSent != DataSignature())
         {
-            _ = SendDataBreakpointsAsync();
+            Sending(SendDataBreakpointsAsync());
         }
     }
 

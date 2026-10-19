@@ -99,6 +99,13 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         stop = await Call(client, "debug_continue");
         Assert.Equal("2", Local(stop, "i"));
 
+        // A breakpoint set while debugging is in the program when the answer comes, which says it bound: the agent's
+        // next step (a click into an app, which goes no way the debugger sees) cannot come before it.
+        JsonElement later = Assert.Single((await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 6 })).EnumerateArray(),
+            b => b.GetProperty("line").GetInt32() == 6);
+        Assert.Equal("bound", later.GetProperty("status").GetString());
+        await Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 6 });
+
         // An edit made while it is paused runs once it goes on, as the window's Resume applies one: Twice(2) and Twice(3)
         // add one each.
         await Call(client, "open_file", new() { ["path"] = "Helper.cs", ["line"] = 6, ["column"] = 25 });

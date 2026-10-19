@@ -483,13 +483,14 @@ public sealed partial class PassengerTools(MainWindow window)
         [Description("Whether a hit stops the program")] bool suspend = true,
         [Description("An exception breakpoint's scenarios: where the exception was thrown (thrownInUserCode, thrownInExternalCode) and how " +
             "it is handled (handledInUserCode, handledInExternalCode, unhandled); it stops when one of each holds")] IReadOnlyList<string>? scenarios = null,
-        CancellationToken cancel = default) => OnUi(cancel, () =>
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         BreakpointStore store = Session.Debug.Breakpoints;
         if (bindingErrors)
         {
             store.Update(store.BindingErrors, enabled: true, suspend, condition, hitCondition, logMessage);
-            return Task.FromResult(ExceptionBreakpoints());
+            await InTheProgram(cancel);
+            return ExceptionBreakpoints();
         }
         if (exception is { Length: > 0 })
         {
@@ -499,12 +500,14 @@ public sealed partial class PassengerTools(MainWindow window)
                 store.SetScenarios(breakpoint, ExceptionScenarioNames.Parse(scenarios));
             }
             store.Update(breakpoint, enabled: true, suspend, condition, hitCondition, logMessage);
-            return Task.FromResult(ExceptionBreakpoints());
+            await InTheProgram(cancel);
+            return ExceptionBreakpoints();
         }
         (string full, int at) = LinePlace(path, line);
         LineBreakpoint set = store.Set(full, at, attribute is { Length: > 0 } ? attribute : null);
         store.Update(set, enabled: true, suspend, condition, hitCondition, logMessage);
-        return Task.FromResult(Breakpoints(full));
+        await InTheProgram(cancel);
+        return Breakpoints(full);
     });
 
     [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint", Destructive = false), Description(
@@ -515,14 +518,15 @@ public sealed partial class PassengerTools(MainWindow window)
         [Description("In .axaml, the attribute whose breakpoint to remove")] string? attribute = null,
         [Description("An exception type's full name, in place of a path and line")] string? exception = null,
         [Description("True to turn XAML Binding Errors off, in place of a path and line")] bool bindingErrors = false,
-        CancellationToken cancel = default) => OnUi(cancel, () =>
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         BreakpointStore store = Session.Debug.Breakpoints;
         if (bindingErrors)
         {
             BindingErrorBreakpoint failures = store.BindingErrors;
             store.Update(failures, enabled: false, failures.Suspend, failures.Condition, failures.HitCondition, failures.LogMessage);
-            return Task.FromResult(ExceptionBreakpoints());
+            await InTheProgram(cancel);
+            return ExceptionBreakpoints();
         }
         if (exception is { Length: > 0 })
         {
@@ -530,7 +534,8 @@ public sealed partial class PassengerTools(MainWindow window)
             {
                 store.Remove(breakpoint);
             }
-            return Task.FromResult(ExceptionBreakpoints());
+            await InTheProgram(cancel);
+            return ExceptionBreakpoints();
         }
         (string full, int at) = LinePlace(path, line);
         string? on = attribute is { Length: > 0 } ? attribute : null;
@@ -538,8 +543,23 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             store.Remove(set);
         }
-        return Task.FromResult(Breakpoints(full));
+        await InTheProgram(cancel);
+        return Breakpoints(full);
     });
+
+    /// <summary>How long a breakpoint change waits for the debugger to take it into the program running.</summary>
+    private static readonly TimeSpan BreakpointLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>Waits for the debugger to answer the breakpoint changes just made, so the program has them (and the answer
+    /// says whether each bound) before the agent's next step: a click or key into the app, which goes no other way.</summary>
+    private async Task InTheProgram(CancellationToken cancel)
+    {
+        if (Session.Debug.Session is { State: DebugState.Running or DebugState.Paused } debugged)
+        {
+            await Task.WhenAny(debugged.BreakpointsAnswered, Task.Delay(BreakpointLimit, cancel));
+            cancel.ThrowIfCancellationRequested();
+        }
+    }
 
     [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description(
         "Every breakpoint: the line breakpoints (an .axaml one on an attribute naming it), then the session's data breakpoints (set from " +
