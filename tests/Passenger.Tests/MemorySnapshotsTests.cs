@@ -307,16 +307,40 @@ public sealed class MemorySnapshotsTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void Get_memory_snapshot_of_a_program_on_a_dotnet_newer_than_the_heap_reader_says_why_and_the_program_runs_on()
+    public void A_memory_snapshot_of_a_program_on_dotnet_11_lists_its_objects_and_the_static_that_keeps_them()
     {
-        // .NET 11's runtime is newer than ClrMD 3 reads: the status bar said "Taking a memory snapshot" for good. When the
-        // reader learns .NET 11, this program's snapshot is listed instead, and this test changes to say so.
-        MainWindow window = Profiled("Newer", "Console.WriteLine(\"ready\");\nwhile (Console.ReadLine() is not null)\n{\n}\n", "net11.0");
-        Click(window.ProfilerView, "Get Memory Snapshot");
-        Responsive(() => window.ProfilerView.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
-            "the memory snapshot or why there is none", _ => { });
-        Assert.Equal("No memory snapshot: the program runs on .NET 11.0, newer than the memory profiler can read", window.Status);
-        Assert.False(window.Profiling!.HasExited, "The program profiled ended when its memory snapshot could not be read");
+        // ClrMD 3 refused .NET 11's runtime, so the status bar said "Taking a memory snapshot" for good on every program
+        // the .NET 11 SDK's dotnet new makes; ClrMD 4 reads it.
+        MainWindow window = Profiled("Eleven", """
+            using System.Runtime.CompilerServices;
+            Kept.Fill(100);
+            Console.WriteLine("ready");
+            Console.ReadLine();
+            static class Kept
+            {
+                public static readonly List<Item> Items = [];
+
+                [MethodImpl(MethodImplOptions.NoInlining)]
+                public static void Fill(int count)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        Items.Add(new Item(i));
+                    }
+                }
+            }
+            sealed class Item(int number) { public int Number { get; } = number; }
+            """, "net11.0");
+        MemoryView memory = window.ProfilerView.MemoryPage;
+        Snapshot(window, 1);
+        HeapType items = Assert.Single(memory.TypeRows, t => t.Name == "Item");
+        Assert.Equal(100, items.Count);
+        Focus(memory.TypeList, items);
+        Ui.Press(window, "enter");
+        Ui.WaitFor(() => memory.Set is not null, "the items");
+        Click(memory, "Shortest Paths to Roots");
+        Assert.Equal("Static reference: Kept.Items", memory.PathRows[^1].Node.Text);
+        Assert.False(window.Profiling!.HasExited, "The program profiled ended with its memory snapshot");
         window.Profiling.Kill();
         window.Close();
     }

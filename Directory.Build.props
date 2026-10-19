@@ -28,4 +28,11 @@
     <EnableAppHostPackDownload Condition="'$(RuntimeIdentifier)' == ''">false</EnableAppHostPackDownload>
     <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
   </PropertyGroup>
+  <!-- ClrMD's downloads from symbol servers and their Azure sign-in, which the profiler never takes (HeapGraph's
+       NothingDownloaded): pruned from every restore at the versions ClrMD asks for, so nothing restores or carries them.
+       A ClrMD that asks for newer ones brings them back, to be looked at again. -->
+  <ItemGroup>
+    <PrunePackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PrunePackageReference Include="Microsoft.Security.AntiSSRF" Version="1.0.0" />
+  </ItemGroup>
 </Project>

@@ -1,9 +1,8 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Diagnostics.Runtime;
-using Microsoft.Diagnostics.Runtime.Utilities;
 
 namespace Passenger.Profiler;
 
@@ -130,7 +129,7 @@ internal sealed class HeapGraph
     public static HeapGraph Read(string dump, CancellationToken cancel = default)
     {
         Stopwatch clock = Stopwatch.StartNew();
-        using DataTarget target = DataTarget.LoadDump(dump);
+        using DataTarget target = DataTarget.LoadDump(dump, new DataTargetOptions { FileLocator = NothingDownloaded.Locator });
         if (target.ClrVersions.Length == 0)
         {
             throw new InvalidOperationException("The dump has no .NET runtime in it");
@@ -144,7 +143,7 @@ internal sealed class HeapGraph
         }
         catch (NotSupportedException)
         {
-            // ClrMD refuses a DAC newer than it knows (.NET 11's), which left Get Memory Snapshot saying it was taking one.
+            // A runtime newer than ClrMD knows (.NET 11's for ClrMD 3) left Get Memory Snapshot saying it was taking one.
             throw new InvalidOperationException($"the program runs on .NET {clr.Version.Major}.{clr.Version.Minor}, newer than the memory profiler can read");
         }
         if (!heap.CanWalkHeap)
@@ -161,28 +160,39 @@ internal sealed class HeapGraph
         return graph;
     }
 
-    /// <summary>The runtime in a dump, read through its DAC, which on macOS and Linux stays loaded for the IDE's life.
-    /// ClrMD unloads the DAC with the runtime it read, but the DAC's platform layer leaves a thread-local destructor that
-    /// the system runs as each thread that used it ends: from unmapped memory, once unloaded, which ended the IDE on Linux
-    /// (SIGSEGV) a while after a snapshot, when the thread pool let that thread go.</summary>
+    /// <summary>The runtime in a dump, read through the DAC in the program's own runtime folder (ClrMD names it and leaves
+    /// finding it to its caller), which on macOS and Linux stays loaded for the IDE's life. ClrMD unloads the DAC with the
+    /// runtime it read, but the DAC's platform layer leaves a thread-local destructor that the system runs as each thread
+    /// that used it ends: from unmapped memory, once unloaded, which ended the IDE on Linux (SIGSEGV) a while after a
+    /// snapshot, when the thread pool let that thread go.</summary>
     private static ClrRuntime Runtime(ClrInfo clr)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return clr.CreateRuntime();
-        }
-        OSPlatform platform = OperatingSystem.IsMacOS() ? OSPlatform.OSX : OSPlatform.Linux;
-        // The program's own runtime folder's DAC, chosen as ClrMD chooses it (version unchecked): one it downloads is not kept.
-        string? dac = clr.DebuggingLibraries
+        OSPlatform platform = OperatingSystem.IsWindows() ? OSPlatform.Windows : OperatingSystem.IsMacOS() ? OSPlatform.OSX : OSPlatform.Linux;
+        string? folder = Path.GetDirectoryName(clr.ModuleInfo.FileName);
+        string? dac = string.IsNullOrEmpty(folder) ? null : clr.DebuggingLibraries
             .Where(l => l.Kind == DebugLibraryKind.Dac && l.Platform == platform && l.TargetArchitecture == RuntimeInformation.ProcessArchitecture)
-            .Select(l => l.FileName)
-            .FirstOrDefault(f => Path.IsPathFullyQualified(f) && File.Exists(f));
+            .Select(l => Path.Combine(folder, Path.GetFileName(l.FileName)))
+            .FirstOrDefault(File.Exists);
         if (dac is null)
         {
-            return clr.CreateRuntime();
+            throw new InvalidOperationException($"the program's .NET {clr.Version.Major}.{clr.Version.Minor} has no DAC beside it to read its heap with");
         }
-        KeptDacs.GetOrAdd(dac, NativeLibrary.Load);
+        if (!OperatingSystem.IsWindows())
+        {
+            KeptDacs.GetOrAdd(dac, NativeLibrary.Load);
+        }
         return clr.CreateRuntime(dac, ignoreMismatch: true);
+    }
+
+    /// <summary>ClrMD's file locator for what a dump lacks, which finds nothing: its own downloads from symbol servers,
+    /// and the Azure sign-in it carries for them (left out of the build), are never needed for a program run here.</summary>
+    private sealed class NothingDownloaded : IFileLocator
+    {
+        public static readonly NothingDownloaded Locator = new();
+
+        public string? FindPEImage(string fileName, int buildTimeStamp, int imageSize, bool checkProperties) => null;
+
+        public string? FindPEImage(string fileName, SymbolProperties archivedUnder, ImmutableArray<byte> buildIdOrUUID, OSPlatform originalPlatform, bool checkProperties) => null;
     }
 
     /// <summary>A dump's walk: the objects and references as found, then the roots, then what is reachable.</summary>
@@ -270,23 +280,20 @@ internal sealed class HeapGraph
         /// <summary>Statics first, named by their field, then what the runtime itself counts as roots.</summary>
         public void FindRoots()
         {
-            using (StaticBases bases = StaticBases.Of(runtime))
+            foreach (ClrModule module in runtime.EnumerateModules())
             {
-                foreach (ClrModule module in runtime.EnumerateModules())
+                foreach ((ulong methodTable, int _) in module.EnumerateTypeDefToMethodTableMap())
                 {
-                    foreach ((ulong methodTable, int _) in module.EnumerateTypeDefToMethodTableMap())
+                    if (runtime.GetTypeByMethodTable(methodTable) is not { } type || type.StaticFields.Length == 0)
                     {
-                        if (runtime.GetTypeByMethodTable(methodTable) is not { } type || type.StaticFields.Length == 0)
+                        continue;
+                    }
+                    foreach (ClrStaticField field in type.StaticFields)
+                    {
+                        if (field.IsObjectReference && StaticSlot(field) is var slot and not 0
+                            && runtime.DataTarget.DataReader.ReadPointer(slot) is var value and not 0)
                         {
-                            continue;
-                        }
-                        foreach (ClrStaticField field in type.StaticFields)
-                        {
-                            if (field.IsObjectReference && StaticSlot(type, field, bases) is var slot and not 0
-                                && runtime.DataTarget.DataReader.ReadPointer(slot) is var value and not 0)
-                            {
-                                Add(value, new GcRoot(RootKind.StaticReference, $"{type.Name}.{field.Name}"));
-                            }
+                            Add(value, new GcRoot(RootKind.StaticReference, $"{type.Name}.{field.Name}"));
                         }
                     }
                 }
@@ -313,8 +320,8 @@ internal sealed class HeapGraph
             return frame.Thread is { } thread ? $"{method} (thread #{thread.ManagedThreadId})" : method;
         }
 
-        /// <summary>Where a static reference is kept: ClrMD finds it for runtimes before 9, the DAC's statics base after.</summary>
-        private ulong StaticSlot(ClrType type, ClrStaticField field, StaticBases bases)
+        /// <summary>Where a static reference is kept, once its type's statics are made.</summary>
+        private ulong StaticSlot(ClrStaticField field)
         {
             foreach (ClrAppDomain domain in runtime.AppDomains)
             {
@@ -323,7 +330,7 @@ internal sealed class HeapGraph
                     return address;
                 }
             }
-            return bases.GcStatics(type.MethodTable) is var gc and not 0 ? gc + (ulong)field.Offset : 0;
+            return 0;
         }
 
         private void Add(ulong address, GcRoot root)
@@ -480,70 +487,6 @@ internal sealed class HeapGraph
                 TypeRetained = dominators.TypeRetained,
                 PointerSize = pointerSize,
             };
-        }
-    }
-
-    /// <summary>The DAC's ISOSDacInterface14, which gives a type's statics base on runtimes from 9, where statics moved and
-    /// ClrMD 3 no longer finds them. ClrMD keeps its DAC to itself, so it is reached by reflection; when that fails
-    /// statics go unnamed, their objects still found through the handle that holds the statics' storage.</summary>
-    private sealed class StaticBases : IDisposable
-    {
-        private static readonly Guid Interface14 = new("9aa22aca-6dc6-4a0c-b4e0-70d2416b9837");
-        private readonly IntPtr sos14;
-        private readonly GetStaticBaseAddress? call;
-        private readonly Dictionary<ulong, ulong> bases = [];
-
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate int GetStaticBaseAddress(IntPtr self, ulong methodTable, out ulong nonGcStatics, out ulong gcStatics);
-
-        private StaticBases(IntPtr sos14)
-        {
-            this.sos14 = sos14;
-            if (sos14 != IntPtr.Zero)
-            {
-                IntPtr vtable = Marshal.ReadIntPtr(sos14);
-                call = Marshal.GetDelegateForFunctionPointer<GetStaticBaseAddress>(Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
-            }
-        }
-
-        public static StaticBases Of(ClrRuntime runtime)
-        {
-            try
-            {
-                object? services = typeof(ClrRuntime).GetField("_services", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(runtime);
-                if (services?.GetType().GetField("_sos", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(services) is CallableCOMWrapper sos)
-                {
-                    Guid wanted = Interface14;
-                    return new StaticBases(sos.QueryInterface(in wanted));
-                }
-            }
-            catch (Exception error) when (error is TargetException or FieldAccessException or InvalidCastException)
-            {
-            }
-            return new StaticBases(IntPtr.Zero);
-        }
-
-        /// <summary>The address of a type's GC statics, or 0.</summary>
-        public ulong GcStatics(ulong methodTable)
-        {
-            if (call is null)
-            {
-                return 0;
-            }
-            if (!bases.TryGetValue(methodTable, out ulong gc))
-            {
-                gc = call(sos14, methodTable, out _, out ulong found) == 0 ? found : 0;
-                bases[methodTable] = gc;
-            }
-            return gc;
-        }
-
-        public void Dispose()
-        {
-            if (sos14 != IntPtr.Zero)
-            {
-                Marshal.Release(sos14);
-            }
         }
     }
 

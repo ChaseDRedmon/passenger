@@ -477,7 +477,7 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Diagnostics.NETCore.Client": "[0.2.661903, )",
-          "Microsoft.Diagnostics.Runtime": "[3.1.512801, )",
+          "Microsoft.Diagnostics.Runtime": "[4.2.751201, )",
           "Microsoft.Diagnostics.Tracing.TraceEvent": "[3.2.6, )",
           "Passenger.Core": "[0.1.0, )"
         }
@@ -608,11 +608,11 @@
       },
       "Microsoft.Diagnostics.Runtime": {
         "type": "CentralTransitive",
-        "requested": "[3.1.512801, )",
-        "resolved": "3.1.512801",
-        "contentHash": "0lMUDr2oxNZa28D6NH5BuSQEe5T9tZziIkvkD44YkkCGQXPJqvFjLq5ZQq1hYLl3RjQJrY+hR0jFgap+EWPDTw==",
+        "requested": "[4.2.751201, )",
+        "resolved": "4.2.751201",
+        "contentHash": "9rg4pJnc46e7QvUYC8Pxu5VqPJhKEO2ILGEZy1LOKrwurLC8iSAAzamDVLd/cYPb3zGbM9RE4Zo41Tis8OxCyA==",
         "dependencies": {
-          "Microsoft.Diagnostics.NETCore.Client": "0.2.410101"
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.661903"
         }
       },
       "Microsoft.Diagnostics.Tracing.TraceEvent": {
