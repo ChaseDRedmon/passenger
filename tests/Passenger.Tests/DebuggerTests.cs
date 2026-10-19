@@ -1550,42 +1550,30 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     /// <summary>A configuration that uses the terminal is debugged there: the program starts in a tab of the Terminal window
-    /// held until the debugger has hold of it, so a breakpoint on Main's first line stops it before any of it runs, debug
-    /// after debug; let go, it reads the key and the line typed into its tab, and its end is told there and in the status
-    /// bar with its exit code.</summary>
+    /// held until the debugger has hold of it, so a breakpoint on Main's first line stops it before any of it runs (LaunchTests
+    /// launches it five times over, for the race); let go, it reads the key and the line typed into its tab, and its end is
+    /// told there and in the status bar with its exit code.</summary>
     [AvaloniaFact]
-    public void Debugged_in_the_terminal_a_program_stops_at_a_breakpoint_on_Mains_first_line_every_time_and_reads_what_is_typed_there()
+    public void Debugged_in_the_terminal_a_program_stops_at_a_breakpoint_on_Mains_first_line_and_reads_what_is_typed_there()
     {
         Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
         MainWindow window = InTerminal(string.Empty);
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(0, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        DebugSession? last = null;
-        for (int debugged = 1; debugged <= 3; debugged++)
-        {
-            editor.Focus();
-            Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Paused or DebugState.Ended } session && session != last, $"debug {debugged} to stop at the breakpoint");
-            DebugSession session = window.Debugger.Session!;
-            last = session;
-            Assert.True(session.State == DebugState.Paused, $"Debug {debugged} in the terminal ended without stopping at the breakpoint on Main's first line: {window.Status}");
-            Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0, "the stop's frames");
-            Assert.True(window.BottomPanel.Debug.Frames[0].Line == 1, $"Debug {debugged} stopped at line {window.BottomPanel.Debug.Frames[0].Line}, not on Main's first line");
-            Passenger.App.Run.TerminalRun run = Assert.IsType<Passenger.App.Run.TerminalRun>(session.Terminal);
-            Assert.True(run.IsRunning && window.TerminalPanel.Tabs.Any(t => t.Run == run && t.Name == "Sum in the terminal"),
-                "The program debugged is not running in a tab of the Terminal window named for its configuration");
-            Assert.DoesNotContain("started", TerminalText(run), StringComparison.Ordinal);
-            if (debugged < 3)
-            {
-                Ui.Run(window, AppActions.Stop);
-                Ui.WaitFor(() => !window.Debugger.IsDebugging && run.Ended.IsCompleted, $"debug {debugged} to stop");
-            }
-        }
+        editor.Focus();
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Paused or DebugState.Ended }, "the debugged program to stop at the breakpoint");
+        DebugSession going = window.Debugger.Session!;
+        Assert.True(going.State == DebugState.Paused, $"Debugged in the terminal, the program ended without stopping at the breakpoint on Main's first line: {window.Status}");
+        Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0, "the stop's frames");
+        Assert.True(window.BottomPanel.Debug.Frames[0].Line == 1, $"The program stopped at line {window.BottomPanel.Debug.Frames[0].Line}, not on Main's first line");
+        Passenger.App.Run.TerminalRun program = Assert.IsType<Passenger.App.Run.TerminalRun>(going.Terminal);
+        Assert.True(program.IsRunning && window.TerminalPanel.Tabs.Any(t => t.Run == program && t.Name == "Sum in the terminal"),
+            "The program debugged is not running in a tab of the Terminal window named for its configuration");
+        Assert.DoesNotContain("started", TerminalText(program), StringComparison.Ordinal);
 
-        // The last is let go: it reads what is typed into its tab, and ends with its own exit code.
-        DebugSession going = last!;
-        Passenger.App.Run.TerminalRun program = going.Terminal!;
+        // Let go, it reads what is typed into its tab, and ends with its own exit code.
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => TerminalText(program).Contains("key?", StringComparison.Ordinal), "the program to ask for a key in its tab");
         window.ShowToolWindow("terminal");
