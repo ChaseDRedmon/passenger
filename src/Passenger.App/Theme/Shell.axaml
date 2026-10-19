@@ -19,8 +19,6 @@
         <!-- A check box's row as tall as a field's, so a page's rows are evenly spaced (Fluent's is 32, its box placed in
              a row of this height). -->
         <StaticResource x:Key="CheckBoxMinHeight" ResourceKey="Passenger.ControlHeight" />
-        <!-- A row of a list, a menu or a popup, Rider's List.rowHeight: one height for every row a person picks from. -->
-        <x:Double x:Key="Passenger.RowHeight">24</x:Double>
         <!-- A form's drop-down (ComboBox.form): one width for every drop-down in a column, so their edges line up. -->
         <x:Double x:Key="Passenger.DropDownWidth">280</x:Double>
         <!-- The room round a menu's frame its shadow is drawn in (Passenger.PopupShadow's reach), inside the menu's own popup,
@@ -74,7 +72,7 @@
     <Style Selector="MenuItem">
         <Setter Property="Margin" Value="4,0" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
-        <Setter Property="MinHeight" Value="{DynamicResource Passenger.RowHeight}" />
+        <Setter Property="MinHeight" Value="{x:Static app:ListRow.Height}" />
         <Setter Property="Padding" Value="10,3,10,4" />
     </Style>
     <!-- A long name ends in an ellipsis rather than cut at the menu's edge (a branch's). -->
@@ -512,7 +510,7 @@
     </Style>
     <Style Selector="ListBox.tree ListBoxItem">
         <Setter Property="Padding" Value="6,0" />
-        <Setter Property="MinHeight" Value="{DynamicResource Passenger.RowHeight}" />
+        <Setter Property="MinHeight" Value="{x:Static app:ListRow.Height}" />
         <!-- A row's words midway down its band, where Fluent would leave a line shorter than the row at its top. -->
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="CornerRadius" Value="4" />

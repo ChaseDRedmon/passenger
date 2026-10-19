@@ -34,7 +34,7 @@ public sealed class UnstashPopup : UserControl
         list = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = PopupFrame.RowHeight * 10,
+            MaxHeight = ListRow.Height * 10,
             ItemsSource = stashes,
             SelectedIndex = stashes.Count > 0 ? 0 : -1,
             ItemTemplate = new FuncDataTemplate<StashInfo>((stash, _) => stash is null ? new TextBlock() : Row(stash), supportsRecycling: false),
@@ -179,7 +179,7 @@ public sealed class UnstashPopup : UserControl
     {
         TextBlock when = new() { Text = ToolWindows.GitLogView.When(stash.Time), VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Margin = new Thickness(12, 0, 4, 0) };
         when.Bind(TextBlock.ForegroundProperty, when.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(8, 0) };
+        DockPanel row = new() { Height = ListRow.Height, Margin = new Thickness(8, 0) };
         DockPanel.SetDock(when, Dock.Right);
         row.Children.Add(when);
         row.Children.Add(new TextBlock { Text = stash.Message, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });

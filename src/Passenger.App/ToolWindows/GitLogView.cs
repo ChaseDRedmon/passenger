@@ -21,7 +21,7 @@ namespace Passenger.App.ToolWindows;
 public sealed class GitLogView : DockPanel
 {
     private const double LaneWidth = 12;
-    private const double RowHeight = 24;
+    private const double RowHeight = ListRow.Height;
 
     private VcsController vcs;
     private IReadOnlyList<GraphRow> rows = [];

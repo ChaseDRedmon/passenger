@@ -31,7 +31,7 @@ public sealed class ActionPopup : UserControl
         results = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = PopupFrame.RowHeight * 15,
+            MaxHeight = ListRow.Height * 15,
             Margin = new Thickness(0, 0, 0, 8),
             ItemTemplate = new FuncDataTemplate<IdeAction>((action, _) => action is null ? new TextBlock() : Row(action), supportsRecycling: false),
         };
@@ -127,7 +127,7 @@ public sealed class ActionPopup : UserControl
         group.Bind(TextBlock.ForegroundProperty, group.GetResourceObservable("Passenger.TextMuted"));
         TextBlock keys = new() { Text = actions.Shortcut(action.Id) ?? string.Empty, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 4, 0) };
         keys.Bind(TextBlock.ForegroundProperty, keys.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(4, 0) };
+        DockPanel row = new() { Height = ListRow.Height, Margin = new Thickness(4, 0) };
         DockPanel.SetDock(keys, Dock.Right);
         row.Children.Add(keys);
         row.Children.Add(new StackPanel

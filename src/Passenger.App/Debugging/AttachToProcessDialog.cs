@@ -214,7 +214,7 @@ public sealed class AttachToProcessDialog : Window
         {
             return new TextBlock { Text = row.Heading, Classes = { "muted" }, FontSize = 11, FontWeight = FontWeight.SemiBold, Margin = new Thickness(4, 6, 0, 2) };
         }
-        Grid grid = new() { ColumnDefinitions = new ColumnDefinitions(Columns), Height = 24 };
+        Grid grid = new() { ColumnDefinitions = new ColumnDefinitions(Columns), Height = ListRow.Height };
         grid.Children.Add(Cell(process.Name, 0, muted: false));
         grid.Children.Add(Cell(process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), 1, muted: false));
         grid.Children.Add(Cell(process.User, 2, muted: true));

@@ -95,6 +95,6 @@ public sealed class ChangesWindow : Window
             FontSize = 12,
         };
         folder.Bind(TextBlock.ForegroundProperty, folder.GetResourceObservable("Passenger.TextMuted"));
-        return new StackPanel { Orientation = Orientation.Horizontal, Height = 24, Children = { icon, name, folder } };
+        return new StackPanel { Orientation = Orientation.Horizontal, Height = ListRow.Height, Children = { icon, name, folder } };
     }
 }

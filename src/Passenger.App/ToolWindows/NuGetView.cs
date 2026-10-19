@@ -737,7 +737,7 @@ public sealed class NuGetView : DockPanel
         StackPanel line = new()
         {
             Orientation = Orientation.Horizontal,
-            Height = 26,
+            Height = ListRow.Height,
             Children = { icon, new TextBlock { Text = row.Id, VerticalAlignment = VerticalAlignment.Center, FontWeight = row.IsInstalled ? FontWeight.SemiBold : FontWeight.Normal }, version },
         };
         if (row.Description.Length > 0)

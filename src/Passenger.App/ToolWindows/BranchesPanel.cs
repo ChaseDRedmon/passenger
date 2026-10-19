@@ -509,7 +509,7 @@ public sealed class BranchesPanel : DockPanel
 
     private Control Row(BranchNode node)
     {
-        ShrinkingRow row = new() { Height = 24, Margin = new Thickness(node.Depth * 16, 0, 0, 0) };
+        ShrinkingRow row = new() { Height = ListRow.Height, Margin = new Thickness(node.Depth * 16, 0, 0, 0) };
         if (node.IsGroup)
         {
             PathIcon chevron = new() { Classes = { "chevron" }, Width = 10, Height = 10, Margin = new Thickness(4, 0, 4, 0) };

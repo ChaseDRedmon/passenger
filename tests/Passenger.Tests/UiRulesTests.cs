@@ -104,6 +104,12 @@ public sealed class UiRulesTests : IDisposable
                 }
                 Assert.False(ToolWindowParts(window).OfType<Border>().Any(b => b.Classes.Contains("tab")),
                     $"{action}'s window has an editor tab's look among its tabs, where every tool window's tab is a panelTab");
+                // Every row a person picks from is one height, as Rider's lists and trees are.
+                foreach (ListBoxItem row in ToolWindowParts(window).OfType<ListBoxItem>().Where(r => r.Bounds.Height > 0))
+                {
+                    Assert.True(Math.Abs(row.Bounds.Height - ListRow.Height) < 0.5,
+                        $"A row of {action}'s window is {row.Bounds.Height:0.#} px tall, where every list's row is {ListRow.Height}");
+                }
                 // Read while the window is shown: one hidden leaves the tree, and its tabs their styles with it.
                 foreach (ToggleButton tab in ToolWindowParts(window).OfType<ToggleButton>().Where(t => t.Classes.Contains("panelTab")))
                 {
@@ -149,8 +155,8 @@ public sealed class UiRulesTests : IDisposable
                     $"{what} is {frame.Bounds.Width:0.#} px wide, not one of the popups' widths ({string.Join(", ", PopupFrame.Widths)})");
                 foreach (ListBoxItem row in frame.GetVisualDescendants().OfType<ListBoxItem>().Where(r => r.IsEffectivelyVisible))
                 {
-                    Assert.True(Math.Abs(row.Bounds.Height - PopupFrame.RowHeight) < 0.5,
-                        $"A row of {what} is {row.Bounds.Height:0.#} px tall, where every popup's row is {PopupFrame.RowHeight}");
+                    Assert.True(Math.Abs(row.Bounds.Height - ListRow.Height) < 0.5,
+                        $"A row of {what} is {row.Bounds.Height:0.#} px tall, where every popup's row is {ListRow.Height}");
                 }
                 seen.Add((what, frame));
                 Ui.Press(window, "ESCAPE");

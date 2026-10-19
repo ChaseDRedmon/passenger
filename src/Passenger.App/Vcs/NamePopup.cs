@@ -52,7 +52,7 @@ public sealed class NamePopup : UserControl
                 {
                     Orientation = Orientation.Horizontal,
                     Spacing = 8,
-                    Height = 24,
+                    Height = ListRow.Height,
                     Margin = new Thickness(4, 0),
                     Children = { k.Icon, new TextBlock { Text = k.Name, VerticalAlignment = VerticalAlignment.Center } },
                 }).ToList(),

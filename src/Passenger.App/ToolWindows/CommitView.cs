@@ -479,7 +479,7 @@ public sealed class CommitView : DockPanel
         return new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Height = 24,
+            Height = ListRow.Height,
             Children = { box, new TextBlock { Text = group.Name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center }, count },
         };
     }
@@ -499,7 +499,7 @@ public sealed class CommitView : DockPanel
         count.Bind(TextBlock.ForegroundProperty, count.GetResourceObservable("Passenger.TextMuted"));
         Button resolve = new() { Classes = { "link" }, Content = "Resolve", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
         resolve.Click += (_, _) => ResolveRequested?.Invoke(this, EventArgs.Empty);
-        return new StackPanel { Orientation = Orientation.Horizontal, Height = 24, Children = { name, count, resolve } };
+        return new StackPanel { Orientation = Orientation.Horizontal, Height = ListRow.Height, Children = { name, count, resolve } };
     }
 
     private Control FileRow(CommitRow row)
@@ -574,7 +574,7 @@ public sealed class CommitView : DockPanel
         // The folder takes what the row leaves, ending in an ellipsis in a narrow window rather than cut mid-letter.
         DockPanel.SetDock(icon, Dock.Left);
         DockPanel.SetDock(name, Dock.Left);
-        DockPanel line = new() { Height = 24, Children = { icon, name, folder } };
+        DockPanel line = new() { Height = ListRow.Height, Children = { icon, name, folder } };
         ToolTip.SetTip(line, change.From is { } from ? $"{change.Kind}: {from} -> {change.Path}" : $"{change.Kind}: {change.Path}");
         return line;
     }

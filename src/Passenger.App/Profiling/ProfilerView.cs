@@ -310,7 +310,7 @@ public sealed class ProfilerView : DockPanel
         string program = System.Text.RegularExpressions.Regex.Replace(file.Name, @"-\d{8}-\d{6}(-\d+)?$", string.Empty);
         return new ShrinkingRow
         {
-            Height = 22,
+            Height = ListRow.Height,
             Margin = new Thickness(6, 0),
             Children = { when, size, new TextBlock { Text = program, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
         };
@@ -508,7 +508,7 @@ public sealed class ProfilerView : DockPanel
         size.FontSize = 12;
         return new ShrinkingRow
         {
-            Height = 22,
+            Height = ListRow.Height,
             Margin = new Thickness(6, 0),
             Children = { size, new TextBlock { Text = type.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
         };
@@ -520,7 +520,7 @@ public sealed class ProfilerView : DockPanel
         TextBlock when = Muted($"at {gc.AtMs:N0} ms", 110);
         TextBlock pause = Muted($"paused {gc.PauseMs:0.00} ms", 140);
         TextBlock why = Muted(gc.Reason, double.NaN);
-        return new ShrinkingRow { Height = 22, Margin = new Thickness(6, 0), Children = { what, when, pause, why } };
+        return new ShrinkingRow { Height = ListRow.Height, Margin = new Thickness(6, 0), Children = { what, when, pause, why } };
     }
 
     public void Toggle(TreeRow row)
@@ -627,7 +627,7 @@ public sealed class ProfilerView : DockPanel
         chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
         chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
         row.PropertyChanged += (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
-        Border toggle = new() { Width = 18, Height = 22, Background = Brushes.Transparent, Child = chevron };
+        Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
             Toggle(row);
@@ -639,7 +639,7 @@ public sealed class ProfilerView : DockPanel
         share.FontSize = 12;
         return new ShrinkingRow
         {
-            Height = 22,
+            Height = ListRow.Height,
             Margin = new Thickness(row.Depth * 14, 0, 0, 0),
             Children = { toggle, share, MethodName(row.Node.Name, row.Depth == 0) },
         };
@@ -653,7 +653,7 @@ public sealed class ProfilerView : DockPanel
         own.FontSize = 12;
         TextBlock total = Muted($"{spot.Total * sampleMs,7:N0} ms in all", 110);
         total.FontSize = 12;
-        return new ShrinkingRow { Height = 22, Margin = new Thickness(6, 0), Children = { own, total, MethodName(spot.Name, false) } };
+        return new ShrinkingRow { Height = ListRow.Height, Margin = new Thickness(6, 0), Children = { own, total, MethodName(spot.Name, false) } };
     }
 
     /// <summary>A method as dotTrace writes it: its own name strong, its type's and namespace's muted before it.</summary>

@@ -378,7 +378,7 @@ public sealed class ProblemsView : DockPanel
         {
             return new TextBlock();
         }
-        ShrinkingRow panel = new() { Height = 24, Margin = new Thickness(8 + (row.Depth * 16), 0, 8, 0) };
+        ShrinkingRow panel = new() { Height = ListRow.Height, Margin = new Thickness(8 + (row.Depth * 16), 0, 8, 0) };
         TextBlock detail = new() { Text = row.Detail, FontSize = 12, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         detail.Bind(TextBlock.ForegroundProperty, detail.GetResourceObservable("Passenger.TextMuted"));
         if (row.Problem is not { } problem)

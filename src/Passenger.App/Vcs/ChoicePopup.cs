@@ -29,7 +29,7 @@ public sealed class ChoicePopup : UserControl
         results = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = PopupFrame.RowHeight * 15,
+            MaxHeight = ListRow.Height * 15,
             Margin = new Thickness(0, 0, 0, 8),
             ItemTemplate = new FuncDataTemplate<Choice>((choice, _) => choice is null ? new TextBlock() : Row(choice), supportsRecycling: false),
         };
@@ -115,7 +115,7 @@ public sealed class ChoicePopup : UserControl
     {
         TextBlock detail = new() { Text = choice.Detail, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 4, 0) };
         detail.Bind(TextBlock.ForegroundProperty, detail.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(4, 0) };
+        DockPanel row = new() { Height = ListRow.Height, Margin = new Thickness(4, 0) };
         DockPanel.SetDock(detail, Dock.Right);
         row.Children.Add(detail);
         row.Children.Add(new TextBlock { Text = choice.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });

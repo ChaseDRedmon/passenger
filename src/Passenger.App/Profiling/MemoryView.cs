@@ -548,7 +548,7 @@ public sealed class MemoryView : DockPanel
         chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
         chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
         row.PropertyChanged += (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
-        Border toggle = new() { Width = 18, Height = 22, Background = Brushes.Transparent, Child = chevron };
+        Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
             Toggle(row);
@@ -663,7 +663,7 @@ public sealed class MemoryView : DockPanel
 
         public Grid Row(params Control[] cells)
         {
-            Grid row = new() { ColumnDefinitions = Definitions(), Height = 22 };
+            Grid row = new() { ColumnDefinitions = Definitions(), Height = ListRow.Height };
             for (int i = 0; i < cells.Length; i++)
             {
                 Grid.SetColumn(cells[i], i);

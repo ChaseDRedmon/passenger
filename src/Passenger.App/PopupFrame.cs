@@ -2,8 +2,8 @@ namespace Passenger.App;
 
 /// <summary>What every popup over the window shares (Find Action, Go to File, Find in Files, a Git choice, a breakpoint's
 /// properties), as Rider's popups share it: the frame (Shell.axaml's <c>Border.popup</c>), a width from one scale, the
-/// title's look (<c>TextBlock.popupTitle</c>) and its list's row height. A popup takes its width and rows from here, never
-/// a number of its own.</summary>
+/// title's look (<c>TextBlock.popupTitle</c>), and its list's rows of <see cref="ListRow.Height"/>. A popup takes its width
+/// from here, never a number of its own.</summary>
 public static class PopupFrame
 {
     /// <summary>A name to type (New Branch, Stash Changes).</summary>
@@ -20,7 +20,4 @@ public static class PopupFrame
 
     /// <summary>Every width a popup may have.</summary>
     public static IReadOnlyList<double> Widths { get; } = [Narrow, Medium, Wide, Widest];
-
-    /// <summary>A row of a popup's list, as every list's row is (Shell.axaml's Passenger.RowHeight, Rider's List.rowHeight).</summary>
-    public const double RowHeight = 24;
 }

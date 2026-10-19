@@ -147,7 +147,7 @@ public sealed class FindInFilesPopup : UserControl
         results = new ListBox
         {
             Classes = { "tree" },
-            Height = PopupFrame.RowHeight * 10,
+            Height = ListRow.Height * 10,
             ItemTemplate = new FuncDataTemplate<SearchMatch>((match, _) => match is null ? new TextBlock() : Row(match), supportsRecycling: false),
         };
         results.SelectionChanged += (_, _) => ShowPreview();
@@ -551,7 +551,7 @@ public sealed class FindInFilesPopup : UserControl
         text.Inlines.Add(new Avalonia.Controls.Documents.Run(trimmed[Math.Min(trimmed.Length, start + Math.Max(0, length))..]));
         TextBlock where = new() { Text = $"{match.Name} {match.Line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 4, 0), FontSize = 12 };
         where.Bind(TextBlock.ForegroundProperty, where.GetResourceObservable("Passenger.TextMuted"));
-        DockPanel row = new() { Height = PopupFrame.RowHeight, Margin = new Thickness(8, 0) };
+        DockPanel row = new() { Height = ListRow.Height, Margin = new Thickness(8, 0) };
         DockPanel.SetDock(where, Dock.Right);
         row.Children.Add(where);
         row.Children.Add(text);

@@ -188,7 +188,7 @@ public sealed class RecentLocationsPopup : UserControl
         StackPanel header = new()
         {
             Orientation = Orientation.Horizontal,
-            Height = 24,
+            Height = ListRow.Height,
             Children = { icon, new TextBlock { Text = row.Name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center }, member },
         };
         ToolTip.SetTip(header, row.Place.Path);

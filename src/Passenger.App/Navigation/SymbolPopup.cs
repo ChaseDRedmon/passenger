@@ -49,7 +49,7 @@ public sealed class SymbolPopup : UserControl
         results = new ListBox
         {
             Classes = { "tree" },
-            MaxHeight = PopupFrame.RowHeight * 15,
+            MaxHeight = ListRow.Height * 15,
             Margin = new Thickness(0, 0, 0, 8),
             ItemTemplate = new FuncDataTemplate<SymbolRow>((row, _) => Row(row), supportsRecycling: false),
         };
@@ -248,7 +248,7 @@ public sealed class SymbolPopup : UserControl
                 },
             },
         };
-        return new DockPanel { Height = PopupFrame.RowHeight, Margin = new Thickness(row.Depth * 16, 0, 0, 0), Children = { where, badge, name } };
+        return new DockPanel { Height = ListRow.Height, Margin = new Thickness(row.Depth * 16, 0, 0, 0), Children = { where, badge, name } };
     }
 
     /// <summary>A kind's letter on its colour, as Rider marks a symbol or a kind of type.</summary>

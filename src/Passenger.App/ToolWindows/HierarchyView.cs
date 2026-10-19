@@ -238,7 +238,7 @@ public sealed class HierarchyView : DockPanel
         return new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Height = 24,
+            Height = ListRow.Height,
             Margin = new Thickness(8 + (row.Depth * 16), 0, 8, 0),
             Children = { chevron, name, detail },
         };

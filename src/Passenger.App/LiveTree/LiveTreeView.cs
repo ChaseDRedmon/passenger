@@ -502,7 +502,7 @@ public sealed class LiveTreeView : DockPanel
         StackPanel line = new()
         {
             Orientation = Orientation.Horizontal,
-            Height = 22,
+            Height = ListRow.Height,
             Margin = new Thickness(6 + (row.Depth * 12), 0, 8, 0),
             Opacity = element.Visible ? 1 : 0.5,
             Children = { chevron, type },

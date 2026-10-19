@@ -337,7 +337,7 @@ public sealed class FindView : DockPanel
 
     private Control Row(FindRow row)
     {
-        StackPanel panel = new() { Orientation = Orientation.Horizontal, Height = 24, Margin = new Thickness(8 + (row.Depth * 16), 0, 8, 0) };
+        StackPanel panel = new() { Orientation = Orientation.Horizontal, Height = ListRow.Height, Margin = new Thickness(8 + (row.Depth * 16), 0, 8, 0) };
         if (row.Usage is { } usage)
         {
             TextBlock number = new() { Text = row.Detail, MinWidth = 36, FontFamily = new FontFamily("avares://Passenger.Editor/Fonts#JetBrains Mono"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };

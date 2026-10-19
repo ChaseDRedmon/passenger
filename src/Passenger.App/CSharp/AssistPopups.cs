@@ -185,7 +185,7 @@ internal sealed class CompletionPopup : Border
         }
         return new DockPanel
         {
-            Height = 24,
+            Height = ListRow.Height,
             Children =
             {
                 new Border
@@ -269,7 +269,7 @@ internal sealed class ChoicePopup : Border
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 10,
-                Height = 24,
+                Height = ListRow.Height,
                 Children =
                 {
                     // Rider's digit before the choices that have one, a column of its own when any does.

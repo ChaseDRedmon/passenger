@@ -479,7 +479,7 @@ public sealed class DebugView : DockPanel
         // Its place gives way first, then its name, each ending in an ellipsis, as Rider's frames list narrows.
         return new ShrinkingRow
         {
-            Height = 24,
+            Height = ListRow.Height,
             Opacity = frame.PresentationHint == "subtle" ? 0.55 : 1,
             Children =
             {
@@ -505,7 +505,7 @@ public sealed class DebugView : DockPanel
                 chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
             }
         };
-        Border toggle = new() { Width = 18, Height = 24, Background = Brushes.Transparent, Child = chevron };
+        Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
             if (node.HasChildren)
@@ -570,7 +570,7 @@ public sealed class DebugView : DockPanel
         return new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Height = 24,
+            Height = ListRow.Height,
             Margin = node.Indent,
             Children =
             {

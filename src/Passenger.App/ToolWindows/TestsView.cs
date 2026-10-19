@@ -508,10 +508,10 @@ public sealed class TestsView : DockPanel
         public TestRow(TestTree model)
         {
             Orientation = Orientation.Horizontal;
-            Height = 24;
+            Height = ListRow.Height;
             chevron = new PathIcon { Classes = { "chevron" }, RenderTransformOrigin = RelativePoint.Center, RenderTransform = turn };
             chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
-            Border toggle = new() { Width = 18, Height = 24, Background = Brushes.Transparent, Child = chevron };
+            Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
             toggle.PointerPressed += (_, e) =>
             {
                 if (DataContext is TestNode node)

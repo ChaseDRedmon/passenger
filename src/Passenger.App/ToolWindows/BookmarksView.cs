@@ -88,6 +88,6 @@ public sealed class BookmarksView : DockPanel
         text.Bind(TextBlock.ForegroundProperty, text.GetResourceObservable("Passenger.TextMuted"));
         // The line takes what the row leaves, so a narrow window ends it in an ellipsis rather than cutting it off.
         DockPanel.SetDock(where, Dock.Left);
-        return new DockPanel { Height = 24, Margin = new Thickness(8, 0), Children = { where, text } };
+        return new DockPanel { Height = ListRow.Height, Margin = new Thickness(8, 0), Children = { where, text } };
     }
 }

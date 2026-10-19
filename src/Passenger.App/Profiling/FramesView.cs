@@ -237,7 +237,7 @@ public sealed class FramesView : DockPanel
         chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
         chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
         row.PropertyChanged += (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
-        Border toggle = new() { Width = 18, Height = 22, Background = Brushes.Transparent, Child = chevron };
+        Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
         toggle.PointerPressed += (_, e) =>
         {
             Toggle(row);
@@ -267,7 +267,7 @@ public sealed class FramesView : DockPanel
 
     private static Grid Row((string Title, double Width)[] columns, Control[] cells)
     {
-        Grid row = new() { ColumnDefinitions = new ColumnDefinitions(string.Join(",", columns.Select(c => c.Width == 0 ? "*" : $"{c.Width}"))), MinHeight = 22 };
+        Grid row = new() { ColumnDefinitions = new ColumnDefinitions(string.Join(",", columns.Select(c => c.Width == 0 ? "*" : $"{c.Width}"))), MinHeight = ListRow.Height };
         for (int i = 0; i < cells.Length; i++)
         {
             Grid.SetColumn(cells[i], i);

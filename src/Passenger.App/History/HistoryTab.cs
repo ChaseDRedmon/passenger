@@ -28,7 +28,7 @@ public sealed record HistoryHost(EditorArea Editors, Func<IReadOnlyList<(string 
 /// Later Changes puts back what the chosen row's version was; a folder's Revert Selection, only the files chosen.</summary>
 public sealed class HistoryTab : DockPanel
 {
-    private const double RowHeight = 24;
+    private const double RowHeight = ListRow.Height;
 
     private readonly LocalHistory store;
     private readonly HistoryHost host;
