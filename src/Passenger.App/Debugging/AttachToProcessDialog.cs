@@ -82,7 +82,7 @@ public sealed class AttachToProcessDialog : Window
             }
         };
         rows.SelectionChanged += (_, _) => attach!.IsEnabled = Chosen is not null;
-        empty = new TextBlock { Classes = { "muted" }, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Text = "Looking for .NET processes…" };
+        empty = new TextBlock { Classes = { "emptyText" }, Text = "Looking for .NET processes…" };
         Border table = new()
         {
             Classes = { "framed" },

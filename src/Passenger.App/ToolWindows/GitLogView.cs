@@ -112,8 +112,7 @@ public sealed class GitLogView : DockPanel
             Padding = new Thickness(10, 8),
             FontSize = 12,
         };
-        placeholder = new TextBlock { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
+        placeholder = new TextBlock { Classes = { "emptyText" } };
 
         filter = new TextBox { Classes = { "search" }, PlaceholderText = "Text or hash", Width = 240, Margin = new Thickness(8, 0) };
         filter.TextChanged += (_, _) => Filter();
@@ -431,9 +430,11 @@ public sealed class GitLogView : DockPanel
         DockPanel subject = new() { VerticalAlignment = VerticalAlignment.Center, ClipToBounds = true };
         foreach (string label in row.Commit.Refs)
         {
-            TextBlock text = new() { Text = label, FontSize = 11 };
+            // A long branch's name ends in an ellipsis, and leaves the subject room, where a narrow log cut it mid-letter.
+            TextBlock text = new() { Text = label, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
             text.Bind(TextBlock.ForegroundProperty, text.GetResourceObservable("Passenger.Vcs.RefText"));
-            Border tag = new() { [DockProperty] = Dock.Left, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 1), Margin = new Thickness(0, 0, 6, 0), Child = text, VerticalAlignment = VerticalAlignment.Center };
+            ToolTip.SetTip(text, label);
+            Border tag = new() { [DockProperty] = Dock.Left, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 1), Margin = new Thickness(0, 0, 6, 0), Child = text, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 160 };
             tag.Bind(Border.BackgroundProperty, tag.GetResourceObservable("Passenger.Vcs.Ref"));
             subject.Children.Add(tag);
         }

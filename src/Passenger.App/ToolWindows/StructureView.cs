@@ -59,7 +59,7 @@ public sealed class StructureView : DockPanel
                 e.Handled = true;
             }
         };
-        placeholder = new TextBlock { Classes = { "muted" }, Text = "A C# file's members show here", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12) };
+        placeholder = new TextBlock { Classes = { "emptyText" }, Text = "A C# file's members show here" };
         settle = new Debounce(Pause, Refresh);
         ListMenus.Attach(list, () => list.SelectedItem is not SymbolRow chosen ? [] :
         [

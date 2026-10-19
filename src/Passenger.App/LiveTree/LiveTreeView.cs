@@ -100,15 +100,7 @@ public sealed class LiveTreeView : DockPanel
             }
         };
         tree.KeyDown += OnTreeKey;
-        placeholder = new TextBlock
-        {
-            Classes = { "muted" },
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(24),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        placeholder = new TextBlock { Classes = { "emptyText" } };
 
         heading = new StackPanel { [DockProperty] = Dock.Top, Margin = new Thickness(10, 8, 10, 4), Spacing = 2 };
         StackPanel tabRow = new() { [DockProperty] = Dock.Top, Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 2, 6, 4) };

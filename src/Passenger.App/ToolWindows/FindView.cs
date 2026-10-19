@@ -94,8 +94,7 @@ public sealed class FindView : DockPanel
         body.Children.Add(list);
         body.Children.Add(divider);
         body.Children.Add(preview);
-        placeholder = new TextBlock { Text = "Find Usages lists a symbol's usages here", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
+        placeholder = new TextBlock { Text = "Find Usages lists a symbol's usages here", Classes = { "emptyText" } };
         body.IsVisible = false;
         Children.Add(new Panel { Children = { body, placeholder } });
         Body = body;

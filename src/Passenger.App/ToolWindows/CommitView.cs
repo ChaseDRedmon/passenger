@@ -139,15 +139,7 @@ public sealed class CommitView : DockPanel
                 e.Handled = true;
             }
         };
-        placeholder = new TextBlock
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(16),
-        };
-        placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
+        placeholder = new TextBlock { Classes = { "emptyText" } };
 
         amend = new CheckBox { Content = "Amend", Margin = new Thickness(10, 4, 0, 0) };
         amend.IsCheckedChanged += async (_, _) =>

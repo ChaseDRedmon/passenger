@@ -38,8 +38,7 @@ public sealed class ChangesWindow : Window
                 e.Handled = true;
             }
         };
-        TextBlock empty = new() { Text = "No differences", IsVisible = files.Count == 0, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        empty.Bind(TextBlock.ForegroundProperty, empty.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock empty = new() { Text = "No differences", IsVisible = files.Count == 0, Classes = { "emptyText" } };
         Content = new Panel { Children = { list, empty } };
         KeyDown += (_, e) =>
         {

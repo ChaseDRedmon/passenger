@@ -242,6 +242,20 @@ public sealed class UiRulesTests : IDisposable
                 Assert.True(at.Right <= nuget.Right + 0.5 && at.Width > 0, $"NuGet's {part.GetType().Name} is cut off at its window's right edge ({at.Right:0.#} past {nuget.Right:0.#})");
             }
 
+            // What a tool window says while it has nothing to show wraps inside it, never running past its edges.
+            foreach (string action in (string[])[AppActions.ShowTests, AppActions.ShowFind, AppActions.ShowDebug, AppActions.ShowProfiler, AppActions.ShowLocalHistory])
+            {
+                Assert.True(window.Perform(action), $"{action} did not run");
+                Ui.Settle();
+                foreach (TextBlock empty in window.DockHost.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("emptyText") && t.IsEffectivelyVisible))
+                {
+                    Rect text = Placed(window, empty);
+                    Rect room = Placed(window, (Visual)empty.Parent!);
+                    Assert.True(text.Left >= room.Left - 0.5 && text.Right <= room.Right + 0.5,
+                        $"After {action}, '{empty.Text}' runs past its pane ({text.Left:0.#} to {text.Right:0.#} in {room.Left:0.#} to {room.Right:0.#})");
+                }
+            }
+
             // A window too short for every stripe button puts the rest behind More, which lists them.
             window.Height = 500;
             window.Width = MainWindow.SmallestWidth;

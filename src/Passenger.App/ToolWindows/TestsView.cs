@@ -114,13 +114,7 @@ public sealed class TestsView : DockPanel
         model.ViewChanged += (_, _) => ShowFilters();
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
-        placeholder = new TextBlock
-        {
-            Text = model.EmptyText,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
+        placeholder = new TextBlock { Text = model.EmptyText, Classes = { "emptyText" } };
         model.Rows.CollectionChanged += (_, _) => ShowPlaceholder();
         model.EmptyTextChanged += (_, _) => ShowPlaceholder();
 
