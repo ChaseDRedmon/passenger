@@ -783,7 +783,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   `tools/Passenger.Notices/Licenses`, a package inside Roslyn's server a row in THIRD_PARTY_NOTICES.md's roslyn/ table,
   and copied source or an asset its entry after that file's marker line, so the app carries them.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
-  and every token exists in both the Dark and Light dictionaries.
+  and every token exists in both the Dark and Light dictionaries. A theme (`Tokens.axaml`, `Harbour.axaml`) is
+  `Passenger.*` tokens alone; Fluent's own keys are named once for every theme in `Theme/FluentKeys.axaml`, which
+  `FluentKeys` (App.axaml's resources) answers with that token as the look in force gives it. A Fluent key a
+  Passenger control can reach goes there, never in a theme. `UiRulesTests` fails on an unmapped Fluent colour, brush
+  or corner (an Avalonia update adds them) and on a colour or non-zero `CornerRadius` written outside `Theme/` unless
+  it's the content's own (a colour in the XAML or CSS being edited, the terminal program's colours); the editor's
+  palette has no colours of its own.
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
 - **Work off the UI thread that changes what is drawn goes through `BackgroundWork`**, so a
   screenshot waits for it instead of capturing a half-finished frame: `BackgroundWork.Run` rather than a bare
