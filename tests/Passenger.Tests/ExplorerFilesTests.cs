@@ -75,6 +75,24 @@ public sealed class ExplorerFilesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void New_class_named_with_a_folder_goes_in_that_folder_in_its_namespace()
+    {
+        MainWindow window = Open();
+        string project = PathNames.Canonical(folder);
+
+        // Typed as a person types it into New Class/Interface: the folder first, and the file's .cs by habit.
+        Assert.Null(window.CreateType(project, "Shapes/Circle.cs", "Class"));
+        string circle = Path.Combine(project, "Shapes", "Circle.cs");
+        Assert.True(File.Exists(circle), $"Shapes/Circle.cs made no Shapes/Circle.cs, but {string.Join(", ", Directory.EnumerateFiles(project, "*.cs", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(project, f)))}");
+        Assert.Equal("namespace Shop.Shapes;\n\npublic class Circle\n{\n}\n", File.ReadAllText(circle));
+        Assert.Equal(PathNames.Canonical(circle), window.EditorArea.Active?.Path);
+
+        // A name that is not one C# name is refused, not cut down to its first part.
+        Assert.Equal("Circle.Shape is not a C# name", window.CreateType(project, "Circle.Shape", "Class"));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Delete_on_a_project_beside_its_solution_takes_it_out_of_the_solution_and_leaves_the_folder()
     {
         string solution = Path.Combine(folder, "Shop.slnx");

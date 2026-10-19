@@ -236,14 +236,22 @@ public partial class MainWindow
     public string? CreateClass(string into, string name) => CreateType(into, name, "Class");
 
     /// <summary>Rider's Class/Interface: a file of its name holding a type of the kind chosen (<see cref="TypeKinds"/>), as
-    /// its file template for that kind writes it, in the namespace its folder gives.</summary>
+    /// its file template for that kind writes it, in the namespace its folder gives. Folders before the name
+    /// ("Shapes/Circle") are made and the type goes in them, where they were dropped and the type made beside them.</summary>
     public string? CreateType(string into, string name, string kind)
     {
-        string type = Path.GetFileNameWithoutExtension(name);
+        string[] parts = name.Trim().Split('/', '\\');
+        string last = parts[^1];
+        string type = last.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? last[..^3] : last;
         if (type.Length == 0 || !char.IsLetter(type[0]) && type[0] != '_' || !type.All(c => char.IsLetterOrDigit(c) || c == '_'))
         {
             return $"{type} is not a C# name";
         }
+        if (Invalid(name) is { } problem)
+        {
+            return problem;
+        }
+        into = Path.Combine([into, .. parts[..^1].Where(p => p.Length > 0)]);
         string declaration = kind switch
         {
             "Interface" => $"public interface {type}\n{{\n}}\n",
