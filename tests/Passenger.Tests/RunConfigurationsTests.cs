@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Run;
 using Passenger.Core;
@@ -287,6 +288,35 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
             dialog.Close();
             Ui.Settle();
             Assert.Equal(["Hello"], Names(window));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A name longer than the list is wide ends in an ellipsis inside its row, as the other narrowing rows do,
+    /// where it had been cut mid-letter at the list's edge.</summary>
+    [AvaloniaFact]
+    public void A_configuration_named_longer_than_the_list_is_wide_ends_in_an_ellipsis_inside_its_row()
+    {
+        const string Long = "TopLevelStatementsConsoleApp project, named at more length than the list has room for";
+        MainWindow window = Keeping();
+        try
+        {
+            RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+            Click(dialog.AddButton);
+            Type(dialog.NameBox, Long);
+            Click(dialog.OkButton);
+            dialog = window.ShowRunConfigurations();
+            Ui.Settle();
+            ListBox list = dialog.GetVisualDescendants().OfType<ListBox>().First();
+            TextBlock name = list.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == Long && t.IsEffectivelyVisible);
+            ListBoxItem row = name.FindAncestorOfType<ListBoxItem>()!;
+            double right = Avalonia.VisualExtensions.TranslatePoint(name, new Avalonia.Point(name.Bounds.Width, 0), row)!.Value.X;
+            Assert.True(right <= row.Bounds.Width + 0.5 && name.TextTrimming == Avalonia.Media.TextTrimming.CharacterEllipsis,
+                $"'{Long}' runs {right:0.#} px into a row {row.Bounds.Width:0.#} px wide, cut at its edge rather than ending in an ellipsis");
+            dialog.Close();
         }
         finally
         {

@@ -492,11 +492,11 @@ public sealed class RunConfigurationsDialog : Window
     }
 
     /// <summary>A list row: the configuration's name, greyed when it cannot run here (why in its tip), and for a generated
-    /// one where it came from, muted beside it.</summary>
+    /// one where it came from, muted beside it; where came from gives way first, then the name, each to an ellipsis.</summary>
     private static Control RowView(RunConfiguration? row, string? whyNot)
     {
-        StackPanel line = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
-        TextBlock name = new() { Text = row?.Name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        ShrinkingRow line = new();
+        TextBlock name = new() { Text = row?.Name, VerticalAlignment = VerticalAlignment.Center };
         if (whyNot is not null)
         {
             name.Classes.Add("muted");
@@ -505,7 +505,7 @@ public sealed class RunConfigurationsDialog : Window
         line.Children.Add(name);
         if (row is { Generated: true })
         {
-            line.Children.Add(new TextBlock { Text = row.LaunchProfile.Length > 0 ? "launchSettings.json" : "project", Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+            line.Children.Add(new TextBlock { Text = row.LaunchProfile.Length > 0 ? "launchSettings.json" : "project", Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) });
         }
         return line;
     }
