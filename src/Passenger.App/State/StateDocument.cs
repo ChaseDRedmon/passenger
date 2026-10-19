@@ -362,11 +362,18 @@ internal static class StateFile
     }
 
     /// <summary>Writes a document through a temporary file beside it, flushed to disk and moved over it, so a crash or
-    /// a full disk leaves the old file whole.</summary>
+    /// a full disk leaves the old file whole; a symlink (settings.json kept in a dotfiles folder) is written through to
+    /// its target, which keeps its permissions, rather than replaced by a file of its own.</summary>
     public static void Replace(string path, JsonObject document)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        string temporary = $"{path}.{Environment.ProcessId}.tmp";
+        string target = new FileInfo(path).LinkTarget is not null ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
+        if (Workspace.FileText.IsReadOnly(target))
+        {
+            // Made read-only to keep it as it is: logged as a write that failed, never moved over.
+            throw new Workspace.ReadOnlyFileException(path);
+        }
+        string temporary = $"{target}.{Environment.ProcessId}.tmp";
         try
         {
             using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -374,7 +381,11 @@ internal static class StateFile
                 stream.Write(Encoding.UTF8.GetBytes(document.ToJsonString(Options) + "\n"));
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, path, overwrite: true);
+            if (!OperatingSystem.IsWindows() && File.Exists(target))
+            {
+                File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
+            }
+            File.Move(temporary, target, overwrite: true);
         }
         catch
         {

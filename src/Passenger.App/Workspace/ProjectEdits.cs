@@ -184,18 +184,18 @@ public static partial class ProjectEdits
     /// <summary>A project reference in the file: the project it names, where its element is, and the group holding it.</summary>
     private sealed record Reference(string Path, int Start, int End, Group? Group);
 
-    /// <summary>A project file read for one change: its text without a byte order mark, which goes back as it came.</summary>
+    /// <summary>A project file read for one change as a save reads a file: its encoding, byte order mark and line breaks,
+    /// which go back as they came.</summary>
     private sealed class ProjectText
     {
         private readonly string path;
-        private readonly bool bom;
+        private readonly FileText file;
 
         public ProjectText(string path)
         {
             this.path = path;
-            byte[] bytes = File.ReadAllBytes(path);
-            bom = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
-            Text = new UTF8Encoding(false).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+            file = FileText.Load(path) ?? throw new IOException($"{Path.GetFileName(path)} is not a text file");
+            Text = file.Text;
         }
 
         public string Text { get; }
@@ -219,12 +219,10 @@ public static partial class ProjectEdits
                 groups.FirstOrDefault(g => m.Index >= g.OpenEnd && m.Index < g.CloseStart)))];
         }
 
-        /// <summary>Writes the project back, waiting out another program reading it, as a project load does the moment the
-        /// files the project names have moved (<see cref="FileText.WhileHeld"/>).</summary>
-        public void Write(string text)
-        {
-            byte[] bytes = new UTF8Encoding(false).GetBytes(text);
-            FileText.WhileHeld(() => File.WriteAllBytes(path, bom ? [.. Encoding.UTF8.Preamble, .. bytes] : bytes));
-        }
+        /// <summary>Writes the project back as an editor's save does (<see cref="FileText.Save"/>): through a temporary file,
+        /// so a crash or a full disk leaves it whole, through a symlink to its target with its permissions, never over a
+        /// read-only one, to Local History with what it held, and waiting out another program reading it, as a project load
+        /// does the moment the files the project names have moved.</summary>
+        public void Write(string text) => FileText.Save(path, text, file.Encoding, file.HasBom, file.CrBreaks);
     }
 }

@@ -51,18 +51,18 @@ public static class SolutionEdits
         return null;
     }
 
-    /// <summary>A solution's file read for one change: its text without a byte order mark, which goes back as it came.</summary>
+    /// <summary>A solution's file read for one change as a save reads a file: its encoding, byte order mark and line
+    /// breaks, which go back as they came.</summary>
     private abstract class SolutionText
     {
-        private readonly bool bom;
+        private readonly FileText file;
 
         protected SolutionText(string path)
         {
             FilePath = path;
             Root = Path.GetDirectoryName(path)!;
-            byte[] bytes = File.ReadAllBytes(path);
-            bom = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
-            Text = new UTF8Encoding(false).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+            file = FileText.Load(path) ?? throw new IOException($"{Path.GetFileName(path)} is not a text file");
+            Text = file.Text;
         }
 
         protected string FilePath { get; }
@@ -82,11 +82,10 @@ public static class SolutionEdits
 
         protected abstract string Written();
 
-        public void Write()
-        {
-            byte[] text = new UTF8Encoding(false).GetBytes(Written());
-            File.WriteAllBytes(FilePath, bom ? [.. Encoding.UTF8.Preamble, .. text] : text);
-        }
+        /// <summary>Writes the solution back as an editor's save does (<see cref="FileText.Save"/>): through a temporary
+        /// file, so a crash or a full disk leaves it whole, through a symlink to its target with its permissions, never
+        /// over a read-only one, and to Local History with what it held.</summary>
+        public void Write() => FileText.Save(FilePath, Written(), file.Encoding, file.HasBom, file.CrBreaks);
 
         /// <summary>A path the solution names, relative to it, as the file system names it.</summary>
         protected string Resolve(string relative) => PathNames.Canonical(Path.Combine(Root, relative.Replace('\\', '/')));

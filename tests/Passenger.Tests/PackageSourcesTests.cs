@@ -177,6 +177,28 @@ public sealed class PackageSourcesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_feed_added_in_sources_leaves_the_nuget_config_as_it_was_in_Local_History_as_every_write_of_the_IDE_does()
+    {
+        byte[] before = File.ReadAllBytes(config);
+        MainWindow window = Open();
+        NuGetView nuget = window.NuGet;
+        ShowSources(nuget);
+        Descendants<Button>(nuget.Sources).Single(b => b.Name == "AddFeed").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
+        FeedDialog dialog = Assert.Single(window.OwnedWindows.OfType<FeedDialog>());
+        dialog.FeedName = "team";
+        dialog.Url = "https://nuget.example.com/v3/index.json";
+        Descendants<Button>(dialog).Single(b => (string?)b.Content == "OK").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Landed(() => nuget.FeedChoices.Contains("team"), "the new feed in the chooser");
+
+        Assert.Contains("<add key=\"team\" value=\"https://nuget.example.com/v3/index.json\" />", File.ReadAllText(config), StringComparison.Ordinal);
+        string path = Passenger.Core.PathNames.Canonical(config);
+        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == path && e.Before is { } hash && window.LocalHistory.Content(hash) is { } kept && kept.AsSpan().SequenceEqual(before)),
+            "Local History to keep the nuget.config as it was before the feed went in");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Disabling_a_feed_takes_it_out_of_search_and_enabling_it_brings_it_back()
     {
         MainWindow window = Open();

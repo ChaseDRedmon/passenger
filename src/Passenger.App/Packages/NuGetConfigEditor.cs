@@ -3,6 +3,7 @@ using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using NuGet.Configuration;
+using Passenger.App.Workspace;
 
 namespace Passenger.App.Packages;
 
@@ -142,26 +143,17 @@ public static class NuGetConfigEditor
 
     private static string Escape(string value) => SecurityElement.Escape(value);
 
-    /// <summary>Reads the file, makes the changes on its text, and writes it back as it came, through a temporary file
-    /// given the file's permissions (a user's nuget.config is its owner's alone); a file not there yet is made with
-    /// NuGet's empty configuration.</summary>
+    /// <summary>Reads the file, makes the changes on its text, and writes it back as it came (its encoding, byte order mark
+    /// and line breaks), as an editor's save writes (<see cref="FileText.Save"/>): through a temporary file given the
+    /// file's permissions (a user's nuget.config is its owner's alone), through a symlink to its target (one a dotfiles
+    /// folder keeps), never over a read-only one, and to Local History with what it held. A file not there yet, or
+    /// empty, is made with NuGet's empty configuration.</summary>
     private static void Change(string path, Action<ConfigText> change)
     {
-        bool exists = File.Exists(path);
-        byte[] bytes = exists ? File.ReadAllBytes(path) : [];
-        bool marked = bytes.AsSpan().StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]);
-        string read = bytes.Length == 0
-            ? "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n</configuration>\n"
-            : new UTF8Encoding(false).GetString(bytes, marked ? 3 : 0, bytes.Length - (marked ? 3 : 0));
-        ConfigText text = new(read);
+        FileText? file = File.Exists(path) ? FileText.Load(path) ?? throw new IOException($"{Path.GetFileName(path)} is not a text file") : null;
+        ConfigText text = new(file is { Text.Length: > 0 } read ? read.Text : "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n</configuration>\n");
         change(text);
-        string written = Path.Combine(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.{Environment.ProcessId}.tmp");
-        File.WriteAllBytes(written, [.. (marked ? (byte[])[0xEF, 0xBB, 0xBF] : []), .. new UTF8Encoding(false).GetBytes(text.Text)]);
-        if (exists && !OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(written, File.GetUnixFileMode(path));
-        }
-        File.Move(written, path, overwrite: true);
+        FileText.Save(path, text.Text, file?.Encoding ?? new UTF8Encoding(false), file?.HasBom ?? false, file?.CrBreaks ?? false);
     }
 
     /// <summary>The file's text and the elements in it, changed in place: each change is a splice of the text, after

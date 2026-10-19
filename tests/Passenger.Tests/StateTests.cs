@@ -122,6 +122,25 @@ public sealed class StateTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Settings_kept_in_a_dotfiles_folder_through_a_symlink_take_each_change_there_and_the_link_stays()
+    {
+        using IDisposable theme = TestsTheme();
+        string file = Path.Combine(settings, "settings.json");
+        string kept = Path.Combine(folder, "dotfiles", "passenger.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(kept)!);
+        File.WriteAllText(kept, "{\n  \"version\": 1,\n  \"editorFontSize\": 15\n}\n");
+        TestFolders.Link(file, kept);
+        MainWindow window = Keeping();
+        window.KeepSettings();
+        Assert.Equal(15, window.Settings.EditorFontSize);
+
+        window.ApplySettings(window.Settings with { EditorFontSize = 17 });
+        window.Close();
+        Assert.True(new FileInfo(file).LinkTarget is not null, "Changing a setting replaced the settings' symlink with a file of its own, the dotfiles' copy left behind");
+        Assert.Equal(17, (int)Read(kept)["editorFontSize"]!);
+    }
+
+    [AvaloniaFact]
     public void Two_windows_changing_different_settings_keep_both_changes()
     {
         using IDisposable theme = TestsTheme();

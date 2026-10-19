@@ -318,11 +318,13 @@ public sealed partial class CodeAssist
         return text.GetPosition(Math.Min(offset, text.Length));
     }
 
+    /// <summary>A file not open as its edits read it (<see cref="WorkspaceEdits"/>): in its own encoding, a lone carriage
+    /// return's lines as a line feed's, so places found in it are where the edit puts them.</summary>
     private static string ReadText(string path)
     {
         try
         {
-            return File.ReadAllText(path);
+            return FileText.Load(path)?.Text ?? string.Empty;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

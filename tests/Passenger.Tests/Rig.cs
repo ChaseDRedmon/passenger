@@ -404,6 +404,20 @@ public static class TestFolders
         }
     }
 
+    /// <summary>A symlink to a file, as a dotfiles folder keeps a configuration; the test is skipped where the system lets
+    /// this user make none (Windows without Developer Mode).</summary>
+    public static void Link(string path, string target)
+    {
+        try
+        {
+            File.CreateSymbolicLink(path, target);
+        }
+        catch (Exception refused) when (OperatingSystem.IsWindows() && refused is IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip($"Windows lets this user make no symlink: {refused.Message}");
+        }
+    }
+
     public static void Begin(string test) => Made[test] = [];
 
     public static void End(string test)

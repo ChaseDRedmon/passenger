@@ -225,6 +225,37 @@ public sealed class SolutionFoldersTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_solution_folder_added_to_a_Windows_1252_sln_keeps_every_other_byte_and_Local_History_keeps_the_sln_as_it_was()
+    {
+        // A .sln an older Visual Studio wrote with no byte order mark, a comment in the system's code page, Windows-1252.
+        string solution = Path.Combine(folder, "Shop.sln");
+        string comment = "# Visual Studio Version 17 \u0096 Café\r\n";
+        byte[] original = Encoding.Latin1.GetBytes(Sln[1..].Replace("# Visual Studio Version 17\r\n", comment, StringComparison.Ordinal));
+        File.WriteAllBytes(solution, original);
+        MainWindow window = Open();
+        Answer(window);
+        bool heard = false;
+        window.FolderWatcher!.Changed += (_, changes) => heard |= changes.Paths.Contains(PathNames.Canonical(solution));
+
+        RightClick(window, Row(window, NodeKind.Solution, "Shop"));
+        ChooseFromMenu(window, "Add", "New Solution Folder...");
+        Name(window, "Tools");
+        Ui.WaitFor(() => heard, "the folder watcher to hear of the change to the solution");
+        Ui.Settle();
+
+        string written = Encoding.Latin1.GetString(File.ReadAllBytes(solution));
+        Assert.True(written.Contains(comment, StringComparison.Ordinal), $"Adding a solution folder rewrote the .sln's Windows-1252 comment:\n{written}");
+        string without = Regex.Replace(written, $"Project\\(\"{Regex.Escape(FolderType)}\"\\) = \"Tools\", \"Tools\", \"\\{{[0-9A-F-]{{36}}\\}}\"\r\nEndProject\r\n", string.Empty);
+        Assert.Equal(Encoding.Latin1.GetString(original), without);
+
+        // Local History has the .sln as it was before, as it has every file an IDE write replaces.
+        string path = PathNames.Canonical(solution);
+        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == path && e.Before is { } hash && window.LocalHistory.Content(hash) is { } before && before.AsSpan().SequenceEqual(original)),
+            "Local History to keep the .sln as it was before the solution folder went in");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Removing_a_solution_folder_names_the_projects_folders_and_files_that_go_with_it()
     {
         string solution = WriteSolution("slnx");

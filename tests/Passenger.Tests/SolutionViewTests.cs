@@ -464,6 +464,26 @@ public sealed class SolutionViewTests : IDisposable
             ?? throw new InvalidOperationException($"The menu has no {header}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
     }
 
+    [AvaloniaFact]
+    public void Add_reference_to_a_Windows_1252_project_keeps_its_other_bytes_and_Local_History_keeps_the_project_as_it_was()
+    {
+        // An older project in the system's code page, as its declaration says, with a comment of Windows-1252's letters.
+        string core = Path.Combine(folder, "Shop.Core", "Shop.Core.csproj");
+        string app = Path.Combine(folder, "Shop.App", "Shop.App.csproj");
+        string comment = "  <!-- Café \u0096 \u0093Core\u0094 -->\n";
+        byte[] original = System.Text.Encoding.Latin1.GetBytes("<?xml version=\"1.0\" encoding=\"windows-1252\"?>\n" + Library.Replace("  <PropertyGroup>", comment + "  <PropertyGroup>", StringComparison.Ordinal));
+        File.WriteAllBytes(core, original);
+        MainWindow window = Open();
+        Heard(window, core, () => Assert.Null(window.SetReferences(core, [app])));
+
+        string written = System.Text.Encoding.Latin1.GetString(File.ReadAllBytes(core));
+        Assert.True(written.Contains(comment, StringComparison.Ordinal), $"Adding a reference rewrote the project's Windows-1252 comment:\n{written}");
+        Assert.Contains("<ProjectReference Include=\"..\\Shop.App\\Shop.App.csproj\" />", written, StringComparison.Ordinal);
+        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == core && e.Before is { } hash && window.LocalHistory.Content(hash) is { } before && before.AsSpan().SequenceEqual(original)),
+            "Local History to keep the project as it was before the reference went in");
+        window.Close();
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
