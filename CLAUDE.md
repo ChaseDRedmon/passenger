@@ -796,8 +796,10 @@ never counts on another having run before it: each shard lists the suite and `to
 by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one it lacks by its budget), the same deal in
 every shard, checked before any test runs to put every test in exactly one; inside a shard the collections keep their
 order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
-`tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 20 minutes fails (the
-whole run was an hour in one job a system). Each system's summary job fails unless every shard succeeded and every test
+`tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 22 minutes fails (the
+whole run was an hour in one job a system; 20 until the MVP's last week grew macOS's classes to 72 minutes, which four
+shards deal at about 19.6 each, and a fifth macOS shard would queue behind the disk images for GitHub's five macOS
+runners). Each system's summary job fails unless every shard succeeded and every test
 has exactly one result, and warns when its run's own times would deal a slowest shard two minutes shorter: `just
 test-times RUN` writes them to TestTimes.json, for committing. Raise a budget, or add a shard, knowing why. The run
 sets its own nice value to 0 when it starts below it (GitHub's macOS
