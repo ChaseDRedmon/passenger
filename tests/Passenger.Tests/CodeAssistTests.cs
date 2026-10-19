@@ -365,6 +365,42 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             find.Rows.SkipWhile(r => r.Depth != 0 || r.Label != group).Skip(1).TakeWhile(r => r.Depth != 0);
     }
 
+    /// <summary>The window takes keys while Find Usages lists ten thousand usages: each usage's place was grouped under its
+    /// file by a path made canonical on the UI thread, which asks the disk once a usage.</summary>
+    [AvaloniaFact]
+    public void The_window_takes_keys_while_find_usages_lists_ten_thousand_usages()
+    {
+        for (int file = 0; file < 4; file++)
+        {
+            StringBuilder text = new($"static class Uses{file}\n{{\n    public static int All()\n    {{\n        int total = 0;\n");
+            for (int call = 0; call < 2500; call++)
+            {
+                text.Append("        total += Helper.Twice(").Append(call).Append(");\n");
+            }
+            project.Write($"Uses{file}.cs", text.Append("        return total;\n    }\n}\n").ToString());
+        }
+        project.Write("Notes.txt", string.Empty);
+        MainWindow window = project.Open("Helper.cs");
+        window.OpenFile(project.PathOf("Notes.txt"));
+        window.OpenFile(project.PathOf("Helper.cs"));
+        PlaceAfter(window.EditorArea.CodeEditor, "Twi");
+        // The server has the folder loaded before the window is timed, which is the server's work, not the window's.
+        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, "the language server");
+        Ui.Settle();
+        FindView find = window.Find;
+        TimeSpan longest;
+        using (InputWait waits = new())
+        {
+            Ui.Run(window, AppActions.FindUsages);
+            Ui.PumpUntil(() => find.Shown == "Usages of Twice" && find.Rows.Count(r => r.Usage is not null) == 10_002, "the usages in the Find window", TimeSpan.FromMinutes(2));
+            waits.Stop();
+            longest = waits.Longest;
+        }
+        Assert.True(longest < TimeSpan.FromMilliseconds(250),
+            $"the window answered no input for {longest.TotalMilliseconds:F0} ms while Find Usages listed {find.Rows.Count(r => r.Usage is not null)} usages");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void The_find_windows_divider_dragged_gives_the_preview_the_room_the_usages_give_up()
     {

@@ -35,8 +35,10 @@ public partial class MainWindow
     private async Task ShowUsagesAsync(string title, IReadOnlyList<LspLocation> locations)
     {
         int search = ++usageSearches;
+        // Each file's path made canonical once, not once a usage: that asks the disk, and ten thousand usages held the window.
+        Dictionary<string, string> paths = locations.Select(l => l.Uri).Distinct(StringComparer.Ordinal).ToDictionary(u => u, DocumentUris.ToPath, StringComparer.Ordinal);
         List<(string Path, TextSnapshot? Open, ParsedText? Syntax, string Project, List<LspLocation> Here)> files =
-            [.. locations.GroupBy(l => DocumentUris.ToPath(l.Uri)).Select(file =>
+            [.. locations.GroupBy(l => paths[l.Uri], StringComparer.Ordinal).Select(file =>
             {
                 OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == file.Key);
                 return (file.Key, open?.Text.Snapshot, open?.Syntax?.Current, ProjectNameOf(file.Key), file.ToList());
