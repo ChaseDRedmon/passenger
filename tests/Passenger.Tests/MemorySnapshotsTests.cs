@@ -306,13 +306,28 @@ public sealed class MemorySnapshotsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Get_memory_snapshot_of_a_program_on_a_dotnet_newer_than_the_heap_reader_says_why_and_the_program_runs_on()
+    {
+        // .NET 11's runtime is newer than ClrMD 3 reads: the status bar said "Taking a memory snapshot" for good. When the
+        // reader learns .NET 11, this program's snapshot is listed instead, and this test changes to say so.
+        MainWindow window = Profiled("Newer", "Console.WriteLine(\"ready\");\nwhile (Console.ReadLine() is not null)\n{\n}\n", "net11.0");
+        Click(window.ProfilerView, "Get Memory Snapshot");
+        Responsive(() => window.ProfilerView.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
+            "the memory snapshot or why there is none", _ => { });
+        Assert.Equal("No memory snapshot: the program runs on .NET 11.0, newer than the memory profiler can read", window.Status);
+        Assert.False(window.Profiling!.HasExited, "The program profiled ended when its memory snapshot could not be read");
+        window.Profiling.Kill();
+        window.Close();
+    }
+
     /// <summary>A console project, built and started under the profiler from the window, run until it says it is ready.</summary>
-    private MainWindow Profiled(string name, string program)
+    private MainWindow Profiled(string name, string program, string framework = "net10.0")
     {
         string project = Path.Combine(folder, name);
         Directory.CreateDirectory(project);
         File.WriteAllText(Path.Combine(project, $"{name}.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(project, "Program.cs"), program);
         Restore.Run(project);
         MainWindow window = new() { Width = 1400, Height = 900 };

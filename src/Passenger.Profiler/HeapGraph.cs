@@ -135,8 +135,18 @@ internal sealed class HeapGraph
         {
             throw new InvalidOperationException("The dump has no .NET runtime in it");
         }
-        using ClrRuntime runtime = Runtime(target.ClrVersions[0]);
-        ClrHeap heap = runtime.Heap;
+        ClrInfo clr = target.ClrVersions[0];
+        using ClrRuntime runtime = Runtime(clr);
+        ClrHeap heap;
+        try
+        {
+            heap = runtime.Heap;
+        }
+        catch (NotSupportedException)
+        {
+            // ClrMD refuses a DAC newer than it knows (.NET 11's), which left Get Memory Snapshot saying it was taking one.
+            throw new InvalidOperationException($"the program runs on .NET {clr.Version.Major}.{clr.Version.Minor}, newer than the memory profiler can read");
+        }
         if (!heap.CanWalkHeap)
         {
             throw new HeapUnreadableException();
