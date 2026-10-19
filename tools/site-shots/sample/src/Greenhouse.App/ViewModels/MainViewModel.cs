@@ -25,7 +25,9 @@ public sealed class MainViewModel : ViewModel
 
     public string Title => "Greenhouse";
 
-    public string Summary => $"Day {day}: {plan.LitresFor(day):F1} L for {string.Join(", ", plan.DueOn(day).Select(p => p.Name))}";
+    public string Summary => plan.DueOn(day).Select(p => p.Name).ToList() is { Count: > 0 } due
+        ? $"Day {day}: {plan.LitresFor(day):F1} L for {string.Join(", ", due)}"
+        : $"Day {day}: nothing to water";
 
     public ObservableCollection<PlantViewModel> Plants { get; } = [];
 
