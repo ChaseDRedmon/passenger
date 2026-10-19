@@ -5,11 +5,14 @@ using Avalonia.Media;
 
 namespace Passenger.App;
 
-/// <summary>Asks which of several ways to go on, as Rider's Reload or Convert does: what each does, a button for each (the
-/// last the default) and Cancel, closing with the words of the button chosen, or null for Cancel. Escape cancels.</summary>
+/// <summary>Asks which of several ways to go on, as Rider's Reload or Convert does: what each does, a button for each and
+/// Cancel after them, laid out as Rider's dialogs are (DialogFooter.Listed), closing with the words of the button chosen,
+/// or null for Cancel. Escape cancels.</summary>
 public sealed class ChoiceDialog : Window
 {
-    public ChoiceDialog(string title, string text, IReadOnlyList<string> choices)
+    /// <param name="chosen">The choice Enter takes, or null for Cancel, as Rider's Reload or Convert has it, since either
+    /// answer may change the file.</param>
+    public ChoiceDialog(string title, string text, IReadOnlyList<string> choices, string? chosen)
     {
         Title = title;
         Width = 480;
@@ -18,20 +21,21 @@ public sealed class ChoiceDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
-        Button cancel = new() { Content = "Cancel", IsCancel = true };
-        cancel.Click += (_, _) => Close(null);
-        StackPanel buttons = new() { Classes = { "footer" }, Children = { cancel } };
-        for (int i = 0; i < choices.Count; i++)
+        List<Button> answers = [];
+        foreach (string choice in choices)
         {
-            string choice = choices[i];
-            Button button = new() { Content = choice, IsDefault = i == choices.Count - 1 };
-            if (button.IsDefault)
-            {
-                button.Classes.Add("primary");
-            }
+            Button button = new() { Content = choice, IsDefault = choice == chosen };
             button.Click += (_, _) => Close(choice);
-            buttons.Children.Add(button);
+            answers.Add(button);
         }
+        Button cancel = new() { Content = "Cancel", IsCancel = true, IsDefault = chosen is null };
+        cancel.Click += (_, _) => Close(null);
+        answers.Add(cancel);
+        foreach (Button button in answers.Where(b => b.IsDefault))
+        {
+            button.Classes.Add("primary");
+        }
+        StackPanel buttons = DialogFooter.Listed([.. answers]);
         Content = new StackPanel
         {
             Margin = new Thickness(20),

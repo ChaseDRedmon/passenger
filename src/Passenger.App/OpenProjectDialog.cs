@@ -6,8 +6,9 @@ using Avalonia.Media;
 namespace Passenger.App;
 
 /// <summary>Rider's Open Solution question, asked as a solution or folder is opened from a window that has one: "Where
-/// would you like to open the solution 'Name'?", This Window, New Window (the default) and Cancel, and Don't ask again,
-/// which makes the answer Settings' Open project in. Escape cancels.</summary>
+/// would you like to open the solution 'Name'?", This Window (the default), New Window and Cancel, in that order as Rider
+/// asks it (its yes, no and cancel), and Don't ask again, which makes the answer Settings' Open project in. Escape
+/// cancels.</summary>
 public sealed class OpenProjectDialog : Window
 {
     public const string ThisWindow = "This Window";
@@ -25,14 +26,14 @@ public sealed class OpenProjectDialog : Window
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         Question = $"Where would you like to open the solution '{name}'?";
 
+        Button here = new() { Content = ThisWindow, IsDefault = true, Classes = { "primary" } };
+        Button apart = new() { Content = NewWindow };
         Button cancel = new() { Content = "Cancel", IsCancel = true };
-        Button here = new() { Content = ThisWindow };
-        Button apart = new() { Content = NewWindow, IsDefault = true, Classes = { "primary" } };
         cancel.Click += (_, _) => Close();
         here.Click += (_, _) => Choose(OpenTarget.ThisWindow);
         apart.Click += (_, _) => Choose(OpenTarget.NewWindow);
 
-        StackPanel choices = new() { Classes = { "footer" }, Children = { cancel, here, apart } };
+        StackPanel choices = DialogFooter.Answers(here, apart, cancel);
         Content = new StackPanel
         {
             Margin = new Thickness(20),

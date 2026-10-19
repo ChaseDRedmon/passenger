@@ -146,12 +146,14 @@ public sealed class ProjectWindowsTests : IDisposable
         string gamma = TestFolders.Create("gamma-");
         MainWindow window = Started(LaunchOptions.Empty with { Folder = alpha });
 
-        // Rider's question, its default New Window; Cancel leaves the window as it was.
+        // Rider's question; Cancel leaves the window as it was.
         Assert.Null(window.Open(beta));
         OpenProjectDialog asked = Asked(window);
         Assert.Equal($"Where would you like to open the solution '{Path.GetFileName(beta)}'?", asked.Question);
-        Assert.Equal(["Cancel", OpenProjectDialog.ThisWindow, OpenProjectDialog.NewWindow], Buttons(asked).Select(b => (string?)b.Content));
-        Assert.Equal(OpenProjectDialog.NewWindow, (string?)Assert.Single(Buttons(asked), b => b.IsDefault).Content);
+        // Rider's yes, no and cancel: This Window (the default), New Window, Cancel, the row reversed on macOS.
+        string[] order = [OpenProjectDialog.ThisWindow, OpenProjectDialog.NewWindow, "Cancel"];
+        Assert.Equal(OperatingSystem.IsMacOS() ? order.Reverse() : order, Buttons(asked).Select(b => (string?)b.Content));
+        Assert.Equal(OpenProjectDialog.ThisWindow, (string?)Assert.Single(Buttons(asked), b => b.IsDefault).Content);
         Press(asked, "Cancel");
         Assert.True(window.Folder == PathNames.Canonical(alpha) && PassengerApp.Windows.Count == 1, "Cancel opened the folder anyway");
 

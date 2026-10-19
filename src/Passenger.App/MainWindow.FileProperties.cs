@@ -120,7 +120,7 @@ public partial class MainWindow
                 $"The encoding you've chosen ('{to.Name}') may change the contents of '{document.Name}'. Do you want to\n"
                 + $"1. Reload the file from disk in the new encoding '{to.Name}' and overwrite editor contents or\n"
                 + "2. Convert the text and overwrite file in the new encoding?",
-                ["Reload", "Convert"]);
+                ["Reload", "Convert"], null);
             if (answer == "Reload")
             {
                 if (change.OtherBom)
@@ -176,7 +176,8 @@ public partial class MainWindow
         status.Text = $"Changed Line Separators from {from} to {to}";
     }
 
-    /// <summary>Asks which of several ways to go on (Reload or Convert), the answer the button's words or null for Cancel.</summary>
-    private Task<string?> Choose(string title, string text, IReadOnlyList<string> choices) =>
-        new ChoiceDialog(title, text, choices).ShowDialog<string?>(this);
+    /// <summary>Asks which of several ways to go on (Reload or Convert), the answer the button's words or null for Cancel;
+    /// <paramref name="chosen"/> is the one Enter takes, null for Cancel.</summary>
+    private Task<string?> Choose(string title, string text, IReadOnlyList<string> choices, string? chosen) =>
+        new ChoiceDialog(title, text, choices, chosen).ShowDialog<string?>(this);
 }

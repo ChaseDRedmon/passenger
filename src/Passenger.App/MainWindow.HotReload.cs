@@ -130,7 +130,7 @@ public partial class MainWindow
             {
                 return false;
             }
-            string? answer = await new ChoiceDialog("Hot Reload", $"{outcome.Said}\n\n{RestartQuestion}", RestartAnswers).ShowDialog<string?>(this);
+            string? answer = await new ChoiceDialog("Hot Reload", $"{outcome.Said}\n\n{RestartQuestion}", RestartAnswers, "Yes").ShowDialog<string?>(this);
             switch (answer)
             {
                 case "Always":
