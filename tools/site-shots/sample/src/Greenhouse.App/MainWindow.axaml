@@ -1,0 +1,34 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:Greenhouse.App.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="560" d:DesignHeight="420"
+        x:Class="Greenhouse.App.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Greenhouse" Width="560" Height="420">
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Top" Spacing="4">
+            <TextBlock Classes="title" Text="{Binding Title}" />
+            <TextBlock Text="{Binding Summary}" Opacity="0.7" />
+        </StackPanel>
+        <Button x:Name="WaterButton" DockPanel.Dock="Bottom" HorizontalAlignment="Right"
+                Content="Water today's plants" Command="{Binding Water}" />
+        <ListBox x:Name="Plants" Margin="0,16" ItemsSource="{Binding Plants}" SelectedItem="{Binding Selected}">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:PlantViewModel">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding Bench}" Opacity="0.6" />
+                        </StackPanel>
+                        <ProgressBar Grid.Column="1" Width="160" Maximum="1" Value="{Binding Moisture}" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>

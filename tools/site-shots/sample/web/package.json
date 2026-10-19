@@ -1,0 +1,10 @@
+{
+  "name": "greenhouse-dashboard",
+  "version": "1.4.0",
+  "private": true,
+  "description": "The greenhouse's page: today's round and how wet each pot is.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p ."
+  }
+}

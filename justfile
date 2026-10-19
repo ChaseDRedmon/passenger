@@ -82,3 +82,9 @@ unicode-widths:
 # last build so rebuilding Passenger never changes the files under it (tools/mcp.sh). `.mcp.json` starts it.
 mcp folder="":
     @tools/mcp.sh {{folder}}
+
+# The site's pictures, site/images/<scene>-<dark|light>.webp, taken again from the sample solution in tools/site-shots
+# (after just build; macOS, with cwebp): just site-shots [SCENE...]
+[unix]
+site-shots *scenes:
+    tools/site-shots/shots.sh {{scenes}}

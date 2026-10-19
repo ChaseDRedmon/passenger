@@ -1,0 +1,6 @@
+[
+  { "name": "Basil", "bench": "North", "capacityLitres": 0.8, "dailyUseLitres": 0.4, "moisture": 0.67 },
+  { "name": "Tomato", "bench": "South", "capacityLitres": 3.0, "dailyUseLitres": 1.0, "moisture": 0.83 },
+  { "name": "Fig", "bench": "South", "capacityLitres": 12.0, "dailyUseLitres": 1.5, "moisture": 0.59 },
+  { "name": "Fern", "bench": "Shade", "capacityLitres": 1.5, "dailyUseLitres": 0.5, "moisture": 0.67 }
+]
