@@ -574,7 +574,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the runtime's handshake as long as the program lives and the session lasts (a runtime's first start on a fresh
   runner reads it off a cold disk); disconnect, terminate and the client's going call `ManagedDebugger.Ending()` before
   asking for the engine's lock, and a failed configurationDone's answer is written under the lock too
-  (`DapConnection.Handle`'s `evenIfFailed`).
+  (`DapConnection.Handle`'s `evenIfFailed`). A debug session is `DebugController.Session` from its first moment
+  (`DebugSession.LaunchAsync`/`AttachAsync`'s `starting`), Starting until configurationDone answers: Stop then
+  disconnects at once (a launched program ends, one being attached to is let go), the start failing as "Debugging NAME
+  was stopped as it started", and a start a disconnect was asked of sends no configurationDone. Profile's Kill shows
+  while its program has yet to reach the profiler and cancels the start.
   Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
   `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit
   text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; the
@@ -791,9 +795,11 @@ debugs Passenger.App; it finds its breakpoint by the code `status.Text = why;` i
 that line means changing the test. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
-tests' sessions and the IDE's alike. LaunchTests hold a program's runtime at its start by pointing
-`DOTNET_DiagnosticPorts=…,connect,suspend` at a port of the test's own (`StartHold`), which comes before the runtime
-starts its debugger; LoopingConsoleApp's `waiting` and `waiting first` modes give an async method a builder whose
+tests' sessions and the IDE's alike. `Debugging/Helpers/StartHold` holds a launched program's runtime at its start by
+pointing `DOTNET_DiagnosticPorts=…,connect,suspend` at a port of the test's own, which comes before the runtime starts
+its debugger (LaunchTests, DebuggerTests, and McpTests through a launch profile); a window test with a held start waits
+with `Ui.PumpUntil`, since the start holds BackgroundWork. Attach to Process's search matches text, so tests choose a
+program's row by its id (`ChooseById`). LoopingConsoleApp's `waiting` and `waiting first` modes give an async method a builder whose
 `ObjectIdForDebugger` waits on the paused passing thread, and `elsewhere` awaits something that goes on on a thread of
 its own. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
