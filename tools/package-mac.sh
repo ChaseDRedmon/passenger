@@ -81,9 +81,12 @@ detach() {
         fi
         sleep "$try"
     done
-    if ! hdiutil detach "$mount" -force; then
-        lsof +D "$mount" >&2 || true
-        fail "the image mounted at $mount could not be detached"
+    # A try that failed may still have detached it (hdiutil then answers "No such file or directory"): not mounted is done.
+    if mount | grep -qF " on $mount "; then
+        if ! hdiutil detach "$mount" -force; then
+            lsof +D "$mount" >&2 || true
+            fail "the image mounted at $mount could not be detached"
+        fi
     fi
     mounted=
 }

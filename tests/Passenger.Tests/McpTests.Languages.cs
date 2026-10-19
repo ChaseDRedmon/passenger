@@ -237,7 +237,8 @@ public sealed partial class McpTests
 
         // A property's value as evaluated, and where it was set: in the Directory.Build.props the SDK imports.
         Dictionary<string, object?> company = At(project, "Shop.csproj", "$(Comp");
-        string said = (await Call(client, "symbol_info", company)).GetString()!;
+        // The hover card's lines end as the system's do (Windows' "\r\n").
+        string said = (await Call(client, "symbol_info", company)).GetString()!.ReplaceLineEndings("\n");
         Assert.True(said.StartsWith("Company = Passenger\nMSBuild property, set in Directory.Build.props, line 3", StringComparison.Ordinal),
             $"symbol_info on a property did not say its evaluated value and where it was set: {said}");
         JsonElement set = Assert.Single((await Call(client, "definition", company)).EnumerateArray());

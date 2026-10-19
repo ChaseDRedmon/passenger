@@ -159,7 +159,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.Equal(("error", 7), (missing.GetProperty("severity").GetString(), missing.GetProperty("line").GetInt32()));
         Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
         // Its code help is MSBuild's, from the evaluation before the import that is not there broke it.
-        string framework = (await Call(client, "symbol_info", new() { ["path"] = "Sum.csproj", ["line"] = 4, ["column"] = 8 })).GetString()!;
+        // The hover card's lines end as the system's do (Windows' "\r\n").
+        string framework = (await Call(client, "symbol_info", new() { ["path"] = "Sum.csproj", ["line"] = 4, ["column"] = 8 })).GetString()!.ReplaceLineEndings("\n");
         Assert.True(framework.StartsWith("TargetFramework = net10.0\nMSBuild property, set in Sum.csproj, line 4", StringComparison.Ordinal),
             $"symbol_info on a project file's property did not say its value and where it was set: {framework}");
     }
