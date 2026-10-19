@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Passenger.Inspector;
 
@@ -20,8 +22,24 @@ internal sealed class Connection : IDisposable
         this.socket = socket;
         stream = new NetworkStream(socket, ownsSocket: true);
         reader = new StreamReader(stream, new UTF8Encoding(false));
+        Configure();
         writer = new Thread(Write) { IsBackground = true, Name = "Passenger inspector writer" };
         writer.Start();
+    }
+
+    /// <summary>Has System.Text.Json make every type the wire carries ready now, before the app's Main, rather than on its
+    /// first use, which it does under one lock for all of them. The writer, stopped there by the debugger as it sent the
+    /// failure the app stopped at, held it from the binding values evaluated at that stop (BindingValues.Read), whose abort
+    /// then fired inside it once the app went on and kept it held for good: no request was read again.</summary>
+    private static void Configure()
+    {
+        foreach (PropertyInfo property in typeof(WireJson).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (typeof(JsonTypeInfo).IsAssignableFrom(property.PropertyType))
+            {
+                _ = property.GetValue(WireJson.Default);
+            }
+        }
     }
 
     /// <summary>Connects to Passenger's socket, or null when it is not there (Passenger gone, the run not its).</summary>
