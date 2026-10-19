@@ -305,6 +305,8 @@ public sealed class IndentationTests : IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.Settle();
         PlaceAfter(editor, "        <Border />");
+        // The jump to the file's end drawn first, its lines laid out and coloured, so what is counted is the Enter's alone.
+        Ui.Settle();
         long before = GC.GetAllocatedBytesForCurrentThread();
         window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
