@@ -46,10 +46,34 @@ public sealed class TestRun : IDisposable
 
     /// <summary>What every wall-clock limit of a test is multiplied by (<see cref="Limits.Scaled"/>): <c>PASSENGER_TEST_TIME_SCALE</c>,
     /// read once, 1 when unset, as on a developer's machine, for whose times each limit is written; CI sets it for each
-    /// system from how much slower its runners are. A value that is no number above 0 ends the run before any test.</summary>
-    public static double TimeScale { get; } = ReadTimeScale();
+    /// system from how much slower its runners are. A value that is no number above 0 fails every test of the run, saying
+    /// so (<see cref="TestRun()"/>), the run's own clean-up beforehand taking 1.</summary>
+    public static double TimeScale => ReadTimeScale.Value.Scale;
 
     public const string TimeScaleVariable = "PASSENGER_TEST_TIME_SCALE";
+
+    private static readonly Lazy<(double Scale, string? Problem)> ReadTimeScale = new(() =>
+    {
+        string? given = Environment.GetEnvironmentVariable(TimeScaleVariable);
+        if (string.IsNullOrEmpty(given))
+        {
+            return (1, null);
+        }
+        return double.TryParse(given, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out double scale)
+            && scale > 0 && double.IsFinite(scale)
+            ? (scale, null)
+            : (1, $"{TimeScaleVariable} is \"{given}\": it must be a number above 0, such as 1.5, by which every test's time limits are multiplied");
+    });
+
+    /// <summary>The run's fixture, made before its first test: a malformed time scale fails each test with why, as a malformed
+    /// flag ends the IDE (a module initializer's exception reaches dotnet test only as "did not return valid JSON").</summary>
+    public TestRun()
+    {
+        if (ReadTimeScale.Value.Problem is { } problem)
+        {
+            throw new InvalidOperationException(problem);
+        }
+    }
 
     /// <summary>Where the run's windows look for Discord (<c>PASSENGER_DISCORD_IPC</c>): a place nothing listens.</summary>
     public static string DiscordNowhere => OperatingSystem.IsWindows()
@@ -118,19 +142,6 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
-    }
-
-    private static double ReadTimeScale()
-    {
-        string? given = Environment.GetEnvironmentVariable(TimeScaleVariable);
-        if (string.IsNullOrEmpty(given))
-        {
-            return 1;
-        }
-        return double.TryParse(given, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out double scale)
-            && scale > 0 && double.IsFinite(scale)
-            ? scale
-            : throw new InvalidOperationException($"{TimeScaleVariable} is \"{given}\": it must be a number above 0, such as 1.5, by which every test's time limits are multiplied");
     }
 
     /// <summary>On macOS and Linux, NuGet's home for the run, which NuGet takes from DOTNET_CLI_HOME: its user nuget.config,

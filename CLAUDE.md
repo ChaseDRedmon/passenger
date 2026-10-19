@@ -938,7 +938,7 @@ and `Screenshot.Pump` are banned in the tests (RS0030) outside `Waiting` and `Ui
 time a test needs to pass (a debounce it measures, a moment in which nothing may happen) is `Ui.Hold(time, why)`,
 `Ui.Stall` (the window's thread blocked) or `Waiting.For`. Every wall-clock limit is written as the time on a
 developer's machine and multiplied by `TestRun.TimeScale` (`PASSENGER_TEST_TIME_SCALE`, 1 when unset, a value that is no
-number above 0 ending the run; `Limits.Scaled`): Ui's and Waiting's waits scale what they are given, and the settle,
+number above 0 failing every test with why, from the run's fixture; `Limits.Scaled`): Ui's and Waiting's waits scale what they are given, and the settle,
 folder, process, restore, git, debug adapter and MCP call limits go through it. CI sets it per system in `test.yml`
 from how much slower its runners are than the Mac (2 on macOS, 2.5 on Windows, 2 on Linux: the 90th percentile of a test's
 time there over its time on the Mac, to the nearest half). `FLAKES.md` is the ledger of CI failures and their
