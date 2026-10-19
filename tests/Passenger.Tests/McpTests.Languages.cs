@@ -219,6 +219,56 @@ public sealed partial class McpTests
             $"The script's rename did not reach package.json on disk:\n{manifest}");
     }
 
+    /// <summary>A project whose property comes from its Directory.Build.props and whose target another names: what MSBuild's
+    /// evaluation makes of each name, where each is defined (the SDK's own files among them), the file's elements, and the
+    /// commands MSBuild files lack said plainly.</summary>
+    [Fact]
+    public async Task An_agent_reads_a_project_files_evaluated_values_and_goes_where_each_name_is_defined()
+    {
+        string shop = Made("mcpmsbuild-", made =>
+        {
+            File.WriteAllText(Path.Combine(made, "Directory.Build.props"), "<Project>\n  <PropertyGroup>\n    <Company>Passenger</Company>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(made, "Shop.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+                + "    <Product>$(Company) Shop</Product>\n  </PropertyGroup>\n  <Target Name=\"Greet\" AfterTargets=\"Build\">\n    <Message Text=\"$(Product)\" />\n  </Target>\n"
+                + "  <Target Name=\"Wave\" DependsOnTargets=\"Greet\" />\n</Project>\n");
+        });
+        await using McpClient client = await Start(["--mcp", shop]);
+        string project = File.ReadAllText(Path.Combine(shop, "Shop.csproj"));
+
+        // A property's value as evaluated, and where it was set: in the Directory.Build.props the SDK imports.
+        Dictionary<string, object?> company = At(project, "Shop.csproj", "$(Comp");
+        string said = (await Call(client, "symbol_info", company)).GetString()!;
+        Assert.True(said.StartsWith("Company = Passenger\nMSBuild property, set in Directory.Build.props, line 3", StringComparison.Ordinal),
+            $"symbol_info on a property did not say its evaluated value and where it was set: {said}");
+        JsonElement set = Assert.Single((await Call(client, "definition", company)).EnumerateArray());
+        Assert.Equal(("Directory.Build.props", 3), (set.GetProperty("path").GetString(), set.GetProperty("line").GetInt32()));
+        Assert.Equal("<Company>Passenger</Company>", set.GetProperty("text").GetString());
+        JsonElement target = Assert.Single((await Call(client, "definition", At(project, "Shop.csproj", "DependsOnTargets=\"Gre"))).EnumerateArray());
+        Assert.Equal(("Shop.csproj", 6), (target.GetProperty("path").GetString(), target.GetProperty("line").GetInt32()));
+        // The SDK's own files, outside the folder, which the editor opens read-only.
+        string[] sdk = [.. (await Call(client, "definition", At(project, "Shop.csproj", "Sdk=\"Microsoft.NE"))).EnumerateArray().Select(p => p.GetProperty("path").GetString()!)];
+        Assert.True(sdk.Length > 0 && sdk.All(Path.IsPathRooted) && sdk.Any(p => p.EndsWith("Sdk.props", StringComparison.Ordinal)),
+            $"The SDK's definition is not its own files: {string.Join(", ", sdk)}");
+
+        string outline = (await Call(client, "outline", new() { ["path"] = "Shop.csproj" })).GetString()!;
+        Assert.Equal("Project Sdk=\"Microsoft.NET.Sdk\" (line 1)\n  PropertyGroup (line 2)\n    TargetFramework = net10.0 (property, line 3)\n"
+            + "    Product = $(Company) Shop (property, line 4)\n  Target Name=\"Greet\" (target, line 6)\n    Message (task, line 7)\n  Target Name=\"Wave\" (target, line 9)", outline);
+
+        // What MSBuild files have no command for is said, with what they have.
+        foreach ((string tool, Dictionary<string, object?> arguments) in new (string, Dictionary<string, object?>)[]
+        {
+            ("usages", company),
+            ("rename", new(company) { ["newName"] = "Maker" }),
+            ("code_actions", company),
+            ("format", new() { ["path"] = "Shop.csproj" }),
+        })
+        {
+            CallToolResult lacking = await Result(client, tool, arguments);
+            Assert.True(lacking.IsError == true && Text(lacking).Contains("MSBuild files have no ", StringComparison.Ordinal)
+                && Text(lacking).Contains("definition goes to where a property", StringComparison.Ordinal), $"{tool} on a project file answered: {Text(lacking)}");
+        }
+    }
+
     /// <summary>A folder of the test's own, written (and restored) by <paramref name="write"/>, removed with the class.</summary>
     private string Made(string name, Action<string> write)
     {

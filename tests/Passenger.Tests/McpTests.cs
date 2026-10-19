@@ -158,9 +158,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.True(asked.Elapsed < TimeSpan.FromSeconds(60), $"The project file's diagnostics took {asked.Elapsed}");
         Assert.Equal(("error", 7), (missing.GetProperty("severity").GetString(), missing.GetProperty("line").GetInt32()));
         Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
-        CallToolResult notCode = await Result(client, "symbol_info", new() { ["path"] = "Sum.csproj", ["line"] = 1, ["column"] = 2 });
-        Assert.True(notCode.IsError == true && Text(notCode).Contains("no code help for MSBuild files such as Sum.csproj", StringComparison.Ordinal),
-            $"symbol_info on a project file did not say at once that Passenger has none for it: {Text(notCode)}");
+        // Its code help is MSBuild's, from the evaluation before the import that is not there broke it.
+        string framework = (await Call(client, "symbol_info", new() { ["path"] = "Sum.csproj", ["line"] = 4, ["column"] = 8 })).GetString()!;
+        Assert.True(framework.StartsWith("TargetFramework = net10.0\nMSBuild property, set in Sum.csproj, line 4", StringComparison.Ordinal),
+            $"symbol_info on a project file's property did not say its value and where it was set: {framework}");
     }
 
     [Fact]

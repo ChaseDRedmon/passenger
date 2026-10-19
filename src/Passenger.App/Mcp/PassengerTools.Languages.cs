@@ -12,7 +12,8 @@ using Passenger.Xaml.Syntax;
 namespace Passenger.App.Mcp;
 
 /// <summary>The code tools for a file of any language Passenger serves, each through that language's own service as the
-/// window's commands go: C# and Razor through Roslyn's server, XAML (Avalonia's and WPF's) through Passenger's own. What a
+/// window's commands go: C# and Razor through Roslyn's server, XAML (Avalonia's and WPF's) through Passenger's own, the web
+/// languages through their servers with ESLint and Prettier, MSBuild files through their project's evaluation. What a
 /// language lacks is said plainly, naming the language.</summary>
 public sealed partial class PassengerTools
 {
@@ -28,6 +29,16 @@ public sealed partial class PassengerTools
 
     /// <summary>A XAML file of an Avalonia or WPF project, read as it stands.</summary>
     private sealed record XamlServed(OpenDocument Document, XamlDocument Xaml, XamlFile File) : Served(Document, "XAML");
+
+    /// <summary>A project, .props or .targets file, read through its project's evaluation.</summary>
+    private sealed record MSBuildServed(OpenDocument Document, MSBuild.MSBuildDocument MSBuild) : Served(Document, "MSBuild");
+
+    /// <summary>What a tool says of a language that has no such command: plainly, naming the language and what it has instead.</summary>
+    private static InvalidOperationException Lacks(Served served, string command, string instead) =>
+        new($"{served.Language} files have no {command} in Passenger, so {Path.GetFileName(served.Document.Path)} has none: {instead}");
+
+    private const string MSBuildHas = "definition goes to where a property, item, target, import or SDK is defined, symbol_info says a property's "
+        + "value and where it was set, outline gives its elements, and diagnostics its evaluation's problems";
 
     /// <summary>The file opened as the editor would, with the service that answers for it once that can: a XAML file's
     /// project read, the C# server's workspace loaded. A file no service reads is refused at once, saying which do.</summary>
@@ -46,6 +57,10 @@ public sealed partial class PassengerTools
                 ? throw new InvalidOperationException($"{name} is not XAML of an Avalonia or WPF project: Passenger reads the XAML of a project that references Avalonia or WPF")
                 : new XamlServed(document, xaml, file);
         }
+        if (Session.MSBuild.For(document) is { } msbuild)
+        {
+            return new MSBuildServed(document, msbuild);
+        }
         if (Session.Web is { } languages && languages.For(document) is { } web)
         {
             // Its server starts with the first file of its kind, and answers once it has; without a Node.js to run on, never.
@@ -60,7 +75,57 @@ public sealed partial class PassengerTools
             return new ServerServed(document, document.Language.Name, lsp);
         }
         throw new InvalidOperationException($"Passenger has no code help for {LanguageOf(document)} files such as {name}: the code tools answer C#, Razor, "
-            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less and JSON files");
+            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less, JSON and MSBuild files");
+    }
+
+    /// <summary>Where Go to Declaration goes from a name in an MSBuild file: where a property was set (the one in force
+    /// first), an item type or target defined, the files an import or SDK brings in (the SDK's own, read-only).</summary>
+    private async Task<IReadOnlyList<Place>> MSBuildDefinition(MSBuildServed msbuild, int offset, CancellationToken cancel) =>
+        await msbuild.MSBuild.TargetsAsync(offset) is { } found
+            ? await PlacesOf([.. found.Targets.Select(t => (t.Place.Path, new TextPosition(Math.Max(0, t.Place.Line - 1), Math.Max(0, t.Place.Column - 1))))], cancel)
+            : [];
+
+    /// <summary>An MSBuild file's elements, indented, each with its line: a property or metadata with its value as written,
+    /// an item with what it includes, a target, an import or an SDK with what names it.</summary>
+    private static string MSBuildOutline(MSBuildServed msbuild)
+    {
+        XmlTree tree = msbuild.MSBuild.Tree;
+        TextSnapshot snapshot = TextSnapshot.From(tree.Text);
+        System.Text.StringBuilder text = new();
+        foreach (XmlElement root in tree.Roots)
+        {
+            Write(root, 0);
+        }
+        return text.Length == 0 ? "The file has no elements" : text.ToString().TrimEnd();
+
+        void Write(XmlElement element, int depth)
+        {
+            MSBuild.MSBuildRole role = MSBuild.MSBuildSyntax.RoleOf(element);
+            text.Append(' ', depth * 2).Append(element.Name);
+            if (role is MSBuild.MSBuildRole.Property or MSBuild.MSBuildRole.Metadata && element.Children.Count == 0)
+            {
+                text.Append(" = ").Append(MSBuild.MSBuildNavigation.Shown(tree.Text[element.Content.Start..element.Content.End]));
+            }
+            foreach (XmlAttribute attribute in element.Attributes.Where(a => a.Name is "Sdk" or "Name" or "Project" or "Include" or "Update" or "Remove" or "Version" or "Label"))
+            {
+                text.Append(' ').Append(attribute.Name).Append("=\"").Append(attribute.Value).Append('"');
+            }
+            string kind = role switch
+            {
+                MSBuild.MSBuildRole.Property => "property, ",
+                MSBuild.MSBuildRole.Item => "item, ",
+                MSBuild.MSBuildRole.Metadata => "metadata, ",
+                MSBuild.MSBuildRole.Task => "task, ",
+                _ when element.LocalName == "Target" => "target, ",
+                _ when element.LocalName == "Import" => "import, ",
+                _ => string.Empty,
+            };
+            text.Append(" (").Append(kind).Append("line ").Append(snapshot.GetLineFromOffset(Math.Min(element.Start, snapshot.Length)) + 1).Append(")\n");
+            foreach (XmlElement child in element.Children)
+            {
+                Write(child, depth + 1);
+            }
+        }
     }
 
     /// <summary>A file's language as the tools name it: XAML, MSBuild and the web languages by what reads them, the rest as

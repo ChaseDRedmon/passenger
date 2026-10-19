@@ -155,14 +155,19 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "symbol_info", Title = "What a symbol is", ReadOnly = true), Description(
         "What is known of the symbol at a position, as the hover card says it: in C#, Razor, JavaScript, TypeScript, HTML, CSS, SCSS, Less " +
         "and JSON its language server's description (a declaration and its documentation, a JSON property's schema); in XAML (Avalonia's or " +
-        "WPF's) the type, property, event, resource or element a name is.")]
+        "WPF's) the type, property, event, resource or element a name is; in a project, .props or .targets file what MSBuild's evaluation " +
+        "makes of a name: a property's value and where it was set, an item's items, a target's definition, an import's files, with MSBuild's " +
+        "documentation.")]
     public Task<string> SymbolInfo(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
         int offset = Offset(served.Document, line, column);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return await XamlSymbolInfo(xaml, offset);
+            case XamlServed xaml:
+                return await XamlSymbolInfo(xaml, offset);
+            case MSBuildServed msbuild:
+                return await msbuild.MSBuild.DescribeAsync(offset) ?? "Nothing is known about this position";
         }
         Hover? hover = await ((ServerServed)served).Lsp.HoverAsync(offset);
         return hover is null ? "Nothing is known about this position" : Shapes.Text(hover.Contents).Trim();
@@ -172,7 +177,9 @@ public sealed partial class PassengerTools(MainWindow window)
         "Where the symbol at a position is defined, as Go to Declaration goes. A C# symbol from a package or the framework has no source, " +
         "and says so. From XAML: the C# or XAML that declares a type, property, event, resource or element, a library's type decompiled " +
         "(a read-only file), or a theme's own XAML through its Source Link. In the web languages, their language server's; in JSON, whose " +
-        "server has none, from a package.json dependency to its installed package and from a script's npm run to the script.")]
+        "server has none, from a package.json dependency to its installed package and from a script's npm run to the script. In a project, " +
+        ".props or .targets file, where its evaluation set a property (the one in force first), defined an item type or a target, or the " +
+        "files an import or an SDK brings in (the SDK's own, which are read-only).")]
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -181,6 +188,8 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             case XamlServed xaml:
                 return await XamlDefinition(xaml, offset, cancel);
+            case MSBuildServed msbuild:
+                return await MSBuildDefinition(msbuild, offset, cancel);
             case ServerServed json when !json.Provides("definitionProvider"):
                 return await JsonDefinition(json, offset, cancel);
         }
@@ -190,7 +199,8 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "usages", Title = "Find usages", ReadOnly = true), Description(
         "Every place the symbol at a position is used, its declaration included, with each line's text, as Find Usages finds them: in C#, " +
         "Razor and the web languages, their language server's (JSON's has none, and says so). In XAML: an element's name where its file " +
-        "names it and where its code-behind uses its field, or a resource's key wherever the project's XAML uses or defines it.")]
+        "names it and where its code-behind uses its field, or a resource's key wherever the project's XAML uses or defines it. MSBuild " +
+        "files have none, and say so.")]
     public Task<IReadOnlyList<Place>> Usages(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -199,6 +209,8 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             case XamlServed xaml:
                 return await XamlUsages(xaml, offset, cancel);
+            case MSBuildServed:
+                throw Lacks(served, "Find Usages", MSBuildHas);
             case ServerServed unfound when !unfound.Provides("referencesProvider"):
                 throw new InvalidOperationException($"{unfound.Language} has no usages: its language server finds none, so Find Usages finds nothing in {Path.GetFileName(unfound.Document.Path)}");
         }
@@ -242,7 +254,8 @@ public sealed partial class PassengerTools(MainWindow window)
         "Renames the symbol at a position everywhere it is used, as the IDE's Rename does, and saves the files it changes. A type's " +
         "files named after it (Foo.cs, Foo.Designer.cs) take its new name too, unless renameFiles is false. In XAML it renames an " +
         "element's name (x:Name or Name) in its file and where its code-behind uses the field. In the web languages, their language " +
-        "server's rename; in JSON, whose server has none, a property's name, and in a package.json's scripts every npm run of a script with it.")]
+        "server's rename; in JSON, whose server has none, a property's name, and in a package.json's scripts every npm run of a script with it. " +
+        "MSBuild files have none, and say so.")]
     public Task<string> Rename(string path, int line, int column, [Description("The new name")] string newName,
         [Description("Whether a type's files named after it are renamed with it, as Rider's Also rename files to reflect this change")] bool renameFiles = true,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -255,6 +268,8 @@ public sealed partial class PassengerTools(MainWindow window)
                 return await XamlRename(xaml, offset, newName, cancel);
             case ServerServed json when !json.Provides("renameProvider"):
                 return await JsonRename(json, offset, newName);
+            case MSBuildServed:
+                throw Lacks(served, "Rename", MSBuildHas);
         }
         ServerServed server = (ServerServed)served;
         LspDocument lsp = server.Lsp;
@@ -283,14 +298,17 @@ public sealed partial class PassengerTools(MainWindow window)
         "the scopes a Fix All may cover, where a new XAML resource or style may go) is followed by them, each one apply_code_action's " +
         "choice. In C#, Razor and the web languages, the language server's, ESLint's fixes for the line first where ESLint checks the " +
         "file; in XAML, Passenger's own: the fixes of the problems on the line (creating a binding's property or command, a missing " +
-        "converter), Extract Resource and Extract Style.")]
+        "converter), Extract Resource and Extract Style. MSBuild files have none, and say so.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return (IReadOnlyList<string>)[.. (await XamlActions(xaml, Offset(xaml.Document, line, column)))
-                .Select(a => a.Choices.Count == 0 ? $"{a.Title} [{a.Kind}]" : $"{a.Title} [{a.Kind}], choices: {string.Join("; ", a.Choices)}")];
+            case XamlServed xaml:
+                return (IReadOnlyList<string>)[.. (await XamlActions(xaml, Offset(xaml.Document, line, column)))
+                    .Select(a => a.Choices.Count == 0 ? $"{a.Title} [{a.Kind}]" : $"{a.Title} [{a.Kind}], choices: {string.Join("; ", a.Choices)}")];
+            case MSBuildServed:
+                throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
         IReadOnlyList<EslintFix> linted = await LintFixes(served, Offset(served.Document, line, column));
         return (IReadOnlyList<string>)[.. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
@@ -308,9 +326,12 @@ public sealed partial class PassengerTools(MainWindow window)
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return await ApplyXamlAction(xaml, Offset(xaml.Document, line, column), title, choice, name);
+            case XamlServed xaml:
+                return await ApplyXamlAction(xaml, Offset(xaml.Document, line, column), title, choice, name);
+            case MSBuildServed:
+                throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
         ServerServed server = (ServerServed)served;
         IReadOnlyList<EslintFix> linted = await LintFixes(served, Offset(served.Document, line, column));
@@ -363,7 +384,7 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description(
         "Reformats a file as the IDE's Reformat Code does, and saves it: C# and Razor by the language server, XAML by Rider's XAML code " +
         "style with the file's .editorconfig over it, JavaScript, TypeScript, HTML, CSS, SCSS, Less and JSON by the project's Prettier " +
-        "where it formats the file (Run on 'Reformat Code'), else by the language server.")]
+        "where it formats the file (Run on 'Reformat Code'), else by the language server. MSBuild files have none, and say so.")]
     public Task<string> Format(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
@@ -388,7 +409,8 @@ public sealed partial class PassengerTools(MainWindow window)
             }
             return laid.Count == 0 ? "Already formatted" : $"Reformatted ({laid.Count} edits)";
         }
-        ServerServed served = await Serve(path, cancel) as ServerServed ?? throw new InvalidOperationException("Reformat Code reads no such file");
+        Served file = await Serve(path, cancel);
+        ServerServed served = file as ServerServed ?? throw Lacks(file, "Reformat Code", MSBuildHas);
         if (served.Web is not null && await Prettify(served) is { } prettified)
         {
             return prettified;
@@ -408,7 +430,8 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "find_symbol", Title = "Go to symbol", ReadOnly = true), Description(
         "Types, members and other symbols across the workspace whose names match a query, as Go to Symbol finds them: by " +
-        "substring, initials or camel humps (\"GH\" finds GetHashCode). Only the solution's own code, not packages'.")]
+        "substring, initials or camel humps (\"GH\" finds GetHashCode). Only the solution's own C# and Razor code, not packages': Go to " +
+        "Symbol is the C# language server's; a XAML, web or MSBuild file's names are in its outline.")]
     public Task<IReadOnlyList<SymbolFound>> FindSymbol(
         string query,
         [Description("Only symbols of this kind: class, interface, struct, enum, method, property, field, event, constructor...")] string? kind = null,
@@ -426,13 +449,17 @@ public sealed partial class PassengerTools(MainWindow window)
         "A file's structure, indented, each part with its line: a C# file's types and their members, as the File Structure window shows " +
         "them; a web language's symbols as its language server outlines them (a script's functions and classes, a stylesheet's rules, an " +
         "HTML document's elements, a JSON file's properties); a XAML file's elements, each with what names it (x:Class, x:Name, x:Key, a " +
-        "style's selector or target type).")]
+        "style's selector or target type); an MSBuild file's elements, its properties with their values as written, its items with what they " +
+        "include, its targets and imports.")]
     public Task<string> Outline(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return XamlOutline(xaml);
+            case XamlServed xaml:
+                return XamlOutline(xaml);
+            case MSBuildServed msbuild:
+                return MSBuildOutline(msbuild);
         }
         LspDocument lsp = ((ServerServed)served).Lsp;
         System.Text.StringBuilder text = new();
