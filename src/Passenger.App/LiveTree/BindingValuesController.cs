@@ -39,12 +39,39 @@ public sealed class BindingValuesController
     {
         this.editors = editors;
         this.tree = tree;
-        soon = new Debounce(TimeSpan.FromMilliseconds(100), RefreshAsync);
+        soon = new Debounce(TimeSpan.FromMilliseconds(100), RefreshAsync, Hold);
         tree.ChosenChanged += (_, _) => Invalidate();
         editors.ActiveChanged += (_, _) => soon.Restart();
         editors.Opened += (_, document) => Follow(document);
         editors.Closed += (_, document) => readings.Remove(document);
         editors.ForEachEditor(editor => editor.ScrollChanged += (_, _) => soon.Restart());
+    }
+
+    /// <summary>The waits and reads under way, from a change to the values it brings landing.</summary>
+    private int reading;
+
+    /// <summary>Whether values are being read for the files shown, or about to be: an agent's debug_state waits until
+    /// they are not, so what it says the editor shows is what the editor shows once the stop is read.</summary>
+    public bool IsReading => reading > 0 || refreshing;
+
+    private IDisposable Hold()
+    {
+        reading++;
+        return new Held(this);
+    }
+
+    private sealed class Held(BindingValuesController owner) : IDisposable
+    {
+        private bool done;
+
+        public void Dispose()
+        {
+            if (!done)
+            {
+                done = true;
+                owner.reading--;
+            }
+        }
     }
 
     /// <summary>How values are read: by the debugger's evaluation at a stop, or from the app as it runs.</summary>
@@ -176,10 +203,25 @@ public sealed class BindingValuesController
         }
     }
 
+    /// <summary>The stop the values shown were read at, while paused.</summary>
+    private DebugStop? readAt;
+
+    /// <summary>Reads again when what is shown was read before the stop now (read a moment after the program paused, which
+    /// raises nothing of its own): what an agent's debug_state asks before it waits out <see cref="IsReading"/>.</summary>
+    public void CatchUp()
+    {
+        UiThread.Check();
+        if (ModeNow() == Mode.Paused && readAt != session?.Debug.Stop)
+        {
+            Invalidate();
+        }
+    }
+
     private async Task RefreshOnceAsync()
     {
         int now = generation;
         Mode? mode = ModeNow();
+        readAt = mode == Mode.Paused ? session?.Debug.Stop : null;
         if (mode is null)
         {
             foreach (OpenDocument document in readings.Keys)

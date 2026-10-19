@@ -147,15 +147,25 @@ public sealed class LiveTreeController
         ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Element == details.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
         : string.Empty;
 
+    /// <summary>The inspector in the app told of the property breakpoints as they are now (while the app runs), which an
+    /// agent's breakpoint_set waits for, so its next click finds the property watched.</summary>
+    public Task Watching { get; private set; } = Task.CompletedTask;
+
     /// <summary>Tells the inspector in the app which properties to watch, as the property breakpoints that are on (none
     /// while muted) and their hit counts say; while the app is paused, once it runs. One at a time, the last word winning.</summary>
-    private async Task SyncWatchesAsync()
+    private Task SyncWatchesAsync()
     {
         if (syncing)
         {
             syncAgain = true;
-            return;
+            return Watching;
         }
+        Watching = SyncWatchesLoopAsync();
+        return Watching;
+    }
+
+    private async Task SyncWatchesLoopAsync()
+    {
         syncing = true;
         try
         {

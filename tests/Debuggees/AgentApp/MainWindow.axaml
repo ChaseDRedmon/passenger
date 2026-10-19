@@ -9,6 +9,7 @@
         <TextBox x:Name="NameBox" PlaceholderText="Your name" KeyDown="OnNameKey" />
         <TextBlock x:Name="Greeting" Text="Nobody greeted" />
         <TextBlock x:Name="Caption" Text="{Binding Nmae}" />
+        <TextBlock x:Name="Who" Text="{Binding Name}" />
         <ComboBox x:Name="Colour" SelectedIndex="0">
             <ComboBoxItem>Red</ComboBoxItem>
             <ComboBoxItem>Green</ComboBoxItem>

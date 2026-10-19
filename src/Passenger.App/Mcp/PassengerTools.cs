@@ -617,13 +617,18 @@ public sealed partial class PassengerTools(MainWindow window)
         "XAML (.axaml) a line's breakpoint stops where the first element or attribute written on it is made or set, and one with an attribute " +
         "(as written on that line: Background, Grid.Row) where that property is set as its element is made. With bindingErrors true it turns " +
         "on XAML Binding Errors, which stops a debugged Avalonia or WPF app the moment a binding fails, its condition and log message reading the " +
-        "failure as $bindingError (Control, Property, Path, FailedPart, DataContext, Message, Xaml).")]
+        "failure as $bindingError (Control, Property, Path, FailedPart, DataContext, Message, Xaml). With control and property, the Live " +
+        "Visual Tree's Break When Value Changes: a property breakpoint on that property of an element of the app being debugged (Avalonia " +
+        "or WPF, as app_details lists its properties), which stops the app in the code that changes it (a style's, a binding's, " +
+        "code-behind's), its condition reading newValue, oldValue and control; it lasts as long as the debugging session.")]
     public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(
         string? path = null,
         int? line = null,
         [Description("In .axaml, an attribute on the line, by its name as written, for a breakpoint on it alone")] string? attribute = null,
         [Description("An exception type's full name, or \"Any exception\", for an exception breakpoint in place of a path and line")] string? exception = null,
         [Description("True for XAML Binding Errors, in place of a path and line")] bool bindingErrors = false,
+        [Description("For a property breakpoint, an element of the debugged app: " + ControlQuery)] string? control = null,
+        [Description("For a property breakpoint, the element's property by the name app_details gives it (Text, Background, Grid.Row)")] string? property = null,
         string? condition = null,
         string? hitCondition = null,
         [Description("Written on each hit, its {expressions} evaluated there")] string? logMessage = null,
@@ -638,6 +643,14 @@ public sealed partial class PassengerTools(MainWindow window)
             store.Update(store.BindingErrors, enabled: true, suspend, condition, hitCondition, logMessage);
             await InTheProgram(cancel);
             return ExceptionBreakpoints();
+        }
+        if (control is { Length: > 0 } || property is { Length: > 0 })
+        {
+            (long element, string described, string name) = await WatchedProperty(control, property, cancel);
+            PropertyBreakpoint watched = store.AddProperty(element, described, name);
+            store.Update(watched, enabled: true, suspend, condition, hitCondition, logMessage);
+            await InTheApp(cancel);
+            return DataBreakpoints();
         }
         if (exception is { Length: > 0 })
         {
@@ -660,14 +673,36 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint", Destructive = false), Description(
         "Removes the breakpoint on a line (or on an .axaml attribute of it), or the exception breakpoint on an exception type (\"Any " +
         "exception\" is never removed: breakpoint_set turns it off with its scenarios, or the person's Breakpoints window). With bindingErrors " +
-        "true it turns XAML Binding Errors off, which every folder keeps.")]
+        "true it turns XAML Binding Errors off, which every folder keeps. With control and property, the property breakpoint on that " +
+        "property of the debugged app's element.")]
     public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string? path = null, int? line = null,
         [Description("In .axaml, the attribute whose breakpoint to remove")] string? attribute = null,
         [Description("An exception type's full name, in place of a path and line")] string? exception = null,
         [Description("True to turn XAML Binding Errors off, in place of a path and line")] bool bindingErrors = false,
+        [Description("For a property breakpoint, the element: " + ControlQuery)] string? control = null,
+        [Description("For a property breakpoint, the element's property")] string? property = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         BreakpointStore store = Session.Debug.Breakpoints;
+        if (control is { Length: > 0 } || property is { Length: > 0 })
+        {
+            if (control is not { Length: > 0 } || property is not { Length: > 0 })
+            {
+                throw new ArgumentException("A property breakpoint is named by its control and its property, both");
+            }
+            string wanted = property.Trim();
+            // By the id breakpoints shows, else the element the query finds now (the app paused answers no query).
+            PropertyBreakpoint? watched = store.Properties.FirstOrDefault(p => Id(p.Element) == control.Trim() && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase));
+            if (watched is null)
+            {
+                (long element, _, _) = await WatchedElement(control, cancel);
+                watched = store.Properties.FirstOrDefault(p => p.Element == element && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ArgumentException($"No property breakpoint is on {wanted} of {control}; breakpoints lists those there are");
+            }
+            store.Remove(watched);
+            await InTheApp(cancel);
+            return DataBreakpoints();
+        }
         if (bindingErrors)
         {
             BindingErrorBreakpoint failures = store.BindingErrors;
@@ -693,6 +728,47 @@ public sealed partial class PassengerTools(MainWindow window)
         await InTheProgram(cancel);
         return Breakpoints(full);
     });
+
+    /// <summary>The element of the debugged app a query names, as a property breakpoint describes it (Type#Name), with its
+    /// details' properties.</summary>
+    private async Task<(long Element, string Described, IReadOnlyList<Passenger.Inspector.PropertyValue> Properties)> WatchedElement(string control, CancellationToken cancel)
+    {
+        if (Session.LiveApp is null)
+        {
+            throw new InvalidOperationException(Session.Debug.IsDebugging
+                ? $"A property breakpoint watches an element of the app being debugged, and what is being debugged is not {Inspectable}"
+                : "A property breakpoint watches an element of the app being debugged: debug_start one first");
+        }
+        LiveTree.LiveApp live = await InspectedAsync("debug", cancel);
+        (List<LiveTree.AppNode> nodes, _) = await TreeOf(live, null, cancel);
+        Passenger.Inspector.Element element = LiveTree.AppQuery.One(nodes, control).Element;
+        Passenger.Inspector.ElementDetails details = await live.DetailsAsync(element.Id);
+        return (element.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, details.Properties);
+    }
+
+    /// <summary>A property breakpoint's element and property, the property by the name the element's details list it under.</summary>
+    private async Task<(long Element, string Described, string Property)> WatchedProperty(string? control, string? property, CancellationToken cancel)
+    {
+        if (control is not { Length: > 0 } || property is not { Length: > 0 })
+        {
+            throw new ArgumentException("A property breakpoint needs both control, the element, and property, the property of it to watch");
+        }
+        (long element, string described, IReadOnlyList<Passenger.Inspector.PropertyValue> properties) = await WatchedElement(control, cancel);
+        string wanted = property.Trim();
+        Passenger.Inspector.PropertyValue found = properties.FirstOrDefault(p => p.Name == wanted)
+            ?? properties.FirstOrDefault(p => p.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"{described} has no property {wanted}; app_details lists the properties it has");
+        return (element, described, found.Name);
+    }
+
+    /// <summary>Waits for the debugger and the inspector in the app to take a property breakpoint's change, so the agent's next
+    /// click or key finds the property watched; while the app is paused, the inspector watches it once the app runs.</summary>
+    private async Task InTheApp(CancellationToken cancel)
+    {
+        await InTheProgram(cancel);
+        await Task.WhenAny(window.PropertyWatches, Task.Delay(BreakpointLimit, cancel));
+        cancel.ThrowIfCancellationRequested();
+    }
 
     /// <summary>How long a breakpoint change waits for the debugger to take it into the program running.</summary>
     private static readonly TimeSpan BreakpointLimit = TimeSpan.FromSeconds(10);
@@ -769,7 +845,9 @@ public sealed partial class PassengerTools(MainWindow window)
         await Session.Debug.DetachAsync() is { } problem ? throw new InvalidOperationException(problem) : Session.Debug.Summary ?? "Detached");
 
     [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
-        "The debugger's state, and while paused where: the reason, the stopped thread's frames, and the chosen frame's variables.")]
+        "The debugger's state, and while paused where: the reason, the stopped thread's frames, and the chosen frame's variables; " +
+        "in a debugged Avalonia app, also the binding values the editor shows after the lines of the .axaml files open in it (open_file " +
+        "one to see its bindings' values at the stop, or that one failed and where), read on the app's UI thread.")]
     public Task<DebugSnapshot> GetDebugState(CancellationToken cancel = default) => OnUi(cancel, DebugSnapshotAsync);
 
     [McpServerTool(Name = "debug_continue", Title = "Resume", Destructive = false), Description("Resumes the program, and waits up to waitSeconds for it to stop again or end.")]
@@ -1004,7 +1082,29 @@ public sealed partial class PassengerTools(MainWindow window)
             locals,
             null,
             debugger.Summary,
-            exception);
+            exception)
+        {
+            BindingValues = await BindingValuesShownAsync(),
+        };
+    }
+
+    /// <summary>How long a stop's answer waits for the binding values of the .axaml files shown to be read.</summary>
+    private static readonly TimeSpan BindingValuesLimit = TimeSpan.FromSeconds(20);
+
+    /// <summary>The binding values after the lines of the .axaml files the editors show, as they show them once read at this
+    /// stop (path:line: Property: value, or that it failed and why); null when no Avalonia app is debugged or none is shown.</summary>
+    private async Task<IReadOnlyList<string>?> BindingValuesShownAsync()
+    {
+        if (Session.LiveApp is null)
+        {
+            return null;
+        }
+        LiveTree.BindingValuesController values = window.BindingValues;
+        values.CatchUp();
+        await Until(() => !values.IsReading, BindingValuesLimit, CancellationToken.None);
+        List<string> shown = [.. Editors.Groups.Select(g => g.Active).OfType<OpenDocument>().Distinct()
+            .SelectMany(d => d.LiveValues.OrderBy(a => a.Line).Select(a => $"{Relative(d.Path)}:{a.Line + 1}: {a.Text}"))];
+        return shown.Count == 0 ? null : shown;
     }
 
     /// <summary>An exception as its type and message, its inner exceptions after it.</summary>
@@ -1066,7 +1166,7 @@ public sealed partial class PassengerTools(MainWindow window)
         [.. Session.Debug.Breakpoints.Data.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
             b.LogMessage, b.Suspend, b.Message, Data: b.Location)),
          .. Session.Debug.Breakpoints.Properties.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
-            b.LogMessage, b.Suspend, b.Message, Property: b.Location))];
+            b.LogMessage, b.Suspend, b.Message, Property: b.Location, Control: Id(b.Element)))];
 
     private IReadOnlyList<BreakpointInfo> ExceptionBreakpoints()
     {
@@ -1303,10 +1403,11 @@ public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int
 public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 
 /// <summary>A breakpoint as an agent reads it: a line breakpoint's path and line, an exception breakpoint's type and scenarios,
-/// or what a data breakpoint watches ("count on counter (Counter)").</summary>
+/// what a data breakpoint watches ("count on counter (Counter)"), or a property breakpoint's property and element ("Text on
+/// TextBlock#Counter", and the element's @id).</summary>
 public sealed record BreakpointInfo(string? Path, int? Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend,
     string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null, string? Data = null, string? Attribute = null, string? Property = null,
-    bool? BindingErrors = null);
+    bool? BindingErrors = null, string? Control = null);
 
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
 
@@ -1321,7 +1422,12 @@ public sealed record DebugSnapshot(
     IReadOnlyList<VariableInfo> Locals,
     int? ExitCode,
     string? Status,
-    string? Exception = null);
+    string? Exception = null)
+{
+    /// <summary>At a stop in a debugged Avalonia app, the binding values after the lines of the .axaml files the editors show,
+    /// as the editor shows them (path:line: Property: value).</summary>
+    public IReadOnlyList<string>? BindingValues { get; init; }
+}
 
 public sealed record TestRunInfo(string Summary, IReadOnlyList<TestFailure> Failures, DebugSnapshot? Debugger = null);
 

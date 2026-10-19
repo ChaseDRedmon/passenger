@@ -236,8 +236,9 @@ public sealed partial class PassengerTools
         "Builds and runs a run configuration (the chosen one if none is named) under the sampling profiler from its first instruction, as " +
         "Profile does, until it ends by itself or, with seconds, for that long (then the snapshot is taken and the program goes on). " +
         "Returns the run's length, the hot spots by their own time, and the hot path of the busiest thread, and for an Avalonia app its frames " +
-        "(their UI thread's time, layout and rendering) with the controls heaviest in layout by their own measure and arrange time, or a " +
-        "count of 0 and why when it drew none in that time; the " +
+        "(their UI thread's time at the median and longest; measuring, arranging, rendering and the compositor in all) with the Frames page's " +
+        "layout table (each control type by its own measure and arrange time, with its heaviest controls and their XAML lines), the controls " +
+        "heaviest in layout, and the longest frame's own breakdown, or a count of 0 and why when it drew none in that time; the " +
         "Performance Profiler window shows the whole snapshot.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
@@ -309,12 +310,28 @@ public sealed partial class PassengerTools
             };
         }
         double[] times = [.. frames.Select(f => f.DurationMs).Order()];
-        IEnumerable<Passenger.Profiler.LayoutCost> controls = Passenger.Profiler.UiFrames.ByType(frames).SelectMany(type => type.Controls);
+        IReadOnlyList<Passenger.Profiler.LayoutCost> types = Passenger.Profiler.UiFrames.ByType(frames);
+        IEnumerable<Passenger.Profiler.LayoutCost> controls = types.SelectMany(type => type.Controls);
+        Passenger.Profiler.UiFrame longest = frames.MaxBy(f => f.DurationMs)!;
+        double start = frames.Min(f => f.StartMs);
         return new UiFramesInfo(frames.Count, Math.Round(Passenger.Profiler.UiFrames.Percentile(times, 0.5), 1), Math.Round(times[^1], 1), Math.Round(frames.Sum(f => f.LayoutMs), 1),
             Math.Round(frames.Sum(f => f.RecordMs + f.CompositeMs), 1),
-            [.. controls.OrderByDescending(c => c.Work.SelfMs).Take(top).Select(c => new ControlLayoutInfo(c.Name, c.Work.Measures, Math.Round(c.Work.MeasureMs, 1),
-                c.Work.Arranges, Math.Round(c.Work.ArrangeMs, 1), Math.Round(c.Work.SelfMs, 1),
-                c.Control?.File is { } file ? $"{Relative(file)}:{c.Control.Line}" : null))]);
+            [.. controls.OrderByDescending(c => c.Work.SelfMs).Take(top).Select(Layout)])
+        {
+            MeasureMs = Math.Round(frames.Sum(f => f.MeasureMs), 1),
+            ArrangeMs = Math.Round(frames.Sum(f => f.ArrangeMs), 1),
+            RecordMs = Math.Round(frames.Sum(f => f.RecordMs), 1),
+            CompositeMs = Math.Round(frames.Sum(f => f.CompositeMs), 1),
+            Types = [.. types.Take(top).Select(t => new TypeLayoutInfo(t.Name, t.Controls.Count, t.Work.Measures, Math.Round(t.Work.MeasureMs, 1), t.Work.Arranges,
+                Math.Round(t.Work.ArrangeMs, 1), Math.Round(t.Work.SelfMs, 1), [.. t.Controls.Take(5).Select(Layout)]))],
+            Longest = new FrameInfo(longest.Number, Math.Round(longest.StartMs - start, 1), Math.Round(longest.DurationMs, 1), longest.MeasurePasses, longest.ArrangePasses,
+                longest.Measures, longest.Arranges, Math.Round(longest.MeasureMs, 1), Math.Round(longest.ArrangeMs, 1), Math.Round(longest.RecordMs, 1),
+                Math.Round(longest.CompositeMs, 1)),
+        };
+
+        ControlLayoutInfo Layout(Passenger.Profiler.LayoutCost c) => new(c.Name, c.Work.Measures, Math.Round(c.Work.MeasureMs, 1),
+            c.Work.Arranges, Math.Round(c.Work.ArrangeMs, 1), Math.Round(c.Work.SelfMs, 1),
+            c.Control?.File is { } file ? $"{Relative(file)}:{c.Control.Line}" : null);
     }
 
     // The terminal
@@ -446,7 +463,32 @@ public sealed record UiFramesInfo(int Count, double MedianMs, double LongestMs, 
 {
     /// <summary>Why there are none, when there are none.</summary>
     public string? Why { get; init; }
+
+    /// <summary>The time measuring, arranging, recording what to render and in the compositor, in all, as the Frames page's summary says.</summary>
+    public double? MeasureMs { get; init; }
+
+    public double? ArrangeMs { get; init; }
+
+    public double? RecordMs { get; init; }
+
+    public double? CompositeMs { get; init; }
+
+    /// <summary>The Frames page's layout table: each control type by its own time, the heaviest first, with its heaviest controls.</summary>
+    public IReadOnlyList<TypeLayoutInfo>? Types { get; init; }
+
+    /// <summary>The longest frame, as the Frames page says it when it is chosen.</summary>
+    public FrameInfo? Longest { get; init; }
 }
+
+/// <summary>A control type's layout in a profile, as the Frames page's table has it: its controls, their measures and arranges with
+/// their time, their own time, and the heaviest of them.</summary>
+public sealed record TypeLayoutInfo(string Type, int ControlCount, int Measures, double MeasureMs, int Arranges, double ArrangeMs, double OwnMs,
+    IReadOnlyList<ControlLayoutInfo> Controls);
+
+/// <summary>One frame: its number, when it began from the first frame, its UI thread's time, its passes, measures and arranges, and its
+/// time measuring, arranging, recording what to render and in the compositor.</summary>
+public sealed record FrameInfo(int Number, double AtMs, double DurationMs, int MeasurePasses, int ArrangePasses, int Measures, int Arranges,
+    double MeasureMs, double ArrangeMs, double RecordMs, double CompositeMs);
 
 /// <summary>A control's layout in a profile: Type#Name, its measures and arranges with their time, its own time without
 /// what it measured or arranged in turn, and its XAML's file:line when the app's build recorded it.</summary>

@@ -4,6 +4,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Passenger.App.Debugging;
 using Passenger.App.LiveTree;
+using Passenger.Core;
 using Passenger.Inspector;
 
 namespace Passenger.App.Mcp;
@@ -109,6 +110,64 @@ public sealed partial class PassengerTools
         }
         return AppQuery.Write(roots, depth, templates, hidden);
     });
+
+    [McpServerTool(Name = "app_details", Title = "An element's properties and styles", ReadOnly = true), Description(
+        "One element of the app looked at closely, as the Live Visual Tree's details show it, for Avalonia and WPF alike: its type, " +
+        "classes and pseudo-classes, where its XAML is (or why there is none), the template it is a part of, its layout (bounds, desired " +
+        "size, margin, border, padding, alignment); each property set from anywhere but its default (all of them with defaults true) with " +
+        "its value, type and source (Local, Style, Theme, Template, Inherited, Animation, Current, Direct, Default) and what that source is " +
+        "(the style's selector, the ancestor inherited from) with its place; and every style that could apply (selector, kind, origin, " +
+        "place) with whether it applies and why not, each setter with whether it wins, is overridden (and by what) or is inactive. " +
+        "breakpoint_set with control and property sets Break When Value Changes on one of its properties.")]
+    public Task<AppElementDetails> AppDetails(
+        [Description(ControlQuery)] string control,
+        [Description(AppChoice)] string? app = null,
+        [Description(WindowChoice)] string? window = null,
+        [Description("Only the properties whose names contain this, as the details' filter box lists them")] string? properties = null,
+        [Description("Properties at their default values too, as the details' Show Defaults")] bool defaults = false,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        LiveApp live = await InspectedAsync(app, cancel);
+        (List<AppNode> nodes, AppNode chosenWindow) = await TreeOf(live, window, cancel);
+        AppNode element = AppQuery.One(Within(nodes, window is null ? null : chosenWindow), control);
+        ElementDetails details = await live.DetailsAsync(element.Element.Id);
+        string typed = properties?.Trim() ?? string.Empty;
+        BreakpointStore breakpoints = Session.Debug.Breakpoints;
+        bool watchable = live == Session.LiveApp;
+        LayoutInfo layout = details.Layout;
+        return new AppElementDetails(
+            AppQuery.Short(element.Element),
+            details.Type,
+            details.FullType,
+            details.Name,
+            details.Classes,
+            details.PseudoClasses,
+            details.Source is { } source ? Placed(source) : null,
+            details.Source is null ? details.NoSource : null,
+            details.TemplatedParent,
+            new AppLayout(Boxed(layout.Bounds), layout.InWindow is { } inWindow ? Boxed(inWindow) : null,
+                string.Create(CultureInfo.InvariantCulture, $"{layout.DesiredWidth:0.##}x{layout.DesiredHeight:0.##}"),
+                Sides(layout.Margin), layout.Border is { } border ? Sides(border) : null, layout.Padding is { } padding ? Sides(padding) : null,
+                $"{layout.HorizontalAlignment}, {layout.VerticalAlignment}"),
+            [.. details.Properties
+                .Where(p => (defaults || p.Source != ValueSources.Default) && (typed.Length == 0 || p.Name.Contains(typed, StringComparison.OrdinalIgnoreCase)))
+                .Select(p => new AppProperty(p.Name, p.Value, p.Type, p.Source, p.Detail, p.Place is { } at ? Placed(at) : null,
+                    watchable && breakpoints.FindProperty(details.Id, p.Name) is not null ? true : null))],
+            [.. details.Styles.Select(s => new AppStyle(s.Selector, s.Kind, s.Origin, s.Place is { } at ? Placed(at) : null, s.Applies, s.WhyNot,
+                [.. s.Setters.Select(setter => new AppSetter(setter.Property, setter.Value, setter.State, setter.By, setter.Place is { } placed ? Placed(placed) : null))]))]);
+
+        static string Boxed(Box box) => string.Create(CultureInfo.InvariantCulture, $"{box.X:0.##},{box.Y:0.##} {box.Width:0.##}x{box.Height:0.##}");
+
+        static string Sides(Edges edges) => string.Create(CultureInfo.InvariantCulture, $"{edges.Left:0.##},{edges.Top:0.##},{edges.Right:0.##},{edges.Bottom:0.##}");
+    });
+
+    /// <summary>A place in the app's XAML as every other tool gives one: the folder's path, the line (none for a root the build
+    /// recorded by its file alone) and the column.</summary>
+    private string Placed(SourcePlace place)
+    {
+        string file = Relative(PathNames.Canonical(place.File));
+        return place.Line > 0 ? string.Create(CultureInfo.InvariantCulture, $"{file}:{place.Line}:{place.Column}") : file;
+    }
 
     [McpServerTool(Name = "app_click", Title = "Click in the app", Destructive = true), Description(
         "Clicks in the app as a person's mouse would, through the window's own input (pointer over, press, release; handlers, commands and " +
@@ -511,3 +570,22 @@ public sealed record AppWindowInfo(string Id, string Type, string? Name, string?
 /// the binding's path, the message, its place in the XAML (path:line:column), how many times, and the nearest members.</summary>
 public sealed record AppBindingError(string App, string Level, string Control, string Property, string Path, string Message, string? Place, int Count,
     IReadOnlyList<string> Nearest);
+
+/// <summary>An element as app_details reads it, as the Live Visual Tree's details show it: what it is, where its XAML is (path:line:column)
+/// or why none, the template it is a part of, its layout, its properties with their sources and its styles with why each applies or not.</summary>
+public sealed record AppElementDetails(string Element, string Type, string FullType, string? Name, IReadOnlyList<string> Classes, IReadOnlyList<string> PseudoClasses,
+    string? Xaml, string? NoXaml, string? TemplatedParent, AppLayout Layout, IReadOnlyList<AppProperty> Properties, IReadOnlyList<AppStyle> Styles);
+
+/// <summary>Where an element is laid out: its bounds in its parent and in its window (x,y wxh), its desired size, its margin, border and
+/// padding (left,top,right,bottom; none when it has no such property) and its alignment.</summary>
+public sealed record AppLayout(string Bounds, string? InWindow, string Desired, string Margin, string? Border, string? Padding, string Alignment);
+
+/// <summary>A property's value and type, its source (<see cref="ValueSources"/>) and what that is, where it is written, and whether a
+/// property breakpoint (Break When Value Changes) is on it.</summary>
+public sealed record AppProperty(string Name, string Value, string Type, string Source, string? Detail, string? Place, bool? Breakpoint);
+
+/// <summary>A style that could apply to an element: its selector, kind, origin and place, whether it applies and why not, its setters.</summary>
+public sealed record AppStyle(string Selector, string Kind, string Origin, string? Place, bool Applies, string? WhyNot, IReadOnlyList<AppSetter> Setters);
+
+/// <summary>A style's setter: the property and value, whether it wins, is overridden (by what) or inactive, and where it is written.</summary>
+public sealed record AppSetter(string Property, string Value, string State, string? By, string? Place);

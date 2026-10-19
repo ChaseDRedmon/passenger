@@ -72,6 +72,17 @@ public sealed partial class McpTests
         Assert.StartsWith("Clicked Button#Count @", clicked, StringComparison.Ordinal);
         Assert.Contains("\"Clicked once\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
 
+        // The button as the Live Visual Tree's details show it: its margin from App.xaml's implicit style, which applies, and
+        // its default style's hover trigger, which does not while the pointer is elsewhere, saying why.
+        JsonElement button = await Call(client, "app_details", new() { ["control"] = "#Count" });
+        JsonElement margin = Assert.Single(button.GetProperty("properties").EnumerateArray(), p => p.GetProperty("name").GetString() == "Margin");
+        Assert.True(margin.GetProperty("source").GetString() == "Style" && margin.GetProperty("place").GetString()!.StartsWith("App.xaml:", StringComparison.Ordinal),
+            $"The button's margin did not come from App.xaml's style: {margin}");
+        JsonElement[] styles = [.. button.GetProperty("styles").EnumerateArray()];
+        Assert.Contains(styles, s => s.GetProperty("selector").GetString() == "Style TargetType=Button" && s.GetProperty("applies").GetBoolean());
+        Assert.Contains(styles, s => s.GetProperty("selector").GetString() == "Trigger IsMouseOver=True" && !s.GetProperty("applies").GetBoolean()
+            && s.GetProperty("whyNot").GetString() == "IsMouseOver is False, not True");
+
         // Typed into the name box and Enter pressed, its handler greets; replace types over what is there.
         Assert.Contains("it shows \"Ada\"", Text(await Call(client, "app_type", new() { ["control"] = "#NameBox", ["text"] = "Ada" })), StringComparison.Ordinal);
         await Call(client, "app_key", new() { ["keys"] = "Enter" });

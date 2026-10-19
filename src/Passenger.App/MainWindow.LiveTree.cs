@@ -13,8 +13,15 @@ public partial class MainWindow
     /// <summary>The Avalonia or WPF app the Live Visual Tree follows, or null.</summary>
     public LiveApp? LiveApp => liveTree!.App;
 
+    /// <summary>The inspector in the debugged app told of the property breakpoints as they are now: what an agent's
+    /// breakpoint_set waits for.</summary>
+    internal Task PropertyWatches => liveTree!.Watching;
+
     /// <summary>A debugged app's binding values in its .axaml files.</summary>
     private BindingValuesController? bindingValues;
+
+    /// <summary>The binding values after the .axaml lines shown, which an agent's debug_state reads as the editor shows them.</summary>
+    internal BindingValuesController BindingValues => bindingValues!;
 
     /// <summary>Avalonia's renderer debug overlays in the apps Run, Debug and Profile launch.</summary>
     private OverlaysCommands? overlays;
