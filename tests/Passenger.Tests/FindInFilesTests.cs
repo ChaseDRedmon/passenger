@@ -1,4 +1,8 @@
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media;
+using Avalonia.Media.TextFormatting;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Navigation;
 using Passenger.App.Workspace;
@@ -271,6 +275,34 @@ public sealed class FindInFilesTests : IDisposable
         Ui.ChooseFromMenu(listed, "Remove Bookmark");
         Assert.Empty(window.Bookmarks.All);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_matched_lines_arrow_is_one_ligature_only_while_Settings_enables_ligatures()
+    {
+        File.WriteAllText(Path.Combine(folder, "Gamma.cs"), "class Gamma\n{\n    int Twice(int x) => x * 2;\n}\n");
+        MainWindow window = Open();
+        foreach (bool ligatures in (bool[])[false, true])
+        {
+            window.ApplySettings(window.Settings with { Ligatures = ligatures });
+            FindInFilesPopup popup = window.ShowFindInFiles(replace: false)!;
+            Search(popup, "Twice");
+            Ui.Settle();
+            TextBlock line = popup.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Inlines is { Count: > 0 } runs && runs.Text?.Contains("=>", StringComparison.Ordinal) == true);
+            Assert.True(PlainArrow(line) != ligatures,
+                ligatures ? "With ligatures enabled, a matched line's => is drawn as = and >, where the editor joins them" : "With ligatures off, a matched line's => is drawn as one arrow, where the editor draws = and >");
+            Ui.Press(window, "Escape");
+        }
+        window.Close();
+    }
+
+    /// <summary>Whether a line draws = and > as the font's own glyphs for them, not a ligature's.</summary>
+    private static bool PlainArrow(TextBlock line)
+    {
+        ShapedTextRun[] runs = [.. line.TextLayout.TextLines.SelectMany(l => l.TextRuns).OfType<ShapedTextRun>()];
+        GlyphTypeface font = runs[0].GlyphRun.GlyphTypeface;
+        HashSet<ushort> drawn = [.. runs.SelectMany(r => r.ShapedBuffer).Select(g => g.GlyphIndex)];
+        return drawn.Contains(font.CharacterToGlyphMap['=']) && drawn.Contains(font.CharacterToGlyphMap['>']);
     }
 
     private static void Search(FindInFilesPopup popup, string text)

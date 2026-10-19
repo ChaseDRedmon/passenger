@@ -26,7 +26,7 @@ public partial class MainWindow
             return null;
         }
         Navigation.FindChoices choices = new(on ?? KeptScope(), Projects, session.FindScope.RecentDirectories, ScopeNames(), findSettings.RecentFileMasks);
-        Navigation.FindInFilesPopup popup = new(SearchFiles, TextOf, replace, navigator.SelectedWord(), choices);
+        Navigation.FindInFilesPopup popup = new(SearchFiles, TextOf, replace, navigator.SelectedWord(), choices, settings.Ligatures);
         popup.ScopeChanged += (_, scope) => KeepFindScope(scope, closing: false);
         // However it closes (a match chosen, Escape, a click outside), as Rider keeps its scope when its popup closes.
         popup.DetachedFromVisualTree += (_, _) => KeepFindScope(popup.Scope, closing: true);

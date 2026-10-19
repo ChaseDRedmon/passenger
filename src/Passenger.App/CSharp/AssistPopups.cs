@@ -455,4 +455,7 @@ internal static class Fonts
     /// <summary>Code as the editor draws it by default, its characters each its own: JetBrains Mono would join "<>" into
     /// a diamond and "=>" into an arrow.</summary>
     public static readonly FontFeatureCollection NoLigatures = [new FontFeature { Tag = "calt", Value = 0 }, new FontFeature { Tag = "liga", Value = 0 }];
+
+    /// <summary>Code's features as Settings' Enable ligatures has the editor draw it: the font's own with it on.</summary>
+    public static FontFeatureCollection? Features(bool ligatures) => ligatures ? null : NoLigatures;
 }

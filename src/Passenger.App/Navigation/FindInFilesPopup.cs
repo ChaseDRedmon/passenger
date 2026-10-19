@@ -61,8 +61,9 @@ public sealed class FindInFilesPopup : UserControl
     private IReadOnlyList<SearchMatch> matches = [];
     private Task? searching;
 
+    /// <param name="ligatures">Settings' Enable ligatures, which the matched lines and the preview follow as the editor does.</param>
     public FindInFilesPopup(Func<SearchQuery, SearchScope, CancellationToken, Task<IReadOnlyList<SearchMatch>>> search, Func<string, TextSnapshot?> textOf,
-        bool replace, string? initial, FindChoices choices)
+        bool replace, string? initial, FindChoices choices, bool ligatures)
     {
         this.search = search;
         this.textOf = textOf;
@@ -148,7 +149,7 @@ public sealed class FindInFilesPopup : UserControl
         {
             Classes = { "tree" },
             Height = ListRow.Height * 10,
-            ItemTemplate = new FuncDataTemplate<SearchMatch>((match, _) => match is null ? new TextBlock() : Row(match), supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<SearchMatch>((match, _) => match is null ? new TextBlock() : Row(match, ligatures), supportsRecycling: false),
         };
         results.SelectionChanged += (_, _) => ShowPreview();
         results.DoubleTapped += (_, _) => Choose();
@@ -158,7 +159,7 @@ public sealed class FindInFilesPopup : UserControl
             ToolWindows.ListMenus.Item("Copy Path", null, () => _ = ToolWindows.ListMenus.CopyAsync(this, chosen.Path)),
             ToolWindows.ListMenus.Item("Copy Line", null, () => _ = ToolWindows.ListMenus.CopyAsync(this, chosen.LineText.Trim())),
         ]);
-        preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, Height = 180, Focusable = false };
+        preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, Height = 180, Focusable = false, Ligatures = ligatures };
         // Clear of the frame's rounded foot, which the editor's square corners would cover.
         Border previewFrame = new() { BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 0, 0, 8), Child = preview };
         previewFrame.Bind(Border.BorderBrushProperty, previewFrame.GetResourceObservable("Passenger.Divider"));
@@ -537,14 +538,21 @@ public sealed class FindInFilesPopup : UserControl
     }
 
     /// <summary>A match's line, its leading space trimmed and the match itself bold, and where it is at the right.</summary>
-    private static Control Row(SearchMatch match)
+    private static Control Row(SearchMatch match, bool ligatures)
     {
         string line = match.LineText;
         int indent = line.Length - line.TrimStart().Length;
         int start = Math.Clamp(match.Column - indent, 0, Math.Max(0, line.Length - indent));
         string trimmed = line[indent..];
         int length = Math.Min(match.Length, trimmed.Length - start);
-        TextBlock text = new() { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, FontFamily = CSharp.Fonts.Mono, FontSize = 12 };
+        TextBlock text = new()
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            FontFamily = CSharp.Fonts.Mono,
+            FontSize = 12,
+            FontFeatures = CSharp.Fonts.Features(ligatures),
+        };
         text.Inlines = [];
         text.Inlines.Add(new Avalonia.Controls.Documents.Run(trimmed[..start]));
         text.Inlines.Add(new Avalonia.Controls.Documents.Run(trimmed.Substring(start, Math.Max(0, length))) { FontWeight = FontWeight.Bold });
