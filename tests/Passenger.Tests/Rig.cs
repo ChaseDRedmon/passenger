@@ -29,7 +29,7 @@ public static class TestApp
 
 /// <summary>What the whole run shares, set before anything reads it and never changed: a folder of the run's own in the
 /// system's temporary folder, holding the IDE's state (<c>PASSENGER_SETTINGS</c>: its log, the language servers' logs,
-/// the agents' sockets, the profiler's snapshots), every test's folders and the shells' history, and an empty Git
+/// the profiler's snapshots; the agents' sockets go in a folder named for it), every test's folders and the shells' history, and an empty Git
 /// configuration in place of the person's and the system's, which every git the tests and the IDE run inherits. So a run
 /// never writes to the person's own state, log or history, an agent of theirs never attaches to a test's window, and a
 /// person's commit signing or hooks never reach a test's commit. The folder goes when the run ends; one a run that was
@@ -163,13 +163,17 @@ public sealed class TestRun : IDisposable
 
     private static void End()
     {
-        try
+        // The windows' agent sockets are in a folder named for the run's state, outside it.
+        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder])
         {
-            TestFolders.Delete(Root);
-        }
-        catch (Exception held) when (held is IOException or UnauthorizedAccessException)
-        {
-            Console.Error.WriteLine($"The tests' folder {Root} could not be removed: {held.Message}");
+            try
+            {
+                TestFolders.Delete(folder);
+            }
+            catch (Exception held) when (held is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"The tests' folder {folder} could not be removed: {held.Message}");
+            }
         }
     }
 }

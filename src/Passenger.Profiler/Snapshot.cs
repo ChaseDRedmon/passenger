@@ -31,7 +31,15 @@ public sealed class CallNode(string name, string module, CallNode? parent)
 
 /// <summary>A method's share of the run, all threads together: samples in it and no deeper (Self), and samples with it
 /// anywhere on the stack, counted once however deep it recurses (Total).</summary>
-public sealed record HotSpot(string Name, string Module, int Self, int Total);
+public sealed record HotSpot(string Name, string Module, int Self, int Total)
+{
+    /// <summary>Where the method is: its module's file and its metadata token, which <see cref="MethodSources"/> finds
+    /// its source by; none for a native frame.</summary>
+    public MethodCode? Code { get; init; }
+}
+
+/// <summary>A managed method by its module's file and metadata token.</summary>
+public readonly record struct MethodCode(string ModuleFile, int Token);
 
 /// <summary>A type the program allocated: about how many bytes and objects (the runtime reports an allocation tick
 /// each 100 KB or so, naming the type and stack that crossed it), and the stacks that allocated it, the allocating
@@ -105,6 +113,9 @@ public sealed class Snapshot
     private readonly IReadOnlyList<(int Thread, SampleRun[] Runs)> runs;
     private readonly IReadOnlyList<int[]> stacks;
     private readonly IReadOnlyList<(string Method, string Module)> frames;
+
+    /// <summary>Each frame's module file and token, beside <see cref="frames"/>.</summary>
+    private readonly IReadOnlyList<MethodCode?> codes;
     private readonly IReadOnlyDictionary<int, string> threadNames;
     private readonly IReadOnlyList<AllocationTick> ticks;
     private readonly IReadOnlyList<Collection> allCollections;
@@ -112,12 +123,13 @@ public sealed class Snapshot
     private readonly Lazy<IReadOnlyList<ThreadLine>> timeline;
 
     private Snapshot(IReadOnlyList<(int Thread, SampleRun[] Runs)> runs, IReadOnlyList<int[]> stacks, IReadOnlyList<(string Method, string Module)> frames,
-        IReadOnlyDictionary<int, string> threadNames, IReadOnlyList<AllocationTick> ticks, IReadOnlyList<Collection> collections,
+        IReadOnlyList<MethodCode?> codes, IReadOnlyDictionary<int, string> threadNames, IReadOnlyList<AllocationTick> ticks, IReadOnlyList<Collection> collections,
         IReadOnlyList<UiFrame> uiFrames, double startMs, double endMs, string trace, Snapshot? whole)
     {
         this.runs = runs;
         this.stacks = stacks;
         this.frames = frames;
+        this.codes = codes;
         this.threadNames = threadNames;
         this.ticks = ticks;
         allCollections = collections;
@@ -209,7 +221,7 @@ public sealed class Snapshot
         Snapshot whole = Whole;
         double from = Math.Max(whole.StartMs, Math.Min(fromMs, toMs));
         double to = Math.Min(whole.EndMs, Math.Max(fromMs, toMs));
-        return new Snapshot(whole.runs, whole.stacks, whole.frames, whole.threadNames, whole.ticks, whole.allCollections, whole.allUiFrames, from, to, whole.TracePath, whole);
+        return new Snapshot(whole.runs, whole.stacks, whole.frames, whole.codes, whole.threadNames, whole.ticks, whole.allCollections, whole.allUiFrames, from, to, whole.TracePath, whole);
     }
 
     /// <summary>When a method was on a sampled stack, first to last, or null when it never was: what the timeline shows
@@ -291,7 +303,7 @@ public sealed class Snapshot
             }
         }
         IReadOnlyList<HotSpot> hot = [.. spots.Where(s => s.Value.Self > 0)
-            .Select(s => new HotSpot(frames[s.Key].Method, frames[s.Key].Module, s.Value.Self, s.Value.Total))
+            .Select(s => new HotSpot(frames[s.Key].Method, frames[s.Key].Module, s.Value.Self, s.Value.Total) { Code = codes[s.Key] })
             .OrderByDescending(s => s.Self)
             .ThenBy(s => s.Name, StringComparer.Ordinal)];
         return (all, hot, threads);
@@ -338,7 +350,7 @@ public sealed class Snapshot
     /// <summary>A stack's frames from where it was caught to its thread's first, named and numbered into the table:
     /// runs of unnamed native frames as one, and the runtime's GC poll at the leaf (where the sampler stops a busy loop)
     /// left to its caller.</summary>
-    private static int[] Frames(TraceCallStack? stack, Dictionary<(string, string), int> table, List<(string Method, string Module)> named)
+    private static int[] Frames(TraceCallStack? stack, Dictionary<(string, string), int> table, List<(string Method, string Module)> named, List<MethodCode?> codes)
     {
         List<int> found = [];
         string? previous = null;
@@ -359,6 +371,9 @@ public sealed class Snapshot
             {
                 table[key] = number = named.Count;
                 named.Add(key);
+                codes.Add(address.Method is { MethodToken: not 0 } code && (code.MethodModuleFile?.FilePath ?? address.ModuleFilePath) is { Length: > 0 } file
+                    ? new MethodCode(file, code.MethodToken)
+                    : null);
             }
             found.Add(number);
             previous = method;
@@ -409,6 +424,7 @@ public sealed class Snapshot
             using TraceLog log = new(etlx);
             Dictionary<(string, string), int> table = [];
             List<(string Method, string Module)> named = [];
+            List<MethodCode?> codes = [];
             List<int[]> stacks = [];
             Dictionary<int[], int> distinct = new(StackComparer.Instance);
             Dictionary<CallStackIndex, int> numbered = [];
@@ -481,7 +497,7 @@ public sealed class Snapshot
             IEnumerable<double> ends = kept.Select(t => t.Runs.Max(r => r.ToMs)).Concat(drawn.Select(f => f.EndMs));
             double first = starts.DefaultIfEmpty(0).Min();
             double end = ends.DefaultIfEmpty(0).Max();
-            return new Snapshot(kept, stacks, named, threads, ticks, collections, drawn, first, end, nettrace, null);
+            return new Snapshot(kept, stacks, named, codes, threads, ticks, collections, drawn, first, end, nettrace, null);
 
             // The event's stack as a number into the table, each the trace numbers named once and each distinct one kept once.
             int Stack(TraceEvent data)
@@ -491,7 +507,7 @@ public sealed class Snapshot
                 {
                     return number;
                 }
-                int[] caught = Frames(index == CallStackIndex.Invalid ? null : log.CallStacks[index], table, named);
+                int[] caught = Frames(index == CallStackIndex.Invalid ? null : log.CallStacks[index], table, named, codes);
                 if (!distinct.TryGetValue(caught, out number))
                 {
                     distinct[caught] = number = stacks.Count;

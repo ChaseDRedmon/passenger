@@ -107,7 +107,7 @@ public partial class MainWindow
             catch (Exception error) when (error is IOException or SocketException or ArgumentException or UnauthorizedAccessException)
             {
                 status.Text = $"Agents cannot reach this window: {error.Message}";
-                // Logged too: an agent waiting for the window learns why only from the log (a socket's path past 104 bytes on macOS).
+                // Logged too: an agent waiting for the window learns why only from the log (a socket folder another user made first).
                 IdeErrors.Write($"Agents: the window on {Folder ?? "no folder"} cannot listen for agents: {error.Message}");
             }
         }

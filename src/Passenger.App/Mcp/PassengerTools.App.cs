@@ -16,24 +16,23 @@ namespace Passenger.App.Mcp;
 /// through WPF's input manager (src/Passenger.Inspector.Wpf/Driver.cs).</summary>
 public sealed partial class PassengerTools
 {
-    private const string AppChoice =
-        "Which app: run (Run's), debug (Debug's), or ide (Passenger's own windows); by default the one running";
+    // Said once a parameter for each app_ tool; the element query's syntax once, in app_tree's description.
+    private const string AppChoice = "run, debug or ide (Passenger's own windows); by default the one running";
 
-    private const string ControlQuery =
-        "An element: @N (an id app_tree shows), or a query of a type, #name, .class and \"text\" it shows (Button#Save, \"Save\", " +
-        "TextBlock.title), steps joined by / for one inside another (#Panel/Button), [n] for the nth match; a template's part only by its " +
-        "#name or @N";
+    private const string ControlQuery = "@N or a query, as app_tree describes";
 
-    private const string WindowChoice = "A window: @N from app_windows, or its type or \"title\"; by default the app's first window";
+    private const string WindowChoice = "@N from app_windows, its type or \"title\"; by default the first";
+
+    private const string HeldKeys = "Held: ctrl, shift, alt, cmd (meta), primary (Cmd on macOS, Ctrl elsewhere)";
 
     /// <summary>How long a tool waits for an app launched a moment ago to show its UI.</summary>
     private static readonly TimeSpan AppUiLimit = TimeSpan.FromSeconds(60);
 
     [McpServerTool(Name = "app_windows", Title = "The app's windows", ReadOnly = true), Description(
-        "The windows of the Avalonia or WPF app that Run or Debug started (an Avalonia 12 app, or a WPF app on Windows, launched with " +
-        "Passenger's inspector in it; one still starting is waited for), or Passenger's own with app ide: each with its id (@N, which the " +
-        "other app_ tools take), type, title, size in units, pixels a unit, whether it is active and shown, and for a popup (a menu, a " +
-        "drop-down) the window it opened from.")]
+        "The windows of the Avalonia or WPF app Run or Debug started with Passenger's inspector in it (an Avalonia 12 app, or " +
+        "a WPF app on Windows; one still starting is waited for), or Passenger's own with app ide: each with its id (@N, which " +
+        "the other app_ tools take), type, title, size in units, pixels a unit, whether it is active and shown, and a popup's " +
+        "(a menu's, a drop-down's) owner.")]
     public Task<AppWindows> AppWindowsList([Description(AppChoice)] string? app = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         LiveApp live = await InspectedAsync(app, cancel);
@@ -43,10 +42,10 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_screenshot", Title = "A picture of the app", ReadOnly = true), Description(
-        "A PNG of one of the app's windows (its open popups drawn over it) as the app itself draws it, so it works with the window hidden, " +
-        "off the screen or headless; or of one element's part of it, or of an area (x, y, width, height in the window's units). By default at " +
-        "the window's own scaling, kept to 1600 pixels a side; scale gives pixels a unit. The text beside it says how its pixels map to the " +
-        "window's units, which app_click's x and y take.")]
+        "A PNG of one of the app's windows (its open popups drawn over it) as the app draws it, so hidden, off-screen or " +
+        "headless alike; or of an element's part of it, or an area (x, y, width, height in the window's units). At the " +
+        "window's scaling by default, at most 1600 pixels a side; scale gives pixels a unit. Its text says how its pixels map " +
+        "to the window's units, which app_click's x and y take.")]
     public Task<CallToolResult> AppScreenshot(
         [Description(AppChoice)] string? app = null,
         [Description(WindowChoice)] string? window = null,
@@ -72,18 +71,21 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_tree", Title = "The app's visual tree", ReadOnly = true), Description(
-        "The app's visual tree (the Live Visual Tree's), indented a level a line: each element's type, #name, .classes, \"text\" it shows, @id, " +
-        "its box in its window's units (x,y widthxheight), and [hidden], [out of view] (scrolled or clipped away), [disabled], [focused]; with " +
-        "properties, their values ({Name=value}). A template's parts are left out (what they hold comes up a level) unless templates is true, " +
-        "and what a hidden element holds is counted unless hidden is true. control starts the tree at an element; filter lists only the " +
-        "elements a query finds, each with where it is. Every window, unless one is named.")]
+        "The app's visual tree (the Live Visual Tree's), a level a line: each element's type, #name, .classes, \"text\" it " +
+        "shows, @id, box in its window's units (x,y widthxheight), and [hidden], [out of view], [disabled], [focused]; with " +
+        "properties, their values ({Name=value}). A template's parts are left out (what they hold comes up a level) unless " +
+        "templates is true, and what a hidden element holds is counted unless hidden is true. control starts the tree at an " +
+        "element; filter lists only the elements a query finds, each with where it is. Every window, unless one is named.\n" +
+        "Every app_ tool names an element (control, filter) by @N, an id shown here, or by a query: a type, #name, .class and " +
+        "\"text\" it shows (Button#Save, \"Save\", TextBlock.title), steps joined by / for one inside another (#Panel/Button), " +
+        "[n] for the nth match; a template's part only by its #name or @N.")]
     public Task<string> AppTree(
         [Description(AppChoice)] string? app = null,
-        [Description(WindowChoice + "; by default every window")] string? window = null,
-        [Description(ControlQuery + "; the tree starts there")] string? control = null,
-        [Description("A query (as control takes) for the elements to list, in place of the whole tree")] string? filter = null,
+        [Description("@N from app_windows, its type or \"title\"; every window by default")] string? window = null,
+        [Description("Where the tree starts: @N or a query")] string? control = null,
+        [Description("A query for the elements to list, in place of the tree")] string? filter = null,
         [Description("Levels below where it starts")] int? depth = null,
-        [Description("Properties to show the values of (Avalonia's, or a WPF app's dependency properties: IsEnabled, Foreground, Grid.Row, Offset) where an element has them")] IReadOnlyList<string>? properties = null,
+        [Description("Properties to show the values of where an element has them (IsEnabled, Foreground, Grid.Row)")] IReadOnlyList<string>? properties = null,
         bool templates = false,
         bool hidden = false,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -112,19 +114,19 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_details", Title = "An element's properties and styles", ReadOnly = true), Description(
-        "One element of the app looked at closely, as the Live Visual Tree's details show it, for Avalonia and WPF alike: its type, " +
-        "classes and pseudo-classes, where its XAML is (or why there is none), the template it is a part of, its layout (bounds, desired " +
-        "size, margin, border, padding, alignment); each property set from anywhere but its default (all of them with defaults true) with " +
-        "its value, type and source (Local, Style, Theme, Template, Inherited, Animation, Current, Direct, Default) and what that source is " +
-        "(the style's selector, the ancestor inherited from) with its place; and every style that could apply (selector, kind, origin, " +
-        "place) with whether it applies and why not, each setter with whether it wins, is overridden (and by what) or is inactive. " +
-        "breakpoint_set with control and property sets Break When Value Changes on one of its properties.")]
+        "One element looked at closely, as the Live Visual Tree's details show it, Avalonia or WPF: its type, classes and " +
+        "pseudo-classes, its XAML's place (or why none), the template it is a part of, its layout (bounds, desired size, " +
+        "margin, border, padding, alignment); each property not at its default (every one with defaults) with its value, type " +
+        "and source (Local, Style, Theme, Template, Inherited, Animation, Current, Direct, Default) and what that is (a " +
+        "style's selector, the ancestor) with its place; and every style that could apply (selector, kind, origin, place), " +
+        "whether it applies and why not, and whether each setter wins, is overridden (by what) or is inactive. breakpoint_set " +
+        "with control and property breaks when one changes.")]
     public Task<AppElementDetails> AppDetails(
         [Description(ControlQuery)] string control,
         [Description(AppChoice)] string? app = null,
         [Description(WindowChoice)] string? window = null,
-        [Description("Only the properties whose names contain this, as the details' filter box lists them")] string? properties = null,
-        [Description("Properties at their default values too, as the details' Show Defaults")] bool defaults = false,
+        [Description("Only the properties whose names contain this")] string? properties = null,
+        [Description("Properties at their defaults too")] bool defaults = false,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         LiveApp live = await InspectedAsync(app, cancel);
@@ -170,19 +172,19 @@ public sealed partial class PassengerTools
     }
 
     [McpServerTool(Name = "app_click", Title = "Click in the app", Destructive = true), Description(
-        "Clicks in the app as a person's mouse would, through the window's own input (pointer over, press, release; handlers, commands and " +
-        "focus all run): at an element's centre (or at x,y from its top left), or at x,y in a window. Its window is not brought forward and " +
-        "the real pointer does not move. An element hidden, disabled, scrolled out of view or covered by another is refused, saying which. " +
-        "Says what took the click, what it shows now and what has the focus.")]
+        "Clicks in the app as a mouse would, through the window's own input (handlers, commands and focus all run): at an " +
+        "element's centre (or x,y from its top left), or at x,y in a window. The window is not brought forward and the real " +
+        "pointer does not move. An element hidden, disabled, out of view or covered is refused, saying which. Says what took " +
+        "the click, what it shows now and what has the focus.")]
     public Task<string> AppClick(
         [Description(AppChoice)] string? app = null,
         [Description(ControlQuery)] string? control = null,
-        [Description("From the element's left, or the window's")] double? x = null,
-        [Description("From the element's top, or the window's")] double? y = null,
+        double? x = null,
+        double? y = null,
         [Description(WindowChoice)] string? window = null,
         [Description("left, right or middle")] string button = "left",
-        [Description("2 for a double click")] int count = 1,
-        [Description("Held while clicking: ctrl, shift, alt, cmd (meta), or primary (Cmd on macOS, Ctrl elsewhere)")] IReadOnlyList<string>? modifiers = null,
+        int count = 1,
+        [Description(HeldKeys)] IReadOnlyList<string>? modifiers = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (LiveApp live, AppNode? element, AppNode target) = await Target(app, control, window, needsPoint: true, x, y, cancel);
@@ -210,9 +212,9 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_type", Title = "Type into the app", Destructive = true), Description(
-        "Types text into the app as a keyboard would, a key and its text at a time (a newline is Enter, a tab Tab): into an element, given " +
-        "the keyboard focus first if it has not (a text box then types at the end of its text), else into whatever has the focus. With " +
-        "replace, the platform's Select All goes first, so the text replaces what is there. Says what it shows now.")]
+        "Types text into the app as a keyboard would, a key at a time (a newline is Enter, a tab Tab): into an element, given " +
+        "the focus first (a text box types at its end), else into what has the focus. With replace, Select All goes first. " +
+        "Says what it shows now.")]
     public Task<string> AppType(
         string text,
         [Description(AppChoice)] string? app = null,
@@ -237,12 +239,13 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_key", Title = "Press keys in the app", Destructive = true), Description(
-        "Presses keys in the app as a keyboard would, one chord after another (\"Enter\", \"Tab Tab Space\", \"ctrl+A Delete\", " +
-        "\"primary+S\" for the platform's Cmd or Ctrl): an element is given the keyboard focus first, else the keys go to whatever has it. " +
-        "Keys are Avalonia's names, which WPF's share (Enter, Escape, Back, Delete, Left, PageDown, F5, A, D1 or 1); modifiers ctrl, shift, alt, cmd (meta), " +
-        "primary. A printable key types its character when nothing takes the key itself. Key bindings and commands run as they would.")]
+        "Presses keys in the app as a keyboard would, chord after chord (\"Enter\", \"Tab Tab Space\", \"ctrl+A Delete\", " +
+        "\"primary+S\"): an element is given the focus first, else they go to what has it. Keys by Avalonia's names, which " +
+        "WPF's share (Enter, Escape, Back, Delete, Left, PageDown, F5, A, D1 or 1); modifiers ctrl, shift, alt, cmd (meta), " +
+        "primary (Cmd on macOS, Ctrl elsewhere). A printable key types its character when nothing takes the key; key bindings " +
+        "and commands run.")]
     public Task<string> AppKey(
-        [Description("Chords separated by spaces, each keys joined by +")] string keys,
+        [Description("Chords split by spaces, a chord's keys joined by +")] string keys,
         [Description(AppChoice)] string? app = null,
         [Description(ControlQuery)] string? control = null,
         [Description(WindowChoice)] string? window = null,
@@ -264,17 +267,17 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_scroll", Title = "Scroll in the app", Destructive = true), Description(
-        "Turns the mouse wheel over an element (its centre) or at x,y in a window, as a person scrolls: dy notches down (negative up), dx " +
-        "right (negative left). The scroll viewer under it scrolls as it would; says where it is now.")]
+        "Turns the mouse wheel over an element (its centre) or at x,y in a window, as a person scrolls: dy notches down, dx " +
+        "right (3 down when neither is given). Says where the scroll viewer under it is now.")]
     public Task<string> AppScroll(
         [Description(AppChoice)] string? app = null,
         [Description(ControlQuery)] string? control = null,
-        [Description("Notches down; negative scrolls up. 3 when neither dy nor dx is given")] double? dy = null,
-        [Description("Notches right; negative scrolls left")] double? dx = null,
+        [Description("Notches down; negative up")] double? dy = null,
+        [Description("Notches right; negative left")] double? dx = null,
         double? x = null,
         double? y = null,
         [Description(WindowChoice)] string? window = null,
-        [Description("Held while scrolling: ctrl, shift, alt, cmd (meta), primary")] IReadOnlyList<string>? modifiers = null,
+        [Description(HeldKeys)] IReadOnlyList<string>? modifiers = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (LiveApp live, AppNode? element, AppNode target) = await Target(app, control, window, needsPoint: true, x, y, cancel);
@@ -304,10 +307,9 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_binding_errors", Title = "The app's failed bindings", ReadOnly = true), Description(
-        "The bindings that have failed in the Avalonia or WPF apps Run and Debug started last (or the one named), as Problems' Bindings tab lists " +
-        "them: each once, with its control, property, path, the framework's message (and the nearest members when the path names one its source " +
-        "lacks), where in the XAML (the misspelt member when the file has it) and how many times it failed. An app that ended keeps its " +
-        "list until the next of its kind starts; Passenger's own (app ide) are those since an agent first looked at its windows.")]
+        "The bindings that failed in the Avalonia or WPF apps Run and Debug started last (or the one named), each once: its " +
+        "control, property, path, the framework's message (and the nearest members when its source lacks the one named), its " +
+        "place in the XAML and how many times it failed. An app that ended keeps its list until the next of its kind starts.")]
     public Task<IReadOnlyList<AppBindingError>> AppBindingErrors([Description(AppChoice)] string? app = null, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         IEnumerable<LiveApp> apps = app switch

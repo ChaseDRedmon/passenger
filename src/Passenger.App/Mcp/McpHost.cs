@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Threading;
@@ -19,15 +20,92 @@ namespace Passenger.App.Mcp;
 /// server for its whole session (<see cref="McpProxy"/>), joining the window over the folder it works in at its first call,
 /// so the agent drives the IDE the person is looking at, once Enable MCP Server or the person's Allow lets it in. Each
 /// connection is a server of its own over the same tools.</summary>
-public static class McpHost
+public static partial class McpHost
 {
     /// <summary>The IDE has no window, only the headless platform's (whose frames a screenshot takes). The process's, as
     /// the platform is: <c>--mcp</c> runs on the headless one alone.</summary>
     public static bool IsHeadless { get; private set; }
 
-    /// <summary>Where windows listen, one socket each: in the IDE's state folder (PASSENGER_SETTINGS moves it), which
-    /// only its user can reach.</summary>
-    public static string SocketFolder => Path.Combine(StateStore.DefaultRoot, "mcp");
+    /// <summary>Where windows listen, one socket each, beside the process's <c>PID.open</c>: the state folder's (<see
+    /// cref="SocketFolderFor"/>).</summary>
+    public static string SocketFolder => SocketFolderFor(StateStore.DefaultRoot);
+
+    /// <summary>A state folder's agent sockets' folder: in the user's own temporary folder, named by a short hash of the
+    /// user and the state folder, so a socket's path stays within the 104 bytes macOS allows (the state folder's own grew
+    /// past them under a long PASSENGER_SETTINGS, and an agent waited 2 minutes for a window that could not listen) and
+    /// each state, a test run's or the person's, has its own.</summary>
+    public static string SocketFolderFor(string state)
+    {
+        string key = $"{Environment.UserName}\n{Path.TrimEndingDirectorySeparator(PathNames.Canonical(state))}";
+        string hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..10];
+        return Path.Combine(UserTemp(), $"passenger-{hash}");
+    }
+
+    /// <summary>The socket folder made the user's alone, or why not: a link, or one another user made first (on Linux's
+    /// shared /tmp), whose mode only its owner may set, is never listened or connected in.</summary>
+    internal static string OwnSocketFolder()
+    {
+        string folder = SocketFolder;
+        if (OperatingSystem.IsWindows())
+        {
+            // The user's temporary folder, under their profile, is theirs alone already.
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+        const UnixFileMode Owner = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        Directory.CreateDirectory(folder, Owner);
+        if (new DirectoryInfo(folder).LinkTarget is not null)
+        {
+            throw new IOException($"{folder} is a link, not a folder of the user's own");
+        }
+        File.SetUnixFileMode(folder, Owner);
+        return folder;
+    }
+
+    /// <summary>The socket folder when it is there and the user's own, else null: the windows an agent may join.</summary>
+    internal static string? FoundSocketFolder()
+    {
+        if (!Directory.Exists(SocketFolder))
+        {
+            return null;
+        }
+        try
+        {
+            return OwnSocketFolder();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The user's own temporary folder: macOS's per-user one as the system names it (an agent's environment may
+    /// point TMPDIR elsewhere, where the person's windows would not be found), Linux's XDG_RUNTIME_DIR, else /tmp.</summary>
+    private static string UserTemp()
+    {
+        if (OperatingSystem.IsMacOS() && DarwinUserTemp() is { } own)
+        {
+            return own;
+        }
+        if (OperatingSystem.IsLinux())
+        {
+            return Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is { Length: > 0 } runtime && Path.IsPathFullyQualified(runtime) && Directory.Exists(runtime)
+                ? runtime
+                : "/tmp";
+        }
+        return Path.GetTempPath();
+    }
+
+    private static unsafe string? DarwinUserTemp()
+    {
+        const int DarwinUserTempDir = 65537;
+        byte* buffer = stackalloc byte[1024];
+        nuint length = Confstr(DarwinUserTempDir, buffer, 1024);
+        return length is > 1 and <= 1024 ? System.Text.Encoding.UTF8.GetString(buffer, (int)length - 1) : null;
+    }
+
+    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "confstr")]
+    private static unsafe partial nuint Confstr(int name, byte* buffer, nuint length);
 
     /// <summary>What an agent is told as it connects: how to begin and find its way, and what a person's window asks.</summary>
     internal const string Instructions =
@@ -37,7 +115,9 @@ public static class McpHost
         "solution or file). Find your way by meaning rather than by text: find_symbol finds a type or member by name, outline lists a file's " +
         "types and members with their lines, and symbol_info, definition, usages, implementations and hierarchy follow the symbol at a line " +
         "and column; find_in_files searches text. editor_text reads a file with its lines numbered; edit changes one as the editor does " +
-        "(an open file the editor has not changed also takes what is written on disk); diagnostics checks it.\n\n" +
+        "(an open file the editor has not changed also takes what is written on disk); diagnostics checks it. A file written a moment " +
+        "before is waited for (up to 10 s) until the language server has read it, so rename, refactor and code actions work on what was " +
+        "written: there is no need to wait or try again.\n\n" +
         "Change code across the solution as the IDE's refactorings do rather than file by file: rename a symbol everywhere, and refactor for " +
         "Change Signature (every call updated), Move, Safe Delete, Extract Interface, Pull Members Up, Push Members Down, Introduce Field or " +
         "Parameter, Encapsulate Field, Optimize Imports and Code Cleanup; refactor with describe true answers what its dialog offers and the " +
@@ -77,6 +157,49 @@ public static class McpHost
     /// writes it, its schema the same in both.</summary>
     internal static McpServerToolCreateOptions ToolCreateOptions() => new() { SerializerOptions = AnswerJson };
 
+    /// <summary>A tool as every connection and <c>--mcp-attach</c> list it: its schema without what says nothing, an
+    /// optional parameter's null default and null type (left out says as much), which every list paid for some 110 times.</summary>
+    internal static McpServerTool Lean(McpServerTool tool)
+    {
+        Tool shown = tool.ProtocolTool;
+        if (JsonNode.Parse(shown.InputSchema.GetRawText()) is JsonObject schema)
+        {
+            Trim(schema);
+            using JsonDocument lean = JsonDocument.Parse(schema.ToJsonString());
+            shown.InputSchema = lean.RootElement.Clone();
+        }
+        return tool;
+
+        static void Trim(JsonNode? node)
+        {
+            if (node is JsonArray items)
+            {
+                foreach (JsonNode? item in items)
+                {
+                    Trim(item);
+                }
+                return;
+            }
+            if (node is not JsonObject part)
+            {
+                return;
+            }
+            if (part.TryGetPropertyValue("default", out JsonNode? given) && given is null)
+            {
+                part.Remove("default");
+            }
+            if (part["type"] is JsonArray { Count: 2 } types && types.Select(t => t?.GetValue<string>()).ToList() is { } named
+                && named.Contains("null") && named.Single(t => t != "null") is { } type)
+            {
+                part["type"] = type;
+            }
+            foreach (JsonNode? child in part.Select(p => p.Value).ToList())
+            {
+                Trim(child);
+            }
+        }
+    }
+
     /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>).</summary>
     public static McpServerOptions Options(MainWindow window, AgentConnection connection)
     {
@@ -84,7 +207,7 @@ public static class McpHost
         McpServerPrimitiveCollection<McpServerTool> collection = [];
         foreach (MethodInfo method in ToolMethods())
         {
-            collection.Add(new ConnectedTool(McpServerTool.Create(method, tools, ToolCreateOptions()), window, connection));
+            collection.Add(new ConnectedTool(Lean(McpServerTool.Create(method, tools, ToolCreateOptions())), window, connection));
         }
         return new McpServerOptions
         {
@@ -191,11 +314,11 @@ public static class McpHost
     /// <summary>Takes away the sockets (and their folder files) of IDEs that are no longer running.</summary>
     internal static void RemoveStale()
     {
-        if (!Directory.Exists(SocketFolder))
+        if (FoundSocketFolder() is not { } sockets)
         {
             return;
         }
-        foreach (string path in Directory.EnumerateFiles(SocketFolder))
+        foreach (string path in Directory.EnumerateFiles(sockets))
         {
             if (ProcessOf(path) is int pid && !Running(pid))
             {

@@ -41,13 +41,8 @@ public sealed class AgentSocket : IDisposable
     /// <summary>Listens for the window's agents, or throws saying why it cannot.</summary>
     public static AgentSocket Open(MainWindow window)
     {
-        string folder = McpHost.SocketFolder;
-        Directory.CreateDirectory(folder);
-        if (!OperatingSystem.IsWindows())
-        {
-            // The folder is the user's alone: nobody else reaches the IDE through it.
-            File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
+        // The folder is the user's alone: nobody else reaches the IDE through it.
+        string folder = McpHost.OwnSocketFolder();
         McpHost.RemoveStale();
         string path = System.IO.Path.Combine(folder, $"{Environment.ProcessId}-{Interlocked.Increment(ref opened)}.sock");
         // Only a dead Passenger that had this process's number leaves one by this name.

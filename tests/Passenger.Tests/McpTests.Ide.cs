@@ -202,8 +202,9 @@ public sealed partial class McpTests
         int spinning = await WrittenId("spin.pid", "the program to start");
         JsonElement profiled = await Call(client, "profile", new() { ["attach"] = true, ["seconds"] = 2 });
         Assert.True(profiled.GetProperty("samples").GetInt32() > 0, $"Attach Profiler sampled nothing: {profiled.GetRawText()}");
-        Assert.Contains(profiled.GetProperty("hotSpots").EnumerateArray(), h => h.GetProperty("method").GetString()!.Contains("Turn", StringComparison.Ordinal));
-        using Process program = Process.GetProcessById(spinning);
+        // The folder's own hot spot says where it is written, from the build's PDB, for the agent to go straight there.
+        JsonElement turn = Assert.Single(profiled.GetProperty("hotSpots").EnumerateArray(), h => h.GetProperty("method").GetString()!.Contains("Spin.Turn", StringComparison.Ordinal));
+        Assert.True(turn.TryGetProperty("source", out JsonElement source) && source.GetString() == "Program.cs:10", $"Spin.Turn's hot spot says no place: {turn}");        using Process program = Process.GetProcessById(spinning);
         Assert.False(program.HasExited, "The program an agent attached the profiler to ended with its snapshot");
         await Call(client, "stop");
     }

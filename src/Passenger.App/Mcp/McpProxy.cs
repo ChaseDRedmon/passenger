@@ -63,7 +63,7 @@ public sealed class McpProxy
         foreach (MethodInfo method in McpHost.ToolMethods())
         {
             // Never called: each call goes on to the window's own tool of the name.
-            tools.Add(new ForwardedTool(McpServerTool.Create(method, _ => throw new InvalidOperationException("The proxy runs no tool itself"), McpHost.ToolCreateOptions()), proxy));
+            tools.Add(new ForwardedTool(McpHost.Lean(McpServerTool.Create(method, _ => throw new InvalidOperationException("The proxy runs no tool itself"), McpHost.ToolCreateOptions())), proxy));
         }
         McpServerOptions options = new()
         {
@@ -212,11 +212,11 @@ public sealed class McpProxy
     /// innermost first, then the newest; with a process named, any of its windows, the newest after those.</summary>
     private IEnumerable<string> Windows()
     {
-        if (!Directory.Exists(McpHost.SocketFolder))
+        if (McpHost.FoundSocketFolder() is not { } sockets)
         {
             return [];
         }
-        return Directory.EnumerateFiles(McpHost.SocketFolder, "*.sock")
+        return Directory.EnumerateFiles(sockets, "*.sock")
             .Where(path => processId is not int pid || McpHost.ProcessOf(path) == pid)
             .Select(path => (Path: path, Holding: McpHost.Holding(McpHost.WindowFolder(path), here)))
             .Where(socket => processId is not null || socket.Holding >= 0)

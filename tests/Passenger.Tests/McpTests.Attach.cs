@@ -22,9 +22,11 @@ public sealed partial class McpTests
     [Fact]
     public async Task An_agent_set_up_before_Passenger_runs_has_the_tools_and_its_first_call_starts_Passenger_on_its_folder_which_asks()
     {
-        // A state of the agent's own, where no window of this run's listens; the run starts Passenger headless (TestRun).
-        string state = TestFolders.Create("a");
-        madeFolders.Add(state);
+        // A state of the agent's own, where no window of this run's listens, its path longer than the 104 bytes macOS allows a
+        // socket's; the run starts Passenger headless (TestRun).
+        string root = TestFolders.Create("mcp-state-");
+        madeFolders.Add(root);
+        string state = Path.Combine(root, new string('s', 60), new string('t', 60));
         string notes = Plain("mcp-start-");
         await using McpClient client = await Start(["--mcp-attach"], notes, new() { ["PASSENGER_SETTINGS"] = state });
 
@@ -39,7 +41,10 @@ public sealed partial class McpTests
         {
             Assert.True(client.ServerInstructions?.Contains(said, StringComparison.Ordinal) == true, $"The server's instructions leave out \"{said}\": {client.ServerInstructions}");
         }
-        string sockets = Path.Combine(state, "mcp");
+        // The state's sockets are in a folder of its own, short whatever the state's path, never the run's or the person's.
+        string sockets = McpHost.SocketFolderFor(state);
+        madeFolders.Add(sockets);
+        Assert.NotEqual(McpHost.SocketFolder, sockets);
         Assert.False(Directory.Exists(sockets) && Directory.GetFiles(sockets, "*.sock").Length > 0, "Listing the tools started a Passenger");
 
         // Its first call starts Passenger on the agent's folder, whose window asks the person and holds the call meanwhile.
@@ -49,6 +54,11 @@ public sealed partial class McpTests
         await Until(() => (window = Directory.Exists(sockets) ? Directory.GetFiles(sockets, "*.sock").FirstOrDefault(s =>
             File.Exists(Path.ChangeExtension(s, ".folder")) && File.ReadAllText(Path.ChangeExtension(s, ".folder")) == PathNames.Canonical(notes)) : null) is not null,
             "Passenger to start with a window on the agent's folder");
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(window!) < 104, $"The window's socket is {window!.Length} characters long: {window}");
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(sockets));
+        }
         string log = Path.Combine(state, "logs", "passenger.log");
         await Until(() => File.Exists(log) && Ui.Shared(log).Contains($"Agents: Test Agent asks to work in the window on {PathNames.Canonical(notes)}", StringComparison.Ordinal),
             "the started Passenger's window to ask the person to let Test Agent in");

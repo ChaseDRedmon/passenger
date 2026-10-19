@@ -4,6 +4,7 @@ using Passenger.App.Packages;
 using Passenger.App.Profiling;
 using Passenger.App.Vcs;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Terminal;
 using Passenger.Text;
@@ -17,10 +18,10 @@ public sealed partial class PassengerTools
     // Version control
 
     [McpServerTool(Name = "vcs_status", Title = "Changed files", ReadOnly = true), Description(
-        "The branch and the files changed since the last commit (modified, added, deleted, renamed, unversioned, conflicted), as the Commit window lists them. " +
-        "While a merge, a rebase, an unstash or a cherry-pick has stopped for conflicts, conflicts says what is under way, the branch yours and theirs are " +
-        "(during a rebase yours is the branch being rebased) and, for each file in conflict, whether each side modified or deleted it, as the Conflicts dialog lists them; " +
-        "vcs_resolve resolves them.")]
+        "The branch and the files changed since the last commit (modified, added, deleted, renamed, unversioned, conflicted). " +
+        "While a merge, rebase, unstash or cherry-pick is stopped for conflicts, conflicts says what is under way, which " +
+        "branches yours and theirs are (in a rebase yours is the branch being rebased) and whether each side modified or " +
+        "deleted each file in conflict; vcs_resolve resolves them.")]
     public Task<VcsStatus> VcsStatus(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = Session.Vcs;
@@ -37,12 +38,12 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "vcs_resolve", Title = "Resolve a conflict", Destructive = true), Description(
-        "Resolves a file in conflict (vcs_status lists them) as the Conflicts dialog does: take yours or theirs, that side's version whole " +
-        "(Accept Yours, Accept Theirs; during a rebase yours is the branch being rebased; a side that deleted the file deletes it), or give text, " +
-        "the merged file to write, as the merge window's Apply Changes writes its result. The file is then marked resolved. Once none is left, " +
-        "vcs_commit finishes a merge, a cherry-pick or a revert, and the Continue Rebase action (ide_action) a rebase.")]
-    public Task<string> VcsResolve(string path, [Description("yours or theirs; or leave it out and give text")] string? take = null,
-        [Description("The file's merged text, in place of take")] string? text = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "Resolves a file in conflict (vcs_status lists them) as the Conflicts dialog does: take yours or theirs, that side's " +
+        "version whole (a side that deleted it deletes it), or give text, the merged file to write; then marks it resolved. " +
+        "Once none is left, vcs_commit finishes a merge, cherry-pick or revert, and the Continue Rebase action (ide_action) a " +
+        "rebase.")]
+    public Task<string> VcsResolve(string path, [Description("yours or theirs, or none with text")] string? take = null,
+        [Description("The merged file, in place of take")] string? text = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = Session.Vcs;
         await vcs.Opened;
@@ -79,9 +80,9 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "vcs_commit", Title = "Commit", Destructive = true), Description(
-        "Commits files with a message, as the Commit window does (every file saved first): the paths given, else every changed file that is not unversioned. " +
-        "amend changes the last commit; push pushes after. Returns the new commit, and how the push went; a push the remote refuses is an error " +
-        "naming git's reason, the commit made all the same.")]
+        "Commits the paths given, else every changed file but the unversioned (saved first), with message; amend changes the " +
+        "last commit, push pushes after. Returns the commit and how the push went; a push the remote refuses is an error with " +
+        "git's reason, the commit made all the same.")]
     public Task<string> VcsCommit(string message, IReadOnlyList<string>? paths = null, bool amend = false, bool push = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = Session.Vcs;
@@ -105,13 +106,12 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "vcs_log", Title = "The history", ReadOnly = true), Description(
-        "The newest commits of every branch, as the Git window's Log lists them, with their branches and tags. With a path, Show History's " +
-        "instead: the commits from HEAD that changed that file (followed through its renames) or folder, each with what it did there (the " +
-        "file under the path it had then); with startLine and endLine too, Show History for Selection's: the commits that changed those " +
-        "lines of the file as the editor has it.")]
+        "The newest commits of every branch, with their branches and tags. With a path, Show History's: the commits from HEAD " +
+        "that changed that file (followed through renames) or folder, each with what it did there; with startLine and endLine " +
+        "too, those that changed those lines.")]
     public Task<IReadOnlyList<VcsCommit>> VcsLog(int count = 20, string? path = null,
-        [Description("The first line of the file's to follow, from 1")] int? startLine = null,
-        [Description("The last line, from 1")] int? endLine = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        [Description("The first line to follow")] int? startLine = null,
+        [Description("The last line")] int? endLine = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         await Session.Vcs.Opened;
         Git repository = Session.Vcs.Repository ?? throw new InvalidOperationException("The folder is not in a Git repository");
@@ -153,9 +153,9 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "vcs_stash", Title = "Stash or unstash changes", Destructive = true), Description(
-        "Rider's Stash Changes and Unstash Changes. action: list (the stashes, the newest first, by index), push (every "
-        + "uncommitted change, new files too, put away under message, open files saved first), pop or apply (stash index's "
-        + "changes back in the files; pop drops it after), drop (throw stash index away).")]
+        "Stash Changes and Unstash Changes. action: list (the stashes, newest first, by index), push (every uncommitted " +
+        "change, new files too, put away under message, open files saved first), pop or apply (stash index's changes back; pop " +
+        "drops it after), drop (throw stash index away).")]
     public Task<IReadOnlyList<StashSummary>> VcsStash(string action = "list", string message = "", int index = 0, CancellationToken cancel = default) => OnUi<IReadOnlyList<StashSummary>>(cancel, async () =>
     {
         VcsController vcs = Session.Vcs;
@@ -187,19 +187,20 @@ public sealed partial class PassengerTools
     // Packages
 
     [McpServerTool(Name = "nuget_search", Title = "Search NuGet", ReadOnly = true), Description(
-        "Packages a query finds on the feeds of the folder's nuget.config files, as the NuGet window searches them: every enabled feed, or the " +
-        "one named, with each package's newest version, its downloads and the feeds that have it. A feed that does not answer fails the search " +
-        "only when no feed does.")]
+        "Packages a query finds on the feeds of the folder's nuget.config files (every enabled one, or feed), each with its " +
+        "newest version, downloads and the feeds that have it. A feed that does not answer fails the search only when none " +
+        "does.")]
     public Task<IReadOnlyList<PackageSummary>> NuGetSearch(string query, bool prerelease = false,
-        [Description("A feed's name, as the NuGet window's Sources tab lists it; every enabled feed when none is given.")] string? feed = null,
+        [Description("A feed's name, as the NuGet window's Sources lists it")] string? feed = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
         await (await window.NuGet.FeedAsync(feed)).SearchAsync(query, prerelease, cancel));
 
     [McpServerTool(Name = "nuget_install", Title = "Install a package", Destructive = true), Description(
-        "Adds a package to a project (its name or .csproj path) at a version (the newest on the folder's enabled feeds when none is given), or " +
-        "moves it to that version, through dotnet add package as the NuGet window does, its restore using the feeds and credentials of the " +
-        "folder's nuget.config files.")]
-    public Task<string> NuGetInstall(string project, string id, string? version = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "Adds a package to a project (its name or .csproj) at a version (else the newest on the folder's enabled feeds), or " +
+        "moves it to that version, through dotnet add package as the NuGet window does, restoring from the folder's " +
+        "nuget.config feeds. Answers the version installed and the files it changed (the project, and Directory.Packages.props " +
+        "under central package management).")]
+    public Task<PackageChange> NuGetInstall(string project, string id, string? version = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
         IPackageFeed feeds = await window.NuGet.FeedAsync(null);
@@ -210,44 +211,72 @@ public sealed partial class PassengerTools
         manager.Line += (_, line) => said.Add(line);
         // What dotnet add package rewrites holds the open files' edits, as the NuGet window's install does.
         Editors.SaveAll();
+        Func<IReadOnlyList<string>> changed = Changes(PackageFiles(chosen));
         bool done = await manager.InstallAsync(chosen.Path, id, at);
-        window.FollowWritten(PackageFiles(chosen));
-        Session.ReadAgain();
-        return done ? $"{id} {at} is in {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
+        IReadOnlyList<string> files = Changed(changed());
+        return done ? new PackageChange(id, at, chosen.Name, files) : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
 
-    [McpServerTool(Name = "nuget_remove", Title = "Remove a package", Destructive = true), Description("Takes a package out of a project, through dotnet remove package.")]
-    public Task<string> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    [McpServerTool(Name = "nuget_remove", Title = "Remove a package", Destructive = true), Description(
+        "Takes a package out of a project, through dotnet remove package. Answers the files it changed.")]
+    public Task<PackageChange> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
         PackageManager manager = new();
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
         Editors.SaveAll();
+        Func<IReadOnlyList<string>> changed = Changes(PackageFiles(chosen));
         bool done = await manager.RemoveAsync(chosen.Path, id);
-        window.FollowWritten(PackageFiles(chosen));
-        Session.ReadAgain();
-        return done ? $"{id} is out of {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
+        IReadOnlyList<string> files = Changed(changed());
+        return done ? new PackageChange(id, null, chosen.Name, files) : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
+
+    /// <summary>The files a package change wrote, taken into the editors that show them and named as the answer names them;
+    /// the projects read again.</summary>
+    private IReadOnlyList<string> Changed(IReadOnlyList<string> written)
+    {
+        window.FollowWritten(written);
+        Session.ReadAgain();
+        return [.. written.Select(Relative)];
+    }
+
+    /// <summary>Which of some files differ, when asked, from what they hold now.</summary>
+    private static Func<IReadOnlyList<string>> Changes(IReadOnlyList<string> files)
+    {
+        byte[]?[] before = [.. files.Select(Bytes)];
+        return () => [.. files.Where((file, i) => !(Bytes(file) ?? []).AsSpan().SequenceEqual(before[i] ?? []))];
+
+        static byte[]? Bytes(string file)
+        {
+            try
+            {
+                return File.Exists(file) ? File.ReadAllBytes(file) : null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+    }
 
     // The profiler
 
     [McpServerTool(Name = "profile", Title = "Profile a configuration", Destructive = true), Description(
-        "Builds and runs a run configuration (the chosen one if none is named) under the sampling profiler from its first instruction, as " +
-        "Profile does, until it ends by itself or, with seconds, for that long (then the snapshot is taken and the program goes on). " +
-        "Returns the run's length, the hot spots by their own time, and the hot path of the busiest thread, and for an Avalonia app its frames " +
-        "(their UI thread's time at the median and longest; measuring, arranging, rendering and the compositor in all) with the Frames page's " +
-        "layout table (each control type by its own measure and arrange time, with its heaviest controls and their XAML lines), the controls " +
-        "heaviest in layout, and the longest frame's own breakdown, or a count of 0 and why when it drew none in that time; the " +
-        "Performance Profiler window shows the whole snapshot. With attach, Run | Attach Profiler to Running Program instead: the program " +
-        "being debugged, else the one run started, profiled from now for seconds (else until it ends), and left running after.")]
+        "Builds and runs a run configuration (the chosen one by default) under the sampling profiler from its start, as " +
+        "Profile does, until it ends or, with seconds, for that long (then the snapshot is taken and it goes on). Returns the " +
+        "run's length, the hot spots by their own time (the folder's own with their source, path:line), the busiest thread's " +
+        "hot path, and for an Avalonia app its frames: their UI thread's time at the median and longest, measure, arrange, " +
+        "render and compositor time in all, the layout table by control type with the heaviest controls and their XAML lines, " +
+        "and the longest frame's breakdown (or a count of 0 and why). With attach, Attach Profiler instead: the program being " +
+        "debugged, else Run's, from now for seconds (else until it ends), left running.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
-        [Description("How long to profile before the snapshot; the program's whole run when not given")] int? seconds = null,
-        [Description("How many hot spots to return")] int top = 25,
-        [Description("With seconds: a memory snapshot too, the heap's types by size, taken just before the CPU snapshot")] bool memory = false,
-        [Description("Profile the program already running (debugged, else run's) from now, rather than launch the configuration")] bool attach = false,
+        [Description("How long before the snapshot; the whole run by default")] int? seconds = null,
+        [Description("How many hot spots")] int top = 25,
+        [Description("With seconds: a memory snapshot too, the heap's types by size")] bool memory = false,
+        [Description("Profile the program running (debugged, else Run's) from now, rather than launch one")] bool attach = false,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (attach && (configuration is not null || arguments is not null))
@@ -290,11 +319,13 @@ public sealed partial class PassengerTools
                 path.Add(Frame(at.Name, at.Total, at.Self));
             }
         }
+        // The folder's own methods by their place, from their PDBs, for an agent to go straight to.
+        using Passenger.Profiler.MethodSources sources = new();
         return new ProfileInfo(
             Math.Round(snapshot.Duration.TotalMilliseconds),
             snapshot.Samples,
             snapshot.Threads.Count,
-            [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => Frame(h.Name, h.Total, h.Self))],
+            [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => Frame(h.Name, h.Total, h.Self) with { Source = Source(h) })],
             path,
             snapshot.TracePath,
             heap)
@@ -304,6 +335,16 @@ public sealed partial class PassengerTools
 
         ProfileFrame Frame(string method, int total, int self) =>
             new(method, (int)Math.Round(snapshot.Milliseconds(total)), (int)Math.Round(snapshot.Milliseconds(self)));
+
+        string? Source(Passenger.Profiler.HotSpot spot)
+        {
+            if (spot.Code is not { } code || sources.Find(code) is not { } at || Session.Folder is not { } folder)
+            {
+                return null;
+            }
+            string file = PathNames.Canonical(at.File);
+            return PathNames.IsUnder(file, folder) ? $"{Relative(file)}:{at.Line}" : null;
+        }
     });
 
     /// <summary>An Avalonia app's frames as the profile tool says them, the heaviest controls first; for an app the
@@ -347,10 +388,9 @@ public sealed partial class PassengerTools
     // The terminal
 
     [McpServerTool(Name = "terminal_run", Title = "Run in the terminal", Destructive = true), Description(
-        "Types a command into the IDE's Terminal window (opening it, and its shell, if need be) and presses Enter, as the person would, then waits " +
-        "until the shell shows its prompt again, or the output has been quiet for two seconds (or waitSeconds), and returns what the command " +
-        "printed. The person sees it run. While the tab shown runs a program (a run configuration that uses the terminal), the line goes " +
-        "to that program, as typed.")]
+        "Types a command into the IDE's Terminal window (opening it if need be) and presses Enter, as the person would, then " +
+        "waits until the shell prompts again or the output has been quiet for 2 s (at most waitSeconds), and returns what it " +
+        "printed. While the tab runs a program (a configuration that uses the terminal), the line goes to it.")]
     public Task<string> TerminalRun(string command, int waitSeconds = 15, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         TerminalSession shell = await Terminal(cancel);
@@ -431,10 +471,22 @@ public sealed partial class PassengerTools
     private static string Prompt(TerminalScreen screen) =>
         screen.IsAlternate ? string.Empty : screen.Lines[screen.CursorRow].Text(0, screen.CursorColumn);
 
-    /// <summary>What a package change may write: the project file, and under central package management the
-    /// Directory.Packages.props an install puts the version in (any open, since only those changed are read again).</summary>
-    private IEnumerable<string> PackageFiles(ProjectModel project) =>
-        [project.Path, .. Editors.Documents.Select(d => d.Path).Where(p => Path.GetFileName(p).Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase))];
+    /// <summary>What a package change may write: the project file, and the Directory.Packages.props nearest above it,
+    /// where under central package management an install puts the version.</summary>
+    private static IReadOnlyList<string> PackageFiles(ProjectModel project)
+    {
+        List<string> files = [project.Path];
+        for (string? at = Path.GetDirectoryName(project.Path); at is not null; at = Path.GetDirectoryName(at))
+        {
+            string props = Path.Combine(at, "Directory.Packages.props");
+            if (File.Exists(props))
+            {
+                files.Add(props);
+                break;
+            }
+        }
+        return files;
+    }
 
     private ProjectModel Project(string project)
     {
@@ -458,8 +510,9 @@ public sealed record VcsChange(string Path, string Kind, string? From);
 /// <summary>A commit as vcs_log lists it; with a path, what it did there.</summary>
 public sealed record VcsCommit(string Hash, string Subject, string Author, string Date, IReadOnlyList<string> Refs, IReadOnlyList<VcsChange>? Changes = null);
 
-/// <summary>A frame of a profile: a method, the milliseconds with it on the stack, and those in it alone.</summary>
-public sealed record ProfileFrame(string Method, int TotalMs, int SelfMs);
+/// <summary>A frame of a profile: a method, the milliseconds with it on the stack, and those in it alone; for a hot spot in
+/// the folder's own code, where the method is (path:line).</summary>
+public sealed record ProfileFrame(string Method, int TotalMs, int SelfMs, string? Source = null);
 
 public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IReadOnlyList<ProfileFrame> HotSpots, IReadOnlyList<ProfileFrame> HotPath, string Trace, IReadOnlyList<HeapTypeInfo>? Heap = null)
 {
@@ -506,6 +559,10 @@ public sealed record ControlLayoutInfo(string Control, int Measures, double Meas
 
 /// <summary>A type on the heap of a memory snapshot: its live objects and their bytes.</summary>
 public sealed record HeapTypeInfo(string Type, int Count, long Bytes);
+
+/// <summary>What nuget_install or nuget_remove did: the package, the version installed (none for a removal), the project, and
+/// the files it changed.</summary>
+public sealed record PackageChange(string Package, string? Version, string Project, IReadOnlyList<string> Changed);
 
 /// <summary>A stash as the vcs_stash tool lists it.</summary>
 public sealed record StashSummary(int Index, string Message, DateTimeOffset Time);

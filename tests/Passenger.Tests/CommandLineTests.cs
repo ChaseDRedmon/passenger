@@ -140,8 +140,7 @@ public sealed class CommandLineTests : IDisposable
     public async Task A_screenshot_s_agent_uses_the_window_s_tools_unasked_through_mcp_attach_and_one_that_fails_takes_no_picture()
     {
         string agent = TestFolders.Create("agent-");
-        // The window's socket is in its state's mcp/, and macOS keeps a socket's path to 103 bytes.
-        string state = TestFolders.Create("s");
+        string state = TestFolders.Create("agent-state-");
         const string Initialize = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""";
         const string Initialized = """{"jsonrpc":"2.0","method":"notifications/initialized"}""";
         const string Type = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"type","arguments":{"text":"agent "}}}""";
@@ -194,17 +193,25 @@ public sealed class CommandLineTests : IDisposable
             command = $"sh \"{script}\"";
         }
 
-        (int code, string error) = await Run(["notes.txt", "--caret", "2:1", "--agent", command, "--size", "800x500", "--scale", "1", "--screenshot", "out.png"], state);
+        try
+        {
+            (int code, string error) = await Run(["notes.txt", "--caret", "2:1", "--agent", command, "--size", "800x500", "--scale", "1", "--screenshot", "out.png"], state);
 
-        string answered = File.Exists(answers) ? await File.ReadAllTextAsync(answers, TestContext.Current.CancellationToken) : "(no answers)";
-        Assert.True(code == 0 && File.Exists(Path.Combine(folder, "out.png")), $"The screenshot after its agent was not taken: exit code {code}\n{error}\nThe agent's answers:\n{answered}");
-        Assert.True(answered.Contains("agent two", StringComparison.Ordinal) && !answered.Contains("\"isError\":true", StringComparison.Ordinal),
-            $"The agent's type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
+            string answered = File.Exists(answers) ? await File.ReadAllTextAsync(answers, TestContext.Current.CancellationToken) : "(no answers)";
+            Assert.True(code == 0 && File.Exists(Path.Combine(folder, "out.png")), $"The screenshot after its agent was not taken: exit code {code}\n{error}\nThe agent's answers:\n{answered}");
+            Assert.True(answered.Contains("agent two", StringComparison.Ordinal) && !answered.Contains("\"isError\":true", StringComparison.Ordinal),
+                $"The agent's type was to be used unasked in the capture's window, its editor_text then reading line 2 as \"agent two\"; it was answered:\n{answered}");
 
-        string fails = OperatingSystem.IsWindows() ? "powershell -NoProfile -Command exit 3" : "sh -c \"exit 3\"";
-        (code, error) = await Run([".", "--agent", fails, "--screenshot", "failed.png"], state);
-        Assert.True(code == 2 && error.Contains($"screenshot: --agent '{fails}' ended with exit code 3", StringComparison.Ordinal) && !File.Exists(Path.Combine(folder, "failed.png")),
-            $"An agent that failed was to end the screenshot with exit code 2 saying so, and take no picture; it exited {code} and wrote:\n{error}");
+            string fails = OperatingSystem.IsWindows() ? "powershell -NoProfile -Command exit 3" : "sh -c \"exit 3\"";
+            (code, error) = await Run([".", "--agent", fails, "--screenshot", "failed.png"], state);
+            Assert.True(code == 2 && error.Contains($"screenshot: --agent '{fails}' ended with exit code 3", StringComparison.Ordinal) && !File.Exists(Path.Combine(folder, "failed.png")),
+                $"An agent that failed was to end the screenshot with exit code 2 saying so, and take no picture; it exited {code} and wrote:\n{error}");
+        }
+        finally
+        {
+            // The window's socket's folder, named for its state, is outside it.
+            TestFolders.Delete(global::Passenger.App.Mcp.McpHost.SocketFolderFor(state));
+        }
     }
 
     [AvaloniaFact]

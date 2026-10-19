@@ -23,33 +23,32 @@ public sealed partial class PassengerTools
         + "introduce_parameter, encapsulate_field, optimize_imports, code_cleanup";
 
     [McpServerTool(Name = "refactor", Title = "Refactor across the solution", Destructive = true), Description(
-        "Runs one of the IDE's C# refactorings at a place (path, line, column; a selection to endLine:endColumn), as its command and dialog " +
-        "do, every file it touches changed: callers, implementations, usings and new files. Each change is one command the IDE's Undo takes " +
-        "back whole, the files saved. kind is one of " + RefactorKinds + ". The options are one JSON object, by kind:\n" +
-        "change_signature (on a method or constructor): {name, returnType, parameters: [{from: \"oldName\", name?, type?, modifier?, defaultValue?} " +
-        "for each kept, in the new order; {type, name, callValue (what every call passes), modifier?, defaultValue?} for a new one]}; " +
-        "a parameter left out is removed, a field left out stays as it is.\n" +
-        "move (on a type): {file: \"Circle.cs\"} to move it to a new file beside its own, or {namespace: \"Shop.Sales\"}, its users following.\n" +
-        "extract_interface (on a class, struct or record): {name, file, members: [...]}, all public members by default.\n" +
-        "pull_members_up: {target: a base type, members: [...], abstract: [...]}; push_members_down: {targets: [derived classes], members, " +
-        "abstract}; a member by its text as described (\"Add(int): void\"), its name when that is one member, or its id.\n" +
-        "safe_delete (on a declaration or a use): refused, listing the usages that would break, unless {deleteAnyway: true}.\n" +
-        "introduce_field, introduce_parameter (on an expression selected), encapsulate_field (on a field): the language server's own, " +
-        "{action, choice} naming one where it offers several.\n" +
-        "optimize_imports, code_cleanup: {scope: file, project (the one path is in, or a .csproj) or solution}, by default the file a path " +
-        "names, the project a .csproj names, or the solution when path is left out; code_cleanup on XAML reformats it.\n" +
-        "Without options, change_signature, move, extract_interface, pull_members_up and push_members_down answer what their dialog would " +
-        "show (dialog), with its defaults as options to change and send back; with describe true any kind answers so and changes nothing. " +
-        "Applied, it answers each file it created, changed, moved or deleted with the lines its edits start on, and what it left alone. " + WaitsForWrites)]
+        "Runs one of the IDE's C# refactorings (kind) at path, line, column (a selection to endLine:endColumn), as its command " +
+        "and dialog do, changing every file it touches (callers, implementations, usings, new files) as one step of the IDE's " +
+        "Undo, saved. options is one JSON object, by kind:\nchange_signature (on a method or constructor): {name, returnType, " +
+        "parameters: [{from: \"oldName\", name?, type?, modifier?, defaultValue?} for each kept, in the new order; {type, " +
+        "name, callValue (what every call passes), modifier?, defaultValue?} for a new one]}; a parameter left out is " +
+        "removed.\nmove (on a type): {file: \"Circle.cs\"}, a new file beside its own, or {namespace: \"Shop.Sales\"}, its " +
+        "users following.\nextract_interface (on a class, struct or record): {name, file, members: [...]}, all public members " +
+        "by default.\npull_members_up: {target: a base type, members: [...], abstract: [...]}; push_members_down: {targets: " +
+        "[derived classes], members, abstract}; a member by its text as described (\"Add(int): void\"), its name when that is " +
+        "one member, or its id.\nsafe_delete (on a declaration or a use): refused, listing the usages that would break, unless " +
+        "{deleteAnyway: true}.\nintroduce_field, introduce_parameter (on an expression selected), encapsulate_field (on a " +
+        "field): the language server's own, {action, choice} naming one where it offers several.\noptimize_imports, " +
+        "code_cleanup: {scope: file, project (path's, or a .csproj) or solution}, by default the file path names, a .csproj's " +
+        "project, or the solution without a path; code_cleanup reformats XAML.\nWithout options, change_signature, move, " +
+        "extract_interface, pull_members_up and push_members_down answer their dialog (dialog) with its defaults as options to " +
+        "change and send back; describe true does so for any kind, changing nothing. Applied, it answers each file created, " +
+        "changed, moved or deleted with the lines its edits start on, and what it left alone.")]
     public Task<RefactorAnswer> Refactor(
-        [Description("change_signature, safe_delete, move, extract_interface, pull_members_up, push_members_down, introduce_field, introduce_parameter, encapsulate_field, optimize_imports or code_cleanup")] string kind,
-        [Description("The file, absolute or the open folder's; for a project or solution scope a .csproj, or left out for the solution")] string? path = null,
-        [Description("From 1: the name or expression refactored")] int? line = null,
-        [Description("From 1")] int? column = null,
-        [Description("Where a selection ends, for introduce_field and introduce_parameter")] int? endLine = null,
+        [Description(RefactorKinds)] string kind,
+        [Description("The file; for optimize_imports or code_cleanup, a .csproj for its project, or none for the solution")] string? path = null,
+        [Description("The name or expression refactored")] int? line = null,
+        int? column = null,
+        [Description("Where a selection ends (introduce_field, introduce_parameter)")] int? endLine = null,
         int? endColumn = null,
-        [Description("The kind's options as one JSON object, as the description says; left out, a kind with a dialog describes it")] JsonElement? options = null,
-        [Description("Answer what the refactoring would show and offer, changing nothing")] bool describe = false,
+        [Description("The kind's options, as described; left out, a kind with a dialog describes it")] JsonElement? options = null,
+        [Description("Answer what it would show and offer, changing nothing")] bool describe = false,
         CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
     {
         string named = kind.Trim().ToLowerInvariant().Replace(' ', '_').Replace('-', '_');

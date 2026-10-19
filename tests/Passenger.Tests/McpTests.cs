@@ -84,6 +84,12 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         string testsRun = Assert.Single(tools, t => t.Name == "tests_run").Description;
         Assert.True(testsRun.Contains("Testing Platform", StringComparison.Ordinal) && testsRun.Contains("xUnit v3", StringComparison.Ordinal),
             $"tests_run tells an agent its tests run otherwise than they do: {testsRun}");
+        // What every session pays to read says each thing once: the app_ tools' element query in app_tree's description alone
+        // (it was in nine tools), and no optional parameter's null default or type; the list was 69 KB and is 55 KB.
+        Assert.Equal(["app_tree"], tools.Where(t => JsonSerializer.Serialize(t.ProtocolTool).Contains("#Panel/Button", StringComparison.Ordinal)).Select(t => t.Name));
+        Assert.DoesNotContain(tools, t => SaysNothing(t.ProtocolTool.InputSchema));
+        int listed = tools.Sum(t => JsonSerializer.Serialize(t.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length);
+        Assert.True(listed < 60_000, $"The tools an agent reads as each session starts take {listed} bytes");
 
         // The symbol named as asked comes first, so a limit of one finds it rather than one with the name inside its own.
         JsonElement symbol = Assert.Single((await Call(client, "find_symbol", new() { ["query"] = "Twice", ["limit"] = 1 })).EnumerateArray());
@@ -197,6 +203,43 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.True(wrong.IsError == true && Text(wrong).Contains("there are passed, failed, skipped and notRun", StringComparison.Ordinal), $"tests_list in no state answered: {Text(wrong)}");
     }
 
+    /// <summary>A debugged test run an agent goes on with from its stop answers, as its test host ends, with the tally and
+    /// failures tests_run gives, where only tests_list had them.</summary>
+    [Fact]
+    public async Task An_agent_going_on_from_a_stop_in_a_debugged_test_run_gets_its_tally_as_it_ends()
+    {
+        string tests = PathNames.Canonical(TestFolders.Create("mcp-debug-tests-"));
+        madeFolders.Add(tests);
+        TestFolders.Prepare(() =>
+        {
+            File.WriteAllText(Path.Combine(tests, "Sums.Tests.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+                "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
+                "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(tests, "SumTests.cs"),
+                "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four()\n    {\n        int sum = 2 + 2;\n" +
+                "        Assert.Equal(4, sum);\n    }\n\n    [Fact]\n    public void Two_and_two_make_five() => Assert.Equal(5, 2 + 2);\n}\n");
+            Restore.Run(tests);
+        }, tests);
+        await using McpClient client = await Start(["--mcp", tests]);
+        await Call(client, "breakpoint_set", new() { ["path"] = "SumTests.cs", ["line"] = 10 });
+        // Stopped at the breakpoint, and at the failing test's exception where the exception breakpoints say so, in either order.
+        JsonElement ended = (await Call(client, "tests_run", new() { ["debug"] = true })).GetProperty("debugger");
+        List<string> stops = [];
+        while (ended.GetProperty("state").GetString() == "paused" && stops.Count < 5)
+        {
+            stops.Add(ended.GetProperty("location").GetString()!);
+            ended = await Call(client, "debug_continue");
+        }
+        Assert.Contains(stops, s => s.StartsWith("SumTests.cs:10:", StringComparison.Ordinal));
+        Assert.Equal("not debugging", ended.GetProperty("state").GetString());
+        Assert.True(ended.TryGetProperty("tests", out JsonElement tally), $"debug_continue answered the debugged run's end without its tests: {ended}");
+        Assert.StartsWith("Tests passed: 1, failed: 1 of 2", tally.GetProperty("summary").GetString(), StringComparison.Ordinal);
+        JsonElement failure = Assert.Single(tally.GetProperty("failures").EnumerateArray());
+        Assert.Equal("Sums.Tests.SumTests.Two_and_two_make_five", failure.GetProperty("test").GetString());
+        Assert.Contains("Assert.Equal() Failure", failure.GetProperty("details").GetString(), StringComparison.Ordinal);
+    }
+
     /// <summary>An agent's stop ends a debug session still starting, as Stop does: while debug_start waits for a program whose
     /// runtime is held at its start (a launch profile's diagnostic port, the test's own), stop ends the session and the
     /// program at once, and debug_start answers that it was stopped.</summary>
@@ -238,8 +281,9 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         static string Words(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
     }
 
-    /// <summary>A package an agent installs or removes is in or out of the project file the editor holds once the tool
-    /// answers, so the agent's next look at the file sees what it did, not the text from before.</summary>
+    /// <summary>A package an agent installs or removes is in or out of the project file and Directory.Packages.props the
+    /// editor holds once the tool answers, which names the version installed and the files it changed, so the agent's
+    /// next look sees what it did, not the text from before.</summary>
     [Fact]
     public async Task An_agents_package_installed_and_removed_shows_in_the_open_project_file_as_each_tool_answers()
     {
@@ -253,19 +297,32 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             + "  <config>\n    <add key=\"globalPackagesFolder\" value=\"packages\" />\n  </config>\n</configuration>\n");
         File.WriteAllText(Path.Combine(library, "Lib.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        // Central package management: the version goes in Directory.Packages.props.
+        File.WriteAllText(Path.Combine(library, "Directory.Packages.props"),
+            "<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>\n  </PropertyGroup>\n</Project>\n");
         await using McpClient client = await Start(["--mcp", library]);
         Dictionary<string, object?> project = new() { ["path"] = "Lib.csproj" };
+        Dictionary<string, object?> versions = new() { ["path"] = "Directory.Packages.props" };
         Assert.DoesNotContain("Passenger.Sample", (await Call(client, "editor_text", project)).GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Passenger.Sample", (await Call(client, "editor_text", versions)).GetString(), StringComparison.Ordinal);
         // Found on the folder's own feed, as the NuGet window's search finds it.
         JsonElement found = Assert.Single((await Call(client, "nuget_search", new() { ["query"] = "Passenger" })).EnumerateArray());
         Assert.Equal(("Passenger.Sample", "1.0.0"), (found.GetProperty("id").GetString(), found.GetProperty("version").GetString()));
 
-        await Call(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample", ["version"] = "1.0.0" });
+        // No version asked for: the newest on the feed, which the answer names with each file it changed.
+        JsonElement install = await Call(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample" });
+        Assert.Equal(("Passenger.Sample", "1.0.0", "Lib"), (install.GetProperty("package").GetString(), install.GetProperty("version").GetString(), install.GetProperty("project").GetString()));
+        Assert.Equal(["Directory.Packages.props", "Lib.csproj"], install.GetProperty("changed").EnumerateArray().Select(f => f.GetString()!).Order(StringComparer.Ordinal));
         string installed = (await Call(client, "editor_text", project)).GetString()!;
-        Assert.True(installed.Contains("<PackageReference Include=\"Passenger.Sample\" Version=\"1.0.0\" />", StringComparison.Ordinal),
+        Assert.True(installed.Contains("<PackageReference Include=\"Passenger.Sample\" />", StringComparison.Ordinal),
             $"nuget_install answered with the open project file still as it was:\n{installed}");
+        string pinned = (await Call(client, "editor_text", versions)).GetString()!;
+        Assert.True(pinned.Contains("<PackageVersion Include=\"Passenger.Sample\" Version=\"1.0.0\" />", StringComparison.Ordinal),
+            $"nuget_install answered with the open Directory.Packages.props still as it was:\n{pinned}");
 
-        await Call(client, "nuget_remove", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample" });
+        JsonElement remove = await Call(client, "nuget_remove", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample" });
+        Assert.Contains("Lib.csproj", remove.GetProperty("changed").EnumerateArray().Select(f => f.GetString()));
+        Assert.True(!remove.TryGetProperty("version", out JsonElement left) || left.ValueKind == JsonValueKind.Null, $"nuget_remove answered a version: {remove}");
         string removed = (await Call(client, "editor_text", project)).GetString()!;
         Assert.False(removed.Contains("Passenger.Sample", StringComparison.Ordinal), $"nuget_remove answered with the open project file still holding the package:\n{removed}");
     }
@@ -1478,7 +1535,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         return window;
     }
 
-    /// <summary>The windows' sockets for agents, in the run's state folder (<see cref="TestRun"/>), not the person's.</summary>
+    /// <summary>The windows' sockets for agents, in the run's state's socket folder (<see cref="TestRun"/>), not the person's.</summary>
     private static string[] Sockets() =>
         Directory.Exists(global::Passenger.App.Mcp.McpHost.SocketFolder) ? Directory.GetFiles(global::Passenger.App.Mcp.McpHost.SocketFolder, "*.sock") : [];
 
@@ -1641,6 +1698,15 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             }
         }
     }
+
+    /// <summary>Whether a schema says what leaving a parameter out says already: a null default, or null among its types.</summary>
+    private static bool SaysNothing(JsonElement schema) => schema.ValueKind switch
+    {
+        JsonValueKind.Object => schema.EnumerateObject().Any(p => (p.Name == "default" && p.Value.ValueKind == JsonValueKind.Null)
+            || (p.Name == "type" && p.Value.ValueKind == JsonValueKind.Array) || SaysNothing(p.Value)),
+        JsonValueKind.Array => schema.EnumerateArray().Any(SaysNothing),
+        _ => false,
+    };
 
     private static string? Local(JsonElement stop, string name) =>
         stop.GetProperty("locals").EnumerateArray().FirstOrDefault(l => l.GetProperty("name").GetString() == name) is { ValueKind: JsonValueKind.Object } local

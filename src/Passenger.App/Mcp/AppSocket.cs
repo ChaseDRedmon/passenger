@@ -42,11 +42,11 @@ internal sealed class AppSocket : IDisposable
         {
             return;
         }
-        string path = System.IO.Path.Combine(McpHost.SocketFolder, NameOf(Environment.ProcessId));
         Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        string path = NameOf(Environment.ProcessId);
         try
         {
-            Directory.CreateDirectory(McpHost.SocketFolder);
+            path = System.IO.Path.Combine(McpHost.OwnSocketFolder(), path);
             File.Delete(path);
             listener.Bind(new UnixDomainSocketEndPoint(path));
             listener.Listen(4);
@@ -90,11 +90,11 @@ internal sealed class AppSocket : IDisposable
     /// opened in one, or null when none is running or none would.</summary>
     internal static async Task<string?> AskAsync(string folder, CancellationToken cancel)
     {
-        if (!Directory.Exists(McpHost.SocketFolder))
+        if (McpHost.FoundSocketFolder() is not { } sockets)
         {
             return null;
         }
-        foreach (string path in Directory.EnumerateFiles(McpHost.SocketFolder, "*.open").OrderByDescending(File.GetLastWriteTimeUtc))
+        foreach (string path in Directory.EnumerateFiles(sockets, "*.open").OrderByDescending(File.GetLastWriteTimeUtc))
         {
             using Socket socket = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             try
