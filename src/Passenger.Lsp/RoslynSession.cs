@@ -374,9 +374,13 @@ public sealed class LspDocument : IDisposable
     public async Task<IReadOnlyList<LspLocation>> ImplementationAsync(int offset, CancellationToken cancel = default) =>
         Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/implementation", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
 
+    /// <summary>Every place the symbol at an offset is used, its declaration included, each once: Roslyn names a place
+    /// once for each symbol declared there (a type and its primary constructor, a record's positional property and its
+    /// parameter), so such a declaration came twice.</summary>
     public async Task<IReadOnlyList<LspLocation>> ReferencesAsync(int offset, CancellationToken cancel = default) =>
-        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/references",
-            new ReferenceParams(Identifier, PositionOf(offset), new ReferenceContext(true)), cancel));
+        [.. Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/references",
+                new ReferenceParams(Identifier, PositionOf(offset), new ReferenceContext(true)), cancel))
+            .DistinctBy(place => (DocumentUris.ToPath(place.Uri), place.Range.Start))];
 
     public async Task<IReadOnlyList<DocumentHighlight>> HighlightsAsync(int offset, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<DocumentHighlight>>("textDocument/documentHighlight", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel) ?? [];

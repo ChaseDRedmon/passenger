@@ -332,6 +332,40 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Find_usages_lists_a_declaration_once_where_a_primary_constructor_or_a_records_property_is_declared_with_it()
+    {
+        project.Write("Pairs.cs", "class Counter(int start)\n{\n    public int Start => start;\n}\n\nrecord Pair(int Left, int Right)\n{\n"
+            + "    public static int Sum(Pair pair) => pair.Left + new Counter(pair.Right).Start;\n}\n");
+        MainWindow window = project.Open("Pairs.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        FindView find = window.Find;
+        // A type with a primary constructor, a record, and a record's positional property: each declared where another
+        // symbol is, the server naming that place once for each.
+        foreach ((string at, string title, string declaration) in new[]
+        {
+            ("class Coun", "Usages of Counter", "class Counter(int start)"),
+            ("record Pa", "Usages of Pair", "record Pair(int Left, int Right)"),
+            ("pair.Lef", "Usages of Left", "record Pair(int Left, int Right)"),
+        })
+        {
+            PlaceAfter(editor, at);
+            Ui.Run(window, AppActions.FindUsages);
+            Ui.WaitFor(() => find.Shown == title, $"the {title}");
+            List<FindRow> declared = [.. Visible(find, "Declaration").Where(r => r.Usage is not null)];
+            Assert.True(declared.Count == 1 && declared[0].Label == declaration,
+                $"The Find window lists the declaration of {title[10..]} {declared.Count} times, where Rider lists each place once: {string.Join("; ", declared.Select(r => $"{r.Label} ({r.Detail})"))}");
+            List<Usage> usages = [.. find.Rows.Select(r => r.Usage).OfType<Usage>()];
+            Assert.True(usages.DistinctBy(u => (u.Path, u.Line, u.Column)).Count() == usages.Count,
+                $"The Find window lists a place of {title[10..]} more than once: {string.Join("; ", usages.Select(u => $"{u.Line + 1}:{u.Column + 1} {u.LineText.Trim()}"))}");
+        }
+        window.Close();
+
+        // The rows under a group of what usages do, to the next group.
+        static IEnumerable<FindRow> Visible(FindView find, string group) =>
+            find.Rows.SkipWhile(r => r.Depth != 0 || r.Label != group).Skip(1).TakeWhile(r => r.Depth != 0);
+    }
+
+    [AvaloniaFact]
     public void The_find_windows_divider_dragged_gives_the_preview_the_room_the_usages_give_up()
     {
         MainWindow window = project.Open("Loop.cs");
