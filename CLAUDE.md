@@ -88,7 +88,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
   input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
-  group per child, which a watchdog shell kills once Passenger's pipe to it closes). `DotnetCommand` builds without
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A child the IDE ends (`Kill`, or
+  `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
+  names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
+  only with Log every program. `DotnetCommand` builds without
   MSBuild's server (which Stop could not reach) and in nodes salted to this IDE, which end with it. `Dotnet`,
   `Programs` and `ShellEnvironment` find the tools as the login shell would; `PathNames` makes paths canonical
   (`realpath`, or `GetFinalPathNameByHandle` on Windows) and answers `IsUnder` for every "is this inside that folder".
@@ -260,7 +263,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   events, each refreshing only its own. Roslyn sends one toast per project-load batch, so `ProjectLoad.cs` reads its
   project-system log lines (`Warning/Error while loading P: …`, `Successfully completed load of P`) and `CSharpService`
   keeps each project's load problems, said in the status bar as a warning or error and listed in Problems' Toolset,
-  Environment tab.
+  Environment tab. The server's progress is followed by its token (`OnProgress`); a restore is held until it names a
+  project, and the server's own `CanonicalProject` (temp's roslyn-canonical-misc/…/Canonical.csproj, made for files no
+  project holds) is never shown, logged as a warning, or read as a load problem.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one. An editor window (Open Tab in New Window,
@@ -328,7 +333,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
-  run points `PASSENGER_DISCORD_IPC` at a place of its own where nothing listens.
+  run points `PASSENGER_DISCORD_IPC` at a place of its own where nothing listens. Show activity in Discord is on at
+  first and shows Passenger only, in the site's words (`DiscordPresence.OwnDetails`, `OwnState`, `LargeText`), also
+  while idle; naming the solution, or the solution and the file, is the person's choice, and off tells Discord nothing.
+  Settings' version 2 upgrade (`AppSettings.DiscordOnNamingNothing`) turns an older settings.json that never turned it
+  on to on, Passenger only.
 - `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
   `SettingsStore` holds them once per process: a change reads settings.json again, puts over it only what changed and
   raises `Changed`, which every window follows (`MainWindow.Follow`), the file watched for other Passengers. A new
@@ -591,7 +600,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   A Debug launch sets `DOTNET_MODIFIABLE_ASSEMBLIES=debug`. `Debugging/HotReload.cs` and `MainWindow.HotReload.cs` are
   Apply Hot Reload Changes (Alt+F10, toolbar and Debug/Run windows' flame, edits made while paused applied on the next
   resume or step), Problems' Hot Reload tab for rude edits, and the restart (Settings' Hot Reload page: always restart
-  for a change it can't apply, on by default, else dotnet watch's question); attached sessions get none.
+  for a change it can't apply, on by default, else dotnet watch's question); attached sessions get none. Roslyn
+  applies a changed signature as a delete plus an add and recompiles only members whose code changed, so `StaleCallers`
+  blocks an update that leaves a loaded module's unchanged code calling the deleted body (ENC0033 at the new
+  declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s past its first, the last
+  standing. MCP's nuget_install and nuget_remove have open project files take the disk's text before answering
+  (`MainWindow.FollowWritten`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
   net8.0, carried under `inspector/`, never put in the app's build): a startup hook `ProjectSession.Inspected` gives only
   a Debug launch whose build has Avalonia.Base.dll beside it (`DOTNET_STARTUP_HOOKS`, which it takes back out of the
