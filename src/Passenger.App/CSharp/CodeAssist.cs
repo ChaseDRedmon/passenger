@@ -1118,7 +1118,7 @@ public sealed partial class CodeAssist
     /// language server; none by default.</summary>
     public Func<OpenDocument, int, IReadOnlyList<EditorFix>>? EditorFixes { get; set; }
 
-    private IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
+    internal IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
 
     /// <summary>Passenger's own fixes at the caret as Rider's list, the one chosen made as one undoable edit; false with none.</summary>
     private bool ShowOwnFixes(string title)

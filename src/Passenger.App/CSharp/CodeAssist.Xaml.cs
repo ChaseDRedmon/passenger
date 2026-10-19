@@ -170,22 +170,21 @@ public sealed partial class CodeAssist
             choice => choice?.Value is XamlTarget target ? Arrive(target, found.File) : Task.CompletedTask);
     }
 
-    /// <summary>Goes into the theme library's own XAML (Fluent's): a control's theme, a part of its template, or a resource
-    /// the theme defines, its file had from the library's Source Link and opened read-only where it is written. The files
-    /// are those compiled into the theme, and those its control list merges in (Fluent's Button.xaml, in
-    /// FluentControls.xaml), whose own text says them.</summary>
-    private async Task ArriveInTheme(XamlTarget target, XamlFile file)
+    /// <summary>Where in the theme library's own XAML (Fluent's) a control's theme, a part of its template, or a resource
+    /// the theme defines is written, its file had from the library's Source Link (to open read-only), and what to say of it;
+    /// no place, and why, where it cannot be had. The files are those compiled into the theme, and those its control list
+    /// merges in (Fluent's Button.xaml, in FluentControls.xaml), whose own text says them.</summary>
+    internal async Task<((string Path, TextPosition Position)? Place, string Said)> ThemePlaceAsync(XamlTarget target, XamlFile file)
     {
         if (Xaml?.Invoke() is not { } service)
         {
-            return;
+            return (null, "No folder is open");
         }
         Passenger.Xaml.Metadata.AssemblyTypes? theme = file.Types.Assemblies.Where(a => a.Name.Contains(".Themes.", StringComparison.Ordinal) && a.XamlFiles.Count > 0)
             .OrderBy(a => a.Name.EndsWith(".Fluent", StringComparison.Ordinal) ? 0 : 1).FirstOrDefault();
         if (theme is null)
         {
-            Message?.Invoke(this, "The project references no theme whose XAML can be read");
-            return;
+            return (null, "The project references no theme whose XAML can be read");
         }
         Said said = new();
         string assembly = LibrarySources.Implementation(theme.Path);
@@ -230,12 +229,10 @@ public sealed partial class CodeAssist
             Match where = place.Match(text);
             if (where.Success)
             {
-                Navigate?.Invoke(this, (local, TextSnapshot.From(text).GetPosition(where.Groups["at"].Index)));
-                Message?.Invoke(this, $"{theme.Name}'s {candidate.TrimStart('/')}, from its Source Link");
-                return;
+                return ((local, TextSnapshot.From(text).GetPosition(where.Groups["at"].Index)), $"{theme.Name}'s {candidate.TrimStart('/')}, from its Source Link");
             }
         }
-        Message?.Invoke(this, said.Last ?? $"{target.Name} is not in {theme.Name}'s XAML");
+        return (null, said.Last ?? $"{target.Name} is not in {theme.Name}'s XAML");
     }
 
     /// <summary>The files a theme's XAML merges in, as paths in its project: avares:// ones of its own assembly, and those
@@ -278,37 +275,42 @@ public sealed partial class CodeAssist
         _ => new("(?!)"),
     };
 
-    /// <summary>Goes where a XAML name leads: a place in the project's source, a range of a file, or a library's type
-    /// decompiled.</summary>
+    /// <summary>Goes where a XAML name leads (<see cref="XamlPlaceAsync"/>), saying in the status bar what there is to say.</summary>
     private async Task Arrive(XamlTarget target, XamlFile? file = null)
+    {
+        ((string Path, TextPosition Position)? place, string? said) = await XamlPlaceAsync(target, file);
+        if (place is { } found)
+        {
+            Navigate?.Invoke(this, found);
+        }
+        if (said is not null)
+        {
+            Message?.Invoke(this, said);
+        }
+    }
+
+    /// <summary>Where a XAML name leads: a place in the project's source, a range of a file, a library's type decompiled (a
+    /// file to open read-only), or the theme's own XAML from its Source Link; with what to say of it, or why there is none.</summary>
+    internal async Task<((string Path, TextPosition Position)? Place, string? Said)> XamlPlaceAsync(XamlTarget target, XamlFile? file)
     {
         if (target.Kind == XamlTargetKind.Theme && file is not null)
         {
-            await ArriveInTheme(target, file);
-            return;
+            return await ThemePlaceAsync(target, file);
         }
         if (target.Place is { } place)
         {
-            Navigate?.Invoke(this, (place.Path, new TextPosition(place.Line, place.Column)));
-            return;
+            return ((place.Path, new TextPosition(place.Line, place.Column)), null);
         }
         if (target.Path is { } path)
         {
-            Navigate?.Invoke(this, (path, target.Range is { } range ? PositionIn(path, range.Start) : new TextPosition(0, 0)));
-            return;
+            return ((path, target.Range is { } range ? PositionIn(path, range.Start) : new TextPosition(0, 0)), null);
         }
         if (target.Type is { } type)
         {
             (string Path, TextPosition Position)? opened = await BackgroundWork.Run(() => LibrarySources.Decompile(type, target.Member));
-            if (opened is { } decompiled)
-            {
-                Navigate?.Invoke(this, decompiled);
-            }
-            else
-            {
-                Message?.Invoke(this, $"{type.FullName} could not be decompiled from {type.Origin.AssemblyName}");
-            }
+            return opened is { } decompiled ? (decompiled, null) : (null, $"{type.FullName} could not be decompiled from {type.Origin.AssemblyName}");
         }
+        return (null, null);
     }
 
     /// <summary>Where an offset of a file is: in its open text, else its text on disk.</summary>
@@ -350,13 +352,33 @@ public sealed partial class CodeAssist
             return;
         }
         (XamlFile file, XamlSymbol symbol) = found;
+        if (await XamlUsesAsync(file, symbol) is not { } usages)
+        {
+            Message?.Invoke(this, XamlUsesWhat);
+            return;
+        }
+        if (usages.Count == 0)
+        {
+            Message?.Invoke(this, "No usages found");
+            return;
+        }
+        UsagesFound?.Invoke(this, ($"Usages of {symbol.Name}", usages));
+    }
+
+    /// <summary>What Find Usages finds in XAML, said where it finds nothing else.</summary>
+    internal const string XamlUsesWhat = "Find Usages in XAML finds an element's name or a resource's key";
+
+    /// <summary>Where a XAML name is used: an element's name where the file names it and where its code-behind uses its
+    /// field; a resource key where any of the project's XAML uses it, its definitions included. Null for any other name.</summary>
+    internal async Task<IReadOnlyList<LspLocation>?> XamlUsesAsync(XamlFile file, XamlSymbol symbol)
+    {
         List<LspLocation> usages = [];
         if (symbol.Named is { } named)
         {
             usages.AddRange(XamlNavigation.NameUses(file, named.Value).Select(r => Location(file.Path, r.Start, r.End)));
             usages.AddRange(await CodeBehindUses(file, named.Value));
         }
-        else if (symbol.Targets[0].Kind == XamlTargetKind.Resource)
+        else if (symbol.Targets.Count > 0 && symbol.Targets[0].Kind == XamlTargetKind.Resource)
         {
             string key = symbol.Name;
             foreach (string path in file.Project.Files.Keys.Order(StringComparer.Ordinal))
@@ -373,15 +395,9 @@ public sealed partial class CodeAssist
         }
         else
         {
-            Message?.Invoke(this, "Find Usages in XAML finds an element's name or a resource's key");
-            return;
+            return null;
         }
-        if (usages.Count == 0)
-        {
-            Message?.Invoke(this, "No usages found");
-            return;
-        }
-        UsagesFound?.Invoke(this, ($"Usages of {symbol.Name}", usages));
+        return usages;
     }
 
     /// <summary>The code-behind's uses of the field Avalonia's generator or WPF's MarkupCompile makes for a named element:
@@ -458,40 +474,50 @@ public sealed partial class CodeAssist
             {
                 return;
             }
-            if (!Microsoft.CodeAnalysis.CSharp.SyntaxFacts.IsValidIdentifier(name))
+            if (await XamlRenameAsync(xaml, old, name) is { } renamed)
             {
-                Message?.Invoke(this, $"'{name}' cannot name a field in the code-behind");
-                return;
+                Message?.Invoke(this, renamed.Said);
             }
-            using Asked asked = WorkspaceEdits.Track(editors);
-            XamlFile? file = await xaml.FileAsync();
-            if (file is null)
-            {
-                return;
-            }
-            Dictionary<string, List<LspTextEdit>> changes = new(StringComparer.Ordinal);
-            void Add(LspLocation place)
-            {
-                if (!changes.TryGetValue(place.Uri, out List<LspTextEdit>? edits))
-                {
-                    changes[place.Uri] = edits = [];
-                }
-                edits.Add(new LspTextEdit(place.Range, name));
-            }
-            foreach (TextRange use in XamlNavigation.NameUses(file, old))
-            {
-                Add(Location(file.Path, use.Start, use.End));
-            }
-            foreach (LspLocation use in await CodeBehindUses(file, old))
-            {
-                Add(use);
-            }
-            JsonElement edit = JsonSerializer.SerializeToElement(new { changes }, Json.Options);
-            List<string> dropped = [];
-            int files = TypeRename.Apply(editors, edit, [], $"Rename {old} to {name}", asked, dropped);
-            Message?.Invoke(this, dropped.Count > 0 ? $"Renamed, but not in {string.Join(", ", dropped)}: it was edited meanwhile"
-                : files > 1 ? $"Renamed in {files} files" : "Renamed");
         });
+    }
+
+    /// <summary>An element's name renamed where the file names it and where its code-behind uses its field, as one command
+    /// undone whole: the files it changed (none where the name cannot be a field's) and the words for it; null when the
+    /// project's XAML is not read.</summary>
+    internal async Task<(IReadOnlyList<string> Files, string Said)?> XamlRenameAsync(XamlDocument xaml, string old, string name)
+    {
+        if (!Microsoft.CodeAnalysis.CSharp.SyntaxFacts.IsValidIdentifier(name))
+        {
+            return ([], $"'{name}' cannot name a field in the code-behind");
+        }
+        using Asked asked = WorkspaceEdits.Track(editors);
+        XamlFile? file = await xaml.FileAsync();
+        if (file is null)
+        {
+            return null;
+        }
+        Dictionary<string, List<LspTextEdit>> changes = new(StringComparer.Ordinal);
+        void Add(LspLocation place)
+        {
+            if (!changes.TryGetValue(place.Uri, out List<LspTextEdit>? edits))
+            {
+                changes[place.Uri] = edits = [];
+            }
+            edits.Add(new LspTextEdit(place.Range, name));
+        }
+        foreach (TextRange use in XamlNavigation.NameUses(file, old))
+        {
+            Add(Location(file.Path, use.Start, use.End));
+        }
+        foreach (LspLocation use in await CodeBehindUses(file, old))
+        {
+            Add(use);
+        }
+        JsonElement edit = JsonSerializer.SerializeToElement(new { changes }, Json.Options);
+        List<string> dropped = [];
+        int files = TypeRename.Apply(editors, edit, [], $"Rename {old} to {name}", asked, dropped);
+        return ([.. changes.Keys.Select(DocumentUris.ToPath)], dropped.Count > 0 ? $"Renamed, but not in {string.Join(", ", dropped)}: it was edited meanwhile"
+            : files > 1 ? $"Renamed in {files} files" : "Renamed");
     }
 
     /// <summary>Show Context Actions in XAML: the fixes of the problems on the caret's line, the file checked as it stands,

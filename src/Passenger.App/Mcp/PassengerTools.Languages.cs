@@ -1,0 +1,269 @@
+using Passenger.App.CSharp;
+using Passenger.App.Workspace;
+using Passenger.App.Xaml;
+using Passenger.Editor;
+using Passenger.Lsp;
+using Passenger.Text;
+using Passenger.Xaml;
+using Passenger.Xaml.Features;
+using Passenger.Xaml.Syntax;
+
+namespace Passenger.App.Mcp;
+
+/// <summary>The code tools for a file of any language Passenger serves, each through that language's own service as the
+/// window's commands go: C# and Razor through Roslyn's server, XAML (Avalonia's and WPF's) through Passenger's own. What a
+/// language lacks is said plainly, naming the language.</summary>
+public sealed partial class PassengerTools
+{
+    /// <summary>A file and the service that answers for it.</summary>
+    private abstract record Served(OpenDocument Document, string Language);
+
+    /// <summary>A file a language server answers for: C# or Razor's.</summary>
+    private sealed record ServerServed(OpenDocument Document, string Language, LspDocument Lsp) : Served(Document, Language);
+
+    /// <summary>A XAML file of an Avalonia or WPF project, read as it stands.</summary>
+    private sealed record XamlServed(OpenDocument Document, XamlDocument Xaml, XamlFile File) : Served(Document, "XAML");
+
+    /// <summary>The file opened as the editor would, with the service that answers for it once that can: a XAML file's
+    /// project read, the C# server's workspace loaded. A file no service reads is refused at once, saying which do.</summary>
+    private async Task<Served> Serve(string path, CancellationToken cancel)
+    {
+        OpenDocument document = Document(path);
+        string name = Path.GetFileName(document.Path);
+        if (XamlService.IsXaml(document.Path))
+        {
+            if (Session.Xaml.For(document) is not { } xaml)
+            {
+                throw new InvalidOperationException($"{name} is in no C# project, so Passenger's XAML does not read it");
+            }
+            XamlFile? file = await xaml.FileAsync().WaitAsync(ServerLimit, cancel);
+            return file is null
+                ? throw new InvalidOperationException($"{name} is not XAML of an Avalonia or WPF project: Passenger reads the XAML of a project that references Avalonia or WPF")
+                : new XamlServed(document, xaml, file);
+        }
+        if (document.Language.Name is "C#" or "Razor")
+        {
+            (_, LspDocument lsp) = await Code(path, cancel);
+            return new ServerServed(document, document.Language.Name, lsp);
+        }
+        throw new InvalidOperationException($"Passenger has no code help for {LanguageOf(document)} files such as {name}: the code tools answer C#, Razor and XAML files");
+    }
+
+    /// <summary>A file's language as the tools name it: XAML and MSBuild by what reads them, the rest as the editor names them.</summary>
+    private static string LanguageOf(OpenDocument document) =>
+        XamlService.IsXaml(document.Path) ? "XAML"
+        : MSBuild.MSBuildFiles.Is(document.Path) ? "MSBuild"
+        : document.Language.Name;
+
+    /// <summary>A XAML name at an offset, with the places it leads; null where there is none.</summary>
+    private static async Task<XamlSymbol?> XamlSymbolAt(XamlServed xaml, int offset) =>
+        await BackgroundWork.Run(() => XamlNavigation.At(xaml.File, offset)) is { Targets.Count: > 0 } symbol ? symbol : null;
+
+    /// <summary>What the hover card says of a XAML name: the type, property, resource or element it is.</summary>
+    private static async Task<string> XamlSymbolInfo(XamlServed xaml, int offset) =>
+        await XamlSymbolAt(xaml, offset) is { } symbol ? XamlNavigation.Describe(xaml.File, symbol) : "Nothing is known about this position";
+
+    /// <summary>Where Go to Declaration goes from a XAML name: the project's source or XAML, a library's type decompiled (read
+    /// only), the theme's XAML from its Source Link; why not, where none of the places can be had.</summary>
+    private async Task<IReadOnlyList<Place>> XamlDefinition(XamlServed xaml, int offset, CancellationToken cancel)
+    {
+        if (await XamlSymbolAt(xaml, offset) is not { } symbol)
+        {
+            return [];
+        }
+        List<(string Path, TextPosition Position)> places = [];
+        List<string> unreached = [];
+        foreach (XamlTarget target in symbol.Targets)
+        {
+            ((string Path, TextPosition Position)? place, string? said) = await window.Assist.XamlPlaceAsync(target, xaml.File);
+            if (place is { } found)
+            {
+                places.Add(found);
+            }
+            else if (said is not null)
+            {
+                unreached.Add(said);
+            }
+        }
+        return places.Count == 0 && unreached.Count > 0
+            ? throw new InvalidOperationException($"{symbol.Name}'s declaration cannot be reached: {string.Join("; ", unreached)}")
+            : await PlacesOf(places, cancel);
+    }
+
+    /// <summary>Find Usages in XAML: an element's name in its file and its code-behind, a resource key in the project's XAML.</summary>
+    private async Task<IReadOnlyList<Place>> XamlUsages(XamlServed xaml, int offset, CancellationToken cancel)
+    {
+        if (await XamlSymbolAt(xaml, offset) is not { } symbol)
+        {
+            return [];
+        }
+        if (symbol.Named is not null)
+        {
+            await CodeBehindRead(cancel);
+        }
+        return await window.Assist.XamlUsesAsync(xaml.File, symbol) is { } uses
+            ? await Places(uses, cancel)
+            : throw new InvalidOperationException($"{CodeAssist.XamlUsesWhat}; {symbol.Name} is neither");
+    }
+
+    /// <summary>Waits for the C# server to load the workspace, when one runs: an element's field is found in the code-behind
+    /// through it, and before it has loaded none are.</summary>
+    private Task CodeBehindRead(CancellationToken cancel) => Until(() => Session.CSharp is not { } csharp || csharp.IsReady, ServerLimit, cancel);
+
+    /// <summary>Rename in XAML: an element's name, in its file and where its code-behind uses its field, saved.</summary>
+    private async Task<string> XamlRename(XamlServed xaml, int offset, string newName, CancellationToken cancel)
+    {
+        await CodeBehindRead(cancel);
+        if (await BackgroundWork.Run(() => XamlNavigation.At(xaml.File, offset)) is not { Named: { } named })
+        {
+            throw new InvalidOperationException("Rename in XAML renames an element's name (its x:Name or Name): put the place on one, its value or a use of it");
+        }
+        if (named.Value == newName)
+        {
+            return $"{newName} is its name already";
+        }
+        if (await window.Assist.XamlRenameAsync(xaml.Xaml, named.Value, newName) is not { } renamed)
+        {
+            throw new InvalidOperationException($"{Path.GetFileName(xaml.Document.Path)} is no longer XAML Passenger reads");
+        }
+        if (renamed.Files.Count == 0)
+        {
+            throw new InvalidOperationException(renamed.Said);
+        }
+        Editors.SaveAll();
+        return $"Renamed {named.Value} to {newName} in {renamed.Files.Count} file{(renamed.Files.Count == 1 ? "" : "s")}: {string.Join(", ", renamed.Files.Select(Relative))}";
+    }
+
+    /// <summary>A XAML file's elements, indented, each with what names it (x:Class, x:Name, x:Key, a style's selector or
+    /// target type) and its line.</summary>
+    private static string XamlOutline(XamlServed xaml)
+    {
+        System.Text.StringBuilder text = new();
+        TextSnapshot snapshot = TextSnapshot.From(xaml.File.Text);
+        foreach (XmlElement root in xaml.File.Tree.Roots)
+        {
+            Write(root, 0);
+        }
+        return text.Length == 0 ? "The file has no elements" : text.ToString().TrimEnd();
+
+        void Write(XmlElement element, int depth)
+        {
+            text.Append(' ', depth * 2).Append(element.Name);
+            foreach (XmlAttribute attribute in element.Attributes.Where(a => a.Name is "x:Class" or "x:Name" or "Name" or "x:Key" or "Selector" or "TargetType" or "x:DataType"))
+            {
+                text.Append(' ').Append(attribute.Name).Append("=\"").Append(attribute.Value).Append('"');
+            }
+            text.Append(" (line ").Append(snapshot.GetLineFromOffset(Math.Min(element.Start, snapshot.Length)) + 1).Append(")\n");
+            foreach (XmlElement child in element.Children)
+            {
+                Write(child, depth + 1);
+            }
+        }
+    }
+
+    /// <summary>One of XAML's fixes or refactorings at a place, as code_actions lists it and apply_code_action makes it.</summary>
+    private sealed record XamlAction(string Title, string Kind, IReadOnlyList<string> Choices, object Made);
+
+    /// <summary>What Show Context Actions offers at a place of a XAML file: a running app's binding fixes, the fixes of the
+    /// problems on its line (create from usage among them), then Extract Resource and Extract Style where they apply, each
+    /// with the places the new resource or style may go.</summary>
+    private async Task<IReadOnlyList<XamlAction>> XamlActions(XamlServed xaml, int offset)
+    {
+        List<XamlAction> offered = [.. window.Assist.OwnFixes(xaml.Document, offset).Select(f => new XamlAction(f.Title, "quickfix", [], f))];
+        XamlFile file = xaml.File;
+        IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
+        TextSnapshot text = TextSnapshot.From(file.Text);
+        int line = text.GetLineFromOffset(Math.Min(offset, text.Length));
+        offered.AddRange(found.Where(d => text.GetLineFromOffset(Math.Min(d.Range.Start, text.Length)) == line)
+            .SelectMany(d => d.Fixes).Select(f => new XamlAction(f.Title, "quickfix", [], f)));
+        Func<string, string?> texts = window.Assist.XamlTexts();
+        if (await BackgroundWork.Run(() => XamlRefactorings.ValueAt(file, offset).Value) is { } value)
+        {
+            IReadOnlyList<ResourcePlace> places = await BackgroundWork.Run(() => XamlRefactorings.Places(file, styles: false, texts));
+            offered.Add(new XamlAction(ExtractResource, "refactor.extract", [.. places.Select(p => p.Title)], value));
+        }
+        if (await BackgroundWork.Run(() => XamlRefactorings.StyleAt(file, offset).Source) is { } source)
+        {
+            IReadOnlyList<ResourcePlace> places = await BackgroundWork.Run(() => XamlRefactorings.Places(file, styles: source.ByClass, texts));
+            offered.Add(new XamlAction(ExtractStyle, "refactor.extract", [.. places.Select(p => p.Title)], source));
+        }
+        return offered;
+    }
+
+    private const string ExtractResource = "Extract Resource...";
+
+    private const string ExtractStyle = "Extract Style...";
+
+    /// <summary>A XAML fix or refactoring made as choosing it in the window makes it, as one command, and the files saved:
+    /// Extract Resource and Extract Style take the dialog's defaults (every use replaced; the element's properties that are
+    /// not bindings) with the place chosen and the name given, else the one the dialog suggests.</summary>
+    private async Task<string> ApplyXamlAction(XamlServed xaml, int offset, string title, string? choice, string? name)
+    {
+        IReadOnlyList<XamlAction> actions = await XamlActions(xaml, offset);
+        XamlAction chosen = actions.FirstOrDefault(a => a.Title == title)
+            ?? throw new InvalidOperationException($"No action '{title}' here; there are: {(actions.Count == 0 ? "none" : string.Join("; ", actions.Select(a => a.Title)))}");
+        string? refused;
+        string what = $"'{title}'";
+        switch (chosen.Made)
+        {
+            case EditorFix fix:
+                WorkspaceEdits.ApplyTo(Editors, xaml.Document, [new TextEdit(fix.Range.Start, fix.Range.Length, fix.Text)]);
+                Editors.SaveAll();
+                return $"Applied {what} to {Relative(xaml.Document.Path)}";
+            case XamlFix fix:
+                IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
+                refused = window.Assist.ApplyXamlChanges(fix.Title, changes);
+                if (refused is not null)
+                {
+                    throw new InvalidOperationException($"{what} was not applied: {refused}");
+                }
+                Editors.SaveAll();
+                return $"Applied {what} to {string.Join(", ", changes.Select(c => Relative(c.Path)).Distinct())}";
+        }
+        Func<string, string?> texts = window.Assist.XamlTexts();
+        if (chosen.Made is ExtractableValue value)
+        {
+            ResourcePlace place = PlaceChosen(await BackgroundWork.Run(() => XamlRefactorings.Places(xaml.File, styles: false, texts)));
+            string key = name ?? value.Suggested;
+            if (XamlRefactorings.KeyProblem(xaml.File, key) is { } problem)
+            {
+                throw new InvalidOperationException($"{what} cannot name the resource '{key}': {problem}");
+            }
+            refused = window.Assist.ApplyXamlChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
+            if (refused is not null)
+            {
+                throw new InvalidOperationException($"{what} was not applied: {refused}");
+            }
+            Editors.SaveAll();
+            return $"Extracted resource '{key}' to {place.Title}{(value.Uses.Count > 1 ? $", used in {value.Uses.Count} places" : string.Empty)}";
+        }
+        StyleSource source = (StyleSource)chosen.Made;
+        ResourcePlace into = PlaceChosen(await BackgroundWork.Run(() => XamlRefactorings.Places(xaml.File, styles: source.ByClass, texts)));
+        string style = name ?? source.Suggested;
+        List<string> properties = [.. source.Properties.Where(p => !p.IsBinding).Select(p => p.Name)];
+        if (properties.Count == 0)
+        {
+            throw new InvalidOperationException($"{what} has no property to extract: {source.ElementName}'s are all bindings");
+        }
+        if (XamlRefactorings.StyleNameProblem(xaml.File, source, style) is { } named)
+        {
+            throw new InvalidOperationException($"{what} cannot name the style '{style}': {named}");
+        }
+        refused = window.Assist.ApplyXamlChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
+        if (refused is not null)
+        {
+            throw new InvalidOperationException($"{what} was not applied: {refused}");
+        }
+        Editors.SaveAll();
+        return $"Extracted {properties.Count} {(properties.Count == 1 ? "property" : "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
+
+        ResourcePlace PlaceChosen(IReadOnlyList<ResourcePlace> places) => choice is null
+            ? places.Count == 1 ? places[0] : throw new InvalidOperationException($"{what} needs a choice of where it goes: {string.Join("; ", places.Select(p => p.Title))}")
+            : places.FirstOrDefault(p => p.Title == choice) ?? throw new InvalidOperationException($"{what} cannot go in '{choice}'; it can go in: {string.Join("; ", places.Select(p => p.Title))}");
+    }
+
+    /// <summary>Places in files as an agent reads them, with each line's text.</summary>
+    private Task<IReadOnlyList<Place>> PlacesOf(IReadOnlyList<(string Path, TextPosition Position)> places, CancellationToken cancel) =>
+        Places([.. places.Select(p => new LspLocation(DocumentUris.FromPath(p.Path),
+            new LspRange(new LspPosition(p.Position.Line, p.Position.Column), new LspPosition(p.Position.Line, p.Position.Column))))], cancel);
+}

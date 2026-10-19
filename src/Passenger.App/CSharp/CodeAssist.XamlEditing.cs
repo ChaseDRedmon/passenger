@@ -164,7 +164,7 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>The XAML files' texts as the editors have them, read from disk for one not open, for work off the UI thread.</summary>
-    private Func<string, string?> XamlTexts()
+    internal Func<string, string?> XamlTexts()
     {
         Dictionary<string, string> open = editors.Documents.Where(d => XamlService.IsXaml(d.Path)).ToDictionary(d => d.Path, d => d.Text.Snapshot.ToString(), StringComparer.Ordinal);
         return path => open.TryGetValue(path, out string? text) ? text : File.Exists(path) ? ReadText(path) : null;
@@ -172,7 +172,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A XAML refactoring's or fix's changes made as one command (Undo takes back every file, a file made
     /// included): each file's edits made from its text as it is now, open or on disk. Null once made; else why not.</summary>
-    private string? ApplyXamlChanges(string name, IReadOnlyList<XamlFileChange> changes)
+    internal string? ApplyXamlChanges(string name, IReadOnlyList<XamlFileChange> changes)
     {
         List<object> documentChanges = [];
         foreach (XamlFileChange change in changes)
