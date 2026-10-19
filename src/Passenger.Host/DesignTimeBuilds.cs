@@ -28,6 +28,9 @@ internal static class DesignTimeBuilds
         ["SkipCompilerExecution"] = "true",
         ["ContinueOnError"] = "ErrorAndContinue",
         ["ShouldUnsetParentConfigurationAndPlatform"] = "false",
+        // Not Roslyn's: Compile's dependencies make obj/…/apphost (signed, on macOS) once the assembly is there, which the
+        // server never reads and a build running beside the design-time build makes and signs too.
+        ["UseAppHost"] = "false",
     };
 
     private const ProjectLoadSettings Settings = ProjectLoadSettings.IgnoreMissingImports | ProjectLoadSettings.IgnoreEmptyImports

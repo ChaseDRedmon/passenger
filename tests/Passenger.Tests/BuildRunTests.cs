@@ -646,6 +646,33 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
+    /// <summary>The project host's design-time build of a program built before writes no apphost: the SDK makes
+    /// obj/…/apphost (and on macOS signs it) in Compile's dependencies once the project's assembly is there, so a build
+    /// begun beside a design-time build could have both make and sign that one file at once. The language server has no
+    /// use for it.</summary>
+    [AvaloniaFact]
+    public void A_design_time_build_of_a_program_built_before_leaves_its_apphost_to_the_build()
+    {
+        string project = Path.Combine(folder, "src", "Hello");
+        Passenger.Core.ChildResult built = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
+            Passenger.Core.ChildProcesses.DotnetCommand(["build", Path.Combine(project, "Hello.csproj"), "-nologo"]), limit: Restore.Limit)).GetAwaiter().GetResult();
+        Assert.True(built.Succeeded, $"The program did not build before the test:\n{built.Output}{built.Error}");
+        string apphost = Path.Combine(project, "obj", "Debug", "net10.0", OperatingSystem.IsWindows() ? "apphost.exe" : "apphost");
+        Assert.True(File.Exists(apphost), $"The build made no apphost at {apphost}");
+        File.Delete(apphost);
+        MainWindow window = Open();
+        try
+        {
+            window.OpenFile(Path.Combine(project, "Program.cs"));
+            Ui.WaitFor(() => window.CSharpService?.Session is { IsLoaded: true }, "the language server to load the program's design-time build", TimeSpan.FromMinutes(2));
+            Assert.False(File.Exists(apphost), "The design-time build made the program's apphost, which the build makes (and on macOS signs) beside it");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>The dotnet command of the build just begun, once it has started: a build starts it once the project host
     /// has held its design-time builds off. Pumped, not settled, as the build holds background work until it ends.</summary>
     private static int BuildCommand(MainWindow window, int? before)
