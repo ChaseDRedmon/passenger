@@ -547,7 +547,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   operation returned (`VcsOutcome`, `CommitResult`, `BuildOutcome`, the debugger's `Stop`), never with what the status
   bar says by then; `PassengerTools.OnUi` answers known refusals with their message and sends any other exception to
   `IdeErrors`, answering "Passenger failed: Type: message", and a non-C# file's `diagnostics` waits only for that
-  file's own checks (`OpenDocument.IsChecking`/`Checking()`, which a check's `Debounce` holds). The tools reach the
+  file's own checks (`OpenDocument.IsChecking`/`Checking()`, which a check's `Debounce` holds). The code tools serve
+  each file through its own language (`PassengerTools.Languages.cs`, `Serve`): Roslyn for C# and Razor, `XamlDocument`
+  for XAML of either dialect, a `WebDocument`'s server for the web languages (ESLint's fixes first, the project's
+  Prettier for `format`), `MSBuildDocument` for project files; a command a language lacks is refused naming what it has
+  (`Lacks`), and where a tool and a window command answer the same question they share one method in `CodeAssist`
+  (`XamlPlaceAsync`, `XamlUsesAsync`, `XamlRenameAsync`, `JsonDeclarationAsync`, `PrettifyAsync`). The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them
   three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
