@@ -107,6 +107,10 @@ public sealed class TestController : IAsyncDisposable
 
     private bool awaitingProjects;
 
+    /// <summary>Whether the tests are still being found from code, as the window's "Looking for tests…" says: the folder's
+    /// projects not yet walked, or its test projects' files still being read.</summary>
+    public bool IsLooking => awaitingProjects || Finder.IsLooking;
+
     /// <summary>Builds, then finds the tests of every test project. Null once found, or what stopped it.</summary>
     public async Task<string?> DiscoverAsync(string workspace)
     {

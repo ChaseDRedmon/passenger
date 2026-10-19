@@ -442,8 +442,16 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
         "Every test the Unit Tests window shows (found in the test projects' code, and by the runner once built), each with its state from the " +
         "last run: passed, failed, skipped, notRun.")]
-    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
-        .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));
+    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        // Found from code as the folder opens: an agent's first look waits for that, as the window says it is looking.
+        await Until(() => !Session.Tests.IsLooking, TestsLookLimit, cancel);
+        return (IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
+            .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))];
+    });
+
+    /// <summary>How long tests_list waits for the tests to be found from the test projects' code.</summary>
+    private static readonly TimeSpan TestsLookLimit = TimeSpan.FromSeconds(60);
 
     private TestRunInfo TestInfo(Testing.TestController tests)
     {

@@ -147,6 +147,24 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     }
 
     [Fact]
+    public async Task An_agent_that_lists_the_tests_as_it_starts_gets_those_the_test_projects_code_declares()
+    {
+        // A test project as written, never built or restored: its tests come from its code, which the agent's first look waits for.
+        string tests = PathNames.Canonical(TestFolders.Create("mcp-tests-"));
+        madeFolders.Add(tests);
+        File.WriteAllText(Path.Combine(tests, "Sums.Tests.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n  </PropertyGroup>\n"
+            + "  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"3.2.2\" />\n  </ItemGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(tests, "SumTests.cs"),
+            "using Xunit;\n\nnamespace Sums;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four() => Assert.Equal(4, 2 + 2);\n}\n");
+        await using McpClient client = await Start(["--mcp", tests]);
+        JsonElement listed = await Call(client, "tests_list");
+        JsonElement test = Assert.Single(listed.EnumerateArray());
+        Assert.Equal(("Sums.SumTests.Two_and_two_make_four", "notrun", "SumTests.cs:8"),
+            (test.GetProperty("test").GetString(), test.GetProperty("state").GetString(), test.GetProperty("location").GetString()));
+    }
+
+    [Fact]
     public async Task An_agent_attaches_to_a_program_already_running_stops_it_at_a_breakpoint_and_detaches_leaving_it_running()
     {
         // Started by the test as a terminal would start it, in its loop when it says so.
