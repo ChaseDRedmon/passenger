@@ -56,9 +56,18 @@ public partial class MainWindow
         ("Unable to apply changes due to compilation errors", "Hot Reload: dotnet watch could not apply the changes: the code does not compile", HotReloadResult.Errors),
     ];
 
+    /// <summary>The variable that gives <see cref="WatchSaysLater"/> in milliseconds (the tests' run, shorter).</summary>
+    public const string WatchSaysLaterVariable = "PASSENGER_WATCH_LATER_MS";
+
     /// <summary>How long dotnet watch's later words are followed once it has said what it made of a save: changes it applied
-    /// can still end in a restart, when the program calls a method the update deleted (one whose signature changed).</summary>
-    private static readonly TimeSpan WatchSaysLater = TimeSpan.FromSeconds(10);
+    /// can still end in a restart, when the program calls a method the update deleted (one whose signature changed). 10 s,
+    /// or what <see cref="WatchSaysLaterVariable"/> gives; a value there that is no whole number of milliseconds above 0 is
+    /// fatal, as a malformed flag is (Program checks it before the window opens).</summary>
+    internal static TimeSpan WatchSaysLater => Environment.GetEnvironmentVariable(WatchSaysLaterVariable) is { Length: > 0 } given
+        ? int.TryParse(given, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) && milliseconds > 0
+            ? TimeSpan.FromMilliseconds(milliseconds)
+            : throw new FormatException($"{WatchSaysLaterVariable} takes a whole number of milliseconds above 0, not '{given}'")
+        : TimeSpan.FromSeconds(10);
 
     /// <summary>A program under dotnet watch takes edits as their files are saved: they are saved, and what dotnet watch
     /// says of them (in the Run window) is said in the status bar, its last word standing, which is the answer (null when

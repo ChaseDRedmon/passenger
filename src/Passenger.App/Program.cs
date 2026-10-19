@@ -31,6 +31,7 @@ internal static class Program
             _ = Updates.ReleaseFeed.Default;
             _ = Discord.DiscordIpc.Default;
             Web.JsonSchemas.CheckVariable();
+            _ = MainWindow.WatchSaysLater;
         }
         catch (FormatException error)
         {
