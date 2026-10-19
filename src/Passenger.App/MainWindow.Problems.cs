@@ -79,16 +79,39 @@ public partial class MainWindow
         {
             problemsFile.PropertyChanged += OnProblemsFileChanged;
         }
+        problemsMoved?.Stop();
         ShowFileProblems();
     }
 
     private void OnProblemsFileChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(OpenDocument.Markers))
+        if (e.PropertyName != nameof(OpenDocument.Markers) || problemsFile is not { } file)
+        {
+            return;
+        }
+        if (file.Text.Version == problemsShownAt)
+        {
+            // The server's problems for the text the tab already shows: listed at once.
+            problemsMoved?.Stop();
+            ShowFileProblems();
+            return;
+        }
+        // Every key moves the file's markers: thousands of problems are placed and listed again once typing pauses.
+        (problemsMoved ??= new Debounce(ProblemsPause, () =>
         {
             ShowFileProblems();
-        }
+            return Task.CompletedTask;
+        })).Restart();
     }
+
+    /// <summary>How long typing pauses before the File tab lists where the keys moved the file's problems, less than the
+    /// server's pull waits, so the problems it finds for that text are listed as they land.</summary>
+    private static readonly TimeSpan ProblemsPause = TimeSpan.FromMilliseconds(250);
+
+    private Debounce? problemsMoved;
+
+    /// <summary>The version of the file's text the File tab last listed problems for.</summary>
+    private int problemsShownAt = -1;
 
     private void ShowFileProblems()
     {
@@ -98,6 +121,7 @@ public partial class MainWindow
             return;
         }
         TextSnapshot text = file.Text.Snapshot;
+        problemsShownAt = file.Text.Version;
         List<Problem> problems = [];
         string? project = null;
         foreach (Marker marker in file.Markers)

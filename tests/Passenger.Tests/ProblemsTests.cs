@@ -117,5 +117,53 @@ public sealed class ProblemsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A file with thousands of problems types as one with few does: every key moves the file's markers, and the
+    /// File tab lists where they went once typing pauses, rather than placing and listing every one again for each key (each
+    /// row's line and column read from the text, the list sorted and compared, the shown rows moved), which with 3,000
+    /// warnings took 23 ms of every key's 85 on the UI thread.</summary>
+    [AvaloniaFact]
+    public void Keys_typed_above_thousands_of_problems_list_them_again_once_typing_pauses()
+    {
+        System.Text.StringBuilder warned = new("class Warned\n{\n    static void All()\n    {\n");
+        for (int i = 0; i < 3000; i++)
+        {
+            warned.Append(System.Globalization.CultureInfo.InvariantCulture, $"        int unused{i};\n");
+        }
+        Write("Warned.cs", warned.Append("    }\n}\n").ToString());
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("Warned.cs");
+        window.Perform(AppActions.ShowProblems);
+        ProblemsView problems = window.BottomPanel.Problems;
+        Ui.WaitFor(() => problems.FileProblems.Count == 3000, "the file's 3,000 warnings", TimeSpan.FromMinutes(2));
+        Assert.Equal(new TextPosition(4, 12), problems.FileProblems[0].Position);
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(1, 1));
+        editor.Focus();
+        Ui.Settle();
+
+        // Keys in quick succession, each one's own work done but no pause between them.
+        int listed = 0;
+        IReadOnlyList<Problem> shown = problems.FileProblems;
+        const int Keys = 8;
+        for (int i = 0; i < Keys; i++)
+        {
+            window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+            window.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            listed += ReferenceEquals(problems.FileProblems, shown) ? 0 : 1;
+            shown = problems.FileProblems;
+        }
+        Assert.True(listed <= Keys / 4, $"The File tab listed the file's 3,000 problems again {listed} times for {Keys} keys typed in quick succession");
+
+        // Once typing pauses, the tab says where the keys moved them.
+        Ui.Settle();
+        Assert.Equal(3000, problems.FileProblems.Count);
+        Assert.Equal(new TextPosition(4 + Keys, 12), problems.FileProblems[0].Position);
+        Assert.Equal(new TextPosition(4 + Keys + 2999, 12), problems.FileProblems[^1].Position);
+        window.Close();
+    }
+
     private void Write(string name, string text) => File.WriteAllText(Path.Combine(folder, name), text);
 }
