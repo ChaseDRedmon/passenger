@@ -423,7 +423,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows (Problems' File tab lists markers moved by keys once typing
-  pauses, 250 ms, and fresh markers for the text already shown at once). Every console (Run, Build, Debug, the profiler's) is written
+  pauses, 250 ms, and fresh markers for the text already shown at once; its solution-wide list asks a refused
+  workspace pull again after a pause, 1 s doubling to 30 s, and `LanguageServer.RefuseNext(method, n)` refuses one for a
+  test; Roslyn holds a workspace pull open until the next change, so an answer lost after it was sent waits for another). Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
   Rider's 1024 KB, and what is typed into it sent to the program. A run configuration is data (`RunConfiguration`: the
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
@@ -958,4 +960,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   take widths from `PopupFrame` and titles from `popupTitle`; every list, menu and popup row is `ListRow.Height` (24); a
   tool window's empty state is `TextBlock.emptyText`; a row that narrows is a `ShrinkingRow`; menus' shadow room and
   placement are `MenuShadow`, scrollbars `ControlThemes.axaml`, the focus ring `FocusRing`; every Window's ground is the
-  chrome. `MainWindow.SmallestWidth` is 640: the layout works at half a 1366-wide screen.
+  chrome. `MainWindow.SmallestWidth` is 640: the layout works at half a 1366-wide screen, and the person's first window
+  and New Window fit the screen's working area before they're shown (`MainWindow.FitToScreen`). A dialog's content is
+  `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
+  `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
+  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More.
