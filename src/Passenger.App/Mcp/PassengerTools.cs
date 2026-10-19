@@ -929,7 +929,7 @@ public sealed partial class PassengerTools(MainWindow window)
         // The server is never given another language's file, so waiting for it to load one would wait out the limit.
         if (document.Language.Name is not ("C#" or "Razor"))
         {
-            throw new InvalidOperationException($"{Path.GetFileName(document.Path)} is a {document.Language.Name} file: the C# language server answers for C# and Razor files");
+            throw new InvalidOperationException($"The C# language server answers for C# and Razor files, not {document.Language.Name} ones such as {Path.GetFileName(document.Path)}");
         }
         // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
         await Until(() => Session.CSharp is not { } csharp || csharp.IsReady && csharp.For(document)?.Lsp is not null, ServerLimit, cancel);
