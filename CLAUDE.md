@@ -362,7 +362,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
   restore's NuGetAudit does; the window marks vulnerable installed versions and offers the lowest that fixes them.
   `StandInFeed` is the tests' v3 feed on loopback (optional credentials, an advisory resource); tests never reach
-  nuget.org for a package or an advisory.
+  nuget.org for a package or an advisory. A stand-in credential provider is a `nuget-plugin-*` program on PATH that
+  sends its own Handshake request: restore runs `NUGET_NETCORE_PLUGIN_PATHS` entries with dotnet (which builds a script as
+  a C# file) and waits for a provider's handshake, either way retrying the feed's 401s for about 45 s on CI.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -617,7 +619,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
-  `EvalRefusedException`; a value shown by its ToString then shows its type. Data breakpoints (Variables' Set Data
+  `EvalRefusedException`; a value shown by its ToString then shows its type. `Extensions.EvaluationTimeout` (5 s, the
+  adapter's `PASSENGER_EVAL_TIMEOUT_MS`) also sets the abort's wait (0.4×) and the rude abort's (1×). Data breakpoints (Variables' Set Data
   Breakpoint, `ManagedDebugger_DataBreakpoints`, `DebugRegisters`): the runtime watches memory only on Windows x64
   (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
   (`ICorDebugHeapValue4`, the runtime's advice over GC notifications) and sets DR0–DR7 on every thread through both the
@@ -684,7 +687,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   for a change it can't apply, on by default, else dotnet watch's question); attached sessions get none. Roslyn
   applies a changed signature as a delete plus an add and recompiles only members whose code changed, so `StaleCallers`
   blocks an update that leaves a loaded module's unchanged code calling the deleted body (ENC0033 at the new
-  declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s past its first, the last
+  declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s (`PASSENGER_WATCH_LATER_MS`) past its first, the last
   standing. MCP's nuget_install and nuget_remove have open project files take the disk's text before answering
   (`MainWindow.FollowWritten`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
@@ -858,7 +861,10 @@ exception.
 A run keeps to a folder of its own (`TestRun`, set up by a module initializer before anything starts): the IDE's state
 (`PASSENGER_SETTINGS`: its log, the language servers' logs, agents' sockets, profiler snapshots), every test's
 folders (`TestFolders.Create`) and the shells' history, with an empty Git configuration in place of the person's
-(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). Nothing changes those variables afterwards; a test that needs fresh
+(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (1 s for
+the debugger's 5 s) and `PASSENGER_WATCH_LATER_MS` (3 s for 10); a test that holds a language server to not responding
+sets that server's `SlowRequest`/`ResponseLimit`, never the run's, since a check Roslyn answers late under load would end
+a server that was only slow. Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
 log, history or Git signing and hooks. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
