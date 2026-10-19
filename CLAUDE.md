@@ -129,7 +129,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
-  the screen's lines first and the whole file only once typing stops.
+  the screen's lines first and the whole file only once typing stops. A finder never tells its answer inside the
+  document's `Changed` (`FoldScan` awaits its scan with `ForceYielding`): the open file moves its regions through the
+  edit in a later handler of the same event, so regions told during it were moved twice.
 - `src/Passenger.Xaml`: Passenger's own XAML core, no UI and no Avalonia, which WPF (#187) shares: `Syntax` (XmlTree and
   MarkupExtension, positions kept, tolerant of half-typed markup), `Metadata` (a TypeSystem over the project's
   assemblies through System.Reflection.Metadata and its C# through Roslyn's parser), `Projects` (ProjectInputs reads
@@ -170,7 +172,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems, a project read again as a restore's
   `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
-  the Explorer or Git); `LibrarySources` decompiles a library's
+  the Explorer or Git), including one under `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder
+  holds and `XamlService.RestoredFor` maps to its project by name; `LibrarySources` decompiles a library's
   type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
   request needs the `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
@@ -379,7 +382,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `NewCommand`, which add the IDE's `Hive` (`--debug:custom-hive`) when set.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
-  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action. Every session
+  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action, which holds its
+  folder from its first moment to the hand-over (`launching`), so Profile and Attach Profiler are refused while a start
+  waits for its program. Every session
   enables `UiFrames.Provider`: `Snapshot.UiFrames` are an Avalonia app's frames, each with the compositor's first
   drawing after it, recorded by the inspector (below); `App/Profiling/FramesView` is the Frames page (`FrameChart`, the
   layout table by type then control, own time first), a control's row opening its XAML and, for the Live Visual Tree's
@@ -843,7 +848,11 @@ and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout 
 `DialogButtonsTests.Check` also holds dialogs to the plain button look, a disabled default, the chrome page, one
 drop-down width per column and Don't ask again's place.
 Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
-never throws, while what it waits for isn't there yet. A test that opens a dialog holds it to `DialogButtonsTests.Check`
+never throws, while what it waits for isn't there yet; `WaitFor`'s limit also covers background work held all along (a
+build, a test run), where `Settle` alone gives up after 90 s. A chord goes through one `Ui.Press(window, "control M ,
+control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a dispatcher timer that fires during a
+settle), so a settle between its keys can lose it. Find Usages, Safe Delete and every list of the server's locations
+make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per location on the UI thread. A test that opens a dialog holds it to `DialogButtonsTests.Check`
 (centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
 programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
 Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests.WpfApp.cs` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
