@@ -1,4 +1,5 @@
 using Passenger.App.CSharp;
+using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.App.Xaml;
 using Passenger.Editor;
@@ -18,8 +19,12 @@ public sealed partial class PassengerTools
     /// <summary>A file and the service that answers for it.</summary>
     private abstract record Served(OpenDocument Document, string Language);
 
-    /// <summary>A file a language server answers for: C# or Razor's.</summary>
-    private sealed record ServerServed(OpenDocument Document, string Language, LspDocument Lsp) : Served(Document, Language);
+    /// <summary>A file a language server answers for: C# or Razor's, or a web language's (<paramref name="Web"/>).</summary>
+    private sealed record ServerServed(OpenDocument Document, string Language, LspDocument Lsp, WebDocument? Web = null) : Served(Document, Language)
+    {
+        /// <summary>Whether the file's server answers a request; C#'s answers every one the tools ask.</summary>
+        public bool Provides(string capability) => Web?.Provides(capability) ?? true;
+    }
 
     /// <summary>A XAML file of an Avalonia or WPF project, read as it stands.</summary>
     private sealed record XamlServed(OpenDocument Document, XamlDocument Xaml, XamlFile File) : Served(Document, "XAML");
@@ -41,19 +46,121 @@ public sealed partial class PassengerTools
                 ? throw new InvalidOperationException($"{name} is not XAML of an Avalonia or WPF project: Passenger reads the XAML of a project that references Avalonia or WPF")
                 : new XamlServed(document, xaml, file);
         }
+        if (Session.Web is { } languages && languages.For(document) is { } web)
+        {
+            // Its server starts with the first file of its kind, and answers once it has; without a Node.js to run on, never.
+            await Until(() => web.Lsp is not null || languages.CannotStart(document), ServerLimit, cancel);
+            return web.Lsp is { } server
+                ? new ServerServed(document, LanguageOf(document), server, web)
+                : throw new InvalidOperationException(languages.Unready("Its code help", document));
+        }
         if (document.Language.Name is "C#" or "Razor")
         {
             (_, LspDocument lsp) = await Code(path, cancel);
             return new ServerServed(document, document.Language.Name, lsp);
         }
-        throw new InvalidOperationException($"Passenger has no code help for {LanguageOf(document)} files such as {name}: the code tools answer C#, Razor and XAML files");
+        throw new InvalidOperationException($"Passenger has no code help for {LanguageOf(document)} files such as {name}: the code tools answer C#, Razor, "
+            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less and JSON files");
     }
 
-    /// <summary>A file's language as the tools name it: XAML and MSBuild by what reads them, the rest as the editor names them.</summary>
+    /// <summary>A file's language as the tools name it: XAML, MSBuild and the web languages by what reads them, the rest as
+    /// the editor names them.</summary>
     private static string LanguageOf(OpenDocument document) =>
         XamlService.IsXaml(document.Path) ? "XAML"
         : MSBuild.MSBuildFiles.Is(document.Path) ? "MSBuild"
-        : document.Language.Name;
+        : WebLanguages.LanguageOf(document.Path)?.LanguageId switch
+        {
+            "typescript" or "typescriptreact" => "TypeScript",
+            "javascript" or "javascriptreact" => "JavaScript",
+            "html" => "HTML",
+            "css" => "CSS",
+            "scss" => "SCSS",
+            "less" => "Less",
+            "json" or "jsonc" => "JSON",
+            _ => document.Language.Name,
+        };
+
+    /// <summary>Go to Declaration in JSON, whose server has none: a package.json dependency's package, a script's run.</summary>
+    private async Task<IReadOnlyList<Place>> JsonDefinition(ServerServed json, int offset, CancellationToken cancel)
+    {
+        ((string Path, TextPosition Position)? place, string said) = await CodeAssist.JsonDeclarationAsync(json.Lsp, json.Document, offset);
+        return place is { } found ? await PlacesOf([found], cancel)
+            : said == CodeAssist.NoDeclaration ? []
+            : throw new InvalidOperationException(said);
+    }
+
+    /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a
+    /// script renamed with it, one undoable edit, saved.</summary>
+    private async Task<string> JsonRename(ServerServed json, int offset, string newName)
+    {
+        OpenDocument document = json.Document;
+        using ChangeTracker asked = new(document.Text);
+        IReadOnlyList<DocumentSymbol> outline = await json.Lsp.OutlineAsync();
+        ServerLines lines = ServerLines.Of(asked.Snapshot);
+        if (CodeAssist.JsonPropertyAt(outline, lines, offset) is not { } at)
+        {
+            throw new InvalidOperationException("Nothing to rename here: JSON's Rename renames a property, so put the place on its name");
+        }
+        string old = at.Path[^1].Name;
+        if (asked.Map(CodeAssist.JsonRenameEdits(at.Path, at.Key, lines, newName, CodeAssist.IsPackageJson(document))) is not { } placed)
+        {
+            throw new InvalidOperationException("Rename was not applied: the property was edited meanwhile");
+        }
+        WorkspaceEdits.ApplyTo(Editors, document, placed);
+        document.Save();
+        int runs = placed.Count - 1;
+        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it")}";
+    }
+
+    /// <summary>ESLint's fixes for the problems on a web file's line, which Show Context Actions lists first; none where ESLint
+    /// does not check the file.</summary>
+    private async Task<IReadOnlyList<EslintFix>> LintFixes(Served served, int offset) =>
+        served is ServerServed { Web: not null } ? await window.Assist.LintFixes(served.Document, offset) : [];
+
+    /// <summary>One of ESLint's fixes made, as choosing it makes it: its server's command, which hands the window its edit
+    /// before it answers; the file saved.</summary>
+    private async Task<string> ApplyLintFix(ServerServed web, EslintFix fix)
+    {
+        if (fix.OpensDocumentation)
+        {
+            return $"'{fix.Title}' opens the rule's page in a browser, and changes nothing";
+        }
+        if (Session.Web?.Eslint.For(web.Document) is not { } lint)
+        {
+            throw new InvalidOperationException($"'{fix.Title}' was not applied: ESLint no longer checks {Path.GetFileName(web.Document.Path)}");
+        }
+        int version = web.Document.Text.Version;
+        await lint.RunAsync(fix);
+        if (web.Document.Text.Version == version)
+        {
+            return $"'{fix.Title}' changed nothing";
+        }
+        Editors.SaveAll();
+        return $"Applied '{fix.Title}' to {Relative(web.Document.Path)}";
+    }
+
+    /// <summary>Reformat Code on a web file the project's Prettier formats (Rider's Run on 'Reformat Code' action), saved;
+    /// null for one its .prettierignore names or whose type it does not read, which the language server formats.</summary>
+    private async Task<string?> Prettify(ServerServed web)
+    {
+        if (Session.Web is not { } languages || !languages.Prettier.OnReformat(web.Document.Path))
+        {
+            return null;
+        }
+        window.OpenFile(web.Document.Path);
+        (CodeAssist.Prettified outcome, string said) = await window.Assist.PrettifyAsync(languages, web.Document, "Reformat Code");
+        switch (outcome)
+        {
+            case CodeAssist.Prettified.Ignored or CodeAssist.Prettified.Unsupported:
+                return null;
+            case CodeAssist.Prettified.Failed:
+                throw new InvalidOperationException($"Not reformatted: {said}");
+            case CodeAssist.Prettified.Formatted:
+                web.Document.Save();
+                break;
+        }
+        return said;
+    }
 
     /// <summary>A XAML name at an offset, with the places it leads; null where there is none.</summary>
     private static async Task<XamlSymbol?> XamlSymbolAt(XamlServed xaml, int offset) =>

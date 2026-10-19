@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Run;
+using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Dap;
@@ -119,7 +120,8 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "diagnostics", Title = "Errors and warnings in a file", ReadOnly = true), Description(
         "The C# language server's errors, warnings and messages for a file, as the editor marks them, fresh; for any other " +
-        "file (XAML, a project file, JSON), the errors and warnings the editor marks once its checks have run.")]
+        "file, the errors and warnings the editor marks once its checks have run: XAML's (Passenger's own), a project file's (MSBuild's " +
+        "evaluation, NuGet's advisories), a JavaScript, TypeScript, HTML, CSS, SCSS, Less or JSON file's (its language server's, and ESLint's).")]
     public Task<IReadOnlyList<Finding>> Diagnostics(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (Document(path) is { Language.Name: not ("C#" or "Razor") } marked)
@@ -127,6 +129,11 @@ public sealed partial class PassengerTools(MainWindow window)
             // Its own checks run after it opens or changes, its markers set as they end; the rest of the IDE's work (a build,
             // a test run, a busy console) is not waited for.
             await Until(() => !marked.IsChecking, MarkersLimit, cancel);
+            if (Session.Web is { } web && web.For(marked) is { Lsp: null })
+            {
+                // A web file whose server cannot start has no checks: none found would read as none there.
+                throw new InvalidOperationException(web.Unready("Its diagnostics", marked));
+            }
             TextSnapshot text = marked.Text.Snapshot;
             return (IReadOnlyList<Finding>)[.. marked.Markers.Where(m => m.Kind is MarkerKind.Error or MarkerKind.Warning).Select(m =>
             {
@@ -146,8 +153,9 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "symbol_info", Title = "What a symbol is", ReadOnly = true), Description(
-        "What is known of the symbol at a position, as the hover card says it: in C# and Razor the language server's declaration and " +
-        "documentation; in XAML (Avalonia's or WPF's) the type, property, event, resource or element a name is.")]
+        "What is known of the symbol at a position, as the hover card says it: in C#, Razor, JavaScript, TypeScript, HTML, CSS, SCSS, Less " +
+        "and JSON its language server's description (a declaration and its documentation, a JSON property's schema); in XAML (Avalonia's or " +
+        "WPF's) the type, property, event, resource or element a name is.")]
     public Task<string> SymbolInfo(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -163,29 +171,36 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "definition", Title = "Go to definition", ReadOnly = true), Description(
         "Where the symbol at a position is defined, as Go to Declaration goes. A C# symbol from a package or the framework has no source, " +
         "and says so. From XAML: the C# or XAML that declares a type, property, event, resource or element, a library's type decompiled " +
-        "(a read-only file), or a theme's own XAML through its Source Link.")]
+        "(a read-only file), or a theme's own XAML through its Source Link. In the web languages, their language server's; in JSON, whose " +
+        "server has none, from a package.json dependency to its installed package and from a script's npm run to the script.")]
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
         int offset = Offset(served.Document, line, column);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return await XamlDefinition(xaml, offset, cancel);
+            case XamlServed xaml:
+                return await XamlDefinition(xaml, offset, cancel);
+            case ServerServed json when !json.Provides("definitionProvider"):
+                return await JsonDefinition(json, offset, cancel);
         }
         return await Places(await ((ServerServed)served).Lsp.DefinitionAsync(offset), cancel);
     });
 
     [McpServerTool(Name = "usages", Title = "Find usages", ReadOnly = true), Description(
-        "Every place the symbol at a position is used, its declaration included, with each line's text, as Find Usages finds them. In XAML: " +
-        "an element's name where its file names it and where its code-behind uses its field, or a resource's key wherever the project's XAML " +
-        "uses or defines it.")]
+        "Every place the symbol at a position is used, its declaration included, with each line's text, as Find Usages finds them: in C#, " +
+        "Razor and the web languages, their language server's (JSON's has none, and says so). In XAML: an element's name where its file " +
+        "names it and where its code-behind uses its field, or a resource's key wherever the project's XAML uses or defines it.")]
     public Task<IReadOnlyList<Place>> Usages(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
         int offset = Offset(served.Document, line, column);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return await XamlUsages(xaml, offset, cancel);
+            case XamlServed xaml:
+                return await XamlUsages(xaml, offset, cancel);
+            case ServerServed unfound when !unfound.Provides("referencesProvider"):
+                throw new InvalidOperationException($"{unfound.Language} has no usages: its language server finds none, so Find Usages finds nothing in {Path.GetFileName(unfound.Document.Path)}");
         }
         return await Places(await ((ServerServed)served).Lsp.ReferencesAsync(offset), cancel);
     });
@@ -226,19 +241,24 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
         "Renames the symbol at a position everywhere it is used, as the IDE's Rename does, and saves the files it changes. A type's " +
         "files named after it (Foo.cs, Foo.Designer.cs) take its new name too, unless renameFiles is false. In XAML it renames an " +
-        "element's name (x:Name or Name) in its file and where its code-behind uses the field.")]
+        "element's name (x:Name or Name) in its file and where its code-behind uses the field. In the web languages, their language " +
+        "server's rename; in JSON, whose server has none, a property's name, and in a package.json's scripts every npm run of a script with it.")]
     public Task<string> Rename(string path, int line, int column, [Description("The new name")] string newName,
         [Description("Whether a type's files named after it are renamed with it, as Rider's Also rename files to reflect this change")] bool renameFiles = true,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
         int offset = Offset(served.Document, line, column);
-        if (served is XamlServed xaml)
+        switch (served)
         {
-            return await XamlRename(xaml, offset, newName, cancel);
+            case XamlServed xaml:
+                return await XamlRename(xaml, offset, newName, cancel);
+            case ServerServed json when !json.Provides("renameProvider"):
+                return await JsonRename(json, offset, newName);
         }
-        LspDocument lsp = ((ServerServed)served).Lsp;
-        (string Type, IReadOnlyList<string> Files)? named = Session.CSharp?.Session?.Folder is { } folder
+        ServerServed server = (ServerServed)served;
+        LspDocument lsp = server.Lsp;
+        (string Type, IReadOnlyList<string> Files)? named = server.Web is null && Session.CSharp?.Session?.Folder is { } folder
             ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
         DateTime asked = DateTime.UtcNow;
         if (await lsp.RenameAsync(offset, newName) is not { } edit)
@@ -261,16 +281,20 @@ public sealed partial class PassengerTools(MainWindow window)
         "The fixes and refactorings offered at a position (Alt+Enter), or over a selection from there to endLine:endColumn (where " +
         "Extract Method and Introduce Variable are offered), as 'title [kind]'; one that offers choices (the actions nested under it, " +
         "the scopes a Fix All may cover, where a new XAML resource or style may go) is followed by them, each one apply_code_action's " +
-        "choice. In C# and Razor, the language server's; in XAML, Passenger's own: the fixes of the problems on the line (creating a " +
-        "binding's property or command, a missing converter), Extract Resource and Extract Style.")]
+        "choice. In C#, Razor and the web languages, the language server's, ESLint's fixes for the line first where ESLint checks the " +
+        "file; in XAML, Passenger's own: the fixes of the problems on the line (creating a binding's property or command, a missing " +
+        "converter), Extract Resource and Extract Style.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        if (await Serve(path, cancel) is XamlServed xaml)
+        Served served = await Serve(path, cancel);
+        if (served is XamlServed xaml)
         {
             return (IReadOnlyList<string>)[.. (await XamlActions(xaml, Offset(xaml.Document, line, column)))
                 .Select(a => a.Choices.Count == 0 ? $"{a.Title} [{a.Kind}]" : $"{a.Title} [{a.Kind}], choices: {string.Join("; ", a.Choices)}")];
         }
-        return (IReadOnlyList<string>)[.. (await Actions(path, line, column, endLine, endColumn, cancel)).Actions.Select(Described)];
+        IReadOnlyList<EslintFix> linted = await LintFixes(served, Offset(served.Document, line, column));
+        return (IReadOnlyList<string>)[.. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
+            .. (await Actions((ServerServed)served, line, column, endLine, endColumn)).Select(Described)];
     });
 
     [McpServerTool(Name = "apply_code_action", Title = "Apply a fix or refactoring", Destructive = true), Description(
@@ -283,15 +307,23 @@ public sealed partial class PassengerTools(MainWindow window)
         [Description("For XAML's Extract Resource and Extract Style, the new resource's key or style's name")] string? name = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        if (await Serve(path, cancel) is XamlServed xaml)
+        Served served = await Serve(path, cancel);
+        if (served is XamlServed xaml)
         {
             return await ApplyXamlAction(xaml, Offset(xaml.Document, line, column), title, choice, name);
         }
+        ServerServed server = (ServerServed)served;
+        IReadOnlyList<EslintFix> linted = await LintFixes(served, Offset(served.Document, line, column));
+        if (linted.FirstOrDefault(f => f.Title == title) is { } lint)
+        {
+            return await ApplyLintFix(server, lint);
+        }
         // Listed now, with any edit the server gives them as it lists them.
         DateTime asked = DateTime.UtcNow;
-        (LspDocument lsp, IReadOnlyList<CodeAction> actions) = await Actions(path, line, column, endLine, endColumn, cancel);
+        LspDocument lsp = server.Lsp;
+        IReadOnlyList<CodeAction> actions = await Actions(server, line, column, endLine, endColumn);
         CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
-            ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", actions.Select(a => a.Title))}");
+            ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", [.. linted.Select(f => f.Title), .. actions.Select(a => a.Title)])}");
         IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(chosen);
         string? scope = null;
         if (choices.Count > 0)
@@ -328,7 +360,10 @@ public sealed partial class PassengerTools(MainWindow window)
         return choices.Count == 0 ? described : $"{described}, choices: {string.Join("; ", choices.Select(c => c.Text))}";
     }
 
-    [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description("Reformats a file as the IDE's Reformat Code does, and saves it.")]
+    [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description(
+        "Reformats a file as the IDE's Reformat Code does, and saves it: C# and Razor by the language server, XAML by Rider's XAML code " +
+        "style with the file's .editorconfig over it, JavaScript, TypeScript, HTML, CSS, SCSS, Less and JSON by the project's Prettier " +
+        "where it formats the file (Run on 'Reformat Code'), else by the language server.")]
     public Task<string> Format(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
@@ -353,7 +388,12 @@ public sealed partial class PassengerTools(MainWindow window)
             }
             return laid.Count == 0 ? "Already formatted" : $"Reformatted ({laid.Count} edits)";
         }
-        (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
+        ServerServed served = await Serve(path, cancel) as ServerServed ?? throw new InvalidOperationException("Reformat Code reads no such file");
+        if (served.Web is not null && await Prettify(served) is { } prettified)
+        {
+            return prettified;
+        }
+        (OpenDocument document, LspDocument lsp) = (served.Document, served.Lsp);
         window.OpenFile(document.Path);
         using Passenger.Text.ChangeTracker asked = new(document.Text);
         IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(document.Indentation.Options);
@@ -384,7 +424,9 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "outline", Title = "A file's structure", ReadOnly = true), Description(
         "A file's structure, indented, each part with its line: a C# file's types and their members, as the File Structure window shows " +
-        "them; a XAML file's elements, each with what names it (x:Class, x:Name, x:Key, a style's selector or target type).")]
+        "them; a web language's symbols as its language server outlines them (a script's functions and classes, a stylesheet's rules, an " +
+        "HTML document's elements, a JSON file's properties); a XAML file's elements, each with what names it (x:Class, x:Name, x:Key, a " +
+        "style's selector or target type).")]
     public Task<string> Outline(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -1013,15 +1055,16 @@ public sealed partial class PassengerTools(MainWindow window)
         ? (Resolve(path), at - 1)
         : throw new InvalidOperationException("Name a path and a line for a line breakpoint, or an exception type for an exception breakpoint");
 
-    private async Task<(LspDocument Lsp, IReadOnlyList<CodeAction> Actions)> Actions(string path, int line, int column, int? endLine, int? endColumn, CancellationToken cancel)
+    /// <summary>The server's actions at a place or over a selection, asked with the diagnostics on the place's line.</summary>
+    private async Task<IReadOnlyList<CodeAction>> Actions(ServerServed served, int line, int column, int? endLine, int? endColumn)
     {
-        (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
+        OpenDocument document = served.Document;
         int offset = Offset(document, line, column);
         int end = endLine is { } last ? Offset(document, last, endColumn ?? 1) : offset;
-        CSharpDocument? csharp = Session.CSharp?.For(document);
-        IReadOnlyList<Diagnostic> here = [.. (csharp?.Diagnostics ?? []).Where(d => d.Range.Start.Line <= line - 1 && line - 1 <= d.Range.End.Line)];
-        IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(TextRange.FromBounds(Math.Min(offset, end), Math.Max(offset, end)), here);
-        return (lsp, [.. actions.Where(a => a.Disabled is null)]);
+        IReadOnlyList<Diagnostic> marked = served.Web?.Diagnostics ?? Session.CSharp?.For(document)?.Diagnostics ?? [];
+        IReadOnlyList<Diagnostic> here = [.. marked.Where(d => d.Range.Start.Line <= line - 1 && line - 1 <= d.Range.End.Line)];
+        IReadOnlyList<CodeAction> actions = await served.Lsp.CodeActionsAsync(TextRange.FromBounds(Math.Min(offset, end), Math.Max(offset, end)), here);
+        return [.. actions.Where(a => a.Disabled is null)];
     }
 
     /// <summary>The language server, once it has loaded the workspace.</summary>

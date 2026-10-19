@@ -347,6 +347,10 @@ public sealed class WebLanguages : IAsyncDisposable
             ? $"TypeScript {typescript.Version}{(typescript.Source == "bundled" ? " (Passenger's)" : string.Empty)}"
             : null;
 
+    /// <summary>Whether a file's server cannot start (no Node.js, one too old, a server missing), so none will answer for it.</summary>
+    public bool CannotStart(OpenDocument document) =>
+        LanguageOf(document.Path) is { } language && servers.GetValueOrDefault(language.Kind) is { Problem: not null };
+
     /// <summary>What the status bar says when a command (<paramref name="what"/>) asks a file's server before it can answer.</summary>
     public string Unready(string what, OpenDocument document) =>
         LanguageOf(document.Path) is { } language

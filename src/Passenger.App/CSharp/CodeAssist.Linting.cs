@@ -44,7 +44,7 @@ public sealed partial class CodeAssist
     private bool PrettierReformats(OpenDocument? file) => file is not null && Web?.Invoke()?.Prettier.OnReformat(file.Path) == true;
 
     /// <summary>ESLint's fixes for the problems on the caret's line; none when ESLint does not check the file.</summary>
-    private async Task<IReadOnlyList<EslintFix>> LintFixes(OpenDocument document, int caret)
+    internal async Task<IReadOnlyList<EslintFix>> LintFixes(OpenDocument document, int caret)
     {
         if (LintOf(document) is not { } lint)
         {
@@ -180,7 +180,7 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>What came of handing a file to Prettier.</summary>
-    private enum Prettified
+    internal enum Prettified
     {
         Formatted,
         Unchanged,
@@ -189,15 +189,22 @@ public sealed partial class CodeAssist
         Failed,
     }
 
-    /// <summary>A file formatted by its project's Prettier as one undoable edit, only the lines that changed replaced, the
-    /// caret where Prettier carried it, the file's own line breaks kept; what came of it said in the status bar as Rider's
-    /// Prettier says it.</summary>
+    /// <summary>A file formatted by its project's Prettier (<see cref="PrettifyAsync"/>), what came of it said in the status bar.</summary>
     private async Task<Prettified> Prettify(WebLanguages web, OpenDocument document, string what)
+    {
+        (Prettified outcome, string said) = await PrettifyAsync(web, document, what);
+        Message?.Invoke(this, said);
+        return outcome;
+    }
+
+    /// <summary>A file formatted by its project's Prettier as one undoable edit, only the lines that changed replaced, the
+    /// caret where Prettier carried it, the file's own line breaks kept; what came of it, in the words Rider's Prettier says
+    /// it in.</summary>
+    internal async Task<(Prettified Outcome, string Said)> PrettifyAsync(WebLanguages web, OpenDocument document, string what)
     {
         if (document.IsReadOnly)
         {
-            Message?.Invoke(this, $"{what}: {document.Name} is read-only");
-            return Prettified.Failed;
+            return (Prettified.Failed, $"{what}: {document.Name} is read-only");
         }
         string text = document.Text.Snapshot.ToString();
         int version = document.Text.Version;
@@ -205,31 +212,26 @@ public sealed partial class CodeAssist
         PrettierAnswer answer = await BackgroundWork.Run(() => web.Prettier.FormatAsync(document.Path, text, caret));
         if (answer.Ignored)
         {
-            Message?.Invoke(this, $"Prettier: file {document.Name} was ignored with .prettierignore");
-            return Prettified.Ignored;
+            return (Prettified.Ignored, $"Prettier: file {document.Name} was ignored with .prettierignore");
         }
         if (answer.Unsupported)
         {
-            Message?.Invoke(this, $"Prettier: file {document.Name} has unsupported type");
-            return Prettified.Unsupported;
+            return (Prettified.Unsupported, $"Prettier: file {document.Name} has unsupported type");
         }
         if (answer.Formatted is not { } formatted)
         {
             // A syntax error's first line says where it is ("Unexpected token (1:9)"); the code frame after it is for a console.
-            Message?.Invoke(this, $"Prettier: {(answer.Error ?? "it gave nothing back").Split('\n')[0].Trim()}");
-            return Prettified.Failed;
+            return (Prettified.Failed, $"Prettier: {(answer.Error ?? "it gave nothing back").Split('\n')[0].Trim()}");
         }
         if (document.Text.Version != version)
         {
-            Message?.Invoke(this, $"{what} was not applied: {document.Name} changed while Prettier formatted it");
-            return Prettified.Failed;
+            return (Prettified.Failed, $"{what} was not applied: {document.Name} changed while Prettier formatted it");
         }
         (string after, int cursor) = InLineEndings(formatted, answer.Cursor, document.Text.LineEnding);
         IReadOnlyList<TextEdit> edits = LineDiff.Edits(text, after);
         if (edits.Count == 0)
         {
-            Message?.Invoke(this, "Prettier: no lines changed. Content is already properly formatted");
-            return Prettified.Unchanged;
+            return (Prettified.Unchanged, "Prettier: no lines changed. Content is already properly formatted");
         }
         int lines = LineDiff.Hunks(LineDiff.Lines(text), LineDiff.Lines(after)).Sum(h => Math.Max(h.OldCount, h.NewCount));
         SelectionSet carried = SelectionSet.Single(Math.Clamp(cursor, 0, after.Length));
@@ -243,8 +245,7 @@ public sealed partial class CodeAssist
             document.Text.Edit(edits, document.Selections, carried);
             document.Text.BreakUndoGroup();
         }
-        Message?.Invoke(this, $"Prettier: formatted {lines} line{(lines == 1 ? string.Empty : "s")}");
-        return Prettified.Formatted;
+        return (Prettified.Formatted, $"Prettier: formatted {lines} line{(lines == 1 ? string.Empty : "s")}");
     }
 
     /// <summary>Prettier's text in the file's own line breaks (its endOfLine is LF unless a configuration says otherwise,

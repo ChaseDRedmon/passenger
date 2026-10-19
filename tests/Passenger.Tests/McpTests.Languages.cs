@@ -7,7 +7,9 @@ namespace Passenger.Tests;
 
 /// <summary>Agents using the code tools on every language Passenger serves, each answered by that language's own service as
 /// the window's commands are: Avalonia's and WPF's XAML through Passenger's own XAML (the galleries of XamlTests and
-/// WpfXamlTests, each in a folder of the test's own, restored), and saying plainly what a language lacks.</summary>
+/// WpfXamlTests, each in a folder of the test's own, restored), the web languages through their servers with the
+/// project's own ESLint and Prettier (skipped without a Node.js, as WebLanguagesTests are), and saying plainly what a
+/// language lacks.</summary>
 public sealed partial class McpTests
 {
     [Fact]
@@ -131,6 +133,90 @@ public sealed partial class McpTests
         Assert.Equal("Renamed Go to Start in 2 files: MainWindow.xaml, MainWindow.xaml.cs", renamed);
         Assert.Contains("Start.Content = \"Start\";", File.ReadAllText(Path.Combine(gallery, "MainWindow.xaml.cs")), StringComparison.Ordinal);
         Assert.Contains("ElementName=Start", File.ReadAllText(Path.Combine(gallery, "MainWindow.xaml")), StringComparison.Ordinal);
+    }
+
+    /// <summary>A script, a stylesheet and a package.json, with the project's own ESLint and Prettier (the tests' packages
+    /// copied into its node_modules): each tool through the file's language server as the window asks it, ESLint's fix
+    /// first among the actions, Prettier formatting what it covers, and JSON's Go to Declaration and Rename, which its server
+    /// lacks, Passenger's own; its lack of usages said plainly.</summary>
+    [Fact]
+    public async Task An_agent_reads_navigates_renames_fixes_and_formats_the_web_languages_through_their_servers_eslint_and_prettier()
+    {
+        WebLanguagesTests.Shop.SkipWithoutNode(typescript: true);
+        EslintPrettierTests.Project.SkipWithoutNode();
+        string web = Made("mcpweb-", made =>
+        {
+            string packages = Path.Combine(AppContext.BaseDirectory, "node-packages", "node_modules");
+            foreach (string file in Directory.EnumerateFiles(packages, "*", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(made, "node_modules", Path.GetRelativePath(packages, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target);
+            }
+            File.WriteAllText(Path.Combine(made, "package.json"), "{\n  \"name\": \"shop-client\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"type\": \"module\",\n"
+                + "  \"scripts\": {\n    \"build\": \"node src/app.js\",\n    \"all\": \"npm run build\"\n  },\n"
+                + $"  \"devDependencies\": {{\n    \"eslint\": \"{EslintPrettierTests.Project.VersionOf("eslint")}\",\n    \"prettier\": \"{EslintPrettierTests.Project.VersionOf("prettier")}\"\n  }}\n}}\n");
+            File.WriteAllText(Path.Combine(made, "eslint.config.js"), EslintPrettierTests.Project.Config);
+            File.WriteAllText(Path.Combine(made, ".prettierrc"), "{ \"semi\": false, \"singleQuote\": true }\n");
+            Directory.CreateDirectory(Path.Combine(made, "src"));
+            File.WriteAllText(Path.Combine(made, "src", "app.js"), "function greet(name) {\n  return `Hello, ${name}`\n}\nlet total = greet('Ada')\nconsole.log(total)\n");
+            File.WriteAllText(Path.Combine(made, "src", "format.js"), EslintPrettierTests.Project.Format);
+            Directory.CreateDirectory(Path.Combine(made, "styles"));
+            File.WriteAllText(Path.Combine(made, "styles", "site.css"), ":root {\n  --accent: #3574f0;\n}\n\n.cart {\n  color: var(--accent);\n}\n");
+        });
+        await using McpClient client = await Start(["--mcp", web]);
+        string app = Path.Combine("src", "app.js");
+        string script = File.ReadAllText(Path.Combine(web, app));
+
+        // TypeScript's server on the script: its outline, its card, where a call's function is declared and every use of it.
+        string outline = (await Call(client, "outline", new() { ["path"] = app })).GetString()!;
+        Assert.True(outline.Contains("greet (function, line 1)", StringComparison.Ordinal) && outline.Contains("total (variable, line 4)", StringComparison.Ordinal),
+            $"The script's outline is not its server's:\n{outline}");
+        Dictionary<string, object?> call = At(script, app, "let total = gre");
+        Assert.Contains("function greet(name: any): string", (await Call(client, "symbol_info", call)).GetString(), StringComparison.Ordinal);
+        JsonElement declared = Assert.Single((await Call(client, "definition", call)).EnumerateArray());
+        Assert.Equal((app, 1), (declared.GetProperty("path").GetString(), declared.GetProperty("line").GetInt32()));
+        Assert.Equal([1, 4], (await Call(client, "usages", call)).EnumerateArray().Select(u => u.GetProperty("line").GetInt32()).Order());
+
+        // ESLint's problem is among the file's, and its fix comes first among the line's actions and is made by ESLint.
+        JsonElement problem = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = app })).EnumerateArray(),
+            d => d.GetProperty("message").GetString()!.Contains("(prefer-const)", StringComparison.Ordinal));
+        Assert.Equal(("error", 4), (problem.GetProperty("severity").GetString(), problem.GetProperty("line").GetInt32()));
+        Dictionary<string, object?> let = At(script, app, "let t");
+        string[] actions = Strings(await Call(client, "code_actions", let));
+        Assert.True(actions.Length > 0 && actions[0].StartsWith("ESLint: Fix 'prefer-const'", StringComparison.Ordinal), $"ESLint's fix is not first among the line's actions: {string.Join(" | ", actions)}");
+        Assert.Equal($"Applied 'ESLint: Fix 'prefer-const'' to {app}", (await Call(client, "apply_code_action", new(let) { ["title"] = "ESLint: Fix 'prefer-const'" })).GetString());
+        Assert.Contains("const total = greet('Ada')", File.ReadAllText(Path.Combine(web, app)), StringComparison.Ordinal);
+
+        string renamed = (await Call(client, "rename", new(At(script, app, "function gre")) { ["newName"] = "welcome" })).GetString()!;
+        Assert.Equal($"Renamed in 1 file: {app}", renamed);
+        string written = File.ReadAllText(Path.Combine(web, app));
+        Assert.True(written.Contains("function welcome(name)", StringComparison.Ordinal) && written.Contains("welcome('Ada')", StringComparison.Ordinal),
+            $"The rename did not reach the script on disk:\n{written}");
+
+        // The project's Prettier formats what it covers, by its .prettierrc.
+        Assert.StartsWith("Prettier: formatted ", (await Call(client, "format", new() { ["path"] = Path.Combine("src", "format.js") })).GetString(), StringComparison.Ordinal);
+        Assert.Equal("const label = { name: 'tea', price: 3 }\nconsole.log(label)\n", File.ReadAllText(Path.Combine(web, "src", "format.js")));
+
+        // CSS's server: a custom property's declaration from its use, and its rename through the stylesheet.
+        string css = Path.Combine("styles", "site.css");
+        string sheet = File.ReadAllText(Path.Combine(web, css));
+        Assert.Equal(2, Assert.Single((await Call(client, "definition", At(sheet, css, "var(--acc"))).EnumerateArray()).GetProperty("line").GetInt32());
+        await Call(client, "rename", new(At(sheet, css, "var(--acc")) { ["newName"] = "--brand" });
+        Assert.Equal(":root {\n  --brand: #3574f0;\n}\n\n.cart {\n  color: var(--brand);\n}\n", File.ReadAllText(Path.Combine(web, css)));
+
+        // JSON's server has no usages, and says so; a dependency leads to its installed package, and a script's rename
+        // takes the scripts that run it along.
+        string manifest = File.ReadAllText(Path.Combine(web, "package.json"));
+        CallToolResult none = await Result(client, "usages", At(manifest, "package.json", "\"bui"));
+        Assert.True(none.IsError == true && Text(none).Contains("JSON has no usages", StringComparison.Ordinal), $"usages in package.json answered: {Text(none)}");
+        JsonElement package = Assert.Single((await Call(client, "definition", At(manifest, "package.json", "\"esl"))).EnumerateArray());
+        Assert.Equal(Path.Combine("node_modules", "eslint", "package.json"), package.GetProperty("path").GetString());
+        Assert.Equal("Renamed build to compile in package.json, and in 1 script that runs it",
+            (await Call(client, "rename", new(At(manifest, "package.json", "\"bui")) { ["newName"] = "compile" })).GetString());
+        manifest = File.ReadAllText(Path.Combine(web, "package.json"));
+        Assert.True(manifest.Contains("\"compile\": \"node src/app.js\"", StringComparison.Ordinal) && manifest.Contains("\"all\": \"npm run compile\"", StringComparison.Ordinal),
+            $"The script's rename did not reach package.json on disk:\n{manifest}");
     }
 
     /// <summary>A folder of the test's own, written (and restored) by <paramref name="write"/>, removed with the class.</summary>

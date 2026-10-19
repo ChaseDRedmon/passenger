@@ -81,38 +81,46 @@ public sealed partial class CodeAssist
         }
         try
         {
-            IReadOnlyList<DocumentSymbol> outline = await lsp.OutlineAsync();
-            if (editors.Active != document || !IsPackageJson(document))
+            ((string Path, TextPosition Position)? place, string said) = await JsonDeclarationAsync(lsp, document, offset);
+            if (editors.Active != document || place is not { } found)
             {
-                Message?.Invoke(this, "Cannot find a declaration to go to");
+                Message?.Invoke(this, editors.Active == document ? said : NoDeclaration);
                 return;
             }
-            LspPosition at = lsp.PositionOf(offset);
-            List<DocumentSymbol> path = JsonPath(outline, at);
-            if (path is [{ Name: "dependencies" or "devDependencies" or "peerDependencies" or "optionalDependencies" }, { } dependency] && Within(dependency.SelectionRange, at))
-            {
-                if (Installed(document.Path, dependency.Name) is { } installed)
-                {
-                    Navigate?.Invoke(this, (installed, new TextPosition(0, 0)));
-                }
-                else
-                {
-                    Message?.Invoke(this, $"{dependency.Name} is not installed: there is no node_modules/{dependency.Name}/package.json over {document.Name} (npm install puts it there)");
-                }
-                return;
-            }
-            if (path is [{ Name: "scripts" } scripts, _] && RunAt(Editor.Document.Snapshot, offset) is { } script
-                && scripts.Children?.FirstOrDefault(s => s.Name == script) is { } declared)
-            {
-                Navigate?.Invoke(this, (document.Path, new TextPosition(declared.SelectionRange.Start.Line, declared.SelectionRange.Start.Character + 1)));
-                return;
-            }
-            Message?.Invoke(this, "Cannot find a declaration to go to");
+            Navigate?.Invoke(this, found);
         }
         catch (LanguageServerFailed failed)
         {
             Failed("Go to Declaration", failed);
         }
+    }
+
+    internal const string NoDeclaration = "Cannot find a declaration to go to";
+
+    /// <summary>Where Go to Declaration goes in JSON, whose server has none: a package.json dependency's installed package,
+    /// a script's <c>npm run</c> to the script; else why not.</summary>
+    internal static async Task<((string Path, TextPosition Position)? Place, string Said)> JsonDeclarationAsync(LspDocument lsp, OpenDocument document, int offset)
+    {
+        TextSnapshot text = document.Text.Snapshot;
+        IReadOnlyList<DocumentSymbol> outline = await lsp.OutlineAsync();
+        if (!IsPackageJson(document))
+        {
+            return (null, NoDeclaration);
+        }
+        LspPosition at = lsp.PositionOf(offset);
+        List<DocumentSymbol> path = JsonPath(outline, at);
+        if (path is [{ Name: "dependencies" or "devDependencies" or "peerDependencies" or "optionalDependencies" }, { } dependency] && Within(dependency.SelectionRange, at))
+        {
+            return Installed(document.Path, dependency.Name) is { } installed
+                ? ((installed, new TextPosition(0, 0)), $"{dependency.Name}'s package.json")
+                : (null, $"{dependency.Name} is not installed: there is no node_modules/{dependency.Name}/package.json over {document.Name} (npm install puts it there)");
+        }
+        if (path is [{ Name: "scripts" } scripts, _] && RunAt(text, offset) is { } script
+            && scripts.Children?.FirstOrDefault(s => s.Name == script) is { } declared)
+        {
+            return ((document.Path, new TextPosition(declared.SelectionRange.Start.Line, declared.SelectionRange.Start.Character + 1)), $"The script {script}");
+        }
+        return (null, NoDeclaration);
     }
 
     /// <summary>Rename where the server has none (JSON's): the property name at the caret, quotes kept, and in a
@@ -137,36 +145,23 @@ public sealed partial class CodeAssist
                     return;
                 }
                 ServerLines lines = ServerLines.Of(asked.Snapshot);
-                LspPosition at = lines.PositionOf(Math.Min(caret, asked.Snapshot.Length));
-                List<DocumentSymbol> path = JsonPath(outline, at);
-                if (path.Count == 0 || !Within(path[^1].SelectionRange, at))
+                if (JsonPropertyAt(outline, lines, caret) is not { } at)
                 {
                     Message?.Invoke(this, "Nothing to rename here: put the caret on a property's name");
                     return;
                 }
-                DocumentSymbol property = path[^1];
-                TextRange key = TextRange.FromBounds(lines.OffsetOf(property.SelectionRange.Start), lines.OffsetOf(property.SelectionRange.End));
+                DocumentSymbol property = at.Path[^1];
                 RenameBox box = new(property.Name);
                 shown = true;
-                ShowModal(box, asked.MapOffset(key.Start), name =>
+                ShowModal(box, asked.MapOffset(at.Key.Start), name =>
                 {
                     using ChangeTracker made = asked;
                     if (name is null || name == property.Name || editors.Active != document)
                     {
                         return Task.CompletedTask;
                     }
-                    List<TextEdit> edits = [new TextEdit(key.Start, key.Length, JsonSerializer.Serialize(name))];
-                    if (IsPackageJson(document) && path is [{ Name: "scripts" } scripts, _])
-                    {
-                        TextRange within = TextRange.FromBounds(lines.OffsetOf(scripts.Range.Start), lines.OffsetOf(scripts.Range.End));
-                        string text = asked.Snapshot.GetText(within);
-                        foreach (Match run in Runs(property.Name).Matches(text))
-                        {
-                            Group script = run.Groups["script"];
-                            edits.Add(new TextEdit(within.Start + script.Index, script.Length, name));
-                        }
-                    }
-                    if (asked.Map([.. edits.OrderBy(e => e.Start)]) is not { } placed)
+                    IReadOnlyList<TextEdit> edits = JsonRenameEdits(at.Path, at.Key, lines, name, IsPackageJson(document));
+                    if (asked.Map(edits) is not { } placed)
                     {
                         Message?.Invoke(this, "Rename was not applied: the property was edited meanwhile");
                         return Task.CompletedTask;
@@ -187,7 +182,39 @@ public sealed partial class CodeAssist
         }, closeModal: false);
     }
 
-    private static bool IsPackageJson(OpenDocument document) => Path.GetFileName(document.Path).Equals("package.json", StringComparison.OrdinalIgnoreCase);
+    /// <summary>The JSON property whose name is at an offset of the text the outline is of: its path from the top, and its
+    /// name's range, quotes and all; null where the offset is on no property's name.</summary>
+    internal static (List<DocumentSymbol> Path, TextRange Key)? JsonPropertyAt(IReadOnlyList<DocumentSymbol> outline, ServerLines lines, int offset)
+    {
+        LspPosition at = lines.PositionOf(Math.Min(offset, lines.Text.Length));
+        List<DocumentSymbol> path = JsonPath(outline, at);
+        if (path.Count == 0 || !Within(path[^1].SelectionRange, at))
+        {
+            return null;
+        }
+        DocumentSymbol property = path[^1];
+        return (path, TextRange.FromBounds(lines.OffsetOf(property.SelectionRange.Start), lines.OffsetOf(property.SelectionRange.End)));
+    }
+
+    /// <summary>Rename's edits for a JSON property, in order: its name, quoted, and in a package.json's scripts every
+    /// <c>npm run</c> of a script renamed with it.</summary>
+    internal static IReadOnlyList<TextEdit> JsonRenameEdits(List<DocumentSymbol> path, TextRange key, ServerLines lines, string name, bool packageJson)
+    {
+        List<TextEdit> edits = [new TextEdit(key.Start, key.Length, JsonSerializer.Serialize(name))];
+        if (packageJson && path is [{ Name: "scripts" } scripts, _])
+        {
+            TextRange within = TextRange.FromBounds(lines.OffsetOf(scripts.Range.Start), lines.OffsetOf(scripts.Range.End));
+            string text = lines.Text.GetText(within);
+            foreach (Match run in Runs(path[^1].Name).Matches(text))
+            {
+                Group script = run.Groups["script"];
+                edits.Add(new TextEdit(within.Start + script.Index, script.Length, name));
+            }
+        }
+        return [.. edits.OrderBy(e => e.Start)];
+    }
+
+    internal static bool IsPackageJson(OpenDocument document) => Path.GetFileName(document.Path).Equals("package.json", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The properties from the document's top to the one whose name or value holds a place, outermost first.</summary>
     private static List<DocumentSymbol> JsonPath(IReadOnlyList<DocumentSymbol> symbols, LspPosition at)
