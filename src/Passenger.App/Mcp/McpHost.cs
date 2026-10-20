@@ -224,8 +224,8 @@ public static partial class McpHost
         IsHeadless = true;
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
-        // Standard output is the protocol's alone: anything else written to the console goes to stderr.
-        Console.SetOut(Console.Error);
+        // Standard output is the protocol's alone, and standard error the agent may never read: the console goes to the log.
+        IdeLog.TakeConsole();
 
         AppBuilder.Configure<App>()
             .UseSkia()
@@ -271,7 +271,8 @@ public static partial class McpHost
     {
         IsHeadless = true;
         Stream input = Console.OpenStandardInput();
-        Console.SetOut(Console.Error);
+        // Its starter (a test run's --mcp-attach) reads nothing of its output or error: the console goes to the log.
+        IdeLog.TakeConsole();
         AppBuilder.Configure<App>()
             .UseSkia()
             .UseHarfBuzz()

@@ -56,8 +56,8 @@ public sealed class McpProxy
     {
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
-        // Standard output is the protocol's alone: anything else written to the console goes to stderr.
-        Console.SetOut(Console.Error);
+        // Standard output is the protocol's alone, and standard error the agent may never read: the console goes to the log.
+        IdeLog.TakeConsole();
         McpProxy proxy = new(processId, PathNames.Canonical(folder ?? Environment.CurrentDirectory));
         McpServerPrimitiveCollection<McpServerTool> tools = [];
         foreach (MethodInfo method in McpHost.ToolMethods())
@@ -273,11 +273,14 @@ public sealed class McpProxy
         if (Environment.GetEnvironmentVariable(StartVariable) == "headless")
         {
             ProcessStartInfo start = ChildProcesses.Command(self, ["--headless", here], here);
-            // Its input kept: its end, with this process, ends it; its output is never the agent's protocol.
+            // Its input kept: its end, with this process, ends it; its output is never the agent's protocol, nor its error the
+            // agent's to read.
             start.RedirectStandardInput = true;
             start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
             headless = ChildProcesses.Start(start);
             _ = headless.StandardOutput.BaseStream.CopyToAsync(Stream.Null, CancellationToken.None);
+            _ = headless.StandardError.BaseStream.CopyToAsync(Stream.Null, CancellationToken.None);
             return;
         }
         if (OperatingSystem.IsMacOS() && Bundle(self) is { } app)
