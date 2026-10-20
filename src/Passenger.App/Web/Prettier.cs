@@ -118,9 +118,10 @@ public sealed class PrettierService : IAsyncDisposable
                 runner = null;
             }
             runner ??= Runner.Start(runtime.Path!, folder);
+            int id = ++asked;
             JsonObject request = new()
             {
-                ["id"] = ++asked,
+                ["id"] = id,
                 ["prettier"] = package,
                 ["file"] = path,
                 ["text"] = text,
@@ -149,7 +150,15 @@ public sealed class PrettierService : IAsyncDisposable
                 runner = null;
                 return new PrettierAnswer(Error: "Prettier's runner ended before it answered; the IDE's log has what it said");
             }
-            PrettierAnswer answer = Read(line);
+            if (Read(line, id) is not { } answer)
+            {
+                // After a line that is not this request's answer, every answer would be the request's before: the runner goes.
+                string said = line[..Math.Min(line.Length, 200)];
+                IdeErrors.Write($"Prettier's runner (process {runner.ProcessId}) wrote what is not its answer for {path}, so it was ended: {said}");
+                runner.Dispose();
+                runner = null;
+                return new PrettierAnswer(Error: $"Prettier's runner wrote what is not its answer for {Path.GetFileName(path)}, so it was ended: {said}");
+            }
             if (!runner.Timed)
             {
                 runner.Timed = true;
@@ -163,12 +172,18 @@ public sealed class PrettierService : IAsyncDisposable
         }
     }
 
-    private static PrettierAnswer Read(string line)
+    /// <summary>The runner's answer to request <paramref name="id"/>; null for a line that is not it: another request's, or
+    /// no answer at all.</summary>
+    private static PrettierAnswer? Read(string line, int id)
     {
         try
         {
             using JsonDocument read = JsonDocument.Parse(line);
             JsonElement answer = read.RootElement;
+            if (answer.ValueKind != JsonValueKind.Object || !answer.TryGetProperty("id", out JsonElement asked) || !asked.TryGetInt32(out int answered) || answered != id)
+            {
+                return null;
+            }
             string? Text(string name) => answer.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             bool Flag(string name) => answer.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.True;
             int cursor = answer.TryGetProperty("cursor", out JsonElement at) && at.TryGetInt32(out int offset) ? offset : 0;
@@ -176,7 +191,7 @@ public sealed class PrettierService : IAsyncDisposable
         }
         catch (JsonException)
         {
-            return new PrettierAnswer(Error: $"Prettier's runner answered what is not JSON: {line[..Math.Min(line.Length, 200)]}");
+            return null;
         }
     }
 
@@ -212,9 +227,12 @@ public sealed class PrettierService : IAsyncDisposable
         {
             this.process = process;
             Node = node;
+            ProcessId = process.Id;
         }
 
         public string Node { get; }
+
+        public int ProcessId { get; }
 
         /// <summary>Whether its first format's time has been logged.</summary>
         public bool Timed { get; set; }
@@ -241,11 +259,13 @@ public sealed class PrettierService : IAsyncDisposable
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
             Process process = ChildProcesses.Start(start);
+            int id = process.Id;
+            // What a plugin or configuration prints comes here too: the runner keeps its output for the answers.
             process.ErrorDataReceived += (_, e) =>
             {
                 if (e.Data is { Length: > 0 } said)
                 {
-                    IdeErrors.Write($"Prettier runner (process {process.Id}): {said}");
+                    IdeErrors.Write($"Prettier runner (process {id}): {said}");
                 }
             };
             process.BeginErrorReadLine();

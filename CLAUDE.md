@@ -247,7 +247,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   on the project's own eslint (`ProjectPackages`: found from the file up, or Settings' Manual package); its fixes are
   commands whose edits come back as `workspace/applyEdit` (`ServerStart.ApplyEdit`, applied through `WorkspaceEdits`),
   and its markers go beside the server's (`WebDocument.ShowLint`). `WebLanguages.Prettier` runs the project's prettier
-  through `Web/prettier.cjs` (carried as `web/passenger/prettier.cjs`), one warm Node.js per folder over JSON lines.
+  through `Web/prettier.cjs` (carried as `web/passenger/prettier.cjs`), one warm Node.js per folder over JSON lines:
+  a request's answer is the line of its id (any other line ends the runner), and what a plugin or configuration prints
+  goes to its standard error, the IDE's log.
   `CodeAssist.Linting.cs` is ESLint's context actions, Fix ESLint Problems, Reformat Code / Reformat with Prettier and
   `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only. A banner's link is
   `OpenDocument.NoticeAction` (Run 'npm install', through ChildProcesses).

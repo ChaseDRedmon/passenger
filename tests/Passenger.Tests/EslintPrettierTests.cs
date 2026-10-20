@@ -188,6 +188,35 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     }
 
     [AvaloniaFact]
+    public void Each_file_Prettier_formats_gets_its_own_text_back_though_its_configuration_prints_to_standard_output()
+    {
+        Project.SkipWithoutNode();
+        project.AddFolder("src/noisy",
+            (".prettierrc.cjs", "console.log(\"the noisy configuration loads\");\nmodule.exports = { semi: false, singleQuote: true };\n"),
+            ("first.js", "const  first = {name:\"tea\"};\nlet  more = 1;\n"),
+            ("second.js", "const  second = [1,2,3];\nconsole.log( second );\n"));
+        MainWindow window = project.Open("src/noisy/first.js");
+        try
+        {
+            ReformatWithPrettier(window);
+            Assert.Equal("Prettier: formatted 2 lines", window.Status);
+            Assert.Equal("const first = { name: 'tea' }\nlet more = 1\n", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+
+            window.OpenFile(project.PathOf("src/noisy/second.js"));
+            Ui.Settle();
+            ReformatWithPrettier(window);
+            string second = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+            Assert.True(second == "const second = [1, 2, 3]\nconsole.log(second)\n", $"second.js was not given its own text by Prettier:\n{second}");
+            Assert.Contains("the noisy configuration loads", Ui.IdeLog(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_json_listing_ESLint_and_Prettier_not_installed_says_so_in_the_banner_whose_link_runs_npm_install_there_and_a_Manual_ESLint_checks_it()
     {
         Project.SkipWithoutNode();
@@ -305,6 +334,13 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         Ui.Settle();
     }
 
+    /// <summary>Reformat with Prettier on the file shown, done.</summary>
+    private static void ReformatWithPrettier(MainWindow window)
+    {
+        Assert.True(window.Perform(AppActions.ReformatWithPrettier), "Reformat with Prettier did not run");
+        Ui.Settle();
+    }
+
     private static void Click(Window window, Control control)
     {
         Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
@@ -344,6 +380,8 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
 
         public const string Legacy = "const  kept   =   \"as written\";\nconsole.log(kept);\n";
 
+        private readonly List<string> added = [];
+
         private static readonly (string Path, string Text)[] Files =
         [
             ("package.json", Package),
@@ -372,9 +410,30 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         /// <summary>A file's path as the IDE names it: canonical, its '/' Windows' '\' there, so it compares with an open file's.</summary>
         public string PathOf(string relative) => Path.GetFullPath(Path.Combine(PathNames.Canonical(Folder), relative));
 
-        /// <summary>Every file as written, whatever a test saved.</summary>
+        /// <summary>A folder of a test's own in the project, with its files, gone again at <see cref="Reset"/>; its path.</summary>
+        public string AddFolder(string relative, params (string Name, string Text)[] files)
+        {
+            string folder = Path.Combine(Folder, relative);
+            Directory.CreateDirectory(folder);
+            added.Add(folder);
+            foreach ((string name, string text) in files)
+            {
+                File.WriteAllText(Path.Combine(folder, name), text);
+            }
+            return folder;
+        }
+
+        /// <summary>Every file as written, whatever a test saved, and the folders a test added gone.</summary>
         public void Reset()
         {
+            foreach (string folder in added)
+            {
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+            }
+            added.Clear();
             foreach ((string path, string text) in Files)
             {
                 string full = Path.Combine(Folder, path);
