@@ -524,7 +524,7 @@ public sealed class OpenDocument : Observable
         TextEdit[] sorted = [.. edits.OrderBy(e => e.Start)];
         string changed = Text.Snapshot.Apply(sorted).ToString();
         // Written before anything changes, so a write that fails leaves the file and the editor as they were.
-        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR) : null;
+        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR, makeFolder: false) : null;
         Text.Perform(sorted, carets, TextEditing.MapThrough(carets, sorted).Clamp(changed.Length),
             () => Undoable(() => Settle(before, write)),
             () => Undoable(() => Settle(after, write)));
@@ -777,6 +777,20 @@ public sealed class OpenDocument : Observable
         return false;
     }
 
+    /// <summary>Whether a file holds the text this one was last loaded or saved with, read as this one is read: the same
+    /// file under another name, once its folder was moved.</summary>
+    public bool IsSavedAt(string path)
+    {
+        try
+        {
+            return File.Exists(path) && FileText.Load(path, Chosen)?.Text == Text.Saved.ToString();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
     private Encoding? Chosen => encodingChosen ? Encoding : null;
 
@@ -819,8 +833,9 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Writes the file, first doing to its text what its .editorconfig asks of a save (trailing whitespace off
     /// every line without one of <paramref name="carets"/>, a final line break, every break its <c>end_of_line</c>, as
-    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays.</summary>
-    public void Save(SelectionSet? carets = null)
+    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays. Its folder, once
+    /// another program moved or deleted it, is made again only when <paramref name="makeFolder"/> (the person's Save).</summary>
+    public void Save(SelectionSet? carets = null, bool makeFolder = false)
     {
         if (IsWorkbook)
         {
@@ -842,12 +857,13 @@ public sealed class OpenDocument : Observable
             SetSeparator(separator);
         }
         FileEncoding? charset = encodingChosen ? null : Conventions.Charset;
-        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom);
+        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom, makeFolder);
     }
 
     /// <summary>Writes the text as it stands, in an encoding and the file's line separator, and takes that as how the
     /// file is stored.</summary>
-    private void Write(Encoding encoding, bool bom) => Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks));
+    private void Write(Encoding encoding, bool bom, bool makeFolder = false) =>
+        Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks, makeFolder));
 
     /// <summary>Takes how a write stored the file, which now holds the text.</summary>
     private void Wrote((FileText Written, string? Converted) write)

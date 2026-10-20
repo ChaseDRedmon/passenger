@@ -460,11 +460,19 @@ public sealed class ProjectSession : IAsyncDisposable
     /// follow it, and the language server knows an open file at its new path.</summary>
     public void Moved(FileMove move)
     {
+        Vcs.Moved(move.From, move.To);
+        LocalHistory?.Moved(move.From, move.To);
+        Followed(move);
+    }
+
+    /// <summary>A folder another program moved, which open files followed: its bookmarks and breakpoints, the recent
+    /// files and the places follow it too, and the language servers know the open files at their new paths. Git and
+    /// Local History read that move from the disk themselves.</summary>
+    public void Followed(FileMove move)
+    {
         Bookmarks.Move(move.From, move.To);
         Debug.Breakpoints.Move(move.From, move.To);
-        Vcs.Moved(move.From, move.To);
         Navigation.Move(move.From, move.To);
-        LocalHistory?.Moved(move.From, move.To);
         for (int i = 0; i < recent.Count; i++)
         {
             recent[i] = PathNames.Moved(recent[i], move.From, move.To);

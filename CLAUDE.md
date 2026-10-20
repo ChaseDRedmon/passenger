@@ -526,7 +526,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on Windows its
   attributes, ACL and streams (ReplaceFile, `FileText.Over`), on macOS its tags, ACL and creation date
   (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
-  window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), Local History given the old bytes; projects,
+  window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), an open file whose folder another program moved
+  or deleted written back there only by the person's Save or Save All (`FolderGoneException`: no autosave makes that
+  folder again; the open files under a folder moved elsewhere follow it, `EditorArea.FollowMove`), Local History given
+  the old bytes; projects,
   solutions, nuget.config, .gitignore and merge results included, never `File.WriteAll*`. A server's edit to files not
   open goes through `WorkspaceEdits.StaleAsync` (refused if one was written within 2 s of the request or its text differs
   from the server's, the extension's `DocumentTexts`; an agent's call waits for the server instead, `Patience`). A project edit or a save waits out a reader that shares no

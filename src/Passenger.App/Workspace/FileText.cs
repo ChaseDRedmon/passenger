@@ -140,14 +140,15 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// on macOS its extended attributes, ACL and creation date), one deleted since it was opened is written anew, and a
     /// read-only one is refused. A text the encoding cannot hold is written as UTF-8, never with question marks, the result
     /// saying so. A CR file (<paramref name="crBreaks"/>) has each of the text's breaks written as '\r'.</summary>
-    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false)
+    /// <param name="makeFolder">Whether a folder no longer there is made again for it (<see cref="FolderGoneException"/>).</param>
+    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false, bool makeFolder = true)
     {
         string? unheld = Unheld(encoding, text);
         FileText written = unheld is null ? new FileText(text, encoding, bom, crBreaks) : new FileText(text, new UTF8Encoding(false), false, crBreaks);
         Writing?.Invoke(path);
         byte[] preamble = written.HasBom ? Preamble(written.Encoding) : [];
         byte[] body = written.Encoding.GetBytes(crBreaks ? LineEndings.In(text, "\r") : text);
-        Write(path, preamble, body, written.Encoding);
+        Write(path, preamble, body, written.Encoding, makeFolder);
         return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {FileEncoding.Of(encoding, bom).Name} cannot hold '{unheld}'");
     }
 
@@ -156,7 +157,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     public static void Restore(string path, byte[] bytes)
     {
         Writing?.Invoke(path);
-        Write(path, [], bytes, null);
+        Write(path, [], bytes, null, makeFolder: true);
     }
 
     /// <summary>Whether a file (through a symlink, its target) is there and marked read-only, as Perforce and TFVC mark a
@@ -186,13 +187,18 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         new FileInfo(path).LinkTarget is not null ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
 
     /// <param name="encoding">What the text was written in; null for bytes put back as a file had them.</param>
-    private static void Write(string path, byte[] preamble, byte[] body, Encoding? encoding)
+    private static void Write(string path, byte[] preamble, byte[] body, Encoding? encoding, bool makeFolder)
     {
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
         if (!there)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            string folder = Path.GetDirectoryName(target)!;
+            if (!makeFolder && !Directory.Exists(folder))
+            {
+                throw new FolderGoneException(folder);
+            }
+            Directory.CreateDirectory(folder);
         }
         else if (new FileInfo(target) is { Exists: true, IsReadOnly: true })
         {
@@ -341,6 +347,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
 
     private byte[] Bytes(Encoding encoding, bool bom) => [.. bom ? Preamble(encoding) : [], .. encoding.GetBytes(Text)];
 }
+
+/// <summary>A save refused because the file's folder is no longer there (moved, renamed or deleted by another program),
+/// which only a save the person asked for makes again, so an autosave never brings back a folder moved away: an
+/// IOException, so every writer's failure says it.</summary>
+public sealed class FolderGoneException(string folder) : IOException($"its folder {Path.GetFileName(folder)} was moved or deleted, and only Save makes it again");
 
 /// <summary>A write refused because the file is read-only (<see cref="FileText.IsReadOnly"/>), which only the person's
 /// Clear Read-Only Status makes writable: an IOException, so every writer's failure says it.</summary>

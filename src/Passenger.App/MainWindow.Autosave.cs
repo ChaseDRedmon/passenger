@@ -10,7 +10,8 @@ namespace Passenger.App;
 /// <summary>Rider's autosave: an edit is never lost and closing never asks. Every changed file is saved before the
 /// window closes (quitting included) or another folder opens, and, each as Settings says, when the focus goes to
 /// another program or to the terminal and once the IDE has been idle a while. Nor is a character the file's encoding
-/// cannot hold: the file is saved as UTF-8 instead, and the status bar says so.</summary>
+/// cannot hold: the file is saved as UTF-8 instead, and the status bar says so. A file whose folder another program moved
+/// or deleted is never written back there but by the person's Save, which the status bar says.</summary>
 public partial class MainWindow
 {
     private readonly DispatcherTimer idleSave = new();
@@ -105,7 +106,7 @@ public partial class MainWindow
             }
             if (all)
             {
-                Editors.SaveAll();
+                Editors.SaveAll(asked: true);
             }
             else
             {

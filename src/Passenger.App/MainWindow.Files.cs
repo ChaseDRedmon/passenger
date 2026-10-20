@@ -23,6 +23,8 @@ public partial class MainWindow
         Explorer.CanPaste = () => held is not null;
         Explorer.NestingAsked += (_, _) => _ = AskNestingAsync();
         Editors.Moved += (_, move) => OnFileMoved(move);
+        // The watcher that saw the move reads the Explorer, the index and Git again itself.
+        Editors.Followed += (_, move) => session.Followed(move);
     }
 
     /// <summary>Rider's File Nesting, over the window: its "Show files with the same names as nested" is the setting every
