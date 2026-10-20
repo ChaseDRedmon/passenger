@@ -235,34 +235,41 @@ public sealed class TestController : IAsyncDisposable
             lastRun = chosen ?? [];
             working?.Say($"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}…");
             Tree.Begin(tests);
-            Changed?.Invoke(this, EventArgs.Empty);
-            Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
-            HashSet<TestOutcome> applied = new(ReferenceEqualityComparer.Instance);
-            void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
             RunSummary? summary = null;
-            // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
-            Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
-                .ToDictionary(p => p, EnvironmentOf, StringComparer.Ordinal);
-            foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
-                .Select(t => (Test: t, Environment: environments[t.Project]))
-                .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
+            try
             {
-                if (summary is { Canceled: true })
+                Changed?.Invoke(this, EventArgs.Empty);
+                Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
+                HashSet<TestOutcome> applied = new(ReferenceEqualityComparer.Instance);
+                void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
+                // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
+                Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
+                    .ToDictionary(p => p, EnvironmentOf, StringComparer.Ordinal);
+                foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
+                    .Select(t => (Test: t, Environment: environments[t.Project]))
+                    .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
                 {
-                    break;
+                    if (summary is { Canceled: true })
+                    {
+                        break;
+                    }
+                    RunSummary part = await runner!.RunAsync(
+                        [.. group.Select(t => t.Test)],
+                        UiThread.Marshal<IReadOnlyList<TestOutcome>>(Apply),
+                        log: UiThread.Marshal(log),
+                        debugger: debug ? new DebugLauncher(this) : null,
+                        environment: group.First().Environment,
+                        cancel: stop.Token);
+                    summary = summary is null ? part : summary.And(part);
                 }
-                RunSummary part = await runner!.RunAsync(
-                    [.. group.Select(t => t.Test)],
-                    UiThread.Marshal<IReadOnlyList<TestOutcome>>(Apply),
-                    log: UiThread.Marshal(log),
-                    debugger: debug ? new DebugLauncher(this) : null,
-                    environment: group.First().Environment,
-                    cancel: stop.Token);
-                summary = summary is null ? part : summary.And(part);
+                // A runner may tell an outcome on another thread behind the run's end: every one is in before the end is.
+                Apply(summary!.Outcomes);
             }
-            // A runner may tell an outcome on another thread behind the run's end: every one is in before the end is.
-            Apply(summary!.Outcomes);
-            Tree.End();
+            finally
+            {
+                // However the run ends, a runner's failure included, what it began and never heard of is no longer running.
+                Tree.End();
+            }
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
             if (!summary.Canceled)
