@@ -159,6 +159,34 @@ public sealed partial class McpTests
         }
     }
 
+    /// <summary>An agent that gives up on the call the window's let-in question holds takes the question away, as a tool's
+    /// is: nothing waits on it, and a later "Allow" would let in an agent that asked nothing. The window's limit is long,
+    /// so only the giving up can close it within the wait.</summary>
+    [AvaloniaFact]
+    public void An_agent_giving_up_on_its_call_takes_the_windows_question_away()
+    {
+        string unattended = Plain("mcp-given-up-");
+        MainWindow window = new() { Width = 1200, Height = 800, AgentAnswerLimit = TimeSpan.FromMinutes(10) };
+        window.Show();
+        window.OpenFolder(unattended);
+        Ui.Settle();
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            using CancellationTokenSource giveUp = new();
+            Task<CallToolResult> givenUp = Task.Run(() => CallGivingUp(client, "workspace", new(), giveUp.Token));
+            WaitFor(() => window.OwnedWindows.OfType<AgentAdmissionDialog>().Any(d => d.IsVisible), "the window to ask whether the agent may work there");
+            giveUp.Cancel();
+            WaitFor(() => givenUp.IsCompleted && !window.OwnedWindows.OfType<AgentAdmissionDialog>().Any(d => d.IsVisible) && window.AgentStatus is null,
+                "the question to go once the agent gave up on the call that waited on it");
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+        }
+    }
+
     /// <summary>Nobody at the window: an agent's call that waits for the person to let it in, and one that waits for their
     /// leave to build, each come back once the window's limit is up, saying nobody answered, the question gone; meanwhile
     /// the status bar says who waits on what and the agent hears, through --mcp-attach, what it waits on; a later call asks

@@ -175,8 +175,8 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
     /// <summary>Each tool's question while the person is asked it, which every call of that tool waits on.</summary>
     private readonly Dictionary<string, Asked> allowing = new(StringComparer.Ordinal);
 
-    /// <summary>The question whether the agent may work in the window, while the person is asked it.</summary>
-    private Task<Admission>? asking;
+    /// <summary>The question whether the agent may work in the window, while the person is asked it, which every call waits on.</summary>
+    private Asked? asking;
 
     /// <summary>Cancelled when the agent goes, or the window stops letting agents in.</summary>
     public CancellationToken Gone { get; } = gone;
@@ -200,7 +200,8 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
 
     /// <summary>Lets the agent into a person's window before its call goes on, or says why not: at once while Enable MCP
     /// Server is on, the folder's Always holds or nobody is at the window; else the person is asked, once for every call
-    /// waiting, for at most the window's limit. A no, or no answer, is the call's answer, and a later call asks again.</summary>
+    /// waiting, for at most the window's limit, the question going away unanswered once none waits, as a tool's does. A no,
+    /// or no answer, is the call's answer, and a later call asks again.</summary>
     internal async Task<string?> AdmitAsync(MainWindow window, AgentCall call, CancellationToken cancel)
     {
         UiThread.Check();
@@ -213,31 +214,36 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
             Admit(window);
             return null;
         }
-        // A no that came after its calls gave up is no answer to this one, which asks again.
-        if (asking is { IsCompletedSuccessfully: true } past && past.Result != Admission.Allowed)
+        if (asking is null)
         {
-            asking = null;
+            CancellationTokenSource takenAway = CancellationTokenSource.CreateLinkedTokenSource(Gone);
+            asking = new(window.AskToLetInAsync(Agent, takenAway.Token), takenAway);
         }
-        asking ??= window.AskToLetInAsync(Agent, Gone);
-        Task<Admission> answer = asking;
+        Asked asked = asking;
+        asked.Waiting++;
         call.Waits($"Waiting for the person at {Where(window)} to let {Agent} in (at most {Limit(window)})");
         Admission said;
         try
         {
-            said = await answer.WaitAsync(cancel);
+            said = await asked.Answer.WaitAsync(cancel);
         }
         finally
         {
-            call.Waited(answer.IsCompletedSuccessfully ? answer.Result.ToString() : "given up");
+            call.Waited(asked.Answer.IsCompletedSuccessfully ? asked.Answer.Result.ToString() : "given up");
+            // The last call waiting gives the question up: it closes unanswered, and the next call asks again.
+            if (--asked.Waiting == 0 && !asked.Answer.IsCompleted)
+            {
+                asked.TakenAway.Cancel();
+            }
+            if (asking == asked && (asked.Waiting == 0 || asked.Answer.IsCompleted))
+            {
+                asking = null;
+            }
         }
         if (said == Admission.Allowed)
         {
             Admit(window);
             return null;
-        }
-        if (asking == answer)
-        {
-            asking = null;
         }
         return said == Admission.NotAllowed
             ? $"The person at {Where(window)} did not let {Agent} work there. Ask them, or do without it; a later call asks them again."

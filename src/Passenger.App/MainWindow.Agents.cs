@@ -132,16 +132,16 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Asks the person whether an agent may work in the window, its call waiting: Allow, with Always for this
-    /// folder kept with the folder, Don't allow, or no answer within <see cref="AgentAnswerLimit"/> or before the agent
-    /// goes, which takes the question away.</summary>
-    internal async Task<Admission> AskToLetInAsync(string agent, CancellationToken gone)
+    /// <summary>Asks the person whether an agent may work in the window, its calls waiting: Allow, with Always for this
+    /// folder kept with the folder, Don't allow, or no answer within <see cref="AgentAnswerLimit"/> or before
+    /// <paramref name="takenAway"/> (no call waits any more, or the agent went), which takes the question away.</summary>
+    internal async Task<Admission> AskToLetInAsync(string agent, CancellationToken takenAway)
     {
         UiThread.Check();
         string? folder = Folder;
         AgentAdmissionDialog dialog = new(agent, folder);
         IdeErrors.Write($"Agents: {agent} asks to work in the window on {folder ?? "no folder"}");
-        Admission said = await AskForAgentAsync(dialog, Admission.NotAllowed, $"{agent} waits for you: let it in?", gone) ?? Admission.Unanswered;
+        Admission said = await AskForAgentAsync(dialog, Admission.NotAllowed, $"{agent} waits for you: let it in?", takenAway) ?? Admission.Unanswered;
         if (said == Admission.Allowed && dialog.Always && folder is not null && !LetsIn(settings, folder))
         {
             // Settings' list, which every window over the folder follows and the person's settings keep.
