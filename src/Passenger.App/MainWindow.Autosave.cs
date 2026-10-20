@@ -91,12 +91,13 @@ public partial class MainWindow
         base.OnClosing(e);
     }
 
-    /// <summary>File, Save (the file shown) or Save All: each changed file first gets what Settings ask of a save, Rider's
-    /// actions on save (Run eslint --fix on save, then Prettier's Run on save), which Rider runs on an explicit save and
-    /// never on autosave, each one undoable edit. The files are saved whatever came of those.</summary>
+    /// <summary>File, Save (the file shown as it is pressed) or Save All: each changed file first gets what Settings ask of
+    /// a save, Rider's actions on save (Run eslint --fix on save, then Prettier's Run on save), which Rider runs on an
+    /// explicit save and never on autosave, each one undoable edit. The files are saved whatever came of those.</summary>
     private async Task SaveExplicitly(bool all)
     {
-        List<OpenDocument> saving = all ? [.. Editors.Documents.Where(d => d.IsModified)] : Editors.Active is { IsModified: true } shown ? [shown] : [];
+        OpenDocument? pressed = all ? null : Editors.Active;
+        List<OpenDocument> saving = all ? [.. Editors.Documents.Where(d => d.IsModified)] : pressed is { IsModified: true } ? [pressed] : [];
         BackgroundWork.Begin();
         try
         {
@@ -116,9 +117,9 @@ public partial class MainWindow
             {
                 Editors.SaveAll(asked: true);
             }
-            else
+            else if (pressed is not null)
             {
-                Editors.SaveActive();
+                Editors.SaveAsked(pressed);
             }
         }
         finally

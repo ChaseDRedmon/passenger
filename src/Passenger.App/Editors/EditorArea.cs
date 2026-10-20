@@ -461,12 +461,13 @@ public sealed partial class EditorArea : UserControl
         }
     }
 
-    /// <summary>File, Save: the file shown, its folder made again if another program moved or deleted it, as asked.</summary>
-    public void SaveActive()
+    /// <summary>File, Save: the file shown when it was pressed, whichever is shown by now, its folder made again if another
+    /// program moved or deleted it, as asked; nothing once that file has closed.</summary>
+    public void SaveAsked(OpenDocument document)
     {
-        if (Active is { } active)
+        if (documents.Contains(document))
         {
-            TrySave(active, asked: true);
+            TrySave(document, asked: true);
         }
     }
 

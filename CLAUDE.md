@@ -251,8 +251,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   Prettier 2 or 3: a request's answer is the line of its id (any other line ends the runner), and what a plugin or
   configuration prints goes to its standard error, the IDE's log.
   `CodeAssist.Linting.cs` is ESLint's context actions, Fix ESLint Problems, Reformat Code / Reformat with Prettier and
-  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only, then saving the files whatever
-  came of them. A banner's link is
+  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only, then saving the files it was pressed
+  on (Save's, the one shown then) whatever came of them. A banner's link is
   `OpenDocument.NoticeAction` (Run 'npm install', through ChildProcesses).
 - `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
   `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one

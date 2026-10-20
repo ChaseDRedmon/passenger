@@ -250,6 +250,41 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     }
 
     [AvaloniaFact]
+    public void Save_saves_the_file_it_was_pressed_on_though_another_tab_is_chosen_while_Prettier_formats_it()
+    {
+        Project.SkipWithoutNode();
+        string held = project.AddFolder("src/held", (".prettierrc.cjs", Project.Holding), ("first.js", "const  first = {name:\"tea\"};\n"));
+        MainWindow window = project.Open("src/format.js");
+        try
+        {
+            window.ApplySettings(window.Settings with { PrettierOnSave = true });
+            OpenDocument other = window.EditorArea.Active!;
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// Not saved.\n")]);
+            window.OpenFile(project.PathOf("src/held/first.js"));
+            Ui.Settle();
+            OpenDocument first = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "let  more = 1;\n")]);
+
+            Assert.True(window.Perform(AppActions.Save), "Save did not run");
+            Processes.WrittenId(Path.Combine(held, "started"), "Prettier to start formatting first.js");
+            window.OpenFile(project.PathOf("src/format.js"));
+            Assert.Same(other, window.EditorArea.Active);
+            File.WriteAllText(Path.Combine(held, "go"), string.Empty);
+            Ui.WaitFor(() => !first.IsModified, "first.js, which Save was pressed on, saved once Prettier formatted it");
+            Assert.Equal("const first = { name: 'tea' }\nlet more = 1\n", File.ReadAllText(project.PathOf("src/held/first.js")));
+            Assert.True(other.IsModified, "format.js was saved, the tab chosen while Prettier formatted the file Save was pressed on");
+            Assert.Equal(Project.Format, File.ReadAllText(project.PathOf("src/format.js")));
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
     public void Save_saves_the_file_though_Prettiers_runner_ends_or_the_folder_closes_while_it_formats()
     {
         Project.SkipWithoutNode();
