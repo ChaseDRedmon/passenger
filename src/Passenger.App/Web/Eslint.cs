@@ -159,13 +159,16 @@ public sealed class EslintService : IAsyncDisposable
         CancellationTokenSource started = new();
         cancel = started;
         BackgroundWork.Begin();
-        Task<LanguageSession?> start = StartAsync(started.Token);
+        Task<LanguageSession?> start = StartAsync(started);
         // One that could not start said so before it returned, its end already past.
         starting = start.IsCompleted ? null : start;
     }
 
-    private async Task<LanguageSession?> StartAsync(CancellationToken cancelled)
+    /// <summary>One start of the server, <paramref name="own"/> its cancellation: the folder's start until another takes its
+    /// place (<see cref="End"/> cancels it first), after which its server, if it still comes, is ended rather than kept.</summary>
+    private async Task<LanguageSession?> StartAsync(CancellationTokenSource own)
     {
+        CancellationToken cancelled = own.Token;
         long began = Stopwatch.GetTimestamp();
         try
         {
@@ -192,7 +195,7 @@ public sealed class EslintService : IAsyncDisposable
                 ApplyEdit = edit => UiThread.InvokeAsync<string?>(() => disposed ? "the folder was closed" : ApplyEdit?.Invoke(edit) ?? "Passenger cannot make ESLint's edit here"),
             };
             LanguageSession started = await BackgroundWork.Run(() => LanguageSession.StartAsync(start, cancelled), cancelled);
-            if (cancelled.IsCancellationRequested || disposed)
+            if (cancelled.IsCancellationRequested || disposed || cancel != own)
             {
                 _ = Task.Run(() => started.DisposeAsync().AsTask());
                 return null;
@@ -220,7 +223,11 @@ public sealed class EslintService : IAsyncDisposable
         }
         finally
         {
-            starting = null;
+            // A start ended (Settings, the Node.js changed) unwinds after the one in its place has begun, which it leaves be.
+            if (cancel == own)
+            {
+                starting = null;
+            }
             Dispatcher.UIThread.Post(() => BackgroundWork.End());
         }
     }

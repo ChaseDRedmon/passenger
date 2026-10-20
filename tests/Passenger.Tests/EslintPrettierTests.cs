@@ -324,6 +324,56 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     }
 
     [AvaloniaFact]
+    public void ESLints_settings_changed_as_it_starts_leave_one_server_for_the_folder_which_ends_with_it()
+    {
+        Project.SkipWithoutNode();
+        List<int> servers = [];
+        void Heard(object? sender, ChildStart start)
+        {
+            if (start.Command.Contains("eslintServer.js", StringComparison.Ordinal))
+            {
+                lock (servers)
+                {
+                    servers.Add(start.ProcessId);
+                }
+            }
+        }
+        int[] Started()
+        {
+            lock (servers)
+            {
+                return [.. servers];
+            }
+        }
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        ChildProcesses.Started += Heard;
+        try
+        {
+            window.OpenFolder(project.Folder);
+            Ui.Settle();
+            window.OpenFile(project.PathOf("src/app.js"));
+            // ESLint's files changed while its server starts, and another file opened before the start in its place is done.
+            window.ApplySettings(window.Settings with { EslintFiles = "**/*.js" });
+            Ui.PumpUntil(() => Started().Length > 0, "an ESLint server to start");
+            window.OpenFile(project.PathOf("src/format.js"));
+            Ui.Settle();
+            // A start given up ends its server at once, which the system may take a moment to tell.
+            int[] running = [];
+            Ui.WaitFor(() => (running = [.. Started().Where(Processes.IsRunning)]).Length == 1, "one ESLint server, and no other, to run for the folder");
+            Assert.Null(window.CloseSolution());
+            Ui.WaitFor(() => !Processes.IsRunning(running[0]), "the folder's ESLint server to end with it");
+        }
+        finally
+        {
+            ChildProcesses.Started -= Heard;
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_json_listing_ESLint_and_Prettier_not_installed_says_so_in_the_banner_whose_link_runs_npm_install_there_and_a_Manual_ESLint_checks_it()
     {
         Project.SkipWithoutNode();
