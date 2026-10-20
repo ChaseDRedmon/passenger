@@ -713,6 +713,15 @@ public sealed class BuildRunController
         session.Builder.Stop();
     }
 
+    /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal), never
+    /// the debugger's session, a test run or a build, which Rerun does not run again.</summary>
+    public void StopRun()
+    {
+        parts.Work.Of(AppActions.RunProgram)?.Cancel();
+        session.Runner.Stop();
+        session.InTerminal?.Stop();
+    }
+
     /// <summary>Why Stop cannot run now: nothing it stops is running.</summary>
     public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Builder.IsRunning || parts.Work.CanStop ? null : "Nothing is running";
 }

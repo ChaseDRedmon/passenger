@@ -1837,6 +1837,60 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         }
     }
 
+    /// <summary>The Run window's Rerun ends only what Run started: a program debugged meanwhile, paused at a breakpoint, stays
+    /// paused in its session while Run's program is stopped and run again.</summary>
+    [AvaloniaFact]
+    public void The_run_windows_rerun_runs_runs_program_again_and_leaves_a_debugged_program_paused()
+    {
+        string runs = Path.Combine(PathNames.Canonical(Fresh()), "runs.pids");
+        Write("Program.cs", "if (Environment.GetEnvironmentVariable(\"PASSENGER_PIDS\") is { } file)\n{\n" +
+            "    File.AppendAllText(file, $\"{Environment.ProcessId}\\n\");\n    Thread.Sleep(Timeout.Infinite);\n}\nConsole.WriteLine(\"debugged\");\n");
+        MainWindow window = Open();
+        string project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj");
+        List<Passenger.App.Run.RunConfiguration> configurations =
+        [
+            new() { Name = "Debugged", Project = project },
+            new() { Name = "Ran", Project = project, Environment = new Dictionary<string, string> { ["PASSENGER_PIDS"] = runs } },
+        ];
+        window.SetConfigurations(configurations, "Debugged");
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(5, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the debugged program to stop at the breakpoint");
+        DebugSession debugged = window.Debugger.Session!;
+        int program = debugged.ProcessStarted.Result;
+        try
+        {
+            window.SetConfigurations(configurations, "Ran");
+            Assert.True(window.Perform(AppActions.RunProgram), $"Run did not start: {Ui.Said(window)}");
+            Ui.WaitFor(() => Runs().Length == 1, "Run's program to start", TimeSpan.FromMinutes(2));
+            int first = Runs()[0];
+
+            Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
+            Click(window, rerun);
+            Ui.WaitFor(() => Runs().Length == 2, "Run's program to run again", TimeSpan.FromMinutes(2));
+            Assert.True(Processes.Gone(first), $"Rerun left Run's first program going: {Processes.Describe(first)}");
+            Assert.True(window.IsRunning, "The program Rerun started again is not running");
+            Assert.True(window.Debugger.Session == debugged && debugged.State == DebugState.Paused,
+                $"Rerun of Run's program ended the debug session beside it: {Debugged(window)}");
+            Assert.True(Processes.IsRunning(program), $"Rerun of Run's program ended the program being debugged ({program})");
+
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging && !window.IsRunning, "Stop to end the debugged program and Run's");
+        }
+        finally
+        {
+            Processes.Kill(program);
+            foreach (int ran in Runs())
+            {
+                Processes.Kill(ran);
+            }
+        }
+        window.Close();
+
+        int[] Runs() => File.Exists(runs) ? [.. Ui.Shared(runs).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse)] : [];
+    }
+
     /// <summary>The window over the folder, its configuration "Sum in the terminal" debugging Sum in the terminal with these
     /// arguments, and chosen.</summary>
     private MainWindow InTerminal(string arguments)

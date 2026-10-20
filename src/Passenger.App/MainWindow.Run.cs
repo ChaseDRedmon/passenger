@@ -92,13 +92,14 @@ public partial class MainWindow
     /// <summary>Run, from its key, the toolbar or the Run window: what stopped it, if anything, is in the status bar.</summary>
     private void RunSelected() => _ = RunAsync();
 
-    /// <summary>Rerun of what Run started: the program still running stopped, its end waited for, and run again.</summary>
+    /// <summary>Rerun of what Run started: the program still running stopped, its end waited for, and run again; what else
+    /// runs (a debugged program, tests, a build) runs on.</summary>
     private async Task RerunAsync()
     {
         if (buildRun.IsRunning)
         {
             Task<int> ended = buildRun.RunEnd;
-            buildRun.Stop();
+            buildRun.StopRun();
             await ended;
         }
         await RunAsync();
