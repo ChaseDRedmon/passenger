@@ -131,7 +131,8 @@ public sealed partial class EditorArea : UserControl
         TitleWindows();
     }
 
-    /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be.</summary>
+    /// <summary>Opens text or a read-only asset in the active group (or shows its tab if open), returning why not when
+    /// the file cannot be read or decoded.</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
@@ -140,20 +141,15 @@ public sealed partial class EditorArea : UserControl
             Activate(open);
             return null;
         }
-        FileText? file;
+        OpenDocument document;
         try
         {
-            file = FileText.Load(full);
+            document = OpenDocument.Load(full);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return error.Message;
         }
-        if (file is null)
-        {
-            return $"{Path.GetFileName(full)} looks like a binary file.";
-        }
-        OpenDocument document = new(full, file);
         Opened?.Invoke(this, document);
         documents.Add(document);
         activeGroup.Add(document);
@@ -195,8 +191,16 @@ public sealed partial class EditorArea : UserControl
 
     /// <summary>A file's document for something beside the tabs to show and edit (Local History's diff): the open one, else
     /// one read from disk with no tab, held (<see cref="Hold"/>) until the hold is disposed. Null when it cannot be read as
-    /// text.</summary>
-    public (OpenDocument Document, IDisposable Hold)? Borrow(string path) => Load(path) is { } document ? (document, Hold(document)) : null;
+    /// text. An asset is never borrowed as editable text, even if its file has since been renamed.</summary>
+    public (OpenDocument Document, IDisposable Hold)? Borrow(string path)
+    {
+        string full = PathNames.Canonical(path);
+        if (AssetPreview.Supports(full))
+        {
+            return null;
+        }
+        return Load(full) is { Asset: null } document ? (document, Hold(document)) : null;
+    }
 
     /// <summary>Names a change made across files through these editors (a refactoring's), for Local History: held while
     /// the change is made.</summary>
@@ -449,10 +453,10 @@ public sealed partial class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Opens the find bar over the active file, with the replace row if asked.</summary>
+    /// <summary>Opens the find bar over the active text file, with the replace row if asked; never over an asset preview.</summary>
     public void ShowFind(bool replace)
     {
-        if (Active is not null)
+        if (Active is { Asset: null })
         {
             activeGroup.Find.Open(replace);
         }
@@ -527,8 +531,13 @@ public sealed partial class EditorArea : UserControl
         return null;
     }
 
+    /// <summary>Saves text, keeping edits on failure or a disk conflict. Assets need no save and never reach serialization.</summary>
     private bool TrySave(OpenDocument document, bool overDisk = false)
     {
+        if (document.Asset is not null)
+        {
+            return true;
+        }
         if (!overDisk && document.ChangedOnDisk())
         {
             SaveConflicted?.Invoke(this, document);
@@ -647,7 +656,7 @@ public sealed partial class EditorArea : UserControl
         return new EditorFrame.Leaf(group);
     }
 
-    /// <summary>A file's document, open already or read from disk now; null when it cannot be read as text.</summary>
+    /// <summary>A file's document, open already or loaded as text or an asset now; null when it cannot be loaded.</summary>
     private OpenDocument? Load(string path)
     {
         string full = PathNames.Canonical(path);
@@ -657,11 +666,7 @@ public sealed partial class EditorArea : UserControl
         }
         try
         {
-            if (FileText.Load(full) is not { } file)
-            {
-                return null;
-            }
-            OpenDocument document = new(full, file);
+            OpenDocument document = OpenDocument.Load(full);
             Opened?.Invoke(this, document);
             documents.Add(document);
             return document;
