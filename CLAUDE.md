@@ -23,6 +23,8 @@ just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dm
                            # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc;
                            # its window's background is tools/dmg-background.svg, drawn by sips at 1x and 2x into one TIFF
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
+just themes                # rewrite the generated themes (Theme/Sorbet.axaml and the rest) from tools/themes.py's
+                           # palettes, every token worked out and nudged until UiRulesTests' contrast holds
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
                            # unless every size's corners are transparent (never write the three files any other way)
 just package-linux [RID]   # artifacts/package/Passenger-linux-x64.tar.gz (or -arm64): one passenger/ folder (app/,
@@ -878,8 +880,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `tools/Passenger.Notices/Licenses`, a package inside Roslyn's server a row in THIRD_PARTY_NOTICES.md's roslyn/ table,
   and copied source or an asset its entry after that file's marker line, so the app carries them.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
-  and every token exists in both the Dark and Light dictionaries. A theme (`Tokens.axaml`, `Harbour.axaml`) is
-  `Passenger.*` tokens alone; Fluent's own keys are named once for every theme in `Theme/FluentKeys.axaml`, which
+  and every token exists in both the Dark and Light dictionaries. A theme (`Tokens.axaml`, `Harbour.axaml`, and each
+  `Look` tools/themes.py writes to `Theme/<Look>.axaml`, which `Themes.Apply` lays over Passenger's) is
+  `Passenger.*` tokens alone, a new token given in every one (`just themes` fails until its script gives it); Fluent's own keys are named once for every theme in `Theme/FluentKeys.axaml`, which
   `FluentKeys` (App.axaml's resources) answers with that token as the look in force gives it. A Fluent key a
   Passenger control can reach goes there, never in a theme. `UiRulesTests` fails on an unmapped Fluent colour, brush
   or corner (an Avalonia update adds them) and on a colour or non-zero `CornerRadius` written outside `Theme/` unless
