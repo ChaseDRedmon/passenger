@@ -748,26 +748,24 @@ public sealed class CSharpService : IAsyncDisposable
 
     /// <summary>The phases of a start that say when the person can work: the open file in its own project at the server
     /// (not Miscellaneous Files, whose answers know nothing of the solution), then that project's colours and diagnostics
-    /// for it. Asked every tenth of a second until then, for the file shown first.</summary>
+    /// for it. Looked for every tenth of a second until then, in the open files' projects as each file finds them as it
+    /// opens and as projects load (<see cref="CSharpDocument.Contexts"/>): a file no project holds costs the server nothing.</summary>
     private async Task TimeActiveFileAsync(RoslynSession started, long began)
     {
         // A wait that never holds a screenshot: a folder may have no C# file open for a long while.
         DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(10);
         while (!disposed && (session is null || session == started) && DateTime.UtcNow < until && !started.Server.HasExited)
         {
-            if (documents.Values.FirstOrDefault(d => d.Lsp is { IsRazor: false }) is { Lsp: { } lsp })
+            if (documents.FirstOrDefault(d => d.Value.Lsp is { IsRazor: false } && d.Value.Contexts.Count > 0) is { Key: { } open, Value: { Lsp: { } lsp } features })
             {
                 try
                 {
-                    if ((await lsp.ProjectContextsAsync())?.Default is { IsMiscellaneous: false } project)
-                    {
-                        string placed = Since(began);
-                        await lsp.SemanticTokensAsync();
-                        string coloured = Since(began);
-                        await lsp.DiagnosticsAsync();
-                        IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had {Path.GetFileName(DocumentUris.ToPath(lsp.Uri))} in {project.Label} {placed}, its colours {coloured} and its diagnostics {Since(began)} after it was started");
-                        return;
-                    }
+                    string placed = Since(began);
+                    await lsp.SemanticTokensAsync();
+                    string coloured = Since(began);
+                    await lsp.DiagnosticsAsync();
+                    IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had {open.Name} in {open.ProjectContext ?? features.Contexts[0].Label} {placed}, its colours {coloured} and its diagnostics {Since(began)} after it was started");
+                    return;
                 }
                 catch (LanguageServerFailed)
                 {

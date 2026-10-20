@@ -84,6 +84,47 @@ public sealed class LogsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>The start's timing waits for an open file to be placed in a project without asking the server itself: the
+    /// first file open being one no project holds, left in the server's Miscellaneous Files, it is not asked after ten
+    /// times a second, which filled lsp.log for ten minutes.</summary>
+    [AvaloniaFact]
+    public void Timing_the_start_never_asks_the_language_server_again_and_again_of_a_file_no_project_holds()
+    {
+        Directory.CreateDirectory(Path.Combine(folder, "App"));
+        Directory.CreateDirectory(Path.Combine(folder, "Scripts"));
+        File.WriteAllText(Path.Combine(folder, "App", "App.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "App", "App.cs"), "class App { }\n");
+        File.WriteAllText(Path.Combine(folder, "Scripts", "Loose.cs"), "class Loose { }\n");
+        Restore.Run(Path.Combine(folder, "App"));
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.ApplySettings(window.Settings with { TraceProtocols = true });
+        try
+        {
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine("Scripts", "Loose.cs"));
+            Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to finish loading ({window.CSharpService?.State})");
+            int server = window.CSharpService!.Session!.Server.ProcessId;
+            Ui.WaitFor(() => Ui.IdeLog().Contains($"(process {server}) gave an open file its colours", StringComparison.Ordinal), "the loose file's colours from the server");
+            int Asked() => Logged("lsp.log").Split('\n').Count(line => line.Contains($"[server {server}] --> ", StringComparison.Ordinal)
+                && line.Contains("\"method\":\"textDocument/_vs_getProjectContexts\"", StringComparison.Ordinal));
+            int before = Asked();
+            Ui.Hold(TimeSpan.FromSeconds(2), "time in which a file asked after ten times a second is asked after twenty");
+            int during = Asked() - before;
+            Assert.True(during <= 1, $"The language server was asked {during} times in 2 s which projects hold a file no project holds");
+
+            // A file a project holds, opened next, is the one the start is timed by.
+            window.OpenFile(Path.Combine("App", "App.cs"));
+            Ui.WaitFor(() => Ui.IdeLog().Contains($"(process {server}) had App.cs in App", StringComparison.Ordinal), "the start timed by the file its project holds");
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { TraceProtocols = false });
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void Tracing_writes_the_language_servers_messages_to_lsp_log_and_every_program_to_the_ides_log_until_turned_off()
     {
