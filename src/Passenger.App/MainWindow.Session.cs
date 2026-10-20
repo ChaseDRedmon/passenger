@@ -46,7 +46,7 @@ public partial class MainWindow
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
-        OpenBrowserOnceListening, () => StateFolder);
+        OpenBrowserOnceListening, () => StateFolder, work);
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
     /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
@@ -184,7 +184,7 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
+                ShowStop();
                 ShowHotReloadButtons();
             }
         };
@@ -200,7 +200,7 @@ public partial class MainWindow
         {
             next.Attach(document);
         }
-        StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
+        ShowStop();
         ShowHotReloadButtons();
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();

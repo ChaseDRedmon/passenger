@@ -128,8 +128,6 @@ public partial class MainWindow
         Bottom.Run.ShowHotReload(watched);
     }
 
-    private void OnHotReloadClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Request(AppActions.ApplyHotReloadChanges);
-
     private void BindHotReload(ProjectSession next)
     {
         DebugController debugger = next.Debug;

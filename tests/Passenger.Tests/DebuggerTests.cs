@@ -1629,7 +1629,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.True(Processes.Gone(run.ProcessId), $"Stop left the program running: {Processes.Describe(run.ProcessId)}");
         Assert.True(Processes.Gone(child), $"Stop left the program's child running: {Processes.Describe(child)}");
         Assert.Contains("Process finished with exit code ", TerminalText(run), StringComparison.Ordinal);
-        Assert.False(window.FindControl<Avalonia.Controls.Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the session ended");
+        Assert.False(window.FindControl<Avalonia.Controls.Button>("StopButton")!.IsEnabled, "The toolbar's Stop could still be clicked once the session ended");
         window.Close();
     }
 
@@ -1661,7 +1661,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             DebugSession starting = window.Debugger.Session!;
             adapter = starting.AdapterProcessId;
             Assert.Equal(DebugState.Starting, starting.State);
-            Assert.True(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar had no Stop while the debugger waited for the program to start");
+            Assert.True(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could not be clicked while the debugger waited for the program to start");
             Button stop = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
             Assert.True(stop.IsEnabled, "The Debug window's Stop was greyed while the debugger waited for the program to start");
 
@@ -1680,7 +1680,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Assert.True(Processes.Gone(adapter), $"Stop left the debugger running: {Processes.Describe(adapter)}");
             Assert.Equal("Debugging Sum held was stopped as it started", window.Status);
             Assert.Contains("Debugging Sum held was stopped as it started", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
-            Assert.False(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the session ended");
+            Assert.False(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could still be clicked once the session ended");
             Assert.False(stop.IsEnabled, "The Debug window's Stop stayed once the session ended");
             window.Close();
         }

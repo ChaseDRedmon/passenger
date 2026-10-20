@@ -51,6 +51,4 @@ public partial class MainWindow
         });
         return picked.Count == 1 ? picked[0].TryGetLocalPath() : null;
     }
-
-    private void OnProfileClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Profile);
 }

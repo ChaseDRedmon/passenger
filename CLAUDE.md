@@ -568,7 +568,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action (`IdeAction.Words` are other names Find Action finds
   it by, as Rider's older names). `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
-  through the registry, so one that cannot run says why; editor actions go to the focused editor.
+  through the registry, so one that cannot run says why; editor actions go to the focused editor. An action that takes a
+  while holds a `Working` (`ActionWork.Begin`, under its id or `IdeAction.Works`) from its first moment until its work is
+  done or handed over, saying each stage (`Say`) and honouring `Stopping`: while it works the registry starts it no more
+  ("Already under way: …"), the status bar says the stage beside a `WorkingRing`, Stop can end it, and a button bound
+  with `ActionButtons.Bind` (every toolbar button, `WorkingActionsTests`) turns a ring round its icon. Run, Debug, Profile
+  and every build do (#254); the begin is in the controller, so an agent's `run` shows too. Stop keeps its toolbar place,
+  greyed when nothing is under way: a button that comes and goes moves its neighbours from under the pointer.
   `Product` is what the build is (version, commit, runtime, the licence and notices beside it), the one place the
   version is read; `AboutDialog` is About (the application menu on macOS, Help elsewhere).
 - `src/Passenger.App/Welcome`: the Welcome screen (`WelcomeView`, in the editor area while nothing is open) and the

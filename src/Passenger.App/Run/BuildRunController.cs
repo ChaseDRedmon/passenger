@@ -25,7 +25,8 @@ public sealed record BuildRunParts(
     StatusSay Say,
     Func<string, ProcessStartInfo, Task<TerminalRun>> InTerminal,
     Action<LaunchPlan, Task> OpenBrowser,
-    Func<string> StateFolder);
+    Func<string> StateFolder,
+    ActionWork Work);
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of
 /// projects one after another (the output in the Build window, what they find in Problems, the window brought forward as
@@ -55,9 +56,8 @@ public sealed class BuildRunController
     private Action<BuildOutcome>? afterBuild;
     private TaskCompletionSource? building;
 
-    /// <summary>A Run between its press and its program's start (the plan resolved, the project built), which a second
-    /// press may not start again.</summary>
-    private bool launching;
+    /// <summary>The build under way as the window's actions show it, from its start to <see cref="FinishBuild"/>.</summary>
+    private Working? buildWork;
 
     /// <summary>The run configuration the Run window last ran.</summary>
     private string ran = string.Empty;
@@ -192,6 +192,8 @@ public sealed class BuildRunController
         }
         building = new TaskCompletionSource();
         BackgroundWork.Track(building.Task);
+        // A build is a start Stop ends, as the Build window's Stop does; held until it ends, whoever began it.
+        buildWork = parts.Work.Begin(AppActions.Build, $"Building {Path.GetFileName(buildQueue.Peek())}…");
         BuildNext(first: true);
     }
 
@@ -226,6 +228,7 @@ public sealed class BuildRunController
         string target = buildQueue.Dequeue();
         string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
         parts.Say($"{verb} {Path.GetFileName(target)}…");
+        buildWork?.Say($"{verb} {Path.GetFileName(target)}…");
         if (session.Builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework, BuildOutput.WindowsTargeting(target, session.Projects)), session.Folder!,
             after: first ? HoldDesignTimeBuildsAsync : null) is { } problem)
         {
@@ -242,6 +245,7 @@ public sealed class BuildRunController
         {
             string which = running.Count == 1 ? $"build of {Path.GetFileNameWithoutExtension(running[0])}" : $"builds of {running.Count} projects";
             parts.Views.Build.Append($"Waiting for the design-time {which} to end\n");
+            buildWork?.Say($"Waiting for the design-time {which} to end…");
         }
     }, stop);
 
@@ -289,6 +293,8 @@ public sealed class BuildRunController
         afterBuild = null;
         TaskCompletionSource? held = building;
         building = null;
+        buildWork?.Dispose();
+        buildWork = null;
         session.DesignTimeBuilds.Release();
         parts.Views.Build.SetRunning(false);
         ShowProblems();
@@ -328,11 +334,15 @@ public sealed class BuildRunController
     }
 
     /// <summary>A configuration's plan, with these arguments in place of its own if given, or why it has none.</summary>
-    public async Task<(LaunchPlan? Plan, string? Problem)> ResolvePlanAsync(RunConfiguration chosen, string? arguments)
+    public async Task<(LaunchPlan? Plan, string? Problem)> ResolvePlanAsync(RunConfiguration chosen, string? arguments, CancellationToken stop = default)
     {
         try
         {
-            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, session.Projects, parts.StateFolder()), null);
+            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, session.Projects, parts.StateFolder(), stop), null);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            return (null, StoppedStarting(chosen.Name));
         }
         catch (Exception error) when (error is LaunchException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -340,16 +350,19 @@ public sealed class BuildRunController
         }
     }
 
+    /// <summary>What a start Stop ended says.</summary>
+    public static string StoppedStarting(string name) => $"{name} was stopped as it started";
+
     /// <summary>A configuration's plan with its build before launch done: the plan to start, or why there is none (the
     /// folder left meanwhile among the reasons).</summary>
-    private async Task<(LaunchPlan? Plan, string? Problem)> PrepareAsync(RunConfiguration chosen, string? arguments, bool build = true)
+    private async Task<(LaunchPlan? Plan, string? Problem)> PrepareAsync(RunConfiguration chosen, string? arguments, Working work, bool build = true)
     {
-        (LaunchPlan? plan, string? problem) = await ResolvePlanAsync(chosen, arguments);
-        if (build && plan?.Build is { } step && await BuildBeforeLaunchAsync(step) is { Succeeded: false } unbuilt)
+        (LaunchPlan? plan, string? problem) = await ResolvePlanAsync(chosen, arguments, work.Stopping);
+        if (build && plan?.Build is { } step && !work.IsStopped && await BuildBeforeLaunchAsync(step) is { Succeeded: false } unbuilt)
         {
-            return (null, unbuilt.Message);
+            return (null, work.IsStopped ? StoppedStarting(chosen.Name) : unbuilt.Message);
         }
-        return session.IsEnded ? (null, Left) : (plan, problem);
+        return session.IsEnded ? (null, Left) : work.IsStopped ? (null, StoppedStarting(chosen.Name)) : (plan, problem);
     }
 
     private const string Left = "The solution was closed";
@@ -374,11 +387,14 @@ public sealed class BuildRunController
         {
             return Said("Nothing to run: no executable project");
         }
-        if (IsRunning || launching)
+        if (IsRunning)
         {
             return Said("Already running");
         }
-        launching = true;
+        if (parts.Work.Begin(AppActions.RunProgram, $"Working out how to run {chosen.Name}…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
+        }
         using IDisposable held = BackgroundWork.Scope();
         try
         {
@@ -387,7 +403,7 @@ public sealed class BuildRunController
             // dotnet watch builds the project itself, and runs it again after an edit it cannot apply.
             bool watched = (hotReload ?? parts.Settings().HotReload) && chosen.Program.Length == 0;
             watching = watched;
-            (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, build: !watched);
+            (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, work, build: !watched);
             if (plan is null)
             {
                 return Said(problem!);
@@ -400,6 +416,7 @@ public sealed class BuildRunController
             {
                 return Said(unmade);
             }
+            work.Say($"Starting {chosen.Name}…");
             ran = chosen.Name;
             RunProject = Path.GetDirectoryName(plan.Project);
             string running = watched ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
@@ -439,7 +456,7 @@ public sealed class BuildRunController
         }
         finally
         {
-            launching = false;
+            work.Dispose();
         }
     }
 
@@ -574,9 +591,21 @@ public sealed class BuildRunController
 
     private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments)
     {
+        if (parts.Work.Begin(AppActions.Debug, $"Working out how to debug {chosen.Name}…") is not { } work)
+        {
+            return ActionWork.Busy(parts.Work.Of(AppActions.Debug)!);
+        }
+        using (work)
+        {
+            return await DebugAsync(chosen, arguments, work);
+        }
+    }
+
+    private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments, Working work)
+    {
         debugged = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
-        (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments);
+        (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, work);
         if (plan is null)
         {
             return problem;
@@ -585,6 +614,7 @@ public sealed class BuildRunController
         {
             return why;
         }
+        work.Say($"Starting {chosen.Name} under the debugger…");
         parts.Dock.Show("debug");
         parts.Views.Debug.ShowTab(console: true);
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
@@ -672,9 +702,11 @@ public sealed class BuildRunController
         return ended.Task;
     }
 
-    /// <summary>Stop: the debugger's session, the program Run started (in the Run window or the terminal) and the build.</summary>
+    /// <summary>Stop: any start under way (Run's, Debug's or Profile's, ended at whatever stage it is), the debugger's session,
+    /// the program Run started (in the Run window or the terminal) and the build.</summary>
     public void Stop()
     {
+        parts.Work.Stop();
         _ = session.Debug.StopAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
@@ -682,5 +714,5 @@ public sealed class BuildRunController
     }
 
     /// <summary>Why Stop cannot run now: nothing it stops is running.</summary>
-    public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Builder.IsRunning ? null : "Nothing is running";
+    public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Builder.IsRunning || parts.Work.CanStop ? null : "Nothing is running";
 }

@@ -18,6 +18,10 @@ public partial class MainWindow
 
     private ActionRegistry? actions;
 
+    /// <summary>What the window's actions are doing that takes a while, which the toolbar's buttons and the status bar show:
+    /// made with the window, before any session's controllers are given it.</summary>
+    private readonly ActionWork work = new();
+
     /// <summary>The window's actions and its keymap.</summary>
     public ActionRegistry Actions => actions!;
 
@@ -62,9 +66,20 @@ public partial class MainWindow
     /// <summary>The window's own actions; each feature's partial or controller adds its own beside them.</summary>
     private void AddActions()
     {
-        actions = new ActionRegistry(Context, () => keys.Keymap);
+        actions = new ActionRegistry(Context, () => keys.Keymap, work);
         Dock.Actions = actions;
         Explorer.Actions = actions;
+        // The toolbar's buttons run their actions as their keys do, each showing its action's work while it is under way.
+        foreach ((Button button, string id) in (ReadOnlySpan<(Button, string)>)[(BuildButton, A.Build), (RunButton, A.RunProgram), (DebugButton, A.Debug),
+            (ProfileButton, A.Profile), (HotReloadButton, A.ApplyHotReloadChanges), (StopButton, A.Stop), (SearchButton, A.GoToEverything), (SettingsButton, A.ShowSettings)])
+        {
+            ActionButtons.Bind(button, id, actions, action => Request(action));
+        }
+        work.Changed += (_, change) =>
+        {
+            status.ShowWork(change, work.Latest);
+            ShowStop();
+        };
         AddEditing();
         Add(A.Open, "Open...", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
         actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 2, 0)] });
@@ -188,11 +203,12 @@ public partial class MainWindow
     private void AddBuilding()
     {
         Add(A.Build, "Build Solution", "Run", _ => BuildSolution(), Unbuildable, ("Build", 0, 0));
-        Add(A.RebuildSolution, "Rebuild Solution", "Build", _ => Build(BuildKind.Rebuild), Unbuildable, ("Build", 0, 1));
-        Add(A.CleanSolution, "Clean Solution", "Build", _ => Build(BuildKind.Clean), Unbuildable, ("Build", 0, 2));
-        Add(A.BuildSelected, "Build Selected Projects", "Build", _ => Build(BuildKind.Build, SelectedProjects()), NoneSelected, ("Build", 1, 0));
-        Add(A.RebuildSelected, "Rebuild Selected Projects", "Build", _ => Build(BuildKind.Rebuild, SelectedProjects()), NoneSelected, ("Build", 1, 1));
-        Add(A.CleanSelected, "Clean Selected Projects", "Build", _ => Build(BuildKind.Clean, SelectedProjects()), NoneSelected, ("Build", 1, 2));
+        // One build at a time, whichever began it: while one works, the others say so.
+        Add(A.RebuildSolution, "Rebuild Solution", "Build", _ => Build(BuildKind.Rebuild), Unbuildable, ("Build", 0, 1), works: A.Build);
+        Add(A.CleanSolution, "Clean Solution", "Build", _ => Build(BuildKind.Clean), Unbuildable, ("Build", 0, 2), works: A.Build);
+        Add(A.BuildSelected, "Build Selected Projects", "Build", _ => Build(BuildKind.Build, SelectedProjects()), NoneSelected, ("Build", 1, 0), works: A.Build);
+        Add(A.RebuildSelected, "Rebuild Selected Projects", "Build", _ => Build(BuildKind.Rebuild, SelectedProjects()), NoneSelected, ("Build", 1, 1), works: A.Build);
+        Add(A.CleanSelected, "Clean Selected Projects", "Build", _ => Build(BuildKind.Clean, SelectedProjects()), NoneSelected, ("Build", 1, 2), works: A.Build);
 
         Add(A.RunProgram, "Run", "Run", _ => RunSelected(), _ => Unconfigured("run"), ("Run", 0, 0));
         Add(A.Debug, "Debug", "Run", _ => DebugSelected(), _ => Unconfigured("debug"), ("Run", 0, 1));
@@ -279,11 +295,12 @@ public partial class MainWindow
 
     /// <summary>Adds one of the window's actions, listed in one place of the menus if given.</summary>
     private void Add(string id, string title, string group, Action<ActionContext> run, Func<ActionContext, string?>? whyNot = null, (string Path, int Group, int Order)? menu = null,
-        IReadOnlyList<string>? words = null) =>
+        IReadOnlyList<string>? words = null, string? works = null) =>
         actions!.Add(new IdeAction(id, title, group, run)
         {
             WhyNot = whyNot ?? (_ => null),
             Menus = menu is { } at ? [new MenuPlace(at.Path, at.Group, at.Order)] : [],
             Words = words ?? [],
+            Works = works,
         });
 }
