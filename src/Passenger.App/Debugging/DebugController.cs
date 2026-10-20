@@ -30,7 +30,9 @@ public sealed class DebugController : IDisposable
     /// <summary>The session's built lines, from its start to its end: the files' edits since the build.</summary>
     private BuiltLines? lines;
 
-    private (string Expression, string Value)? lastResult;
+    /// <summary>The last expression the person evaluated (not a watch), as it came out, and the stop it was evaluated at
+    /// (<see cref="shown"/>): listed under the watches while that stop is shown, never evaluated again unasked.</summary>
+    private (int Stop, VariableNode Row)? lastResult;
 
     /// <summary>The frame chosen at the stop shown: its variables are the view's, a hover evaluates in it. None while the
     /// program runs, so nothing asks of a frame the debugger has let go.</summary>
@@ -882,6 +884,7 @@ public sealed class DebugController : IDisposable
                 editors.CodeEditor.CancelChoices();
                 executionPoint = null;
                 stopException = null;
+                lastResult = null;
                 bindingStop = null;
                 bindingFrame = null;
                 UpdateAllMarks();
@@ -1123,13 +1126,10 @@ public sealed class DebugController : IDisposable
                 return;
             }
         }
-        if (lastResult is { } result)
+        if (lastResult is { } result && result.Stop == stop)
         {
-            rows.Add(await Evaluated(session, current, result.Expression, VariableRole.Result));
-            if (stop != shown)
-            {
-                return;
-            }
+            VariableNode row = result.Row;
+            rows.Add(new VariableNode(row.Name, row.Value, row.Type, row.Reference, 0, row.Role));
         }
         Dictionary<string, string> values = [];
         try
@@ -1363,6 +1363,8 @@ public sealed class DebugController : IDisposable
         await ShowVariables();
     }
 
+    /// <summary>Evaluate's Enter, or Add to Watches: a watch is evaluated at every stop, an expression only now, once, its
+    /// side effects with it, its result kept for this stop alone.</summary>
     private async Task Evaluate(string expression, bool watch)
     {
         if (watch)
@@ -1372,9 +1374,15 @@ public sealed class DebugController : IDisposable
                 watches.Add(expression);
             }
         }
-        else
+        else if (Session is { State: DebugState.Paused } session && frame is { } current)
         {
-            lastResult = (expression, string.Empty);
+            int stop = shown;
+            VariableNode row = await Evaluated(session, current, expression, VariableRole.Result);
+            if (stop != shown)
+            {
+                return;
+            }
+            lastResult = (stop, row);
         }
         await ShowVariables();
     }

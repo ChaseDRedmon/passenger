@@ -822,6 +822,42 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
+    /// <summary>An expression evaluated at a stop runs once, when it is asked: its result is that stop's, gone once the
+    /// program goes on, where it was evaluated again at every later stop, side effects and all, an increment adding at
+    /// every step.</summary>
+    [AvaloniaFact]
+    public void An_expression_evaluated_at_a_stop_runs_once_and_its_result_goes_with_the_stop()
+    {
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "total") == "0", "the first stop");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("total += 100");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Result && r.Name == "total += 100" && r.Value == "100"), "the expression's result");
+        Ui.WaitFor(() => Value(window, "total") == "100", "the value the expression set");
+
+        // Two steps: the loop's own add once (101), and then nothing, the expression never run again.
+        StepOver();
+        Assert.True(Value(window, "total") == "101", $"After a step total was {Value(window, "total")}: the expression evaluated at the stop before ran again");
+        Assert.DoesNotContain(view.Tree.Rows, r => r.Role == VariableRole.Result);
+        StepOver();
+        Assert.True(Value(window, "total") == "101", $"After a second step total was {Value(window, "total")}: the expression ran again");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+
+        void StepOver()
+        {
+            StopTimes? before = window.Debugger.LastStopTimes;
+            Ui.Run(window, AppActions.StepOver);
+            WaitDebugging(window, () => !ReferenceEquals(window.Debugger.LastStopTimes, before), "the step's stop and its locals");
+        }
+    }
+
     [AvaloniaFact]
     public void A_value_set_in_the_variables_view_is_the_one_the_program_goes_on_with()
     {
