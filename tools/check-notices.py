@@ -19,19 +19,16 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOTICES = os.path.join(ROOT, "THIRD_PARTY_NOTICES.md")
 
-# Restored with the packages that use them, but in no app Passenger is published as (macOS and Windows): their natives
-# are for Linux, the browser and 32-bit Windows. A Linux build (#57) moves its own into the notices.
+# Restored with the packages that use them, but in no app Passenger is published as (macOS, Windows, and Linux on x64
+# and Arm64, whose natives the notices name): their natives are for the browser, 32-bit Arm and musl Linux, and 32-bit
+# Windows. A system Passenger comes to ship for takes its own out of here and into the notices.
 NOT_SHIPPED = {
-    "HarfBuzzSharp.NativeAssets.Linux",
     "HarfBuzzSharp.NativeAssets.WebAssembly",
-    "SkiaSharp.NativeAssets.Linux",
     "SkiaSharp.NativeAssets.WebAssembly",
     "Microsoft.Diagnostics.DbgShim.linux-arm",
-    "Microsoft.Diagnostics.DbgShim.linux-arm64",
     "Microsoft.Diagnostics.DbgShim.linux-musl-arm",
     "Microsoft.Diagnostics.DbgShim.linux-musl-arm64",
     "Microsoft.Diagnostics.DbgShim.linux-musl-x64",
-    "Microsoft.Diagnostics.DbgShim.linux-x64",
     "Microsoft.Diagnostics.DbgShim.win-x86",
 }
 
