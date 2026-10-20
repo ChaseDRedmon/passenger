@@ -14,7 +14,7 @@ namespace Passenger.App.Xaml;
 /// package's implementation assembly (its lib/ beside the ref/ a project compiles against; the runtime's own for the
 /// framework's), written once per assembly version under the state folder's MetadataAsSource/, where the editor shows
 /// it read-only, as Roslyn's server keeps what it decompiles. Each version's folder (an entry, Source Link's too) is
-/// kept while used, pruned as the debugger's symbol cache is, once a process at its first use.</summary>
+/// kept while used, and pruned as the debugger's symbol cache is, at each process's first use.</summary>
 public static partial class LibrarySources
 {
     /// <summary>An entry unused this long is deleted: a package updated leaves its old version's behind.</summary>

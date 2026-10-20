@@ -1,6 +1,7 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.Xaml;
@@ -17,7 +18,7 @@ public interface ILibraryFiles
 /// <summary>A library's files through its Source Link: the portable PDB its assembly names, from NuGet's symbol server
 /// (<c>PASSENGER_SYMBOLS</c> names another), its Source Link map from the build's paths to the repository's, and the
 /// project folder its documents are in; each file downloaded once over HTTPS into MetadataAsSource/SourceLink/, which the
-/// editor shows read-only.</summary>
+/// editor shows read-only, written whole or not at all and never outside its assembly version's folder.</summary>
 public sealed class SourceLink : ILibraryFiles
 {
     public const string Variable = "PASSENGER_SYMBOLS";
@@ -31,12 +32,15 @@ public sealed class SourceLink : ILibraryFiles
 
     public async Task<string?> FileAsync(string assembly, string assemblyName, string path, IProgress<string>? why, CancellationToken cancel)
     {
-        if (await BackgroundWork.Run(() => LibrarySources.Entry("SourceLink", assemblyName, assembly)) is not { } folder)
+        // The path comes from the library's own XAML (an include's Source), so it must not lead out of the version's folder.
+        (string? folder, string? local) = await BackgroundWork.Run(() => LibrarySources.Entry("SourceLink", assemblyName, assembly) is { } entry
+            ? (entry, LibrarySources.Inside(entry, path.Replace('/', Path.DirectorySeparatorChar)))
+            : (null, null));
+        if (folder is null || local is null)
         {
-            why?.Report($"{assemblyName} is no name to keep its sources under");
+            why?.Report($"{assemblyName}'s {path} leads outside its sources' folder, so it was not downloaded");
             return null;
         }
-        string local = Path.Combine(folder, path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(local))
         {
             return local;
@@ -49,7 +53,8 @@ public sealed class SourceLink : ILibraryFiles
                 return null;
             }
             (Dictionary<string, string> map, string? project) = Read(pdb, assemblyName);
-            if (project is null || Map(map, project + path.TrimStart('/')) is not { } url)
+            string relative = Path.GetRelativePath(PathNames.Canonical(folder), local).Replace('\\', '/');
+            if (project is null || Map(map, project + relative) is not { } url)
             {
                 why?.Report($"{assemblyName}'s PDB has no Source Link for {path}");
                 return null;
@@ -60,8 +65,7 @@ public sealed class SourceLink : ILibraryFiles
                 return null;
             }
             byte[] bytes = await Http.GetByteArrayAsync(url, cancel);
-            Directory.CreateDirectory(Path.GetDirectoryName(local)!);
-            await File.WriteAllBytesAsync(local, bytes, cancel);
+            await BackgroundWork.Run(() => LibrarySources.WriteWhole(local, bytes));
             return local;
         }
         catch (Exception error) when (error is HttpRequestException or IOException or UnauthorizedAccessException or BadImageFormatException or JsonException
@@ -94,7 +98,10 @@ public sealed class SourceLink : ILibraryFiles
             }
         }
         string name = Path.GetFileName(codeView.Path.Replace('\\', '/'));
-        string pdb = Path.Combine(folder, name);
+        if (LibrarySources.Inside(folder, name) is not { } pdb)
+        {
+            return null;
+        }
         if (File.Exists(pdb))
         {
             return pdb;
@@ -110,8 +117,7 @@ public sealed class SourceLink : ILibraryFiles
         using HttpResponseMessage response = await Http.SendAsync(request, cancel);
         response.EnsureSuccessStatusCode();
         byte[] bytes = await response.Content.ReadAsByteArrayAsync(cancel);
-        Directory.CreateDirectory(folder);
-        await File.WriteAllBytesAsync(pdb, bytes, cancel);
+        await BackgroundWork.Run(() => LibrarySources.WriteWhole(pdb, bytes));
         return pdb;
     }
 

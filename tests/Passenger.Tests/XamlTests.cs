@@ -890,6 +890,45 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_themes_include_that_climbs_out_of_its_sources_folder_is_refused_and_nothing_is_written_outside_it()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        Passenger.App.Xaml.XamlDocument xaml = window.XamlService.For(window.EditorArea.Active!)!;
+        Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read");
+        // Fluent's control list as its Source Link gave it in an earlier session, merging in a file five folders up from
+        // the version's own: in the state folder itself, had the download been let through.
+        Passenger.Xaml.Metadata.AssemblyTypes fluent = xaml.Loaded.Result!.Types.Assemblies.Single(a => a.Name == "Avalonia.Themes.Fluent");
+        string entry = Path.Combine(Passenger.App.Xaml.LibrarySources.Folder, "SourceLink", fluent.Name,
+            Passenger.App.Xaml.LibrarySources.Stamp(Passenger.App.Xaml.LibrarySources.Implementation(fluent.Path)));
+        string escaped = Path.Combine(Passenger.App.State.StateStore.DefaultRoot, "escaped");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(entry, "Controls"));
+            File.WriteAllText(Path.Combine(entry, "Controls", "FluentControls.xaml"),
+                "<ResourceDictionary xmlns=\"https://github.com/avaloniaui\">\n  <ResourceDictionary.MergedDictionaries>\n"
+                + "    <MergeResourceInclude Source=\"../../../../../escaped/Button.xaml\" />\n  </ResourceDictionary.MergedDictionaries>\n</ResourceDictionary>\n");
+            PlaceAfter(window.EditorArea.CodeEditor, "<Butt");
+            Ui.Run(window, AppActions.GoToDeclaration);
+            Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the class and its control theme to choose from");
+            Ui.Press(window, "DOWN");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Status?.Contains("leads outside its sources' folder", StringComparison.Ordinal) == true, "the include that climbs out refused, saying why");
+            Assert.Equal("MainWindow.axaml", window.EditorArea.Active?.Name);
+            Assert.False(Directory.Exists(escaped), $"Source Link wrote outside its folder: {escaped}");
+            window.Close();
+        }
+        finally
+        {
+            // The run's other tests ask Source Link for Fluent's files afresh.
+            string versions = Path.Combine(Passenger.App.Xaml.LibrarySources.Folder, "SourceLink", fluent.Name);
+            if (Directory.Exists(versions))
+            {
+                Directory.Delete(versions, recursive: true);
+            }
+        }
+    }
+
     /// <summary>A theme library's files as its Source Link would give them, written into a folder of the test's; what was
     /// asked for, in order.</summary>
     private sealed class ThemeSources(string folder) : Passenger.App.Xaml.ILibraryFiles

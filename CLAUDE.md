@@ -192,14 +192,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
   project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
   by `ProjectInputs.Compiles`), a project read again, its builder and dialect made anew (one that takes Avalonia later
-  gets its help), as its project file changes or a restore's
-  `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
-  the Explorer or Git), including one under `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder
-  holds and `XamlService.RestoredFor` maps to its project by name; `LibrarySources` decompiles a library's
-  type read-only, once per assembly version (`Entry`: a folder named by a SHA-256 of the assembly's path, time and
-  length, alike in every session; Source Link's too), pruned at a process's first use as the debugger's symbol cache is
-  (30 days unused, 256 MB, never one used in the last day); `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
-  request needs the `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address).
+  gets its help), as its project file changes or a restore's `project.assets.json` lands (the folder watcher passes over
+  obj/ but reports that file apart, never to Local History, the Explorer or Git), including one under
+  `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder holds and `XamlService.RestoredFor` maps to
+  its project by name; `LibrarySources` decompiles a library's type read-only, once per assembly version (`Entry`: a
+  folder named by a SHA-256 of the assembly's path, time and length, alike in every session; Source Link's too), pruned
+  at a process's first use as the debugger's symbol cache is (30 days unused, 256 MB, never one used in the last day);
+  `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose request needs the
+  `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address), each path, which the theme's own
+  includes give, made canonical and refused outside its version's folder (`LibrarySources.Inside`), each file written
+  whole through a temporary file and a rename (`LibrarySources.WriteWhole`).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
   ChildProcesses over Avalonia.Remote.Protocol, restarted by `BuildRunController.BuildFinished`; frames are bitmaps at
   96 DPI sized by the host's scale, and the host's viewport resize requests go unanswered (answering made it ask again
