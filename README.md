@@ -185,12 +185,13 @@ Locations, bookmarks and File Structure.
   <img src="site/images/agent-dark.webp" alt="An agent in Passenger's terminal driving the Avalonia app being built over MCP: it starts the app under the debugger, finds its Water button, clicks it and reads the plants' moisture back, while the Live Visual Tree shows the button it clicked, now focused">
 </picture>
 
-Connect a coding agent such as Claude Code or Codex to Passenger and it works through the IDE, not just your files. It
-finds where things are declared and used, reads the warnings, and renames, fixes and formats code as the IDE does, in
-C#, Razor, XAML, the web languages and project files alike. It builds, runs and tests, sets breakpoints, steps, reads
-and changes variables, applies Hot Reload and profiles a run. It searches and replaces across files, commits, resolves
-conflicts, adds packages, types into the terminal and looks at the window. When the program is an Avalonia app, or a
-WPF app on Windows, it sees and drives the app as a person testing it would, without taking your focus or your pointer.
+Connect a coding agent such as Claude Code, Codex or OpenCode to Passenger and it works through the IDE, not just your
+files. It finds where things are declared and used, reads the warnings, and renames, fixes and formats code as the IDE
+does, in C#, Razor, XAML, the web languages and project files alike. It builds, runs and tests, sets breakpoints, steps,
+reads and changes variables, applies Hot Reload and profiles a run. It searches and replaces across files, commits,
+resolves conflicts, adds packages, types into the terminal and looks at the window. When the program is an Avalonia app,
+or a WPF app on Windows, it sees and drives the app as a person testing it would, without taking your focus or your
+pointer.
 
 There are two ways in, each a flag on Passenger's own executable:
 
@@ -200,9 +201,16 @@ There are two ways in, each a flag on Passenger's own executable:
   Passenger, starting it if need be. It never joins a window on another folder. The window asks you before it lets an
   agent in (Allow, Don't allow, or Always for this folder), unless you have turned on Settings | MCP Server | Enable
   MCP Server; it is reached through a socket in your own user's folder, and the first time an agent uses a tool that
-  changes anything, or opens another folder in your window, it asks you again.
+  changes anything, or opens another folder in your window, it asks you again. While a question waits, the window comes
+  forward (on a Mac the Dock icon bounces), the status bar says which agent waits and on what, and the agent is told so;
+  an answer not given within two minutes comes back to the agent as nobody having answered, and its next call asks again.
 - **`--mcp FOLDER`** starts a Passenger of the agent's own with no window, over a folder or solution, for work it does
-  alone.
+  alone. It asks nothing, so it suits an agent you leave to work while you are away.
+
+A call that takes a while (a build, a test run, a debug session waiting for a stop) tells the agent what it is doing
+every 10 seconds when the agent asks for progress, so an agent that gives up on a call it hears nothing of waits on.
+With Settings | Diagnostics | Trace protocol messages on, `mcp.log` in the logs folder has each agent's call, what it
+waited on and for how long.
 
 The quickest way in is Passenger's own Settings | MCP Server: it shows each agent's setup below with this copy's own
 path filled in, each with a Copy button, and lists the folders agents join unasked, each one to take back.
@@ -236,6 +244,40 @@ Claude Desktop takes the same `mcpServers` entry in Settings | Developer | Edit 
 `--mcp-attach`, since it starts its servers in no folder of yours; the Codex desktop app takes it in Settings | MCP
 servers | Add server (STDIO, with the same command and argument). Any other agent that can add an MCP server connects
 the same way.
+
+OpenCode takes it in `opencode.json`, at your project's root or in `~/.config/opencode/` for every project, with a
+timeout of 10 minutes on a call:
+
+```json
+{
+  "mcp": {
+    "passenger": {
+      "type": "local",
+      "command": ["/Applications/Passenger.app/Contents/MacOS/Passenger", "--mcp-attach"],
+      "enabled": true,
+      "timeout": 600000
+    }
+  }
+}
+```
+
+OpenCode 2 lists its servers under `mcp.servers`. Turn Code Mode off for Passenger, so OpenCode calls its tools
+itself (Code Mode's permission prompts can leave a call waiting), and give a call 10 minutes rather than 12 hours:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "passenger": {
+        "type": "local",
+        "command": ["/Applications/Passenger.app/Contents/MacOS/Passenger", "--mcp-attach"],
+        "codemode": false,
+        "timeout": { "execution": 600000 }
+      }
+    }
+  }
+}
+```
 
 This repository's own [`.mcp.json`](.mcp.json) runs [`tools/mcp.sh`](tools/mcp.sh) (`just mcp`): the last Debug build
 with `--mcp` over this folder, run from a clone of the build so rebuilding Passenger never changes the files under the

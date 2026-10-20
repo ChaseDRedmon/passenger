@@ -28,7 +28,7 @@ public sealed partial class SettingsDialog
 
     private void AddAgents(AgentSetup setup)
     {
-        const string Words = "mcp model context protocol agents ai claude codex attach socket";
+        const string Words = "mcp model context protocol agents ai claude codex opencode attach socket";
         // What turning it on allows is said under it, as Rider's consent to its MCP server says.
         Add(McpPage, "Enable MCP Server", Check(Working.McpServer, v => Change(s => s with { McpServer = v })), Words,
             "Agents started with passenger --mcp-attach can use this window without asking to: read and change files, build, run and "
@@ -76,10 +76,13 @@ public sealed partial class SettingsDialog
                 new TextBlock { Text = "Set up an agent", FontWeight = FontWeight.SemiBold },
                 Muted("Each runs this copy of Passenger, by its own path, with --mcp-attach. An agent has Passenger's tools from its "
                     + "start; its first call joins the window open on the folder it works in, or opens that folder in Passenger, "
-                    + "starting it if need be, in a window you see."),
+                    + "starting it if need be, in a window you see. That window asks you before it lets the agent in and before "
+                    + "the agent first changes anything, and a call waits 2 minutes at most for each answer, telling the agent so."),
+                Muted("For an agent working on its own, put --mcp and the folder in place of --mcp-attach: a Passenger of the "
+                    + "agent's own, with no window, which asks nothing."),
             },
         });
-        const string SetupWords = $"{Words} setup set up install configure command config json toml claude code desktop codex copy path";
+        const string SetupWords = $"{Words} setup set up install configure command config json toml claude code desktop codex opencode copy path";
         options.Add(new Option(McpPage, "Set up an agent", heading, $"{McpPage} {SetupWords}"));
         List<(string, string)> setups = [];
         void Setup(string title, string text, string note, string words)
@@ -98,6 +101,15 @@ public sealed partial class SettingsDialog
                 ? $"In Claude's Settings, Developer, Edit Config, then restart Claude. It starts its servers in no folder of yours, so put the folder to work in where {AgentSetup.FolderPlaceholder} is."
                 : "In Claude's Settings, Developer, Edit Config, then restart Claude. It starts its servers in no folder of yours, so the folder to work in follows --mcp-attach: this window's.",
             "desktop app config claude_desktop_config.json folder");
+        Setup("OpenCode", setup.OpenCode,
+            "OpenCode 1, in opencode.json at your project's root, or ~/.config/opencode/opencode.json for every project. The "
+            + "timeout gives a call 10 minutes, and Passenger tells OpenCode its progress meanwhile.",
+            "opencode.json sst anomaly");
+        Setup("OpenCode 2", setup.OpenCode2,
+            "OpenCode 2 lists servers under mcp.servers, in opencode.jsonc or opencode.json. With Code Mode off it calls "
+            + "Passenger's tools itself, as Code Mode's permission prompts can leave a call waiting, and a call that never "
+            + "came back would end after 10 minutes rather than 12 hours.",
+            "opencode.jsonc codemode code mode execution timeout");
         AgentSetups = setups;
 
         void AddBlock(Control row, string title, string words) => options.Add(new Option(McpPage, title, row, $"{McpPage} {title} {words}"));

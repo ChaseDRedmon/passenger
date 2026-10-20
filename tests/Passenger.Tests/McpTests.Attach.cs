@@ -269,7 +269,7 @@ public sealed partial class McpTests
             dialog.Page = SettingsDialog.McpPage;
             Ui.Settle();
             Dictionary<string, string> setups = dialog.AgentSetups.ToDictionary(s => s.Heading, s => s.Text);
-            Assert.Equal(["Claude Code", "A repository's .mcp.json", "Codex", "Codex's config.toml", "Claude Desktop"], dialog.AgentSetups.Select(s => s.Heading));
+            Assert.Equal(["Claude Code", "A repository's .mcp.json", "Codex", "Codex's config.toml", "Claude Desktop", "OpenCode", "OpenCode 2"], dialog.AgentSetups.Select(s => s.Heading));
 
             // The commands name the program running, wherever it is, which an agent's session starts.
             string claude = setups["Claude Code"];
@@ -285,6 +285,17 @@ public sealed partial class McpTests
                 Assert.Equal(passenger, server.GetProperty("command").GetString());
                 Assert.Equal(arguments, server.GetProperty("args").EnumerateArray().Select(a => a.GetString()!));
             }
+            // OpenCode's, in each version's shape: its command one list, a call given minutes, and OpenCode 2's tools called
+            // directly rather than through Code Mode.
+            JsonElement openCode = JsonDocument.Parse(setups["OpenCode"]).RootElement.GetProperty("mcp").GetProperty("passenger");
+            JsonElement openCode2 = JsonDocument.Parse(setups["OpenCode 2"]).RootElement.GetProperty("mcp").GetProperty("servers").GetProperty("passenger");
+            foreach (JsonElement server in (JsonElement[])[openCode, openCode2])
+            {
+                Assert.Equal("local", server.GetProperty("type").GetString());
+                Assert.Equal([passenger, "--mcp-attach"], server.GetProperty("command").EnumerateArray().Select(a => a.GetString()!));
+            }
+            Assert.Equal((true, 600_000), (openCode.GetProperty("enabled").GetBoolean(), openCode.GetProperty("timeout").GetInt32()));
+            Assert.Equal((false, 600_000), (openCode2.GetProperty("codemode").GetBoolean(), openCode2.GetProperty("timeout").GetProperty("execution").GetInt32()));
 
             // Copy puts the text on the clipboard whole, and says it did until another is copied.
             Button copy = dialog.CopyButtons["Claude Desktop"];

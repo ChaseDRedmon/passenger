@@ -5,8 +5,9 @@ using Passenger.Core;
 namespace Passenger.App.Mcp;
 
 /// <summary>How an agent is given this copy of Passenger as its MCP server, as Settings' MCP Server page shows it: each
-/// agent's command or configuration, naming this executable by its real path (inside the app bundle on macOS) with
-/// --mcp-attach, and Claude Desktop's with the folder to work in after it, since it starts its servers in no folder.</summary>
+/// agent's command or configuration (Claude Code, Codex, Claude Desktop, OpenCode 1 and 2), naming this executable by its
+/// real path (inside the app bundle on macOS) with --mcp-attach, and Claude Desktop's with the folder to work in after
+/// it, since it starts its servers in no folder.</summary>
 public sealed record AgentSetup(string Executable, string? Folder)
 {
     /// <summary>What Claude Desktop's configuration names when no folder is open: the person's to fill in.</summary>
@@ -42,6 +43,29 @@ public sealed record AgentSetup(string Executable, string? Folder)
 
     /// <summary>Claude Desktop's claude_desktop_config.json entry, with the folder to work in.</summary>
     public string ClaudeDesktop => Json(["--mcp-attach", Folder ?? FolderPlaceholder]);
+
+    /// <summary>How long OpenCode is told a call may take: past the person's two questions (2 minutes each at most) and a
+    /// build, yet a call that never came back would fail in minutes rather than OpenCode 2's 12 hours.</summary>
+    public const int OpenCodeTimeout = 600_000;
+
+    /// <summary>OpenCode 1's opencode.json entry: a local server, its command one list, its one timeout every request's.</summary>
+    public string OpenCode =>
+        "{\n  \"mcp\": {\n    \"passenger\": {\n" +
+        "      \"type\": \"local\",\n" +
+        $"      \"command\": [{Quoted(Executable)}, \"--mcp-attach\"],\n" +
+        "      \"enabled\": true,\n" +
+        $"      \"timeout\": {OpenCodeTimeout}\n" +
+        "    }\n  }\n}";
+
+    /// <summary>OpenCode 2's: under mcp.servers, Code Mode off, so the agent calls Passenger's tools itself (Code Mode's
+    /// permission prompts can leave a call waiting), and a tool call's execution timeout.</summary>
+    public string OpenCode2 =>
+        "{\n  \"mcp\": {\n    \"servers\": {\n      \"passenger\": {\n" +
+        "        \"type\": \"local\",\n" +
+        $"        \"command\": [{Quoted(Executable)}, \"--mcp-attach\"],\n" +
+        "        \"codemode\": false,\n" +
+        $"        \"timeout\": {{ \"execution\": {OpenCodeTimeout} }}\n" +
+        "      }\n    }\n  }\n}";
 
     private string Json(IReadOnlyList<string> arguments) =>
         "{\n  \"mcpServers\": {\n    \"passenger\": {\n" +

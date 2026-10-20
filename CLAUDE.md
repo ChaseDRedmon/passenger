@@ -335,7 +335,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
-  `roslyn/` (the server's own logs), `lsp.log`, `dap.log` and `vstest.log`. Settings | Diagnostics turns on protocol
+  `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol
   traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
   ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
@@ -634,13 +634,33 @@ window or takes the focus; it shows everything but the system's own window chrom
   the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Every call on a
   window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
   `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
-  else the person's answer to `AgentAdmissionDialog` within `MainWindow.AgentAnswerLimit`; turning the setting off, or
+  else the person's answer to `AgentAdmissionDialog`; turning the setting off, or
   the window's folder taken off the list, ends the connections (`AgentSocket.ShutOut`). On a person's
-  window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`),
-  and `open` asks before it replaces their folder. Settings' MCP Server page (`SettingsDialog.Mcp.cs`) lists the
+  window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`,
+  `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
+  away), and `open` asks before it replaces their folder. No wait on the person is unbounded (#255): each question goes
+  through `MainWindow.AskForAgentAsync`, which closes it unanswered after `MainWindow.AgentAnswerLimit` (2 minutes),
+  the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
+  the Dock icon on macOS, where Activate is refused while another app is in front) and has the status bar say who waits
+  on what (`AgentStatus`, "X waits for you: allow build?"). Every call is an `AgentCall` (`ConnectedTool`, `McpProxy`):
+  when its request gave a progress token it tells the agent MCP progress every `AgentCall.Every` (10 s;
+  `PASSENGER_MCP_PROGRESS_MS`, the tests' run 1 s) and at once as it starts waiting on the person, since OpenCode 1 gives
+  up on a call it hears nothing of for 60 s and OpenCode 2 waits 12 hours; what it says is what it waits on, else the
+  window's `ActionWork` stage it follows (`AgentCall.Follow`: build, run, debug_start, profile), else what the tool said
+  (`AgentCall.Say`, reached through an AsyncLocal the dispatcher flows), with the time so far. `--mcp-attach` sends the
+  window a progress token of its own and tells the agent the window's words under the agent's token and its own rising
+  counts, beating itself only until the window speaks. With protocol traces on, `mcp.log` has each call's start, waits
+  (with what they came to) and end with their times, names only (the proxy reads `traceProtocols` from settings.json);
+  passenger.log has each question and its answer always. In the MCP modes (`--mcp`, `--mcp-attach`, `--headless`)
+  `IdeLog.TakeConsole` writes Console.Out and Console.Error to passenger.log, and on macOS and Linux makes the
+  process's own standard error a pipe a thread reads into it, since an agent may never read stderr (OpenCode's never does)
+  and a full pipe stops its writer; Program.Main's fatal-flag message still goes to real stderr. Settings' MCP Server
+  page (`SettingsDialog.Mcp.cs`) lists the
   folders, each taken back by Remove, and each agent's setup (`AgentSetup`: Claude Code's and Codex's commands, a
-  repository's `.mcp.json`, Codex's config.toml, Claude Desktop's with the window's folder after `--mcp-attach`) naming
-  this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy. `McpHost.Instructions` tell an agent to
+  repository's `.mcp.json`, Codex's config.toml, Claude Desktop's with the window's folder after `--mcp-attach`,
+  OpenCode 1's opencode.json and OpenCode 2's `mcp.servers` with Code Mode off, each with a 10-minute timeout) naming
+  this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy, and says when `--mcp FOLDER` (asks
+  nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent to
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
   angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
@@ -966,7 +986,8 @@ folders (`TestFolders.Create`) and the shells' history, with an empty Git config
 (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`); on macOS and Linux NuGet's home is the run's too, its package cache named
 as NuGet names the default, ending in a separator, so a restore of the repository's own projects (SelfDebuggingTests')
 writes the nuget.g.props the person's build did and compiles nothing again. The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (3 s for
-the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux) and `PASSENGER_WATCH_LATER_MS` (3 s for 10); a test that holds a language server to not responding
+the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux), `PASSENGER_WATCH_LATER_MS` (3 s for 10) and
+`PASSENGER_MCP_PROGRESS_MS` (an agent's call told its progress every 1 s, not 10); a test that holds a language server to not responding
 sets that server's `SlowRequest`/`ResponseLimit`, never the run's, since a check Roslyn answers late under load would end
 a server that was only slow. Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
