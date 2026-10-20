@@ -191,8 +191,13 @@ public sealed class MenuTests : IDisposable
             Click(window, titles[1]);
             Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu in the File menu's place");
             Assert.False(OpenMenuTitles(window).Contains("Open..."), "The File menu stayed open under the Edit menu");
+            // With one open, the pointer moving over another title opens that one, as a menu bar's do, no click needed.
+            Hover(window, titles[2]);
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Recent Locations"), "the View menu, opened by the pointer moving over its title");
+            Hover(window, titles[0]);
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Open..."), "the File menu again, opened by the pointer moving back over its title");
             Ui.Press(window, "ESCAPE");
-            Assert.False(MenuOpen(window), "Escape left the bar's Edit menu open: it never took the keys");
+            Assert.False(MenuOpen(window), "Escape left the bar's File menu open: it never took the keys");
 
             // Narrower, the menus the toolbar has no room for go behind the button after the bar, which holds just those.
             window.Width = 1200;
@@ -220,6 +225,14 @@ public sealed class MenuTests : IDisposable
         {
             window.Close();
         }
+    }
+
+    /// <summary>The pointer moved over a control, from beside it, as a person's moves.</summary>
+    private static void Hover(MainWindow window, Control target)
+    {
+        window.MouseMove(target.TranslatePoint(new Point(2, target.Bounds.Height / 2), window)!.Value);
+        window.MouseMove(target.TranslatePoint(new Point(target.Bounds.Width / 2, target.Bounds.Height / 2), window)!.Value);
+        Ui.Settle();
     }
 
     private static void Click(MainWindow window, Control target)
