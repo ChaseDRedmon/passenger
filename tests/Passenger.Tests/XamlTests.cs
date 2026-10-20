@@ -194,6 +194,39 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void An_interface_typed_as_its_own_base_or_in_a_cycle_beside_open_xaml_leaves_the_xaml_checked_and_the_ide_running()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        OpenDocument view = window.EditorArea.Active!;
+        PlaceAfter(window.EditorArea.CodeEditor, "<TextBlock Text=\"{Binding #Go.Content}\" />");
+        window.KeyTextInput("\n        <TextBlock Text=\"{Binding Subtitle}\" />\n        <TextBlock Text=\"{Binding Caption}\" />");
+        Ui.WaitFor(() => view.Markers.Count == 2, "the two properties the view model lacks marked");
+
+        // On the way to IMainViewModelBase the interface names itself; a binding the view model lacks then asks what it
+        // implements (the toolkit's ObservableObject, INotifyPropertyChanged, for Create property), which went round for good.
+        window.OpenFile(app.PathOf("ViewModels/MainViewModel.cs"));
+        Ui.Settle();
+        CodeEditor code = window.EditorArea.CodeEditor;
+        Replace(code, "public class MainViewModel\n{", "public interface IMainViewModel : IMainViewModel\n{\n}\n\npublic class MainViewModel : IMainViewModel\n{\n    public string Caption { get; set; } = \"\";\n");
+        Ui.WaitFor(() => view.Markers.Count == 1, "the property typed into the view model no longer marked, its types read again");
+        Assert.Equal("Cannot resolve property 'Subtitle' on MainViewModel", Assert.Single(view.Markers).Message);
+
+        // Two interfaces, each the other's base.
+        Replace(code, "public interface IMainViewModel : IMainViewModel\n{\n}", "public interface IMainViewModel : IViewModelBase\n{\n}\n\npublic interface IViewModelBase : IMainViewModel\n{\n}");
+        Replace(code, "public string Caption", "public string Heading");
+        Ui.WaitFor(() => view.Markers.Count == 2, "the property renamed in the view model marked again, its types read again");
+        Assert.Equal(["Cannot resolve property 'Caption' on MainViewModel", "Cannot resolve property 'Subtitle' on MainViewModel"], view.Markers.Select(m => m.Message).Order());
+
+        window.OpenFile(app.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "{Binding Subt");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
+        Assert.Equal("Create property 'Subtitle'", window.Assist.Offered[0]);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_package_restored_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands()
     {
         string folder = PathNames.Canonical(TestFolders.Create("xaml-restore-"));
