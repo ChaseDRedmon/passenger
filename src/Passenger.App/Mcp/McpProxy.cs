@@ -81,7 +81,10 @@ public sealed class McpProxy
         McpServer server = McpServer.Create(transport, options);
         Task running = server.RunAsync(gone.Token);
         // The server waits out the calls still going when the agent goes, so its going is watched for here.
-        Task.WaitAny(running, transport.MessageReader.Completion);
+        // The system's request to end it (an agent's client may send SIGTERM a moment after closing the input) ends it so too.
+        TaskCompletionSource terminated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using System.Runtime.InteropServices.PosixSignalRegistration? signal = McpHost.EndOnSignal(() => terminated.TrySetResult());
+        Task.WaitAny(running, transport.MessageReader.Completion, terminated.Task);
         gone.Cancel();
         proxy.Leave();
         try
@@ -424,6 +427,20 @@ public sealed class McpProxy
         if (joined is { } window)
         {
             Quietly(window).Wait(TimeSpan.FromSeconds(5));
+        }
+        // The test run's headless window ends with its input, cleanly: left to this process's end, the watchdog would kill it
+        // before it took its socket away.
+        if (headless is { HasExited: false } child)
+        {
+            try
+            {
+                child.StandardInput.Close();
+                child.WaitForExit(McpHost.EndLimit);
+            }
+            catch (Exception error) when (error is IOException or InvalidOperationException)
+            {
+                // Gone already.
+            }
         }
     }
 

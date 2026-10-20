@@ -73,6 +73,43 @@ public sealed partial class McpTests
         await Until(() => !Processes.IsRunning(started), "the Passenger the agent started to end with its session");
     }
 
+    /// <summary>An agent's client that asks the system to end its server a moment after closing the server's input (OpenCode
+    /// 1's SIGTERM, 20 ms after) has it end as the end of its input ends it: exit code 0, and the headless Passenger it
+    /// started ended with it and its socket taken away, where the watchdog's kill had left the socket behind.</summary>
+    [Fact]
+    public async Task An_agents_server_the_system_asks_to_end_as_its_input_closes_ends_cleanly_with_the_passenger_it_started()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has no SIGTERM for an agent's client to send");
+        string root = TestFolders.Create("mcp-term-");
+        madeFolders.Add(root);
+        string state = Path.Combine(root, "state");
+        string notes = Plain("mcp-term-");
+        Process proxy = StartPassenger(["--mcp-attach"], notes, new() { ["PASSENGER_SETTINGS"] = state });
+        McpClient client = await Connect(proxy, ["--mcp-attach"]);
+        string sockets = McpHost.SocketFolderFor(state);
+        madeFolders.Add(sockets);
+        // Its first call starts Passenger on the folder, whose window asks; given up once that window listens.
+        using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        Task<CallToolResult> waiting = CallGivingUp(client, "workspace", new(), giveUp.Token);
+        string? socket = null;
+        await Until(() => (socket = Directory.Exists(sockets) ? Directory.GetFiles(sockets, "*.sock").FirstOrDefault() : null) is not null,
+            "Passenger to start with a window on the agent's folder");
+        int started = McpHostProcess(socket!);
+        giveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+
+        // OpenCode 1's end: the input closed, and the system asked to end the process 20 ms later.
+        proxy.StandardInput.Close();
+        Waiting.For(TimeSpan.FromMilliseconds(20), "OpenCode 1's moment between closing the input and SIGTERM");
+        // Gone already, the signal finds no process, which is as good.
+        await ChildProcesses.RunAsync(ChildProcesses.Command("/bin/kill", ["-TERM", proxy.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)]),
+            limit: TimeSpan.FromSeconds(30), answers: [1], cancel: Cancel);
+        await Until(() => proxy.HasExited, "the agent's server to end");
+        Assert.Equal(0, proxy.ExitCode);
+        await Until(() => !Processes.IsRunning(started), "the Passenger the agent started to end with it");
+        Assert.Empty(Directory.Exists(sockets) ? Directory.GetFiles(sockets, "*.sock") : []);
+    }
+
     [AvaloniaFact]
     public void An_agents_first_call_has_the_running_Passenger_open_its_folder_in_a_window_of_its_own_which_asks_first()
     {

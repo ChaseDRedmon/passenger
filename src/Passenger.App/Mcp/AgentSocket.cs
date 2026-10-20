@@ -350,7 +350,7 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
 /// <summary>A tool as one connection reaches it: its call cancelled with the connection, and on a person's window held
 /// until the agent is let in, then first allowed by them when it changes something (not read-only nor declared harmless),
 /// and named in the status bar while it runs; told to the agent as it goes and logged (<see cref="AgentCall"/>).</summary>
-internal sealed class ConnectedTool(McpServerTool tool, MainWindow window, AgentConnection connection) : DelegatingMcpServerTool(tool)
+internal sealed class ConnectedTool(McpServerTool tool, MainWindow? window, AgentConnection connection, Task? ready = null) : DelegatingMcpServerTool(tool)
 {
     public override async ValueTask<CallToolResult> InvokeAsync(RequestContext<CallToolRequestParams> request, CancellationToken cancellationToken = default)
     {
@@ -380,17 +380,22 @@ internal sealed class ConnectedTool(McpServerTool tool, MainWindow window, Agent
     {
         if (!connection.Attached)
         {
+            // --mcp's own IDE, whose server answers before the IDE is up: a call waits for it.
+            if (ready is not null)
+            {
+                await ready.WaitAsync(cancel);
+            }
             return await base.InvokeAsync(request, cancel);
         }
         // Read-only or not, no call goes on before the agent is let into the window.
         string? refused = await UiThread.InvokeAsync(() =>
         {
             connection.Named(request.Server.ClientInfo);
-            return connection.AdmitAsync(window, told, cancel);
+            return connection.AdmitAsync(window!, told, cancel);
         });
         if (refused is null && shown.Annotations is not ({ ReadOnlyHint: true } or { DestructiveHint: false }))
         {
-            refused = await UiThread.InvokeAsync(() => connection.AllowAsync(window, shown, request.Params?.Arguments, told, cancel));
+            refused = await UiThread.InvokeAsync(() => connection.AllowAsync(window!, shown, request.Params?.Arguments, told, cancel));
         }
         if (refused is not null)
         {
@@ -403,14 +408,14 @@ internal sealed class ConnectedTool(McpServerTool tool, MainWindow window, Agent
             return await base.InvokeAsync(request, cancel);
         }
         string title = shown.Title ?? shown.Name;
-        UiThread.Post(() => window.AgentWorkStarted(title));
+        UiThread.Post(() => window!.AgentWorkStarted(title));
         try
         {
             return await base.InvokeAsync(request, cancel);
         }
         finally
         {
-            UiThread.Post(() => window.AgentWorkEnded(title));
+            UiThread.Post(() => window!.AgentWorkEnded(title));
         }
     }
 

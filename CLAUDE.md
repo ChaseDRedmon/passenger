@@ -623,7 +623,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   console, and `profile` takes `attach`. The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
-  agent joins), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
+  agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
   folder, macOS's by `confstr` whatever TMPDIR an agent has, else XDG_RUNTIME_DIR or /tmp, named by a hash of the user and
   the state folder, mode 0700 and used only once its mode is the user's to set, so a socket's path stays within macOS's
   104 bytes whatever PASSENGER_SETTINGS is, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
@@ -631,7 +631,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   its whole session, answering initialize and tools/list from `McpHost.ToolMethods` and joining, at a tool call, only a
   window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
   through the process's `PID.open` socket (`AppSocket`, `PassengerApp.OpenProject`), else starts Passenger (`open -a` on
-  the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Every call on a
+  the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Each mode ends on
+  SIGTERM as on the end of its input (`McpHost.EndOnSignal`, gone within `EndLimit` at the latest), since an agent's
+  client may send it a moment after closing the input (OpenCode 1's, 20 ms after), and `--mcp-attach` ends the test
+  run's headless window by closing its input, so it takes its socket away before the watchdog would kill it. Every call on a
   window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
   `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
   else the person's answer to `AgentAdmissionDialog`; turning the setting off, or
