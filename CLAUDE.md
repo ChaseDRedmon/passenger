@@ -643,7 +643,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
   `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
   else the person's answer to `AgentAdmissionDialog`; turning the setting off, or
-  the window's folder taken off the list, ends the connections (`AgentSocket.ShutOut`). On a person's
+  the window's folder taken off the list, ends the connections (`AgentSocket.ShutOut`). An agent is let in on a folder:
+  the window leaving it (`OpenFolder`, Close Solution) ends the connections of those let in on it (`AgentSocket.Moving`)
+  unless agents are let in unasked where it goes; the agent whose own `open` moves it stays, and those that stay are asked
+  again before each tool's first use there; `--mcp-attach` joins again by folder once its window has another folder open
+  than the one it joined it on (its own `open` aside). On a person's
   window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`,
   `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
   away), and `open` asks before it replaces their folder. No wait on the person is unbounded (#255): each question goes

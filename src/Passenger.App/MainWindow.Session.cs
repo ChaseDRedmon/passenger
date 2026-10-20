@@ -52,8 +52,8 @@ public partial class MainWindow
     /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
     /// read again: its language server and open files are kept. Another folder's session is left first, and the new one
     /// made once what it ran has ended: the task is done once the folder is open (at once when nothing had to end), or
-    /// once a later open has taken its place.</summary>
-    public Task OpenFolder(string path)
+    /// once a later open has taken its place. <paramref name="opener"/> is the agent whose own open it is, which stays let in.</summary>
+    public Task OpenFolder(string path, Mcp.AgentConnection? opener = null)
     {
         UiThread.Check();
         string named = PathNames.Canonical(path);
@@ -73,6 +73,7 @@ public partial class MainWindow
             }
             EndSession();
         }
+        AgentsGoTo(opening, opener);
         Autosave();
         // The session with no folder ends too, what it ran with it (a program attached to with no folder open); the files
         // open in it stay, the new session's.

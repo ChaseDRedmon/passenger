@@ -17,8 +17,8 @@ namespace Passenger.Tests;
 /// site's steps set one up: its session has the tools from the start, its first call has Passenger open its folder (the
 /// run's headless build started on it, or a window of the running Passenger's), the window asks the person before the
 /// agent works there, and a window closed is found again at the next call. A window on another folder is never joined,
-/// and on a person's window an agent's open of another folder is theirs to allow; Settings keep a folder let in always
-/// from another window meanwhile.</summary>
+/// and on a person's window an agent's open of another folder is theirs to allow; an agent let in on one folder is asked
+/// again once the person opens another there, and Settings keep a folder let in always from another window meanwhile.</summary>
 public sealed partial class McpTests
 {
     [Fact]
@@ -454,6 +454,104 @@ public sealed partial class McpTests
         }
     }
 
+    /// <summary>An agent let in on one folder works there alone: the person opening another in its window shuts it out, and its
+    /// next call is asked again, changing nothing in the folder the person opened meanwhile. The agent's own open of a
+    /// folder, which the person allows, keeps it let in there, though its first change there is asked for again.</summary>
+    [AvaloniaFact]
+    public void An_agent_let_in_on_one_folder_is_asked_again_once_the_person_opens_another_in_its_window()
+    {
+        string first = Plain("mcp-first-");
+        string second = Plain("mcp-second-");
+        string third = Plain("mcp-third-");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(first);
+        Ui.Settle();
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Task<JsonElement> editing = Task.Run(() => Call(client, "edit", Note("first")));
+            Press(Admission(window, "the window to ask whether the agent may work there"), AgentAdmissionDialog.Allow);
+            Press(Question(window, "the question for the agent's edit"), "Allow");
+            Await(editing, "the edit in the first folder");
+            Assert.Equal("notes first\n", File.ReadAllText(Path.Combine(first, "Notes.txt")));
+            WaitFor(() => window.Agents == 1, "the window to count the agent it let in");
+
+            // The person opens another folder there: the agent let in on the first is shut out, and its next call asks again.
+            window.OpenFolder(second);
+            Ui.Settle();
+            WaitFor(() => window.Agents == 0, "the agent let in on the first folder to be shut out as the window opened the second");
+            Task<CallToolResult> again = Task.Run(() => Result(client, "edit", Note("second")));
+            AgentAdmissionDialog asked = Admission(window, "the window to ask again on the folder the person opened");
+            Assert.Contains(Texts(asked), t => t.Contains($"read and search {Path.GetFileName(second.TrimEnd(Path.DirectorySeparatorChar))},", StringComparison.Ordinal));
+            Press(asked, AgentAdmissionDialog.DontAllow);
+            CallToolResult refused = Await(again, "the edit after the window opened another folder");
+            Assert.True(refused.IsError == true && Text(refused).Contains("did not let Test Agent work there", StringComparison.Ordinal),
+                $"The agent's edit after the person opened another folder was answered: {Text(refused)}");
+            Assert.Equal("notes\n", File.ReadAllText(Path.Combine(second, "Notes.txt")));
+
+            // Let in there and allowed to edit, its own open of a third, which the person allows, keeps it let in; its first
+            // edit there asks again.
+            Task<JsonElement> editingSecond = Task.Run(() => Call(client, "edit", Note("second")));
+            Press(Admission(window, "the window to ask at the agent's next call"), AgentAdmissionDialog.Allow);
+            Press(Question(window, "the question for the agent's edit in the second folder"), "Allow");
+            Await(editingSecond, "the edit in the second folder");
+            Assert.Equal("notes second\n", File.ReadAllText(Path.Combine(second, "Notes.txt")));
+            Task<JsonElement> opening = Task.Run(() => Call(client, "open", new() { ["path"] = third }));
+            Press(Question(window, "the question for the agent's open"), AgentAdmissionDialog.Allow);
+            Assert.Equal(PathNames.Canonical(third), Await(opening, "the agent's open the person allowed").GetProperty("folder").GetString());
+            Task<JsonElement> editingThird = Task.Run(() => Call(client, "edit", Note("third")));
+            ConfirmDialog allowing = Question(window, "the question for the agent's first edit in the folder it opened");
+            Assert.Contains("Allow edit?", Texts(allowing));
+            Assert.DoesNotContain(window.OwnedWindows.OfType<AgentAdmissionDialog>(), d => d.IsVisible);
+            Press(allowing, "Allow");
+            Await(editingThird, "the edit in the folder the agent opened");
+            Assert.Equal("notes third\n", File.ReadAllText(Path.Combine(third, "Notes.txt")));
+            Assert.Equal(1, window.Agents);
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+        }
+    }
+
+    /// <summary>With Enable MCP Server on, a window keeps its agents as the person opens another folder there, but an agent
+    /// set up in the first goes on in it: --mcp-attach joins a window on its own folder again (the running Passenger opening
+    /// one), never the window now on the other.</summary>
+    [AvaloniaFact]
+    public void An_agent_set_up_in_a_folder_goes_on_there_once_its_window_opens_another()
+    {
+        string own = Plain("mcp-own-");
+        string other = Plain("mcp-other-");
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.KeepLayout();
+        window.KeepSettings();
+        window.OpenFolder(own);
+        Ui.Settle();
+        window.ApplySettings(window.Settings with { McpServer = true });
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", own])), "the agent attaching");
+        try
+        {
+            Assert.Equal(PathNames.Canonical(own), Await(Task.Run(() => Call(client, "workspace")), "the agent's first call").GetProperty("folder").GetString());
+            window.OpenFolder(other);
+            Ui.Settle();
+            JsonElement after = Await(Task.Run(() => Call(client, "workspace")), "the agent's call after its window opened another folder");
+            Assert.Equal(PathNames.Canonical(own), after.GetProperty("folder").GetString());
+            MainWindow joined = PassengerApp.Windows.Single(w => w != window);
+            Assert.Equal((PathNames.Canonical(own), PathNames.Canonical(other)), (joined.Folder, window.Folder));
+        }
+        finally
+        {
+            Gone(client);
+            foreach (MainWindow open in PassengerApp.Windows.Reverse().ToList())
+            {
+                open.Close();
+            }
+        }
+    }
+
     /// <summary>A folder let in always from one window stays let in when another window's Settings, open since before, takes
     /// back a different one: the list merges as what each changed, where it was taken whole from the last to change it.</summary>
     [AvaloniaFact]
@@ -507,6 +605,9 @@ public sealed partial class McpTests
             settingsWindow.Close();
         }
     }
+
+    /// <summary>An edit of Notes.txt, as <see cref="Plain"/> writes it, that adds a word.</summary>
+    private static Dictionary<string, object?> Note(string word) => new() { ["path"] = "Notes.txt", ["oldText"] = "notes", ["newText"] = $"notes {word}" };
 
     /// <summary>A folder of the test's own with one text file, which opens with no language server to wait for.</summary>
     private string Plain(string name)

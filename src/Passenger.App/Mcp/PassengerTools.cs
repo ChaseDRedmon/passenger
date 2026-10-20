@@ -68,13 +68,13 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                         : $"Nobody at {AgentConnection.Where(window)} answered within {AgentConnection.Limit(window)} whether {connection.Agent} may open {full} in place of {open}. A later call asks again.");
                 }
             }
-            await window.OpenFolder(full).WaitAsync(cancel);
+            await window.OpenFolder(full, connection).WaitAsync(cancel);
         }
         else if (File.Exists(full))
         {
             if (Session.Folder is null)
             {
-                await window.OpenFolder(Path.GetDirectoryName(full)!).WaitAsync(cancel);
+                await window.OpenFolder(Path.GetDirectoryName(full)!, connection).WaitAsync(cancel);
             }
             if (window.OpenFile(full) is { } problem)
             {
@@ -1085,6 +1085,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return await UiThread.InvokeAsync(async () =>
             {
+                // Ended while it waited its turn (its agent shut out as the window left the folder): it does nothing in the next.
+                cancel.ThrowIfCancellationRequested();
                 if (!Session.WorkspaceRead.IsCompleted || !Session.Models.Idle.IsCompleted)
                 {
                     AgentCall.Say($"Waiting for {Session.Folder ?? "the folder"}'s projects to be read");

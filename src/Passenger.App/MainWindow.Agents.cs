@@ -136,6 +136,13 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The window leaves its folder for <paramref name="folder"/> (none when it closes it): the agents let in on the
+    /// folder it leaves are shut out, each asked again at its next call, unless the window lets agents in unasked where it
+    /// goes; the agent whose own open it is (<paramref name="opener"/>) stays. Those that stay are asked again before their
+    /// first use of each tool there.</summary>
+    private void AgentsGoTo(string? folder, Mcp.AgentConnection? opener) =>
+        agentSocket?.Moving(AgentsUnattended || settings.McpServer || (folder is not null && LetsIn(settings, folder)), opener);
+
     /// <summary>Asks the person whether an agent may work in the window, its calls waiting: Allow, with Always for this
     /// folder kept with the folder, Don't allow, or no answer within <see cref="AgentAnswerLimit"/> or before
     /// <paramref name="takenAway"/> (no call waits any more, or the agent went), which takes the question away.</summary>
@@ -177,7 +184,7 @@ public partial class MainWindow
         UiThread.Check();
         string what = char.ToLowerInvariant(title[0]) + title[1..];
         ConfirmDialog dialog = new($"Allow {tool}?",
-            $"{agent}, connected through Passenger's MCP server, wants to {what} (its {tool} tool). Once allowed, it may use that tool again without asking until it disconnects.",
+            $"{agent}, connected through Passenger's MCP server, wants to {what} (its {tool} tool). Once allowed, it may use that tool again without asking in this folder until it disconnects.",
             "Allow", "Deny", arguments.Count == 0 ? null : AgentArguments(arguments));
         IdeErrors.Write($"Agents: {agent} asks to use {tool} in the window on {Folder ?? "no folder"}");
         Admission said = Answered(await AskForAgentAsync(dialog, false, $"{agent} waits for you: allow {tool}?", cancel));

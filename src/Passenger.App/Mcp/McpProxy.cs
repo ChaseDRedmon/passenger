@@ -16,8 +16,9 @@ namespace Passenger.App.Mcp;
 /// and joins a window only when a tool is called: the innermost whose folder holds FOLDER (else the agent's working
 /// folder), never one on an unrelated folder; with a PID, that process's windows alone, the newest when none holds it.
 /// With no window to join it has the running Passenger open the folder (<see cref="AppSocket"/>), else starts Passenger
-/// on it, and waits for that folder's window, which lets the agent in or asks the person first. A window that closes is
-/// joined again, or another started, at the next call. Resources and prompts are none, here as in the window.</summary>
+/// on it, and waits for that folder's window, which lets the agent in or asks the person first. A window that closes, or
+/// that opens another folder than the one it was joined on (but by the agent's own open), is joined again, or another
+/// started, at the next call. Resources and prompts are none, here as in the window.</summary>
 public sealed class McpProxy
 {
     /// <summary>The test run's: <c>headless</c> has a call with no window start this build headless, as its own child, in
@@ -37,6 +38,16 @@ public sealed class McpProxy
 
     /// <summary>The socket <see cref="joined"/> talks over.</summary>
     private Socket? joinedSocket;
+
+    /// <summary>The joined window's socket file, beside which it writes its folder.</summary>
+    private string? joinedPath;
+
+    /// <summary>The folder the joined window had open as it was joined, or as the agent's own open left it: the agent's to
+    /// work in there, and no other the person opens in that window.</summary>
+    private string? joinedOn;
+
+    /// <summary>The agent's own opens under way on the joined window, which move it on purpose.</summary>
+    private int opening;
 
     /// <summary>The headless Passenger a test run's call started, which ends with this one.</summary>
     private Process? headless;
@@ -145,9 +156,14 @@ public sealed class McpProxy
         }
         call.Logged("forwarded to the window");
         AgentCall.Say($"Waiting for the Passenger window on {here} to answer");
-        Task<CallToolResult> answer = window.SendRequestAsync<CallToolRequestParams, CallToolResult>(RequestMethods.ToolsCall, Forwarded(request.Params!, asked), requestId: id).AsTask();
+        bool opens = tool == "open";
+        if (opens)
+        {
+            Interlocked.Increment(ref opening);
+        }
         try
         {
+            Task<CallToolResult> answer = window.SendRequestAsync<CallToolRequestParams, CallToolResult>(RequestMethods.ToolsCall, Forwarded(request.Params!, asked), requestId: id).AsTask();
             return await answer.WaitAsync(cancel);
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
@@ -173,8 +189,37 @@ public sealed class McpProxy
             {
                 told.TryRemove(forwarded, out _);
             }
+            if (opens)
+            {
+                await FollowAsync(window);
+                Interlocked.Decrement(ref opening);
+            }
         }
     }
+
+    /// <summary>The agent's own open answered: the window it joined is on the folder that open left it on, the agent's to
+    /// work in from now.</summary>
+    private async Task FollowAsync(McpClient window)
+    {
+        await joining.WaitAsync();
+        try
+        {
+            if (joined == window && joinedPath is { } path)
+            {
+                joinedOn = McpHost.WindowFolder(path);
+            }
+        }
+        finally
+        {
+            joining.Release();
+        }
+    }
+
+    /// <summary>Whether the joined window has another folder open than the one the agent was let in on there, which the
+    /// person opened (the agent's own opens under way aside): the window shuts the agent out, unless it lets agents in
+    /// unasked there, and the agent goes on with its own folder.</summary>
+    private bool Moved() =>
+        Volatile.Read(ref opening) == 0 && joinedPath is { } path && !string.Equals(McpHost.WindowFolder(path), joinedOn, StringComparison.Ordinal);
 
     /// <summary>The agent's call as the window is sent it: the same, but for its progress token, the proxy's own or none.</summary>
     private static CallToolRequestParams Forwarded(CallToolRequestParams call, ProgressToken? token)
@@ -240,7 +285,7 @@ public sealed class McpProxy
                 {
                     await Task.WhenAny(live.Completion, Task.Delay(TimeSpan.FromSeconds(1), cancel));
                 }
-                if (!live.Completion.IsCompleted)
+                if (!live.Completion.IsCompleted && !Moved())
                 {
                     return live;
                 }
@@ -250,7 +295,7 @@ public sealed class McpProxy
                 await Quietly(joined);
                 joined = null;
             }
-            NetworkStream stream = Connect() ?? await StartAsync(call, cancel);
+            (NetworkStream stream, string socket) = Connect() ?? await StartAsync(call, cancel);
             // A window whose thread does not answer the handshake is given up on, as one that never opened is.
             using CancellationTokenSource handshake = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             handshake.CancelAfter(StartLimit);
@@ -261,6 +306,8 @@ public sealed class McpProxy
                     new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" }, ProtocolVersion = protocol }, cancellationToken: handshake.Token);
                 joined.RegisterNotificationHandler(NotificationMethods.ProgressNotification, Heard);
                 joinedSocket = stream.Socket;
+                joinedPath = socket;
+                joinedOn = McpHost.WindowFolder(socket);
             }
             catch (Exception error) when (error is IOException or McpException or InvalidOperationException
                 || (error is OperationCanceledException && !cancel.IsCancellationRequested))
@@ -292,8 +339,8 @@ public sealed class McpProxy
         }
     }
 
-    /// <summary>A connection to the window to join, or null when no window of Passenger's is over the folder.</summary>
-    private NetworkStream? Connect()
+    /// <summary>A connection to the window to join, with its socket's file, or null when no window of Passenger's is over the folder.</summary>
+    private (NetworkStream Stream, string Socket)? Connect()
     {
         McpHost.RemoveStale();
         foreach (string path in Windows())
@@ -302,7 +349,7 @@ public sealed class McpProxy
             try
             {
                 socket.Connect(new UnixDomainSocketEndPoint(path));
-                return new NetworkStream(socket, ownsSocket: true);
+                return (new NetworkStream(socket, ownsSocket: true), path);
             }
             catch (SocketException)
             {
@@ -332,7 +379,7 @@ public sealed class McpProxy
 
     /// <summary>Has a Passenger open the folder, the running one's or one started on it, and joins its window once it
     /// listens.</summary>
-    private async Task<NetworkStream> StartAsync(AgentCall call, CancellationToken cancel)
+    private async Task<(NetworkStream Stream, string Socket)> StartAsync(AgentCall call, CancellationToken cancel)
     {
         if (processId is int pid)
         {

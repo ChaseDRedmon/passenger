@@ -22,9 +22,9 @@ public sealed class AgentSocket : IDisposable
     /// <summary>Cancelled, and made anew, when the person shuts out the agents connected (Enable MCP Server turned off).</summary>
     private CancellationTokenSource letIn = new();
 
-    /// <summary>The agents' connections, closed at once when they are shut out or the window closes, so an agent's next
-    /// call finds the window gone rather than sending into its end.</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Socket, byte> clients = new();
+    /// <summary>The agents' connections, each with what ends its calls, closed at once when they are shut out or the
+    /// window closes, so an agent's next call finds the window gone rather than sending into its end.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Socket, Served> clients = new();
 
     private AgentSocket(MainWindow window, string path, Socket listener)
     {
@@ -81,6 +81,33 @@ public sealed class AgentSocket : IDisposable
         Hangup();
     }
 
+    /// <summary>The window leaves its folder for another, or none: the agents let in on the one it leaves are shut out,
+    /// each asked to be let in again at its next call, unless <paramref name="staying"/> (the window lets agents in unasked
+    /// where it goes); the agent whose own open moves it (<paramref name="opener"/>) goes with it. Those kept are asked
+    /// again before their first use of each tool there. UI thread only.</summary>
+    public void Moving(bool staying, AgentConnection? opener)
+    {
+        UiThread.Check();
+        foreach ((Socket client, Served served) in clients)
+        {
+            if (staying || served.Connection == opener)
+            {
+                served.Connection.Moved();
+                continue;
+            }
+            try
+            {
+                // At once, so a call of the folder left that has yet to run does nothing in the one opened.
+                served.Gone.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Its connection ended as it was shut out.
+            }
+            Hangup(client);
+        }
+    }
+
     public void Dispose()
     {
         if (closed.IsCancellationRequested)
@@ -98,14 +125,19 @@ public sealed class AgentSocket : IDisposable
     {
         foreach (Socket client in clients.Keys)
         {
-            try
-            {
-                client.Shutdown(SocketShutdown.Both);
-            }
-            catch (Exception error) when (error is SocketException or ObjectDisposedException)
-            {
-                // Gone already.
-            }
+            Hangup(client);
+        }
+    }
+
+    private static void Hangup(Socket client)
+    {
+        try
+        {
+            client.Shutdown(SocketShutdown.Both);
+        }
+        catch (Exception error) when (error is SocketException or ObjectDisposedException)
+        {
+            // Gone already.
         }
     }
 
@@ -130,7 +162,7 @@ public sealed class AgentSocket : IDisposable
     {
         using CancellationTokenSource gone = CancellationTokenSource.CreateLinkedTokenSource(closed.Token, letIn.Token);
         AgentConnection connection = new(gone.Token, attached: true);
-        clients[client] = 0;
+        clients[client] = new Served(connection, gone);
         try
         {
             await using NetworkStream stream = new(client, ownsSocket: true);
@@ -152,6 +184,9 @@ public sealed class AgentSocket : IDisposable
             UiThread.Post(() => connection.Left(window));
         }
     }
+
+    /// <summary>An agent's connection as the socket serves it, and what ends its calls.</summary>
+    private sealed record Served(AgentConnection Connection, CancellationTokenSource Gone);
 }
 
 /// <summary>What the person said to an agent's question: whether it may work in the window, use a tool, open a folder.</summary>
@@ -169,7 +204,7 @@ public enum Admission
 /// waited for at most the window's <see cref="MainWindow.AgentAnswerLimit"/>. UI thread only, but for <see cref="Gone"/>.</summary>
 public sealed class AgentConnection(CancellationToken gone, bool attached)
 {
-    /// <summary>The tools the person allowed, which the agent uses unasked until it goes.</summary>
+    /// <summary>The tools the person allowed, which the agent uses unasked until it goes or the window opens another folder.</summary>
     private readonly HashSet<string> allowed = new(StringComparer.Ordinal);
 
     /// <summary>Each tool's question while the person is asked it, which every call of that tool waits on.</summary>
@@ -258,6 +293,14 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
         window.AgentAnswerLimit.TotalSeconds >= 120 && window.AgentAnswerLimit.TotalSeconds % 60 == 0
             ? $"{window.AgentAnswerLimit.TotalMinutes:0} minutes"
             : $"{window.AgentAnswerLimit.TotalSeconds:0} s";
+
+    /// <summary>The window opened another folder and the agent stays let in (its own open, or agents let in unasked there):
+    /// the tools allowed in the one it left are asked for again.</summary>
+    internal void Moved()
+    {
+        UiThread.Check();
+        allowed.Clear();
+    }
 
     /// <summary>The connection ended: the window stops counting it.</summary>
     internal void Left(MainWindow window)
