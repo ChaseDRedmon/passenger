@@ -46,3 +46,10 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   what the window said when the wait ran out.
 - CI Windows shard 2, e258c203: no test listed, xunit v3 3.2.2's runner writing after its JSON. Neither: **xunit's
   runner**, worked around in 6001a6f7.
+- `XamlTimingTests`' keys while Passenger.App's types are read, CI Linux 39324137868: a key waited 255 ms against the
+  250 ms bound once, on a shared runner; it passed on re-run, and the bound measures responsiveness, so the time scale
+  rightly leaves it alone. Neither: **the runner's load**, not changed; again on Linux means look at the read's work on
+  the UI thread.
+- The v0.1.0 release run 39337400528: a shard whose tests had all passed failed uploading its results (CreateArtifact,
+  ETIMEDOUT), and the publish met an HTTP 500 from GitHub's releases API (`gh release create` removed its draft).
+  Neither: **GitHub**; re-running the failed jobs published the release.
