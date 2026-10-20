@@ -15,6 +15,9 @@ public sealed class Workbook
     /// <summary>Excel's last column, XFD: a cell past it is not a cell.</summary>
     private const int LastColumn = 16384;
 
+    /// <summary>Excel's last row: a row numbered past it (in a damaged or hostile file) would make millions of rows of nothing.</summary>
+    private const int LastRow = 1_048_576;
+
     private readonly string path;
     private readonly string[] strings;
     private readonly CellFormat[] formats;
@@ -95,6 +98,7 @@ public sealed class Workbook
         using XmlReader reader = Reader(entry);
         int row = -1;
         int column = -1;
+        bool inRow = false;
         while (reader.Read())
         {
             if (reader.NodeType != XmlNodeType.Element)
@@ -105,6 +109,12 @@ public sealed class Workbook
             {
                 // A row's number may skip empty rows, which are kept as rows of no cells.
                 int number = int.TryParse(reader.GetAttribute("r"), NumberStyles.None, CultureInfo.InvariantCulture, out int r) ? r - 1 : row + 1;
+                // Rows come in order; one numbered at or before the last, or past Excel's last, is no row of the sheet.
+                inRow = number > row && number < LastRow;
+                if (!inRow)
+                {
+                    continue;
+                }
                 while (row < number)
                 {
                     row++;
@@ -112,7 +122,7 @@ public sealed class Workbook
                 }
                 column = -1;
             }
-            else if (reader.LocalName == "c" && row >= 0)
+            else if (reader.LocalName == "c" && inRow)
             {
                 column = reader.GetAttribute("r") is { } at ? ColumnOf(at) : column + 1;
                 if (column is < 0 or >= LastColumn)

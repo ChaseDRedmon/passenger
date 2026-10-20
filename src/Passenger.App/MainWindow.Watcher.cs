@@ -113,6 +113,12 @@ public partial class MainWindow
     /// <summary>An open file changed on disk: its text is taken, or with unsaved edits the person is asked which to keep.</summary>
     private void FollowDisk(OpenDocument document)
     {
+        if (document.IsWorkbook)
+        {
+            // Its tab holds no text to take: its table reads the file again.
+            Tables.TableFile.For(document)?.Follow();
+            return;
+        }
         if (!document.ChangedOnDisk())
         {
             return;

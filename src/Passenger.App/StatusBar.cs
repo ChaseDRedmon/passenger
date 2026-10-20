@@ -143,15 +143,20 @@ public sealed class StatusBar
         string where = folder is null ? "No solution" : Path.GetFileName(folder);
         text.Text = active is null ? where : string.Empty;
         ShowStorage(active);
-        indent.Text = active?.Indentation.Shown ?? "";
-        ToolTip.SetTip(indent, active?.Indentation.Tip(active.Language.Name));
+        OpenDocument? textual = Textual(active);
+        indent.Text = textual?.Indentation.Shown ?? "";
+        ToolTip.SetTip(indent, textual?.Indentation.Tip(textual.Language.Name));
         ShowLanguage(languageLabel);
-        ShowCaret(active is null ? null : editor);
+        ShowCaret(textual is null ? null : editor);
     }
 
+    /// <summary>The file shown while it is text: a workbook's tab holds none, so it has no breaks, encoding, indent or caret.</summary>
+    private static OpenDocument? Textual(OpenDocument? active) => active is { IsWorkbook: false } ? active : null;
+
     /// <summary>The file's line separator and encoding, which a click there offers others of.</summary>
-    public void ShowStorage(OpenDocument? active)
+    public void ShowStorage(OpenDocument? shown)
     {
+        OpenDocument? active = Textual(shown);
         lineSeparator.IsVisible = active is not null;
         encoding.IsVisible = active is not null;
         lineEnding.Text = active?.Separator.ToString() ?? string.Empty;

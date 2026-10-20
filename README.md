@@ -119,8 +119,9 @@ and more), a rename that renames the type's file, Go to Declaration, Implementat
 and type hierarchies and decompiled library sources. Problems lists the whole solution's without a build. Razor and
 Blazor files get C# and HTML help together.
 
-Two looks of its own, each dark and light: Passenger, the default, in the app icon's blue, and Harbour, warmer and
-rounder, the icon's teal on linen by day and a warm charcoal by night.
+Twelve looks of its own, each dark and light: Passenger, the default, in the app icon's blue; Harbour, warmer and
+rounder, the icon's teal on linen by day and a warm charcoal by night; and Sorbet, Nocturne, Saffron, Bonbon, Ledger,
+Slate, Orbit, Nightjar, Moss and Phosphor, each checked for contrast in both.
 
 ### Project files and the web languages
 
@@ -248,7 +249,7 @@ later, Git, and Node.js for the web languages.
 
 ```sh
 just build                 # Debug build; warnings are errors
-just run [PATH]            # run it on a folder or solution (--theme dark|light, --look passenger|harbour)
+just run [PATH]            # run it on a folder or solution (--theme dark|light, --look passenger, harbour, sorbet…)
 just test [FILTER]         # every test, the IDE driven whole on Avalonia's headless platform, or those matching
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
 just mcp [FOLDER]          # Passenger as an MCP server over a folder, from a clone of the last build

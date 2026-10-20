@@ -4,11 +4,13 @@ Guidance for Claude Code working in this repository.
 
 ## What this is
 
-**Passenger** is a Rider-inspired IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity),
-written in C# on .NET 11 with an Avalonia 12 UI, for Windows and macOS first. The work still to do is the issues of
-the GitHub MVP milestone (https://github.com/Zaneris/passenger/milestone/1), each saying what Rider does and when it
-is done. Read the issue before starting anything larger than a fix, and close or tick it when it lands. When a reference for how something should behave is needed, JetBrains
-Rider is installed at `~/Applications/Rider.app`.
+**Passenger** is an IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity), written in C# on
+.NET 11 with an Avalonia 12 UI, for Windows and macOS first. The MVP shipped as v0.1.0; the work still to do is the
+issues of the Post-MVP 1 milestone (https://github.com/Zaneris/passenger/milestone/2), each saying what Passenger does
+now, what it should do and when it is done (**Now:**, **The aim:**, **Done when:**). Read the issue before starting
+anything larger than a fix, and close or tick it when it lands. A new feature is the best Passenger can make it from what
+it already has, never a copy of another IDE's; only its keys follow Rider's keymaps (Rules), whose files are in the jars
+of JetBrains Rider at `~/Applications/Rider.app`. What is built keeps the behaviour this file describes.
 
 ## Commands
 
@@ -21,6 +23,8 @@ just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dm
                            # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc;
                            # its window's background is tools/dmg-background.svg, drawn by sips at 1x and 2x into one TIFF
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
+just themes                # rewrite the generated themes (Theme/Sorbet.axaml and the rest) from tools/themes.py's
+                           # palettes, every token worked out and nudged until UiRulesTests' contrast holds
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
                            # unless every size's corners are transparent (never write the three files any other way)
 just package-linux [RID]   # artifacts/package/Passenger-linux-x64.tar.gz (or -arm64): one passenger/ folder (app/,
@@ -876,8 +880,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `tools/Passenger.Notices/Licenses`, a package inside Roslyn's server a row in THIRD_PARTY_NOTICES.md's roslyn/ table,
   and copied source or an asset its entry after that file's marker line, so the app carries them.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
-  and every token exists in both the Dark and Light dictionaries. A theme (`Tokens.axaml`, `Harbour.axaml`) is
-  `Passenger.*` tokens alone; Fluent's own keys are named once for every theme in `Theme/FluentKeys.axaml`, which
+  and every token exists in both the Dark and Light dictionaries. A theme (`Tokens.axaml`, `Harbour.axaml`, and each
+  `Look` tools/themes.py writes to `Theme/<Look>.axaml`, which `Themes.Apply` lays over Passenger's) is
+  `Passenger.*` tokens alone, a new token given in every one (`just themes` fails until its script gives it); Fluent's own keys are named once for every theme in `Theme/FluentKeys.axaml`, which
   `FluentKeys` (App.axaml's resources) answers with that token as the look in force gives it. A Fluent key a
   Passenger control can reach goes there, never in a theme. `UiRulesTests` fails on an unmapped Fluent colour, brush
   or corner (an Avalonia update adds them) and on a colour or non-zero `CornerRadius` written outside `Theme/` unless
@@ -1106,7 +1111,7 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   ComboBox, NumericUpDown, CheckBox and MenuItem takes (content centred, `Passenger.ControlHeight` 28, the radius
   resources `ControlRadius` 4, `ToolRadius` 6, `PopupRadius` 8); a class style comes after them and says only how it
   differs. A visual inconsistency is fixed once in a shared place (a token, a base style or resource, or a helper such
-  as `DialogFooter.Of`), never per control, following Rider where the design is in question; a control that can't use
+  as `DialogFooter.Of`), never per control, Passenger's own consistency settling a design in question; a control that can't use
   the shared piece says why in one line. A dialog's buttons come from `DialogFooter` in a `Border.footerBar`:
   `Of(default, cancel, more…)` for OK, Cancel, Apply; `Listed(…)` for Rider's DialogWrapper order (the default last on
   macOS); `Answers(…)` for a question's answers as Rider's message dialogs lay them (the row reversed on macOS); what

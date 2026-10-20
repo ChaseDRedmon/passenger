@@ -26,16 +26,19 @@ public sealed class TablesTests : IDisposable
     public void A_CSV_opens_as_its_table_under_its_first_rows_names_and_its_Text_edits_show_in_the_Table()
     {
         string path = Path.Combine(folder, "people.csv");
-        File.WriteAllText(path, "Name,City,Note\nAda,London,\"Wrote the \"\"first\"\" program\"\nAlan,\"Wilmslow, Cheshire\",\"two\nlines\"\n");
+        File.WriteAllText(path, "Name,City,Note,Total\nAda,London,\"Wrote the \"\"first\"\" program\",\"1,234.50\"\nAlan,\"Wilmslow, Cheshire\",\"two\nlines\",980\n");
         MainWindow window = Open(path);
 
         CellGrid grid = Grid(window);
         Table table = grid.Table!;
-        Assert.Equal(["Name", "City", "Note"], Enumerable.Range(0, table.ColumnCount).Select(table.Header));
+        Assert.Equal(["Name", "City", "Note", "Total"], Enumerable.Range(0, table.ColumnCount).Select(table.Header));
         Assert.True(table.RowCount == 2, $"The header row should not be a row of the table, but it has {table.RowCount} rows");
         Assert.Equal("Wrote the \"first\" program", table.Cell(0, 2));
         Assert.Equal("Wilmslow, Cheshire", table.Cell(1, 1));
         Assert.Equal("two\nlines", table.Cell(1, 2));
+        Assert.True(table.IsNumber(0, 3) && table.IsNumber(1, 3),
+            "A number quoted for its thousands' commas should be drawn against the cell's right edge as an unquoted one is, as Excel reads both");
+        Assert.False(table.IsNumber(1, 1), "Text that happens to be quoted should stay text");
 
         Click(window, Named(window, "ShowText"));
         Assert.Null(window.EditorArea.ActiveGroup.Table);
@@ -78,6 +81,26 @@ public sealed class TablesTests : IDisposable
         Ui.Settle();
         window.Close();
         Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "The workbook should never be written over");
+    }
+
+    [AvaloniaFact]
+    public void A_workbook_saved_again_by_another_program_shows_its_new_cells_and_no_text_s_storage_in_the_status_bar()
+    {
+        string path = Path.Combine(folder, "sales.xlsx");
+        WriteWorkbook(path);
+        MainWindow window = Open(path);
+        Assert.False(Status(window, "EncodingButton").IsVisible || Status(window, "LineSeparatorButton").IsVisible,
+            "A workbook's tab holds no text, so the status bar should offer no encoding or line separator to change");
+        Assert.True(string.IsNullOrEmpty(((TextBlock)Status(window, "IndentText")).Text) && string.IsNullOrEmpty(((TextBlock)Status(window, "CaretText")).Text),
+            "A workbook's tab holds no text, so the status bar should show no indent or caret");
+
+        // As Excel saves: a new file put in the old one's place.
+        string saved = Path.Combine(folder, "saved.tmp");
+        WriteWorkbook(saved, price: 99);
+        File.Move(saved, path, overwrite: true);
+        string price = 99.0.ToString("\\$#,##0.00", CultureInfo.CurrentCulture);
+        Ui.WaitFor(() => Grid(window).Table?.Cell(1, 1) == price, "the table to show the price the workbook was saved with");
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -141,6 +164,9 @@ public sealed class TablesTests : IDisposable
     private static CellGrid Grid(MainWindow window) =>
         window.EditorArea.ActiveGroup.Table ?? throw new InvalidOperationException("The file shows no table");
 
+    private static Control Status(MainWindow window, string name) =>
+        window.FindControl<Control>(name) ?? throw new InvalidOperationException($"The status bar has no {name}");
+
     private static Control Named(MainWindow window, string name) =>
         window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<Control>().First(c => c.Name == name);
 
@@ -155,7 +181,7 @@ public sealed class TablesTests : IDisposable
 
     /// <summary>A workbook as Excel writes one: shared strings, a currency, a date and a percent style, an empty row, a
     /// formula's value, a boolean, and a hidden sheet.</summary>
-    private static void WriteWorkbook(string path)
+    private static void WriteWorkbook(string path, double price = 1234.5)
     {
         const string Ns = "xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
         using ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create);
@@ -172,7 +198,7 @@ public sealed class TablesTests : IDisposable
         Part("xl/styles.xml", $"<styleSheet {Ns}><numFmts><numFmt numFmtId=\"164\" formatCode=\"&quot;$&quot;#,##0.00;[Red]\\-&quot;$&quot;#,##0.00\"/>"
             + "<numFmt numFmtId=\"165\" formatCode=\"yyyy\\-mm\\-dd\"/></numFmts><cellXfs><xf numFmtId=\"0\"/><xf numFmtId=\"164\"/><xf numFmtId=\"165\"/><xf numFmtId=\"10\"/></cellXfs></styleSheet>");
         Part("xl/worksheets/sheet1.xml", $"<worksheet {Ns}><sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row>"
-            + "<row r=\"2\"><c r=\"A2\" t=\"s\"><v>1</v></c><c r=\"B2\" s=\"1\"><v>1234.5</v></c><c r=\"C2\" s=\"2\"><v>45000</v></c><c r=\"D2\" s=\"3\"><v>0.1234</v></c></row>"
+            + $"<row r=\"2\"><c r=\"A2\" t=\"s\"><v>1</v></c><c r=\"B2\" s=\"1\"><v>{price.ToString(CultureInfo.InvariantCulture)}</v></c><c r=\"C2\" s=\"2\"><v>45000</v></c><c r=\"D2\" s=\"3\"><v>0.1234</v></c></row>"
             + "<row r=\"4\"><c r=\"A4\" t=\"s\"><v>2</v></c><c r=\"B4\" s=\"1\"><f>SUM(B2:B3)</f><v>1234.5</v></c><c r=\"E4\" t=\"b\"><v>1</v></c></row>"
             + "<row r=\"9\" ht=\"20\" customHeight=\"1\"/></sheetData></worksheet>");
         Part("xl/worksheets/sheet2.xml", $"<worksheet {Ns}><sheetData><row r=\"2\"><c r=\"B2\"><v>42</v></c></row></sheetData></worksheet>");
