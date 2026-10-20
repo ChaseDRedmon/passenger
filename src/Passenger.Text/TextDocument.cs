@@ -206,14 +206,15 @@ public sealed class TextDocument
         }
         UndoEntry entry = undo[^1];
         undo.RemoveAt(undo.Count - 1);
+        // On the other stack before anyone hears of the change, so a handler that throws never loses the step.
+        redo.Add(entry);
+        mergeBroken = true;
         for (int i = entry.Steps.Count - 1; i >= 0; i--)
         {
             Step step = entry.Steps[i];
             Snapshot = step.Before;
             Raise(step.After, step.Before, step.Inverse(), ChangeReason.Undo);
         }
-        redo.Add(entry);
-        mergeBroken = true;
         entry.Undone?.Invoke();
         return entry.SelectionsBefore;
     }
@@ -226,13 +227,13 @@ public sealed class TextDocument
         }
         UndoEntry entry = redo[^1];
         redo.RemoveAt(redo.Count - 1);
+        undo.Add(entry);
+        mergeBroken = true;
         foreach (Step step in entry.Steps)
         {
             Snapshot = step.After;
             Raise(step.Before, step.After, step.Edits, ChangeReason.Redo);
         }
-        undo.Add(entry);
-        mergeBroken = true;
         entry.Redone?.Invoke();
         return entry.SelectionsAfter;
     }

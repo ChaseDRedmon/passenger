@@ -2,6 +2,7 @@ using System.Text;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input.Platform;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Navigation;
@@ -758,6 +759,74 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Assert.True(window.Status == "Reformatted" && text.Contains("int result s= Helper.Twice(2);", StringComparison.Ordinal),
             $"Once Reformat Code's answer came ({window.Status}), the line is not the letter typed with the space after it deleted:\n{text}");
         window.Close();
+    }
+
+    /// <summary>Undo and Redo of a paste at a file's end, the platform's input method following the editor as a desktop's
+    /// does: each changes the text and keeps its step for the other, and the language server holds the editor's text. The
+    /// file's folds move first with each, which told the input method of a caret past the text's new end, and that throw
+    /// ended the change's telling, losing the step and the server's copy of it.</summary>
+    [AvaloniaFact]
+    public void Undo_and_redo_of_a_paste_at_a_files_end_keep_their_steps_and_the_servers_copy_with_an_input_method_following()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument program = window.EditorArea.Active!;
+        Ui.WaitFor(() => program.FoldRegions.Count > 0, "the file's folds");
+        Ui.WaitFor(() => window.CSharpService?.For(program)?.Lsp is not null, "the server to have the file");
+        editor.Focus();
+        // Asked of the focused control by Avalonia on a platform with an input method (macOS's, Windows'), as headless has none.
+        Avalonia.Input.TextInput.TextInputMethodClientRequestedEventArgs asked = new() { RoutedEvent = Avalonia.Input.InputElement.TextInputMethodClientRequestedEvent };
+        editor.RaiseEvent(asked);
+        Avalonia.Input.TextInput.TextInputMethodClient client = asked.Client ?? throw new InvalidOperationException("The editor gave no input method client");
+        // Read back as the platform's input method reads it, when told it changed.
+        List<string> told = [];
+        client.SurroundingTextChanged += (_, _) => told.Add(client.SurroundingText);
+        client.SelectionChanged += (_, _) => told.Add($"{client.Selection.Start}:{client.Selection.End}");
+
+        // Pasted at the end, its caret is past where the text ends once it is undone.
+        string before = editor.Document.Snapshot.ToString();
+        editor.Selections = SelectionSet.Single(before.Length);
+        Task copied = window.Clipboard!.SetTextAsync("\nstatic class Pasted { }");
+        Ui.WaitFor(() => copied.IsCompleted, "the clipboard to take the text");
+        Ui.Press(window, Ui.Shortcut(EditorActions.Paste));
+        string pasted = editor.Document.Snapshot.ToString();
+        string pastedLine = pasted[(pasted.LastIndexOf('\n') + 1)..];
+        Assert.Contains("static class Pasted { }", pastedLine, StringComparison.Ordinal);
+
+        told.Clear();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(before, editor.Document.Snapshot.ToString());
+        Assert.True(editor.Document.CanRedo, "Undo of the paste left nothing to redo: its step was lost");
+        Assert.Equal(before.Length, editor.Selections.Primary.Caret);
+        Assert.True(told.Contains(string.Empty), $"The input method was not told the caret's line, empty at the end, once the paste was undone: [{string.Join(" | ", told)}]");
+        ServerHolds(window, program, "the paste undone");
+
+        told.Clear();
+        Ui.Run(window, EditorActions.Redo);
+        Assert.Equal(pasted, editor.Document.Snapshot.ToString());
+        Assert.True(editor.Document.CanUndo, "Redo of the paste left nothing to undo: its step was lost");
+        Assert.True(told.Contains(pastedLine), $"The input method was not told the caret's line, the pasted one, once the paste was redone: [{string.Join(" | ", told)}]");
+        ServerHolds(window, program, "the paste redone");
+        window.Close();
+    }
+
+    /// <summary>Waits for the language server's copy of an open file to be the editor's text.</summary>
+    private static void ServerHolds(MainWindow window, OpenDocument document, string after)
+    {
+        string expected = Passenger.Roslyn.Extension.TextHash.Of(document.Text.Snapshot.ToString());
+        Task<IReadOnlyList<Passenger.Roslyn.Extension.TextHeld>>? asking = null;
+        Ui.WaitFor(() =>
+        {
+            if (asking is { IsCompletedSuccessfully: true } done && done.Result is [{ Hash: { } hash }] && hash == expected)
+            {
+                return true;
+            }
+            if (asking is null || asking.IsCompleted)
+            {
+                asking = window.CSharpService!.For(document)!.Lsp!.HeldTextsAsync([document.Path]);
+            }
+            return false;
+        }, $"the language server to hold the editor's text after {after}");
     }
 
     [AvaloniaFact]

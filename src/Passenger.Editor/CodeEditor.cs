@@ -36,6 +36,10 @@ public sealed partial class CodeEditor : Control
     private readonly DispatcherTimer blink;
     private TextDocument document = new();
     private SelectionSet selections = SelectionSet.Single(0);
+
+    /// <summary>The text the carets are offsets in: the document's, but while a change is told to those who heard of it
+    /// before this editor carried its carets through it (mid-edit, or someone else's edit).</summary>
+    private TextSnapshot caretsText;
     private IHighlighter? highlighter;
     private Vector scroll;
     private double widestLine;
@@ -78,6 +82,7 @@ public sealed partial class CodeEditor : Control
             InvalidateVisual();
         });
         document.Changed += OnDocumentChanged;
+        caretsText = document.Snapshot;
         ActualThemeVariantChanged += (_, _) => RefreshStyle();
         // A theme or a colour scheme laid over the application's resources (Settings) changes the brushes, not the variant.
         ResourcesChanged += (_, _) =>
@@ -405,6 +410,7 @@ public sealed partial class CodeEditor : Control
             HideFoldPreview();
             EndComposition();
             selections = SelectionSet.Single(0);
+            caretsText = value.Snapshot;
             leaning = [];
             wrapLeaning = [];
             nextWrapLeaning = null;
@@ -491,6 +497,7 @@ public sealed partial class CodeEditor : Control
         Document = shown;
         softWrap = wrapped;
         selections = carets.Clamp(shown.Snapshot.Length);
+        caretsText = shown.Snapshot;
         leaning = [];
         wrapLeaning = [];
         scroll = offset;
@@ -677,6 +684,7 @@ public sealed partial class CodeEditor : Control
         UnfoldAroundCarets(clamped);
         bool changed = !clamped.SameAs(selections) || clamped.PrimaryIndex != selections.PrimaryIndex;
         selections = clamped;
+        caretsText = document.Snapshot;
         CheckSnippet();
         if (reveal)
         {
@@ -753,6 +761,7 @@ public sealed partial class CodeEditor : Control
             leaning = [];
             wrapLeaning = [];
             selections = TextEditing.MapThrough(selections, e.Edits).Clamp(e.After.Length);
+            caretsText = e.After;
             FollowInputMethod();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
         }
