@@ -930,6 +930,45 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>Rename's box and Move's list follow the text while open; closed by a switch of tab, which answers neither,
+    /// they let it go, rather than keep every edit made to the file for as long as it is open.</summary>
+    [AvaloniaFact]
+    public void Rename_and_moves_list_closed_by_switching_tabs_stop_following_the_file()
+    {
+        MainWindow window = project.Open("Program.cs");
+        window.OpenFile(project.PathOf("Helper.cs"));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        TextDocument helper = editor.Document;
+        int before = Trackers(helper);
+        PlaceAfter(editor, "static int Tw");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "Twice", "the rename box");
+        Assert.Equal(before + 1, Trackers(helper));
+        Ui.Run(window, AppActions.PreviousTab);
+        Ui.Settle();
+        Assert.Equal("Program.cs", window.EditorArea.Active?.Name);
+        Assert.Null(window.Assist.Renaming);
+        Assert.True(Trackers(helper) == before, $"Rename's box, closed by the switch of tab, still follows every edit to Helper.cs ({Trackers(helper) - before} more followers)");
+
+        Ui.Run(window, AppActions.NextTab);
+        Ui.Settle();
+        PlaceAfter(editor, "static class Hel");
+        Ui.Run(window, AppActions.Move);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Move to Another File..."), "Move's list");
+        Assert.Equal(before + 1, Trackers(helper));
+        Ui.Run(window, AppActions.PreviousTab);
+        Ui.Settle();
+        Assert.Empty(window.Assist.Offered);
+        Assert.True(Trackers(helper) == before, $"Move's list, closed by the switch of tab, still follows every edit to Helper.cs ({Trackers(helper) - before} more followers)");
+        window.Close();
+    }
+
+    /// <summary>How many requests' and popups' trackers follow a document's edits.</summary>
+    private static int Trackers(TextDocument document) =>
+        (typeof(TextDocument).GetField(nameof(TextDocument.Changed), System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(document) as Delegate)?
+            .GetInvocationList().Count(d => d.Target is ChangeTracker) ?? 0;
+
     [AvaloniaFact]
     public void Forward_after_back_still_goes_to_the_definition_when_the_caret_moved_in_between()
     {

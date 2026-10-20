@@ -455,7 +455,7 @@ public sealed partial class CodeAssist
 
     /// <summary>Rename in XAML: an element's name, where the file names it and where its code-behind uses its field, as one
     /// command undone whole.</summary>
-    private async Task XamlRename(XamlDocument xaml, OpenDocument document)
+    private async Task XamlRename(XamlDocument xaml)
     {
         int caret = Editor.Selections.Primary.Caret;
         if (await XamlSymbolAt(xaml, caret, "Rename in XAML renames an element's name") is not { Symbol.Named: { } named } found)
@@ -464,10 +464,8 @@ public sealed partial class CodeAssist
         }
         string old = named.Value;
         RenameBox box = new(old);
-        ChangeTracker opened = new(document.Text);
         ShowModal(box, named.ValueStart, async name =>
         {
-            opened.Dispose();
             if (name is null || name == old)
             {
                 return;

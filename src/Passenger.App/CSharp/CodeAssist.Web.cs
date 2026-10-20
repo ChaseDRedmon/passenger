@@ -155,7 +155,6 @@ public sealed partial class CodeAssist
                 shown = true;
                 ShowModal(box, asked.MapOffset(at.Key.Start), name =>
                 {
-                    using ChangeTracker made = asked;
                     if (name is null || name == property.Name || editors.Active != document)
                     {
                         return Task.CompletedTask;
@@ -171,6 +170,8 @@ public sealed partial class CodeAssist
                     Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it");
                     return Task.CompletedTask;
                 });
+                // Let go as the box closes, however it closes; what was typed until then is still carried.
+                modalClosed = asked.Dispose;
             }
             finally
             {

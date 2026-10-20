@@ -1321,9 +1321,9 @@ public sealed partial class CodeAssist
 
     private void ShowRename()
     {
-        if (XamlCurrent is { } xaml && editors.Active is { } shown)
+        if (XamlCurrent is { } xaml && editors.Active is not null)
         {
-            _ = Carried("Rename", () => XamlRename(xaml, shown), closeModal: false);
+            _ = Carried("Rename", () => XamlRename(xaml), closeModal: false);
             return;
         }
         if (WebCurrent is { Lsp: not null } own && !own.Provides("renameProvider") && editors.Active is { } json)
@@ -1349,8 +1349,8 @@ public sealed partial class CodeAssist
         ChangeTracker opened = new(Editor.Document);
         ShowModal(box, word.Start, async name =>
         {
+            // Let go as the box closed, just before: what was typed while it was open is still mapped.
             int at = opened.MapOffset(word.Start);
-            opened.Dispose();
             if (name is null)
             {
                 return;
@@ -1387,6 +1387,7 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, $"Rename failed: {failed.Message}");
             }
         });
+        modalClosed = opened.Dispose;
         _ = OfferFileRenames(box, document, word.Start);
     }
 

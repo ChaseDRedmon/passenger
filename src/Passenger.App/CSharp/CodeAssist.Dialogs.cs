@@ -74,13 +74,14 @@ public sealed partial class CodeAssist
             {
                 if (chosen?.Value is not bool toFile)
                 {
-                    caret.Dispose();
                     return Task.CompletedTask;
                 }
                 // Not awaited: the list's choice is work a screenshot waits for, and the dialog waits for the person.
-                _ = MoveAsync(type, document, caret, toFile);
+                _ = MoveAsync(type, document, new FollowedCaret(new ChangeTracker(document.Text), caret.Offset), toFile);
                 return Task.CompletedTask;
             });
+        // The list's own let go as it closes, however it closes: a choice follows the caret on from there with one of its own.
+        modalClosed = caret.Dispose;
     }
 
     private async Task MoveAsync(TypeSource type, OpenDocument document, FollowedCaret caret, bool toFile)
