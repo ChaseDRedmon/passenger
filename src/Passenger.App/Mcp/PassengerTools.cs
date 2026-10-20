@@ -659,7 +659,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     // The debugger
 
-    [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint", Destructive = false), Description(
+    [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint", Destructive = true), Description(
         "Sets a breakpoint, or changes the one there: a line breakpoint at path and line; a CLR exception breakpoint on " +
         "exception, stopping in its scenarios (Rider's Suspend If; a new one on a type in all of them); XAML Binding Errors " +
         "with bindingErrors true, stopping a debugged Avalonia or WPF app as a binding fails, its condition and logMessage " +
@@ -981,7 +981,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return await DebugSnapshotAsync();
     });
 
-    [McpServerTool(Name = "debug_input", Title = "Type into the program's console", Destructive = false), Description(
+    [McpServerTool(Name = "debug_input", Title = "Type into the program's console", Destructive = true), Description(
         "Sends a line to the debugged program's standard input, as the Debug window's console does, or types it into a " +
         "terminal configuration's tab, Enter for the newline.")]
     public Task<string> DebugInput(string text, bool newline = true, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -996,9 +996,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return "Sent";
     });
 
-    [McpServerTool(Name = "debug_evaluate", Title = "Evaluate an expression", ReadOnly = true), Description(
-        "Evaluates a C# expression in a frame of the stopped thread (0, the top, by default), as the Debug window's evaluate box does. " +
-        "A result with members has a reference debug_variables opens.")]
+    [McpServerTool(Name = "debug_evaluate", Title = "Evaluate an expression", Destructive = true), Description(
+        "Evaluates a C# expression, which may call the program's methods, in a frame of the stopped thread (0, the top, by " +
+        "default), as the Debug window's evaluate box does. A result with members has a reference debug_variables opens.")]
     public Task<VariableInfo> DebugEvaluate(string expression, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugSession session = Paused();
@@ -1007,7 +1007,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return new VariableInfo(expression, value.Result, value.Type, value.VariablesReference);
     });
 
-    [McpServerTool(Name = "debug_set_value", Title = "Set a value", Destructive = false), Description(
+    [McpServerTool(Name = "debug_set_value", Title = "Set a value", Destructive = true), Description(
         "Assigns a C# expression's value to a local, member or element (\"order.Quantity\", \"list[2]\") in a frame of the " +
         "stopped thread, as Set Value does; the program goes on with it. Returns the value as it now is.")]
     public Task<VariableInfo> DebugSetValue(string expression, [Description("A C# expression: 42, \"text\", null, new List<int>()")] string value, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>

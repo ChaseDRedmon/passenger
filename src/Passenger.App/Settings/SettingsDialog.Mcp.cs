@@ -32,8 +32,8 @@ public sealed partial class SettingsDialog
         // What turning it on allows is said under it, as Rider's consent to its MCP server says.
         Add(McpPage, "Enable MCP Server", Check(Working.McpServer, v => Change(s => s with { McpServer = v })), Words,
             "Agents started with passenger --mcp-attach can use this window without asking to: read and change files, build, run and "
-            + "debug, use Git, NuGet and the terminal. Off, the window asks before letting each agent in. Either way, each agent asks "
-            + "before its first use of a tool that changes something.");
+            + "debug, use Git, NuGet and the terminal. Off, the window asks before letting each agent in. Either way, an agent asks "
+            + "before it first uses each tool that changes anything beyond saving, stopping and stepping.");
 
         TextBlock none = new() { Classes = { "emptyText" }, Text = "None: a window asks before it lets an agent in" };
         void List()
@@ -77,7 +77,7 @@ public sealed partial class SettingsDialog
                 Muted("Each runs this copy of Passenger, by its own path, with --mcp-attach. An agent has Passenger's tools from its "
                     + "start; its first call joins the window open on the folder it works in, or opens that folder in Passenger, "
                     + "starting it if need be, in a window you see. That window asks you before it lets the agent in and before "
-                    + "the agent first changes anything, and a call waits 2 minutes at most for each answer, telling the agent so."),
+                    + "the agent first makes each kind of change, saving, stopping and stepping aside, and a call waits 2 minutes at most for each answer, telling the agent so."),
                 Muted("For an agent working on its own, put --mcp and the folder in place of --mcp-attach: a Passenger of the "
                     + "agent's own, with no window, which asks nothing."),
             },

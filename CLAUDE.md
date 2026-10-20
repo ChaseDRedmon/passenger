@@ -663,9 +663,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   than the one it joined it on (its own `open` aside). On a person's
   window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`,
   `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
-  away), and `open` asks before it replaces their folder. No wait on the person is unbounded (#255): each question goes
-  through `MainWindow.AskForAgentAsync`, which closes it unanswered after `MainWindow.AgentAnswerLimit` (2 minutes),
-  the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
+  away), and `open` asks before it replaces their folder. What runs code in a debugged program or changes it
+  (`debug_evaluate`, `debug_set_value`, `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
+  too) are `Destructive`; `save_all`, `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
+  the person is unbounded (#255): each question goes through `MainWindow.AskForAgentAsync`, which closes it unanswered
+  after `MainWindow.AgentAnswerLimit` (2 minutes), the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
   the Dock icon on macOS, where Activate is refused while another app is in front) and has the status bar say who waits
   on what (`AgentStatus`, "X waits for you: allow build?"). Every call is an `AgentCall` (`ConnectedTool`, `McpProxy`):
   when its request gave a progress token it tells the agent MCP progress every `AgentCall.Every` (10 s;

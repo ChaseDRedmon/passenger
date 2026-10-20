@@ -1010,6 +1010,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         });
         WaitFor(() => window.Agents == 1 || agent.IsCompleted, "the window to show the agent", AgentLimit);
         int shown = window.Agents;
+        // A breakpoint is asked about first: its condition or log message runs in the person's later sessions too.
+        Press(Question(window, "the question for the agent's breakpoint"), "Allow");
         looked.TrySetResult();
         WaitFor(() => agent.IsCompleted, "the agent's calls", AgentLimit);
         // The status bar says an agent is on the window while it is, and stops saying so once it goes.
@@ -1190,7 +1192,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             Assert.Equal("Stopped", Await(Task.Run(() => Call(client, "stop")), "the agent's stop").GetString());
             WaitFor(() => window.RunInTerminal is { IsRunning: false }, "the program in the terminal to end");
 
-            Await(Task.Run(() => Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint");
+            Asked(window, client, "breakpoint_set", "set a breakpoint", new() { ["path"] = "Program.cs", ["line"] = 1 });
             Task<JsonElement> debugging = Task.Run(() => Call(client, "debug_start"));
             Press(Question(window, "the question for the agent's debug"), "Allow");
             JsonElement stop = Await(debugging, "the stop");
@@ -1199,12 +1201,50 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint's removal");
             Await(Task.Run(() => Call(client, "debug_continue", new() { ["waitSeconds"] = 1 })), "the program let go");
             WaitFor(() => window.Debugger.Session?.Terminal?.Session.Screen.Lines.Any(l => l.Text() == "key?") == true, "the program to ask for a key in its tab");
-            Await(Task.Run(() => Call(client, "debug_input", new() { ["text"] = "q", ["newline"] = false })), "the key typed");
+            Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "q", ["newline"] = false });
             Await(Task.Run(() => Call(client, "debug_input", new() { ["text"] = "hello" })), "the line typed");
             WaitFor(() => !window.Debugger.IsDebugging && window.Debugger.Session?.Terminal?.Ended.IsCompleted == true, "the program's end");
             string shown = Await(Task.Run(() => Call(client, "debug_output")), "the program's output").GetString()!;
             Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
                 && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"debug_output read, of the program's tab:\n{shown}");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
+    /// <summary>On the person's window an agent is asked once, the first time, before it sets a breakpoint (whose condition
+    /// runs in their later sessions too), evaluates code in the paused program, sets a value there or types into its input;
+    /// saving and stopping are never asked about.</summary>
+    [AvaloniaFact]
+    public void An_agent_is_asked_once_before_it_first_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_the_debugged_program()
+    {
+        MainWindow window = AgentsWindow(folder);
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
+            Asked(window, client, "breakpoint_set", "set a breakpoint", new() { ["path"] = "Program.cs", ["line"] = 4 });
+            Unasked(window, client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 6 });
+            JsonElement stop = Asked(window, client, "debug_start", "debug a configuration");
+            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.StartsWith("Program.cs:4:", StringComparison.Ordinal),
+                $"The agent's debug_start did not stop at its breakpoint: {stop}");
+
+            Assert.Equal("42", Asked(window, client, "debug_evaluate", "evaluate an expression", new() { ["expression"] = "Helper.Twice(i) + 40" }).GetProperty("value").GetString());
+            Assert.Equal("1", Unasked(window, client, "debug_evaluate", new() { ["expression"] = "i" }).GetProperty("value").GetString());
+            Assert.Equal("40", Asked(window, client, "debug_set_value", "set a value", new() { ["expression"] = "total", ["value"] = "40" }).GetProperty("value").GetString());
+            Assert.Equal("41", Unasked(window, client, "debug_set_value", new() { ["expression"] = "total", ["value"] = "41" }).GetProperty("value").GetString());
+            Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "hello" });
+            Unasked(window, client, "debug_input", new() { ["text"] = "again" });
+
+            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
+            WaitFor(() => !window.Debugger.IsDebugging, "the debugging the agent stopped to end");
         }
         finally
         {
@@ -1605,6 +1645,29 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     {
         WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), what);
         return window.OwnedWindows.OfType<ConfirmDialog>().Single();
+    }
+
+    /// <summary>An agent's call the window first asks the person about, its question naming the tool and what it would do;
+    /// allowed, the call's answer.</summary>
+    private JsonElement Asked(MainWindow window, McpClient client, string tool, string what, Dictionary<string, object?>? arguments = null)
+    {
+        Task<JsonElement> calling = Task.Run(() => Call(client, tool, arguments));
+        ConfirmDialog asked = Question(window, $"the question for the agent's {tool}");
+        string[] said = Texts(asked);
+        Assert.True(said.Contains($"Allow {tool}?") && said.Any(t => t.Contains($"wants to {what} (its {tool} tool)", StringComparison.Ordinal)),
+            $"The question for the agent's {tool} said: {string.Join(" | ", said)}");
+        Press(asked, "Allow");
+        return Await(calling, $"the agent's {tool}");
+    }
+
+    /// <summary>An agent's call answered without a question to the person.</summary>
+    private JsonElement Unasked(MainWindow window, McpClient client, string tool, Dictionary<string, object?>? arguments = null)
+    {
+        Task<JsonElement> calling = Task.Run(() => Call(client, tool, arguments));
+        WaitFor(() => calling.IsCompleted || window.OwnedWindows.OfType<ConfirmDialog>().Any(), $"the agent's {tool}", AgentLimit);
+        Assert.True(!window.OwnedWindows.OfType<ConfirmDialog>().Any(),
+            $"The agent's {tool} asked the person: {string.Join(" | ", window.OwnedWindows.OfType<ConfirmDialog>().SelectMany(Texts))}");
+        return calling.GetAwaiter().GetResult();
     }
 
     private static string[] Texts(Avalonia.Controls.Window dialog) =>
