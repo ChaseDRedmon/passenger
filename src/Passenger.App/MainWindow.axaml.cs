@@ -660,6 +660,9 @@ public partial class MainWindow : Window
     /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came from for Back.</summary>
     public void NavigateTo(string path, TextPosition position) => navigator.NavigateTo(path, position);
 
+    /// <summary>Goes to a place a language server names, in its lines (<see cref="Lsp.ServerLines"/>).</summary>
+    public void NavigateTo(string path, Lsp.LspPosition at) => navigator.NavigateTo(path, ServerPlaces.PositionOf(Editors, path, at));
+
     /// <summary>The actions run from Find Action, the latest first, which it lists before anything is typed.</summary>
     private readonly List<string> recentActions = [];
 

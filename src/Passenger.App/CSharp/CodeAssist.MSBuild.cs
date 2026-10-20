@@ -169,14 +169,11 @@ public sealed partial class CodeAssist
         {
             return;
         }
-        TextSnapshot snapshot = TextSnapshot.From(propsText!);
-        TextPosition from = snapshot.GetPosition(version.Start);
-        TextPosition to = snapshot.GetPosition(version.End);
         JsonElement edit = JsonSerializer.SerializeToElement(new
         {
             changes = new Dictionary<string, List<LspTextEdit>>
             {
-                [DocumentUris.FromPath(props!)] = [new LspTextEdit(new LspRange(new LspPosition(from.Line, from.Column), new LspPosition(to.Line, to.Column)), version.Text)],
+                [DocumentUris.FromPath(props!)] = ServerPlaces.EditsOf(TextSnapshot.From(propsText!), [version]),
             },
         }, Json.Options);
         List<string> dropped = [];

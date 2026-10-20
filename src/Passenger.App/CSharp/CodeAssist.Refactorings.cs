@@ -253,16 +253,17 @@ public sealed partial class CodeAssist
         // Each usage a row: where it is, then its line's code, the code lined up in a column of its own.
         Grid rows = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
         Dictionary<string, string> paths = DocumentUris.ToPaths(doomed.Uses.Select(u => u.Uri));
-        Func<string, int, string> preview = LinePreviews();
+        Func<string, LspPosition, (int Line, string Code)> preview = LinePreviews();
         foreach ((LspLocation use, int row) in doomed.Uses.Select((u, i) => (u, i)))
         {
             string path = paths[use.Uri];
             string shown = root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+            (int line, string used) = preview(path, use.Range.Start);
             rows.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            TextBlock where = new() { Text = $"{shown}:{use.Range.Start.Line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 12, 1) };
+            TextBlock where = new() { Text = $"{shown}:{line + 1}", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 12, 1) };
             TextBlock code = new()
             {
-                Text = preview(path, use.Range.Start.Line),
+                Text = used,
                 FontFamily = Fonts.Mono,
                 FontSize = 12,
                 Foreground = InfoCard.Brush("Passenger.TextMuted"),

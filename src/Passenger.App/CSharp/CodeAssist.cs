@@ -1703,14 +1703,15 @@ public sealed partial class CodeAssist
     {
         string root = Root ?? string.Empty;
         Dictionary<string, string> paths = DocumentUris.ToPaths(locations.Select(l => l.Uri));
-        Func<string, int, string> preview = LinePreviews();
+        Func<string, LspPosition, (int Line, string Code)> preview = LinePreviews();
         List<Choice> choices = locations.Select((l, i) =>
         {
             string path = paths[l.Uri];
-            string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{l.Range.Start.Line + 1}";
+            (int line, string code) = preview(path, l.Range.Start);
+            string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{line + 1}";
             return names?[i] is { } name
                 ? new Choice(name, shown, l)
-                : new Choice(shown, preview(path, l.Range.Start.Line), l, DetailIsCode: true);
+                : new Choice(shown, code, l, DetailIsCode: true);
         }).ToList();
         ShowModal(new ChoicePopup(title, choices), offset, title, choice =>
         {
@@ -1722,8 +1723,11 @@ public sealed partial class CodeAssist
         });
     }
 
-    private void Arrive(LspLocation location) =>
-        Navigate?.Invoke(this, (DocumentUris.ToPath(location.Uri), new TextPosition(location.Range.Start.Line, location.Range.Start.Character)));
+    private void Arrive(LspLocation location)
+    {
+        string path = DocumentUris.ToPath(location.Uri);
+        Navigate?.Invoke(this, (path, ServerPlaces.PositionOf(editors, path, location.Range.Start)));
+    }
 
     private async Task Reformat()
     {
@@ -2042,30 +2046,16 @@ public sealed partial class CodeAssist
         return start;
     }
 
-    /// <summary>The lines of code a list of places shows, each closed file read once for the list, not once a place, since
-    /// it is read on the UI thread; an open file's from its text.</summary>
-    private Func<string, int, string> LinePreviews()
+    /// <summary>The line of each of a list of places, in the editor's lines, and its code, each closed file read once for
+    /// the list, not once a place, since it is read on the UI thread; an open file's from its text.</summary>
+    private Func<string, LspPosition, (int Line, string Code)> LinePreviews()
     {
-        Dictionary<string, string[]> read = new(StringComparer.Ordinal);
-        return (path, line) =>
+        Func<string, TextSnapshot> texts = ServerPlaces.Texts(editors);
+        return (path, at) =>
         {
-            if (editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
-            {
-                return open.Text.Snapshot.GetLineText(line).Trim();
-            }
-            if (!read.TryGetValue(path, out string[]? lines))
-            {
-                try
-                {
-                    lines = File.ReadAllLines(path);
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                {
-                    lines = [];
-                }
-                read[path] = lines;
-            }
-            return line < lines.Length ? lines[line].Trim() : string.Empty;
+            TextSnapshot text = texts(path);
+            TextPosition place = ServerPlaces.PositionOf(text, at);
+            return (place.Line, text.GetLineText(place.Line).Trim());
         };
     }
 

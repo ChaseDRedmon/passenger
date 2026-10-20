@@ -52,7 +52,8 @@ public sealed record SourceScope(string? Namespace, IReadOnlyList<string> Usings
     public static readonly SourceScope Empty = new(null, [], new Dictionary<string, string>(), []);
 }
 
-/// <summary>A place in a source file, its line and column from zero.</summary>
+/// <summary>A place in a source file, its line and column from zero, its lines as Roslyn counts them: a lone '\r', U+0085,
+/// U+2028 and U+2029 end one too, as the language server's do, so a place is read in its file as the server's are.</summary>
 public sealed record SourcePlace(string Path, int Line, int Column);
 
 public enum MemberKind

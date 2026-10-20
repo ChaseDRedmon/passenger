@@ -317,6 +317,48 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.Close();
     }
 
+    /// <summary>A lone '\r', U+0085, U+2028 and U+2029 end a line for the edits a workspace edit makes, not for the editor:
+    /// the version a new reference takes goes into Directory.Packages.props, not open, beside the others below them.</summary>
+    [AvaloniaFact]
+    public void A_new_references_version_goes_beside_the_others_in_a_directory_packages_props_holding_line_breaks_only_roslyn_counts()
+    {
+        string props = $"""
+            <Project>
+              <PropertyGroup>
+                <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+              </PropertyGroup>
+              <!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c{'\r'}d -->
+              <ItemGroup>
+                <PackageVersion Include="Passenger.Sample" Version="$(SampleVersion)" />
+                <PackageVersion Include="Passenger.Vulnerable" Version="1.0.0" />
+              </ItemGroup>
+            </Project>
+
+            """;
+        Write("Directory.Packages.props", props);
+        Write("App/App.csproj", Project.Replace(" Version=\"1.0.0\"", string.Empty, StringComparison.Ordinal));
+        MainWindow window = Open("App/App.csproj");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument project = window.EditorArea.Active!;
+        Ui.WaitFor(() => project.Markers.Any(m => m.Message.StartsWith("NU1902", StringComparison.Ordinal)), "the reference to the vulnerable central version warned of");
+        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("PackageReference"), "the item types an ItemGroup takes");
+        window.KeyTextInput("PackageRef");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the feed's packages");
+        window.KeyTextInput("Oth");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Equal(props.Replace("    <PackageVersion Include=\"Passenger.Sample\"",
+            "    <PackageVersion Include=\"Passenger.Other\" Version=\"3.0.0\" />\n    <PackageVersion Include=\"Passenger.Sample\"", StringComparison.Ordinal),
+            File.ReadAllText(Path.Combine(folder, "Directory.Packages.props")));
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_project_file_saved_has_the_solution_view_and_the_language_server_take_what_it_says_now()
     {

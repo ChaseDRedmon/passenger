@@ -162,13 +162,13 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync();
-        return (IReadOnlyList<Finding>)[.. found.Select(d => new Finding(
-            d.Severity switch { 1 => "error", 2 => "warning", 3 => "info", _ => "hint" },
-            d.Code?.ToString(),
-            d.Message,
-            Relative(document.Path),
-            d.Range.Start.Line + 1,
-            d.Range.Start.Character + 1))];
+        TextSnapshot answered = lsp.Text.Snapshot;
+        return (IReadOnlyList<Finding>)[.. found.Select(d =>
+        {
+            TextPosition at = ServerPlaces.PositionOf(answered, d.Range.Start);
+            return new Finding(d.Severity switch { 1 => "error", 2 => "warning", 3 => "info", _ => "hint" }, d.Code?.ToString(), d.Message,
+                Relative(document.Path), at.Line + 1, at.Column + 1);
+        })];
     });
 
     [McpServerTool(Name = "symbol_info", Title = "What a symbol is", ReadOnly = true), Description(
@@ -255,8 +255,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             "supertypes" => [.. (await server.SupertypesAsync(item)).Select(t => (t, t.SelectionRange))],
             _ => [.. (await server.SubtypesAsync(item)).Select(t => (t, t.SelectionRange))],
         };
-        IReadOnlyList<(string Path, string Text)> lines = await Lines([.. found.Select(f => (f.Item.Uri, f.At.Start.Line))], cancel);
-        return [.. found.Select((f, i) => new HierarchyEntry(f.Item.Name, f.Item.Detail, lines[i].Path, f.At.Start.Line + 1, f.At.Start.Character + 1, lines[i].Text))];
+        IReadOnlyList<Place> places = await Places([.. found.Select(f => new LspLocation(f.Item.Uri, f.At))], cancel);
+        return [.. found.Select((f, i) => new HierarchyEntry(f.Item.Name, f.Item.Detail, places[i].Path, places[i].Line, places[i].Column, places[i].Text))];
     });
 
     [McpServerTool(Name = "implementations", Title = "Go to implementation", ReadOnly = true), Description("The implementations of the interface, abstract or virtual member at a position.")]
@@ -460,11 +460,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         RoslynSession session = await Server(cancel);
         IReadOnlyList<SymbolInformation> found = await session.SymbolsAsync(query);
         // The server's order is not by how well a name matches: the query's own name first, so a limit never cuts it.
-        return (IReadOnlyList<SymbolFound>)[.. found
+        List<SymbolInformation> kept = [.. found
             .Where(s => kind is null || SymbolKinds.Name(s.Kind).Equals(kind, StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => NameMatch(s.Name, query))
-            .Take(limit)
-            .Select(s => new SymbolFound(s.Name, SymbolKinds.Name(s.Kind), s.ContainerName, Relative(DocumentUris.ToPath(s.Location.Uri)), s.Location.Range.Start.Line + 1, s.Location.Range.Start.Character + 1))];
+            .Take(limit)];
+        IReadOnlyList<Place> places = await Places([.. kept.Select(s => s.Location)], cancel);
+        return (IReadOnlyList<SymbolFound>)[.. kept.Select((s, i) => new SymbolFound(s.Name, SymbolKinds.Name(s.Kind), s.ContainerName, places[i].Path, places[i].Line, places[i].Column))];
     });
 
     /// <summary>How well a symbol's name matches a query: the name itself, then in another letter case, then one that starts
@@ -492,7 +493,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         LspDocument lsp = ((ServerServed)served).Lsp;
         System.Text.StringBuilder text = new();
-        Write(await lsp.OutlineAsync(), 0);
+        IReadOnlyList<DocumentSymbol> outline = await lsp.OutlineAsync();
+        TextSnapshot answered = lsp.Text.Snapshot;
+        Write(outline, 0);
         return text.Length == 0 ? "Nothing is declared in this file" : text.ToString().TrimEnd();
 
         void Write(IReadOnlyList<DocumentSymbol> symbols, int depth)
@@ -504,7 +507,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 {
                     text.Append(" : ").Append(symbol.Detail);
                 }
-                text.Append(" (").Append(SymbolKinds.Name(symbol.Kind)).Append(", line ").Append(symbol.SelectionRange.Start.Line + 1).Append(")\n");
+                text.Append(" (").Append(SymbolKinds.Name(symbol.Kind)).Append(", line ").Append(ServerPlaces.PositionOf(answered, symbol.SelectionRange.Start).Line + 1).Append(")\n");
                 Write(symbol.Children ?? [], depth + 1);
             }
         }
@@ -1338,7 +1341,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         int offset = Offset(document, line, column);
         int end = endLine is { } last ? Offset(document, last, endColumn ?? 1) : offset;
         IReadOnlyList<Diagnostic> marked = served.Web?.Diagnostics ?? Session.CSharp?.For(document)?.Diagnostics ?? [];
-        IReadOnlyList<Diagnostic> here = [.. marked.Where(d => d.Range.Start.Line <= line - 1 && line - 1 <= d.Range.End.Line)];
+        int at = served.Lsp.PositionOf(offset).Line;
+        IReadOnlyList<Diagnostic> here = [.. marked.Where(d => d.Range.Start.Line <= at && at <= d.Range.End.Line)];
         IReadOnlyList<CodeAction> actions = await served.Lsp.CodeActionsAsync(TextRange.FromBounds(Math.Min(offset, end), Math.Max(offset, end)), here);
         return [.. actions.Where(a => a.Disabled is null)];
     }
@@ -1410,15 +1414,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return Math.Min(text.GetLineStart(l) + Math.Max(0, column - 1), text.GetLine(l).End);
     }
 
-    private async Task<IReadOnlyList<Place>> Places(IReadOnlyList<LspLocation> locations, CancellationToken cancel)
-    {
-        IReadOnlyList<(string Path, string Text)> lines = await Lines([.. locations.Select(l => (l.Uri, l.Range.Start.Line))], cancel);
-        return [.. locations.Select((l, i) => new Place(lines[i].Path, l.Range.Start.Line + 1, l.Range.Start.Character + 1, lines[i].Text))];
-    }
+    /// <summary>The places the language server names, in its lines, as an agent reads them (<see cref="Lines"/>).</summary>
+    private Task<IReadOnlyList<Place>> Places(IReadOnlyList<LspLocation> locations, CancellationToken cancel) =>
+        Lines([.. locations.Select(l => (l.Uri, l.Range.Start, true))], cancel);
 
-    /// <summary>Each place's path as the agent is shown it and its line's text, trimmed, worked out on the thread pool,
-    /// each file read once: a symbol used thousands of times in a large solution never holds the person's window.</summary>
-    private Task<IReadOnlyList<(string Path, string Text)>> Lines(IReadOnlyList<(string Uri, int Line)> places, CancellationToken cancel)
+    /// <summary>Each place's path as the agent is shown it, its line and column in the editor's lines and that line's text,
+    /// trimmed: one the server names (<paramref name="places"/>' Server) read in its file's text, as the server's lines
+    /// are not the editor's in a file with a lone '\r', U+0085, U+2028 or U+2029. Worked out on the thread pool, each file
+    /// read once: a symbol used thousands of times in a large solution never holds the person's window.</summary>
+    private Task<IReadOnlyList<Place>> Lines(IReadOnlyList<(string Uri, LspPosition At, bool Server)> places, CancellationToken cancel)
     {
         string? folder = Session.Folder;
         // An editor's snapshot is immutable, so an open file's lines (unsaved edits and all) are read off the UI thread too.
@@ -1430,55 +1434,21 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return BackgroundWork.Run(() =>
         {
             Dictionary<string, string> byUri = places.Select(p => p.Uri).Distinct(StringComparer.Ordinal).ToDictionary(u => u, DocumentUris.ToPath, StringComparer.Ordinal);
-            string[] paths = [.. places.Select(p => byUri[p.Uri])];
-            Dictionary<(string Path, int Line), string> texts = ReadLines([.. paths.Select((path, i) => (path, places[i].Line))], open, cancel);
-            return (IReadOnlyList<(string, string)>)[.. paths.Select((path, i) => (Relative(folder, path), texts.GetValueOrDefault((path, places[i].Line), string.Empty)))];
-        }, cancel);
-    }
-
-    /// <summary>The lines asked for, trimmed: an open file's from the editor, any other's from disk, read once and only as
-    /// far as its last line asked for. A file that cannot be read has no lines, rather than failing the tool.</summary>
-    private static Dictionary<(string Path, int Line), string> ReadLines(IReadOnlyList<(string Path, int Line)> wanted, Dictionary<string, TextSnapshot> open, CancellationToken cancel)
-    {
-        Dictionary<(string Path, int Line), string> texts = [];
-        foreach (IGrouping<string, int> file in wanted.GroupBy(w => w.Path, w => w.Line, StringComparer.Ordinal))
-        {
-            cancel.ThrowIfCancellationRequested();
-            HashSet<int> lines = [.. file];
-            if (open.TryGetValue(file.Key, out TextSnapshot? text))
+            Dictionary<string, TextSnapshot?> texts = new(StringComparer.Ordinal);
+            return (IReadOnlyList<Place>)[.. places.Select(place =>
             {
-                foreach (int line in lines.Where(l => l < text.LineCount))
+                cancel.ThrowIfCancellationRequested();
+                string path = byUri[place.Uri];
+                if (!texts.TryGetValue(path, out TextSnapshot? text))
                 {
-                    texts[(file.Key, line)] = text.GetLineText(line).Trim();
+                    texts[path] = text = open.GetValueOrDefault(path) ?? ServerPlaces.Read(path);
                 }
-                lines.RemoveWhere(l => l < text.LineCount);
-            }
-            if (lines.Count == 0)
-            {
-                continue;
-            }
-            int last = lines.Max();
-            try
-            {
-                int at = 0;
-                foreach (string line in File.ReadLines(file.Key))
-                {
-                    if (lines.Contains(at))
-                    {
-                        texts[(file.Key, at)] = line.Trim();
-                    }
-                    if (++at > last)
-                    {
-                        break;
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
                 // Gone or refused since the language server read it: its places are still places, without their text.
-            }
-        }
-        return texts;
+                TextPosition at = text is null || !place.Server ? new TextPosition(place.At.Line, place.At.Character) : ServerPlaces.PositionOf(text, place.At);
+                string line = text is not null && at.Line < text.LineCount ? text.GetLineText(at.Line).Trim() : string.Empty;
+                return new Place(Relative(folder, path), at.Line + 1, at.Column + 1, line);
+            })];
+        }, cancel);
     }
 
     private Workspace Snapshot()

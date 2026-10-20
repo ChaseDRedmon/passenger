@@ -24,6 +24,7 @@ public sealed record ProfilerParts(
     Func<string> StateFolder,
     Func<Task<string?>> PickSnapshot,
     Action<string, TextPosition> Navigate,
+    Action<string, Lsp.LspPosition> NavigateToServer,
     Func<int, long, bool> RevealControl);
 
 /// <summary>The window's profiler, as Rider's: Profile builds and starts the chosen configuration under the sampling
@@ -506,7 +507,7 @@ public sealed class ProfilerCommands
             parts.Say($"{method} is not in the open code");
             return;
         }
-        parts.Navigate(Lsp.DocumentUris.ToPath(location.Uri), new TextPosition(location.Range.Start.Line, location.Range.Start.Character));
+        parts.NavigateToServer(Lsp.DocumentUris.ToPath(location.Uri), location.Range.Start);
     }
 }
 

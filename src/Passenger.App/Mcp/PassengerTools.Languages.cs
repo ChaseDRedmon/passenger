@@ -436,6 +436,5 @@ public sealed partial class PassengerTools
 
     /// <summary>Places in files as an agent reads them, with each line's text.</summary>
     private Task<IReadOnlyList<Place>> PlacesOf(IReadOnlyList<(string Path, TextPosition Position)> places, CancellationToken cancel) =>
-        Places([.. places.Select(p => new LspLocation(DocumentUris.FromPath(p.Path),
-            new LspRange(new LspPosition(p.Position.Line, p.Position.Column), new LspPosition(p.Position.Line, p.Position.Column))))], cancel);
+        Lines([.. places.Select(p => (DocumentUris.FromPath(p.Path), new LspPosition(p.Position.Line, p.Position.Column), false))], cancel);
 }

@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Passenger.App;
 using Passenger.App.CSharp;
 using Passenger.App.Settings;
+using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.App.Xaml;
 using Passenger.Editor;
@@ -345,6 +346,51 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         window.KeyTextInput("DockPanel");
         Ui.Settle();
         Assert.Contains($"        <DockPanel>\n            {title}\n            {button}\n        </DockPanel>\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    /// <summary>A lone '\r', U+0085, U+2028 and U+2029 end a line for Roslyn and the language servers, not for the editor:
+    /// XAML's usages, a binding's declaration in its view model and Extract Resource's edits are read and made in each
+    /// file's own lines, never a line away for each such break above them.</summary>
+    [AvaloniaFact]
+    public void Usages_declarations_and_extract_resource_land_where_asked_below_line_breaks_only_roslyn_counts()
+    {
+        string pasted = $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd -->";
+        MainWindow window = avalonia.Open(avalonia.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Insert(editor, "Title=\"Gallery\">", $"\n    {pasted}");
+        PlaceAfter(editor, "<Button Name=\"G");
+        Ui.Run(window, AppActions.FindUsages);
+        Ui.WaitFor(() => window.Find.Rows.Any(r => r.Usage is not null), "the usages in the Find window");
+        List<Usage> found = [.. window.Find.Rows.Select(r => r.Usage).OfType<Usage>().Where(u => u.Path.EndsWith("MainWindow.axaml", StringComparison.Ordinal))];
+        Assert.Equal(2, found.Count);
+        TextSnapshot text = editor.Document.Snapshot;
+        Assert.All(found, usage => Assert.True(text.GetText(text.GetOffset(new TextPosition(usage.Line, usage.Column)), 2) == "Go",
+            $"A usage of Go was found at line {usage.Line + 1}, column {usage.Column + 1}: '{text.GetLineText(usage.Line)}'"));
+
+        // The view model's property, below such breaks in its open text, from a binding's path.
+        window.OpenFile(avalonia.PathOf("ViewModels/MainViewModel.cs"));
+        Ui.Settle();
+        Insert(window.EditorArea.CodeEditor, "namespace Gallery.ViewModels;\n", $"\n/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\n");
+        Ui.Settle();
+        window.OpenFile(avalonia.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        PlaceAfter(editor, "{Binding Gree");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("MainViewModel.cs", window.EditorArea.Active?.Name);
+        Assert.Equal("    public string |Greeting { get; set; } = \"Hello\";", CaretLine(window.EditorArea.CodeEditor));
+
+        window.OpenFile(avalonia.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        PlaceAfter(editor, "<StackPanel Margin=\"1");
+        Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
+        ExtractResourceDialog resource = Shown<ExtractResourceDialog>(window, "Extract Resource");
+        resource.NameBox.Text = "PanelMargin";
+        Ui.Settle();
+        Next(resource);
+        Assert.Contains($"Title=\"Gallery\">\n    <Window.Resources>\n        <Thickness x:Key=\"PanelMargin\">12</Thickness>\n    </Window.Resources>\n    {pasted}\n"
+            + "    <StackPanel Margin=\"{StaticResource PanelMargin}\" Spacing=\"8\">\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
         window.Close();
     }
 

@@ -278,7 +278,7 @@ public sealed class Navigator
             parts.Popups.Close();
             if (row is not null)
             {
-                NavigateTo(row.Path, row.Position);
+                NavigateTo(row.Path, row.ServerPosition is { } at ? ServerPlaces.PositionOf(Editors, row.Path, at) : row.Position);
             }
         };
         parts.Popups.Show(popup);
@@ -345,7 +345,10 @@ public sealed class Navigator
         string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
         string where = Session.Folder is { } root && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
         Lsp.LspPosition start = symbol.Location.Range.Start;
-        return new SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character));
+        return new SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character))
+        {
+            ServerPosition = start,
+        };
     }
 
     /// <summary>Roslyn's container ("in Greeter (project Greetings (net10.0))") as Rider names it: the type, or the

@@ -299,7 +299,7 @@ public sealed partial class CodeAssist
         }
         if (target.Place is { } place)
         {
-            return ((place.Path, new TextPosition(place.Line, place.Column)), null);
+            return ((place.Path, ServerPlaces.PositionOf(editors, place.Path, new LspPosition(place.Line, place.Column))), null);
         }
         if (target.Path is { } path)
         {
@@ -334,13 +334,11 @@ public sealed partial class CodeAssist
         }
     }
 
-    /// <summary>A range of a file as a place for the Find window.</summary>
+    /// <summary>A range of a file as a place for the Find window, which reads it in the server's lines as the server's are.</summary>
     private LspLocation Location(string path, int start, int end)
     {
-        TextSnapshot text = editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot ?? TextSnapshot.From(ReadText(path));
-        TextPosition from = text.GetPosition(Math.Min(start, text.Length));
-        TextPosition to = text.GetPosition(Math.Min(end, text.Length));
-        return new LspLocation(DocumentUris.FromPath(path), new LspRange(new LspPosition(from.Line, from.Column), new LspPosition(to.Line, to.Column)));
+        TextSnapshot text = ServerPlaces.TextOf(editors, path);
+        return new LspLocation(DocumentUris.FromPath(path), ServerLines.Of(text).RangeOf(TextRange.FromBounds(Math.Min(start, text.Length), Math.Min(end, text.Length))));
     }
 
     /// <summary>Find Usages in XAML: an element's name where the file names it and where its code-behind uses the field

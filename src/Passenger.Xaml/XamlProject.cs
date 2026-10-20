@@ -107,15 +107,19 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
         };
     }
 
-    /// <summary>An offset's line and column from zero.</summary>
+    /// <summary>An offset's line and column from zero, the lines counted as Roslyn counts them (<see cref="SourcePlace"/>).</summary>
     private static SourcePlace PlaceOf(string path, string text, int offset)
     {
         int line = 0;
         int lineStart = 0;
-        for (int at = text.IndexOf('\n'); at >= 0 && at < offset; at = text.IndexOf('\n', at + 1))
+        for (int at = 0; at < offset; at++)
         {
-            line++;
-            lineStart = at + 1;
+            char c = text[at];
+            if (c is '\n' or '\u0085' or '\u2028' or '\u2029' || (c == '\r' && (at + 1 == text.Length || text[at + 1] != '\n')))
+            {
+                line++;
+                lineStart = at + 1;
+            }
         }
         return new SourcePlace(path, line, offset - lineStart);
     }

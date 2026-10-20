@@ -194,12 +194,7 @@ public sealed partial class CodeAssist
             {
                 return $"{Path.GetFileName(change.Path)} is no longer as {name} found it";
             }
-            TextSnapshot snapshot = TextSnapshot.From(text);
-            documentChanges.Add(new
-            {
-                textDocument = new { uri },
-                edits = edits.OrderBy(e => e.Start).Select(e => new LspTextEdit(new LspRange(Position(snapshot, e.Start), Position(snapshot, e.End)), e.Text)),
-            });
+            documentChanges.Add(new { textDocument = new { uri }, edits = ServerPlaces.EditsOf(TextSnapshot.From(text), edits) });
         }
         JsonElement edit = JsonSerializer.SerializeToElement(new { documentChanges }, Json.Options);
         List<string> dropped = [];
@@ -216,12 +211,6 @@ public sealed partial class CodeAssist
             FilesChanged?.Invoke(this, EventArgs.Empty);
         }
         return dropped.Count > 0 ? $"{name} was not applied to {string.Join(", ", dropped)}: it was edited meanwhile" : null;
-
-        static LspPosition Position(TextSnapshot snapshot, int offset)
-        {
-            TextPosition at = snapshot.GetPosition(Math.Min(offset, snapshot.Length));
-            return new LspPosition(at.Line, at.Column);
-        }
     }
 
     /// <summary>The refactorings Rider offers at the caret of a XAML file (Refactor This, and after the fixes in Show

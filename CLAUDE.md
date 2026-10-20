@@ -232,7 +232,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   what it writes there on the thread pool); `SemanticHighlighter` asks again only for a word read once its request had
   crossed (`SentRequest`). Roslyn reads a column past a line's
   end as the line's end, so no change is sent between a "\r\n"'s halves: `LspDocument.Unsplit` takes in the half
-  beside it and puts it back. `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
+  beside it and puts it back. A server's lines are not the editor's: a lone '\r', U+0085, U+2028 and U+2029 end one
+  there (`ServerLines`, as Roslyn's own parse counts them, and `SourcePlace` with it), so every position crossing either
+  way goes through `ServerLines` of the file's text, a place in another file through `App/CSharp/ServerPlaces` (the
+  editor's text, else the disk's), never `new TextPosition(line, character)`; MCP's places are the editor's lines too.
+  `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
   HTML in the HTML server (`LanguageServer.HtmlServer`) as `<uri>__virtual.html` and forwards Razor's HTML questions
   there, mapping answers' URIs back; a Razor file's pull adds the HTML server's diagnostics on lines its HTML has as the

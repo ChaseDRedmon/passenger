@@ -888,6 +888,48 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>The server counts a line at each break in Separators.cs's and Separated.cs's comments that the editor does
+    /// not, so a place it names is read in the file's own text: a file not open as it is on disk.</summary>
+    [AvaloniaFact]
+    public void Go_to_declaration_and_implementation_land_on_their_line_below_line_breaks_only_roslyn_counts()
+    {
+        MainWindow window = project.Open("Separated.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "=> Separators.Va");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Separators.cs", window.EditorArea.Active?.Name);
+        Assert.True(editor.CaretPosition == new TextPosition(3, 22),
+            $"Go to Declaration landed on line {editor.CaretPosition.Line + 1} ('{editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line)}'), not on Value's name on line 4");
+
+        // In the file shown, the places to choose from by their lines as the editor numbers them.
+        window.OpenFile(project.PathOf("Separated.cs"));
+        Ui.Settle();
+        PlaceAfter(editor, "    int Val");
+        Ui.Run(window, AppActions.GoToImplementation);
+        Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the two implementations to choose from");
+        Assert.Equal(["Separated.cs:14", "Separated.cs:9"], window.Assist.Offered.Order(StringComparer.Ordinal));
+        Assert.Contains("public int Value() => 1;", window.Assist.OfferedDetails);
+        int second = window.Assist.Offered.ToList().IndexOf("Separated.cs:14");
+        for (int i = 0; i < second; i++)
+        {
+            Ui.Press(window, "DOWN");
+        }
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Equal("    public int |Value() => Separators.Value();", XamlTests.CaretLine(editor));
+
+        // An agent is told the editor's lines too, as it names its own.
+        Passenger.App.Mcp.PassengerTools tools = new(window);
+        Passenger.App.Mcp.Place declared = Assert.Single(Await(tools.Definition("Separated.cs", 14, 39), "the declaration an agent asks for"));
+        Assert.Equal(("Separators.cs", 4, 23, "public static int Value()"), (declared.Path, declared.Line, declared.Column, declared.Text));
+        Assert.Contains(Await(tools.Usages("Separators.cs", 4, 23), "the usages an agent asks for"),
+            p => p is { Path: "Separated.cs", Line: 14, Column: 38, Text: "public int Value() => Separators.Value();" });
+        Assert.Contains(Await(tools.FindSymbol("FirstSeparated"), "the symbol an agent looks for"), s => s.Line == 7);
+        Assert.Contains("FirstSeparated (class, line 7)", Await(tools.Outline("Separated.cs"), "the outline an agent asks for"), StringComparison.Ordinal);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Forward_after_back_still_goes_to_the_definition_when_the_caret_moved_in_between()
     {
@@ -2085,6 +2127,8 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");
             // Roslyn ends a line at each of these in the comment; the editor's lines end only at '\n'.
             File.WriteAllText(PathOf("Separators.cs"), "static class Separators\n{\n    /* Pasted:\u2028a line separator,\u2029a paragraph separator,\u0085a next line,\ra carriage return. */\n    public static int Value()\n    {\n        int total = 1;\n          return total;\n    }\n}\n");
+            File.WriteAllText(PathOf("Separated.cs"), $"interface ISeparated\n{{\n    int Value();\n}}\n\n/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\n"
+                + "class FirstSeparated : ISeparated\n{\n    public int Value() => 1;\n}\n\nclass SecondSeparated : ISeparated\n{\n    public int Value() => Separators.Value();\n}\n");
             File.WriteAllText(PathOf("Crlf.cs"), "static class Crlf\r\n{\r\n    public static int One()\r\n    {\r\n          return 1;\r\n    }\r\n}\r\n");
             // Each file under Breaks the server writes with the other line break than its own, on any system.
             Directory.CreateDirectory(PathOf("Breaks"));
