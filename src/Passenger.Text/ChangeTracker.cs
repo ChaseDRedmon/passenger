@@ -34,7 +34,8 @@ public sealed class ChangeTracker : IDisposable
     }
 
     /// <summary>Edits in the offsets of the text as it was, in the offsets of the text now; null when the text one of them
-    /// replaces was changed meanwhile, so it would no longer replace what it was made for.</summary>
+    /// replaces was changed meanwhile, so it would no longer replace what it was made for. Text typed at either end of
+    /// what an edit replaces stays outside it.</summary>
     public IReadOnlyList<TextEdit>? Map(IReadOnlyList<TextEdit> edits)
     {
         List<TextEdit> mapped = [];
@@ -54,7 +55,8 @@ public sealed class ChangeTracker : IDisposable
                         return null;
                     }
                 }
-                start = TextEditing.MapOffset(start, change, afterInsertions: false);
+                // A replacement starts after what was typed at its start, which it would otherwise take with it.
+                start = TextEditing.MapOffset(start, change, afterInsertions: end > start);
                 end = TextEditing.MapOffset(end, change, afterInsertions: false);
             }
             mapped.Add(new TextEdit(start, Math.Max(0, end - start), edit.Text));

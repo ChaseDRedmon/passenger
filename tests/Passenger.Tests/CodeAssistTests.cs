@@ -737,6 +737,29 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>A letter typed where Reformat Code's answer is about to delete a space, before the answer comes: the answer
+    /// still lands, and deletes only the space it was made for, never the letter typed at its start.</summary>
+    [AvaloniaFact]
+    public void A_letter_typed_at_the_start_of_what_a_reformat_is_about_to_change_stays_once_the_reformat_lands()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int result");
+        window.KeyTextInput(" ");
+        Ui.Settle();
+        Assert.Contains("int result  = Helper.Twice(2);", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // Asked for, and the letter typed between the two spaces, at the start of the second, which the answer deletes.
+        Assert.Null(window.Actions.Run(AppActions.Reformat));
+        window.KeyTextInput("s");
+        Ui.WaitFor(() => window.Status is "Reformatted" or "Already formatted" || window.Status?.Contains("not applied", StringComparison.Ordinal) == true,
+            "the reformat's answer");
+        string text = editor.Document.Snapshot.ToString();
+        Assert.True(window.Status == "Reformatted" && text.Contains("int result s= Helper.Twice(2);", StringComparison.Ordinal),
+            $"Once Reformat Code's answer came ({window.Status}), the line is not the letter typed with the space after it deleted:\n{text}");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_line_typed_while_a_rename_is_out_still_leaves_the_new_name_on_the_symbol()
     {
