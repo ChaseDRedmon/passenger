@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -21,6 +23,225 @@ namespace Passenger.Tests;
 /// again once the person opens another there, and Settings keep a folder let in always from another window meanwhile.</summary>
 public sealed partial class McpTests
 {
+    [AvaloniaFact]
+    public void Cancelling_an_attach_during_initialization_closes_its_stream_and_a_queued_call_does_not_lose_the_join()
+    {
+        string notes = Plain("mcp-initialize-");
+        MainWindow window = AgentsWindow(notes);
+        McpClient? client = null;
+        using CancellationTokenSource firstCancel = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        using CancellationTokenSource queuedCancel = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        try
+        {
+            using WithheldWindow fake = new(window);
+            client = Await(Task.Run(() => Start(["--mcp-attach", notes])), "the agent's session starting");
+            using CancellationTokenSource acceptLimit = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+            acceptLimit.CancelAfter(TimeSpan.FromSeconds(10).Scaled());
+            Task<Socket> accepting = fake.Listener.AcceptAsync(acceptLimit.Token).AsTask();
+            Task<CallToolResult> first = Task.Run(() => CallGivingUp(client, "workspace", new(), firstCancel.Token));
+            using Socket accepted = Await(accepting, "the proxy connecting to the withheld window");
+            using NetworkStream stream = new(accepted, ownsSocket: false);
+            using StreamReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
+            string? initialize = Await(reader.ReadLineAsync(Cancel).AsTask().WaitAsync(TimeSpan.FromSeconds(10).Scaled(), Cancel), "the proxy's initialize request");
+            Assert.NotNull(initialize);
+            using JsonDocument request = JsonDocument.Parse(initialize);
+            Assert.Contains(request.RootElement.GetProperty("method").GetString(), new[] { "server/discover", "initialize" });
+
+            TaskCompletionSource queuedStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task<CallToolResult> queued = Task.Run(async () =>
+            {
+                Task<CallToolResult> call = CallGivingUp(client, "workspace", new(), queuedCancel.Token);
+                queuedStarted.SetResult();
+                return await call;
+            });
+            Ui.PumpUntil(() => queuedStarted.Task.IsCompleted, "the second call starting while initialization holds the join", TimeSpan.FromSeconds(3));
+            queuedCancel.Cancel();
+            Assert.ThrowsAny<OperationCanceledException>(() => Await(queued.WaitAsync(TimeSpan.FromSeconds(3).Scaled(), Cancel), "the queued call giving up"));
+            Assert.False(first.IsCompleted, "Cancelling a queued call ended the join another call still owns");
+
+            Task<JsonElement> retry = Task.Run(() => Call(client, "workspace"));
+            Assert.False(Await(Task.Run(() => Waiting.Until(() => fake.Listener.Poll(0, SelectMode.SelectRead), TimeSpan.FromSeconds(1))),
+                "checking whether the cancelled waiter let another join pass"), "Cancelling a queued call released another call's join lock");
+            Assert.False(retry.IsCompleted, "A third call passed the join while initialization was still held");
+            fake.Dispose();
+            firstCancel.Cancel();
+            Assert.ThrowsAny<OperationCanceledException>(() => Await(first.WaitAsync(TimeSpan.FromSeconds(3).Scaled(), Cancel), "the initializing call giving up"));
+            Await(reader.ReadToEndAsync(Cancel).WaitAsync(TimeSpan.FromSeconds(10).Scaled(), Cancel),
+                "the cancelled initialization's stream to reach EOF");
+            Assert.Equal(window.Folder, Await(retry.WaitAsync(TimeSpan.FromSeconds(10).Scaled(), Cancel), "the next call joining the real window").GetProperty("folder").GetString());
+        }
+        finally
+        {
+            firstCancel.Cancel();
+            queuedCancel.Cancel();
+            try
+            {
+                if (client is not null)
+                {
+                    Gone(client);
+                }
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public void An_attach_passes_a_full_socket_backlog_and_joins_the_next_window()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "This test fills a Linux Unix-domain socket backlog");
+        string notes = Plain("mcp-backlog-");
+        MainWindow window = AgentsWindow(notes);
+        McpClient? client = null;
+        List<Socket> fillers = [];
+        using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        try
+        {
+            using WithheldWindow fake = new(window);
+            bool full = false;
+            for (int i = 0; i < 16; i++)
+            {
+                Socket filler = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified) { Blocking = false };
+                fillers.Add(filler);
+                try
+                {
+                    filler.Connect(new UnixDomainSocketEndPoint(fake.Path));
+                }
+                catch (SocketException blocked) when (blocked.SocketErrorCode == SocketError.WouldBlock)
+                {
+                    full = true;
+                    break;
+                }
+            }
+            Assert.True(full, "Sixteen nonblocking connections did not fill the withheld window's backlog");
+            client = Await(Task.Run(() => Start(["--mcp-attach", notes])), "the agent's session starting");
+            Task<CallToolResult> workspace = Task.Run(() => CallGivingUp(client, "workspace", new(), giveUp.Token));
+            CallToolResult result = Await(workspace.WaitAsync(TimeSpan.FromSeconds(15).Scaled(), Cancel), "the proxy passing the full backlog and joining the real window");
+            Assert.False(result.IsError == true, Text(result));
+            using JsonDocument seen = JsonDocument.Parse(Text(result));
+            Assert.Equal(window.Folder, seen.RootElement.GetProperty("folder").GetString());
+        }
+        finally
+        {
+            giveUp.Cancel();
+            foreach (Socket filler in fillers)
+            {
+                filler.Dispose();
+            }
+            try
+            {
+                if (client is not null)
+                {
+                    Gone(client);
+                }
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void An_attached_diagnostic_stops_waiting_on_a_suspended_server_when_cancelled_or_shut_out(bool revokeConnection)
+    {
+        MainWindow window = AgentsWindow(folder);
+        McpClient? client = null;
+        int suspended = 0;
+        using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        try
+        {
+            window.OpenFile(Path.Combine(window.Folder!, "Helper.cs"));
+            Ui.Settle();
+            client = Await(Task.Run(() => Start(["--mcp-attach", folder])), "the agent attaching");
+            Await(Task.Run(() => Call(client, "diagnostics", new() { ["path"] = "Helper.cs" })), "the language server loading the sample");
+            Ui.Settle();
+            Assert.DoesNotContain(InFlight.Now(), piece => piece.What.Contains("textDocument/diagnostic", StringComparison.Ordinal));
+            Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+            (server.SlowRequest, server.ResponseLimit) = (TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
+            suspended = server.ProcessId;
+            Processes.Suspend(suspended, "The test's language server");
+
+            Task<CallToolResult> diagnostic = Task.Run(() => revokeConnection
+                ? Result(client, "diagnostics", new() { ["path"] = "Helper.cs" })
+                : CallGivingUp(client, "diagnostics", new() { ["path"] = "Helper.cs" }, giveUp.Token));
+            Ui.PumpUntil(() => InFlight.Now().Any(piece => piece.What.Contains("textDocument/diagnostic", StringComparison.Ordinal)),
+                "the attached agent's diagnostic to wait on the suspended server", TimeSpan.FromSeconds(10));
+            if (revokeConnection)
+            {
+                window.ApplySettings(window.Settings with { McpServer = false });
+                Ui.PumpUntil(() => diagnostic.IsCompleted, "the shut-out agent's diagnostic to return", TimeSpan.FromSeconds(10));
+                CallToolResult refused = diagnostic.GetAwaiter().GetResult();
+                Assert.True(refused.IsError == true, Text(refused));
+                Assert.Contains("connection to the Passenger window ended", Text(refused), StringComparison.Ordinal);
+                Ui.PumpUntil(() => window.Agents == 0, "the still-open window to let the agent go", TimeSpan.FromSeconds(10));
+                Assert.True(window.IsVisible, "Shutting out an agent closed the person's window");
+            }
+            else
+            {
+                giveUp.Cancel();
+                Ui.PumpUntil(() => diagnostic.IsCompleted, "the agent's diagnostic giving up", TimeSpan.FromSeconds(10));
+                Assert.ThrowsAny<OperationCanceledException>(() => diagnostic.GetAwaiter().GetResult());
+            }
+            Ui.PumpUntil(() => !InFlight.Now().Any(piece => piece.What.Contains("textDocument/diagnostic", StringComparison.Ordinal)),
+                "the diagnostic request to clear while its server is still suspended", TimeSpan.FromSeconds(10));
+            Assert.True(Processes.IsRunning(suspended), "The request cleared only because its language server ended");
+        }
+        finally
+        {
+            giveUp.Cancel();
+            if (suspended != 0)
+            {
+                Processes.Kill(suspended);
+            }
+            try
+            {
+                if (client is not null)
+                {
+                    Gone(client);
+                }
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+    }
+
+    /// <summary>A live socket for this process and folder, ranked before the real window, which never answers initialize.</summary>
+    private sealed class WithheldWindow : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(McpHost.SocketFolder, $"{ProcessId}-{Guid.NewGuid():N}.sock");
+        public Socket Listener { get; } = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+
+        public WithheldWindow(MainWindow window)
+        {
+            try
+            {
+                Listener.Bind(new UnixDomainSocketEndPoint(Path));
+                Listener.Listen(1);
+                File.WriteAllText(System.IO.Path.ChangeExtension(Path, ".folder"), window.Folder);
+                File.SetLastWriteTimeUtc(Path, File.GetLastWriteTimeUtc(window.AgentSocket!).AddMinutes(1));
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            Listener.Dispose();
+            File.Delete(Path);
+            File.Delete(System.IO.Path.ChangeExtension(Path, ".folder"));
+        }
+    }
+
     [Fact]
     public async Task An_agent_set_up_before_Passenger_runs_has_the_tools_and_its_first_call_starts_Passenger_on_its_folder_which_asks()
     {

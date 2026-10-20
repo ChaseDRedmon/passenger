@@ -87,7 +87,7 @@ internal sealed class AppSocket : IDisposable
     }
 
     /// <summary>Asks the running Passengers, through their sockets, to open a folder, the newest first: the folder it
-    /// opened in one, or null when none is running or none would.</summary>
+    /// opened in one, or null when none is running or none would. Each request has 30 seconds, including connection.</summary>
     internal static async Task<string?> AskAsync(string folder, CancellationToken cancel)
     {
         if (McpHost.FoundSocketFolder() is not { } sockets)
@@ -99,13 +99,13 @@ internal sealed class AppSocket : IDisposable
             using Socket socket = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             try
             {
-                await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), cancel);
-                await using NetworkStream stream = new(socket, ownsSocket: false);
-                byte[] asked = Encoding.UTF8.GetBytes(new JsonObject { ["open"] = folder }.ToJsonString() + "\n");
-                await stream.WriteAsync(asked, cancel);
-                using StreamReader reader = new(stream, Encoding.UTF8);
                 using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
                 limit.CancelAfter(TimeSpan.FromSeconds(30));
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), limit.Token);
+                await using NetworkStream stream = new(socket, ownsSocket: false);
+                byte[] asked = Encoding.UTF8.GetBytes(new JsonObject { ["open"] = folder }.ToJsonString() + "\n");
+                await stream.WriteAsync(asked, limit.Token);
+                using StreamReader reader = new(stream, Encoding.UTF8);
                 if (await reader.ReadLineAsync(limit.Token) is { } line && JsonNode.Parse(line) is JsonObject answer
                     && answer["opened"]?.GetValue<string>() is { } opened)
                 {
