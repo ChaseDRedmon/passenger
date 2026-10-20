@@ -460,6 +460,11 @@ def variant(theme, p, dark):
     t["Passenger.File.Markdown"] = hue("blue")
     t["Passenger.File.Code"] = hue("cyan")
     t["Passenger.File.Plain"] = t["Passenger.File.Folder"]
+    # The File Icons set's colours, file-icons' ten hues in this theme's own.
+    for name in ("red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink"):
+        t[f"Passenger.FileIcon.{name.capitalize()}"] = hue(name)
+    t["Passenger.FileIcon.Maroon"] = shift(mix(hue("red"), hue("orange"), 0.45), -0.08)
+    t["Passenger.FileIcon.Grey"] = mix(text, muted, 0.8)
 
     t["Passenger.Editor.Background"] = editor
     t["Passenger.Editor.Gutter"] = editor

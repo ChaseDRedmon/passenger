@@ -729,6 +729,9 @@ public sealed class OpenDocument : Observable
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
     public Avalonia.Media.IBrush IconBrush => Explorer.FileIcons.BrushForFile(Path);
 
+    /// <summary>The icon set changed: its tabs draw the file's icon again.</summary>
+    public void IconsChanged() => Raise(nameof(Icon));
+
     /// <summary>The carets: the editor's while the file is shown there, as left otherwise, moved by every change to the text.</summary>
     public SelectionSet Selections { get; set; } = SelectionSet.Single(0);
     public Vector Scroll { get; set; }

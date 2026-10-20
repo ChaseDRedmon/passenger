@@ -563,7 +563,7 @@ public sealed class EditorGroup : DockPanel
             {
                 modified.IsVisible = document.IsModified;
             }
-            else if (e.PropertyName == nameof(OpenDocument.Path))
+            else if (e.PropertyName is nameof(OpenDocument.Path) or nameof(OpenDocument.Icon))
             {
                 Paint();
             }

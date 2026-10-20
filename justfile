@@ -75,6 +75,10 @@ themes:
 icons:
     python3 -I tools/icons.py
 
+# Rewrite Theme/FileIconSet.axaml, the File Icons set's shapes, from the list in tools/file-icons.py.
+file-icons:
+    python3 -I tools/file-icons.py
+
 # Fail naming any package the solution restores, Roslyn's server carries or dotnet-tools.json pins that the notices miss.
 notices:
     python3 -I tools/check-notices.py
