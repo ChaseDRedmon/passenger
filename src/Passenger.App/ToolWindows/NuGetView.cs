@@ -455,10 +455,17 @@ public sealed class NuGetView : DockPanel
 
     /// <summary>Adds the chosen package to a project at the chosen version, or moves it there.</summary>
     public Task<bool> InstallAsync(ProjectModel project) =>
-        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version ? ChangeAsync(() => manager.InstallAsync(project.Path, row.Id, version)) : Task.FromResult(false);
+        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version
+            ? ChangeAsync($"Installing {row.Id} {version} in {project.Name}…", () => manager.InstallAsync(project.Path, row.Id, version)) : Task.FromResult(false);
 
     public Task<bool> RemoveAsync(ProjectModel project) =>
-        Selected is { } row ? ChangeAsync(() => manager.RemoveAsync(project.Path, row.Id)) : Task.FromResult(false);
+        Selected is { } row ? ChangeAsync($"Removing {row.Id} from {project.Name}…", () => manager.RemoveAsync(project.Path, row.Id)) : Task.FromResult(false);
+
+    /// <summary>What a package change's work is held under in the window, which no action names.</summary>
+    public const string Changing = "nuget.change";
+
+    /// <summary>The window's work under way, which a package change shows itself in until it ends.</summary>
+    public ActionWork? Work { get; set; }
 
     /// <summary>Ends a package change still under way, as the IDE closes.</summary>
     public void StopChange() => manager.Stop();
@@ -517,7 +524,7 @@ public sealed class NuGetView : DockPanel
         return tab;
     }
 
-    private async Task<bool> ChangeAsync(Func<Task<bool>> change)
+    private async Task<bool> ChangeAsync(string stage, Func<Task<bool>> change)
     {
         if (busy)
         {
@@ -526,6 +533,7 @@ public sealed class NuGetView : DockPanel
         busy = true;
         status.Text = "Working...";
         using IDisposable held = BackgroundWork.Scope();
+        using Working? working = Work?.Begin(Changing, stage, stoppable: false);
         bool done;
         try
         {

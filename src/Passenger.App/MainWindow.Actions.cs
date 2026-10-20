@@ -41,6 +41,30 @@ public partial class MainWindow
         return false;
     }
 
+    /// <summary>The tool windows' buttons that run actions show those actions' work, as the toolbar's do.</summary>
+    private void ShowActionWork()
+    {
+        foreach (Docking.ToolWindow tool in Dock.Windows)
+        {
+            ActionButtons.ShowMarked(tool.Content, actions!);
+        }
+    }
+
+    /// <summary>Runs an action's work held under its id: begun at once with its first stage, ended with the task; asked for
+    /// again while it works, it says what is under way.</summary>
+    private async Task WorkingAsync(string id, string stage, Func<Task> run, bool stoppable = false)
+    {
+        if (work.Begin(id, stage, stoppable) is not { } working)
+        {
+            status.Text = ActionWork.Busy(work.Of(id)!);
+            return;
+        }
+        using (working)
+        {
+            await run();
+        }
+    }
+
     /// <summary>Where an action asked for now runs: the file shown and its caret, what has the keys in the window in front
     /// (an editor window, a diff, a dialog, a floating tool window, this one) and the tool window it is in, and the
     /// debugger's state.</summary>
@@ -267,9 +291,9 @@ public partial class MainWindow
     private void AddTests()
     {
         Add(A.RunTests, "Run Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: false), NoTestHere, ("Tests", 0, 0));
-        Add(A.DebugTests, "Debug Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: true), NoTestHere, ("Tests", 0, 1));
-        Add(A.RunTestsUntilFailure, "Run Unit Tests Until Failure", "Unit Tests", c => RunTestsInContext(c, debug: false, untilFailure: true), NoTestHere, ("Tests", 0, 2));
-        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => session.Tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3));
+        Add(A.DebugTests, "Debug Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: true), NoTestHere, ("Tests", 0, 1), works: A.RunTests);
+        Add(A.RunTestsUntilFailure, "Run Unit Tests Until Failure", "Unit Tests", c => RunTestsInContext(c, debug: false, untilFailure: true), NoTestHere, ("Tests", 0, 2), works: A.RunTests);
+        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => session.Tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3), works: A.RunTests);
         Add(A.RerunTests, "Rerun Unit Tests", "Unit Tests", _ => RunTests(() => session.Tests.RerunAsync(Folder!)), NeedsFolder, ("Tests", 1, 0));
         Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => session.Tests.RerunFailedAsync(Folder!)), NeedsFolder, ("Tests", 1, 1));
         Add(A.StopTests, "Stop Unit Tests", "Unit Tests", _ => session.Tests.Stop(), NothingRunning, ("Tests", 1, 2));

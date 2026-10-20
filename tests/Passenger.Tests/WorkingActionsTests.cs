@@ -113,6 +113,32 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Fetch_says_it_is_fetching_at_once_and_a_second_fetch_says_it_is_under_way()
+    {
+        string repository = TestFolders.Create("working-git-");
+        File.WriteAllText(Path.Combine(repository, "readme.txt"), "a\n");
+        TestGit.Init(repository);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(repository);
+        Ui.Settle();
+        try
+        {
+            Assert.True(window.Perform(AppActions.Fetch));
+            Assert.Equal("Fetching…", window.Status);
+            Assert.False(window.Perform(AppActions.Fetch), "A second Fetch started while the first one worked");
+            Assert.Equal("Already under way: Fetching…", window.Actions.WhyNot(AppActions.Fetch, window.Actions.Context()));
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.Fetch) is null, "the fetch to end");
+            Assert.Equal("Fetched", window.Status);
+        }
+        finally
+        {
+            window.Close();
+            TestFolders.Delete(repository);
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

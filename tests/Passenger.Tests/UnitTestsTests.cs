@@ -67,7 +67,15 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         int logged = Ui.Shared(runnerLog).Length;
         // Run All has no key of Rider's: the Unit Tests window's button runs it.
         Assert.True(window.Perform(AppActions.RunAllTests));
+        // Said at once, its build's stage beside the status bar's ring, and asked again while it works it starts nothing more.
+        Assert.Equal("Building Sums.Tests.csproj…", window.Status);
+        Assert.False(window.Perform(AppActions.RunTests) || window.Perform(AppActions.RunAllTests), "A second test run started while the first one worked");
+        Assert.StartsWith("Already under way: ", window.Actions.WhyNot(AppActions.RunAllTests, window.Actions.Context()), StringComparison.Ordinal);
+        Avalonia.Controls.Button runAll = Avalonia.LogicalTree.LogicalExtensions.GetLogicalDescendants(window.BottomPanel.Tests).OfType<Avalonia.Controls.Button>()
+            .Single(b => ActionButtons.GetAction(b) == AppActions.RunAllTests);
+        Assert.True(ActionButtons.IsWorking(runAll), "The Unit Tests window's Run All should show the run working, as the toolbar's buttons show theirs");
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+        Assert.Null(window.Actions.Work.Of(AppActions.RunTests));
         // The tally: vstest.console ran under the SDK's dotnet, which VSTest's translation layer is told through a
         // constructor of its own; a version of the package without it fails here, naming it.
         Assert.Equal("Tests passed: 3, failed: 1, skipped: 1 of 5", System.Text.RegularExpressions.Regex.Replace(window.BottomPanel.Tests.Status, @" in \d+\.\d s$", string.Empty));

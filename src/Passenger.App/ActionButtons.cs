@@ -25,8 +25,30 @@ public static class ActionButtons
     /// run) and show its work.</summary>
     public static void Bind(Button button, string id, ActionRegistry actions, Func<string, bool> request)
     {
-        button.SetValue(ActionProperty, id);
         button.Click += (_, _) => request(id);
+        Show(button, id, actions);
+    }
+
+    /// <summary>Marks a tool window's button as running an action it asks for its own way, so the window shows that
+    /// action's work on it (<see cref="ShowMarked"/>).</summary>
+    public static void Mark(Button button, string id) => button.SetValue(ActionProperty, id);
+
+    /// <summary>Shows each marked button's action's work on it, in what a window hosts.</summary>
+    public static void ShowMarked(Avalonia.LogicalTree.ILogical within, ActionRegistry actions)
+    {
+        foreach (Button button in Avalonia.LogicalTree.LogicalExtensions.GetLogicalDescendants(within).OfType<Button>().ToList())
+        {
+            if (GetAction(button) is { } id)
+            {
+                Show(button, id, actions);
+            }
+        }
+    }
+
+    /// <summary>Has the button show its action's work: a ring round its icon and the stage in its tip while it works.</summary>
+    private static void Show(Button button, string id, ActionRegistry actions)
+    {
+        button.SetValue(ActionProperty, id);
         string? tip = ToolTip.GetTip(button) as string;
         Panel? shown = null;
         void Show()

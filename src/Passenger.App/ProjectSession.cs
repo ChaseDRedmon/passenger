@@ -20,8 +20,9 @@ namespace Passenger.App;
 /// <summary>What a window lends each session it makes: its editors (whose open files the session's services follow), where
 /// its state and Local History are kept, how folders are watched, the warm language server a test's windows share, the
 /// consoles, Debug window and tests tree its runners, debugger and test runner write to, the build a test run starts with,
-/// the tab of the Terminal window a program the debugger launches there runs in, and the settings as they stand (the
-/// Node.js the web language servers run on, whether remote JSON schemas are downloaded).</summary>
+/// the tab of the Terminal window a program the debugger launches there runs in, the settings as they stand (the
+/// Node.js the web language servers run on, whether remote JSON schemas are downloaded), and the window's work under way,
+/// which Git's operations and test runs show themselves in.</summary>
 public sealed record SessionSetup(
     EditorArea Editors,
     string StateFolder,
@@ -32,7 +33,8 @@ public sealed record SessionSetup(
     ToolViews Views,
     Func<CancellationToken, Task<BuildOutcome>> BuildForTests,
     Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger,
-    Func<Settings.AppSettings> Settings);
+    Func<Settings.AppSettings> Settings,
+    ActionWork Work);
 
 /// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
 /// packages the projects reference, changed with them.</summary>
@@ -65,7 +67,8 @@ public sealed class ProjectSession : IAsyncDisposable
         Configurations = new RunConfigurations(folder);
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
-        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
+        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
+        Vcs.Work = setup.Work;
         Debug = new DebugController(setup.Editors, setup.Views.Debug)
         {
             RunInTerminal = setup.RunForDebugger,

@@ -60,6 +60,13 @@ public sealed class TestController : IAsyncDisposable
 
     public TestTree Tree { get; }
 
+    /// <summary>The window's work under way, which a run shows itself in from its first moment to its end, Stop ending it
+    /// as the Unit Tests window's Stop does: null with no window to show it in.</summary>
+    public ActionWork? Work { get; init; }
+
+    /// <summary>The run under way as the window shows it.</summary>
+    private Working? working;
+
     /// <summary>The tests the code declares, which the tree shows before any build.</summary>
     public TestFinder Finder { get; } = new();
 
@@ -209,6 +216,8 @@ public sealed class TestController : IAsyncDisposable
         holdingWork = true;
         List<TestNode>? chosen = rows?.ToList();
         using CancellationTokenSource stop = Begin();
+        working = Work?.Begin(AppActions.RunTests, build ? "Building the test projects…" : "Finding the tests…");
+        using CancellationTokenRegistration stopped = working?.Stopping.Register(stop.Cancel) ?? default;
         try
         {
             // A run builds first, as Rider's does, and finds what is new.
@@ -224,6 +233,7 @@ public sealed class TestController : IAsyncDisposable
             }
             List<TestNode> methods = [.. tests.Select(Tree.Node).OfType<TestNode>().Select(n => n.Kind == TestNodeKind.Row ? n.Parent! : n).Distinct()];
             lastRun = chosen ?? [];
+            working?.Say($"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}…");
             Tree.Begin(tests);
             Changed?.Invoke(this, EventArgs.Empty);
             Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
@@ -273,6 +283,8 @@ public sealed class TestController : IAsyncDisposable
         {
             stopping = null;
             IsBusy = false;
+            working?.Dispose();
+            working = null;
             ReleaseWork();
             Changed?.Invoke(this, EventArgs.Empty);
         }
@@ -389,6 +401,10 @@ public sealed class TestController : IAsyncDisposable
             return unbuilt.Message;
         }
         cancel.ThrowIfCancellationRequested();
+        if (build)
+        {
+            working?.Say("Finding the tests…");
+        }
         if (folder != workspace)
         {
             Forget(workspace);

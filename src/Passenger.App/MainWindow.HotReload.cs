@@ -31,11 +31,11 @@ public partial class MainWindow
         {
             if (session.Debug.HotReload is not null)
             {
-                _ = session.Debug.ApplyAndRestartAsync();
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAndRestartAsync);
             }
             else
             {
-                _ = SaveForWatchAsync();
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", SaveForWatchAsync);
             }
         }, _ => session.Debug.HotReload is not null || session.Debug.IsDebugging ? session.Debug.WhyNotApply()
             : buildRun.WatchesHotReload ? null

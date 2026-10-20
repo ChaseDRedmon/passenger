@@ -345,7 +345,9 @@ public sealed class TestsView : DockPanel
     private Button ActionTool(string action, string icon, string tip)
     {
         string? keys = AppActions.Keymap().ShortcutsFor(action).FirstOrDefault()?.Display();
-        return Tool(icon, keys is null ? tip : $"{tip} ({keys})", () => ActionRequested?.Invoke(this, action));
+        Button button = Tool(icon, keys is null ? tip : $"{tip} ({keys})", () => ActionRequested?.Invoke(this, action));
+        ActionButtons.Mark(button, action);
+        return button;
     }
 
     private static Button Tool(string icon, string tip, Action run)

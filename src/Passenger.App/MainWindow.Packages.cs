@@ -22,6 +22,7 @@ public partial class MainWindow
             Menus = [new MenuPlace("Tools", 0, 0)],
         });
         nuget.SaveFirst = () => Editors.SaveAll();
+        nuget.Work = work;
         nuget.Changed += (_, _) =>
         {
             // dotnet add package wrote the project, and Directory.Packages.props under central management.

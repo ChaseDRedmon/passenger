@@ -69,6 +69,7 @@ public partial class MainWindow : Window
         AddWelcome();
         AddChords();
         AddToolWindows();
+        ShowActionWork();
         AddVcs();
         AddTerminal();
         AddSettings();
