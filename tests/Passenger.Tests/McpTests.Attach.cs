@@ -17,7 +17,8 @@ namespace Passenger.Tests;
 /// site's steps set one up: its session has the tools from the start, its first call has Passenger open its folder (the
 /// run's headless build started on it, or a window of the running Passenger's), the window asks the person before the
 /// agent works there, and a window closed is found again at the next call. A window on another folder is never joined,
-/// and on a person's window an agent's open of another folder is theirs to allow.</summary>
+/// and on a person's window an agent's open of another folder is theirs to allow; Settings keep a folder let in always
+/// from another window meanwhile.</summary>
 public sealed partial class McpTests
 {
     [Fact]
@@ -450,6 +451,60 @@ public sealed partial class McpTests
         finally
         {
             Gone(own);
+        }
+    }
+
+    /// <summary>A folder let in always from one window stays let in when another window's Settings, open since before, takes
+    /// back a different one: the list merges as what each changed, where it was taken whole from the last to change it.</summary>
+    [AvaloniaFact]
+    public void A_folder_let_in_always_from_one_window_stays_when_another_windows_settings_take_back_a_different_one()
+    {
+        string taken = Plain("mcp-taken-");
+        string kept = Plain("mcp-kept-");
+        MainWindow settingsWindow = new() { Width = 1200, Height = 800, StateFolder = settings };
+        settingsWindow.Show();
+        settingsWindow.KeepLayout();
+        settingsWindow.KeepSettings();
+        settingsWindow.OpenFolder(taken);
+        Ui.Settle();
+        settingsWindow.ApplySettings(settingsWindow.Settings with { AgentFolders = [PathNames.Canonical(taken)] });
+        MainWindow asking = new() { Width = 1200, Height = 800, StateFolder = settings };
+        asking.Show();
+        asking.KeepLayout();
+        asking.KeepSettings();
+        asking.OpenFolder(kept);
+        Ui.Settle();
+        SettingsDialog dialog = DialogButtonsTests.Check(settingsWindow.ShowSettings());
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", kept])), "the agent attaching");
+        try
+        {
+            dialog.Page = SettingsDialog.McpPage;
+            Ui.Settle();
+            Assert.Equal([PathNames.Canonical(taken)], dialog.AgentFolderList.Items.OfType<string>());
+
+            // Meanwhile the other window lets an agent in always for its folder.
+            Task<JsonElement> letIn = Task.Run(() => Call(client, "workspace"));
+            AgentAdmissionDialog asked = Admission(asking, "the other window to ask whether the agent may work there");
+            Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(asked).OfType<CheckBox>().Single(c => (string?)c.Content == "Always for this folder").IsChecked = true;
+            Press(asked, AgentAdmissionDialog.Allow);
+            Await(letIn, "the call let in always");
+            Assert.True(asking.AlwaysLetsAgentsIn, "Always for this folder did not keep the folder");
+
+            // The Settings open since before take back the folder they list.
+            dialog.AgentFolderList.SelectedIndex = 0;
+            dialog.RemoveAgentFolderButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            dialog.Ok();
+            Ui.Settle();
+            Assert.False(settingsWindow.AlwaysLetsAgentsIn, "The folder Settings took back still lets agents in unasked");
+            Assert.True(asking.AlwaysLetsAgentsIn, "The folder the other window let in always while Settings were open was dropped as Settings took back another");
+            Assert.Equal([PathNames.Canonical(kept)], settingsWindow.Settings.AgentFolders);
+        }
+        finally
+        {
+            dialog.Close();
+            Gone(client);
+            asking.Close();
+            settingsWindow.Close();
         }
     }
 

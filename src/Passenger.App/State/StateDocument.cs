@@ -17,6 +17,11 @@ public interface IStateDocument<TSelf> where TSelf : class, IStateDocument<TSelf
     /// before documents had versions; the version this build writes is their count.</summary>
     static abstract IReadOnlyList<Action<JsonObject>> Upgrades { get; }
 
+    /// <summary>The properties (by their C# names) whose lists are sets, in no order and with no repeats: a change merges as
+    /// what it added and took away, so what another side added or took away meanwhile stays. Any other list is one value,
+    /// taken whole from the side that changed it, as its order may matter.</summary>
+    static virtual IReadOnlyList<string> Sets => [];
+
     /// <summary>The value with whatever this build cannot use brought into range, or back to its default.</summary>
     TSelf Clamped();
 }
@@ -234,7 +239,7 @@ public sealed class StateDocument<T> where T : class, IStateDocument<T>, new()
                 {
                     return;
                 }
-                StateFile.Replace(Path, StateFile.Merged(disk.Document, Math.Max(disk.Version, T.Upgrades.Count), known, mine));
+                StateFile.Replace(Path, StateFile.Merged(disk.Document, Math.Max(disk.Version, T.Upgrades.Count), known, mine, T.Sets));
                 known = mine;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -396,12 +401,13 @@ internal static class StateFile
     }
 
     /// <summary>The file's document, its version first, with each value this side changed since it last read or wrote
-    /// the file (<paramref name="known"/>) taken from <paramref name="mine"/>, and every other as the file has it.</summary>
-    public static JsonObject Merged(JsonObject disk, int version, string? known, string mine)
+    /// the file (<paramref name="known"/>) taken from <paramref name="mine"/>, and every other as the file has it; a list
+    /// among <paramref name="sets"/> (<see cref="IStateDocument{TSelf}.Sets"/>) merged as a set.</summary>
+    public static JsonObject Merged(JsonObject disk, int version, string? known, string mine, IReadOnlyList<string> sets)
     {
         disk.Remove("version");
         JsonObject written = new() { ["version"] = version };
-        MergeInto(written, disk, known is null ? [] : (JsonObject)JsonNode.Parse(known)!, (JsonObject)JsonNode.Parse(mine)!, nested: false);
+        MergeInto(written, disk, known is null ? [] : (JsonObject)JsonNode.Parse(known)!, (JsonObject)JsonNode.Parse(mine)!, Named(sets));
         return written;
     }
 
@@ -410,21 +416,29 @@ internal static class StateFile
     public static T Merged<T>(T now, T from, T to) where T : class, IStateDocument<T>, new()
     {
         JsonObject merged = [];
-        MergeInto(merged, Node(now), Node(from), Node(to), nested: false);
+        MergeInto(merged, Node(now), Node(from), Node(to), Named(T.Sets));
         return (merged.Deserialize<T>(Options) ?? new T()).Clamped();
 
         static JsonObject Node(T value) => (JsonObject)JsonSerializer.SerializeToNode(value, Options)!;
     }
 
-    /// <summary>Merges one object's values. In an object inside the document (a dictionary: shortcuts, recent solutions),
+    /// <summary>Properties' C# names as the document's JSON names them.</summary>
+    private static HashSet<string> Named(IReadOnlyList<string> properties) =>
+        [.. properties.Select(p => Options.PropertyNamingPolicy?.ConvertName(p) ?? p)];
+
+    /// <summary>Merges one object's values: the document's own, whose lists among <paramref name="sets"/> merge as sets,
+    /// or (with none) an object inside it. In an object inside the document (a dictionary: shortcuts, recent solutions),
     /// an entry this side has unchanged that the file no longer has was removed by another side, and stays removed.</summary>
-    private static void MergeInto(JsonObject into, JsonObject disk, JsonObject before, JsonObject after, bool nested)
+    private static void MergeInto(JsonObject into, JsonObject disk, JsonObject before, JsonObject after, HashSet<string>? sets)
     {
+        bool nested = sets is null;
         foreach ((string name, JsonNode? there) in disk)
         {
             if (after.TryGetPropertyValue(name, out JsonNode? now))
             {
-                into[name] = before.TryGetPropertyValue(name, out JsonNode? was) ? MergeValue(there, was, now) : now?.DeepClone();
+                into[name] = !before.TryGetPropertyValue(name, out JsonNode? was) ? now?.DeepClone()
+                    : sets?.Contains(name) == true ? MergeSet(there, was, now)
+                    : MergeValue(there, was, now);
             }
             else if (!before.ContainsKey(name))
             {
@@ -446,10 +460,31 @@ internal static class StateFile
         if (there is JsonObject thereObject && was is JsonObject wasObject && now is JsonObject nowObject)
         {
             JsonObject merged = [];
-            MergeInto(merged, thereObject, wasObject, nowObject, nested: true);
+            MergeInto(merged, thereObject, wasObject, nowObject, sets: null);
             return merged;
         }
         return (JsonNode.DeepEquals(was, now) ? there : now)?.DeepClone();
+    }
+
+    /// <summary>A set's merge: the file's members in its order, less those this side took away, then those it added.</summary>
+    private static JsonNode? MergeSet(JsonNode? there, JsonNode? was, JsonNode? now)
+    {
+        if (there is not JsonArray theirs || was is not JsonArray before || now is not JsonArray after)
+        {
+            return MergeValue(there, was, now);
+        }
+        JsonArray merged = [];
+        foreach (JsonNode? member in theirs.Concat(after))
+        {
+            bool kept = Has(theirs, member) ? !Has(before, member) || Has(after, member) : !Has(before, member);
+            if (kept && !Has(merged, member))
+            {
+                merged.Add(member?.DeepClone());
+            }
+        }
+        return merged;
+
+        static bool Has(JsonArray set, JsonNode? member) => set.Any(m => JsonNode.DeepEquals(m, member));
     }
 
     /// <summary>Enums by name; a name this build does not have (a later build's) reads as no value of the enum, which

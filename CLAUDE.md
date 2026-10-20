@@ -330,7 +330,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`LaunchPlan.SandboxedState`, as IntelliJ's DevKit sandbox), unless its configuration sets `PASSENGER_SETTINGS`. A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
-  stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
+  stay (and an entry another window removed stays removed; a list its `Sets` names merges as what each side added and
+  took away), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
   (`StateFile.TakeUnsaid`). New state is a document there, never a file of
   its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
