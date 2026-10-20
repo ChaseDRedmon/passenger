@@ -189,7 +189,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
   `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
-  file, projects read off the UI thread, told each build's AVLN problems, a project read again as a restore's
+  file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
+  project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
+  by `ProjectInputs.Compiles`), a project read again as a restore's
   `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
   the Explorer or Git), including one under `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder
   holds and `XamlService.RestoredFor` maps to its project by name; `LibrarySources` decompiles a library's

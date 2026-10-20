@@ -267,6 +267,75 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_property_added_to_a_view_model_in_a_referenced_project_reaches_the_xaml_that_binds_to_it()
+    {
+        // The usual layout: the app's XAML in Shop, its view models in Shop.Core, which Shop references.
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-core-"));
+        string shop = Path.Combine(folder, "Shop");
+        string core = Path.Combine(folder, "Shop.Core");
+        string viewModel = Path.Combine(core, "ViewModels", "MainViewModel.cs");
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                AvaloniaApp.Create(shop, "Shop");
+                string project = Path.Combine(shop, "Shop.csproj");
+                File.WriteAllText(project, File.ReadAllText(project).Replace("</Project>",
+                    "  <ItemGroup>\n    <ProjectReference Include=\"..\\Shop.Core\\Shop.Core.csproj\" />\n  </ItemGroup>\n</Project>", StringComparison.Ordinal));
+                Directory.CreateDirectory(Path.GetDirectoryName(viewModel)!);
+                File.WriteAllText(Path.Combine(core, "Shop.Core.csproj"),
+                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+                File.WriteAllText(viewModel, "namespace Shop.Core.ViewModels;\n\npublic class MainViewModel\n{\n    public string Greeting { get; set; } = \"Hello\";\n}\n");
+                File.WriteAllText(Path.Combine(shop, "MainWindow.axaml"), """
+                    <Window xmlns="https://github.com/avaloniaui"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:vm="using:Shop.Core.ViewModels"
+                            x:Class="Shop.MainWindow"
+                            x:DataType="vm:MainViewModel"
+                            Title="Shop">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Greeting}" />
+                            <TextBlock Text="{Binding Subtitle}" />
+                            <TextBlock Text="{Binding Caption}" />
+                        </StackPanel>
+                    </Window>
+
+                    """);
+                Restore.Run(shop);
+            }, folder);
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
+            OpenDocument view = window.EditorArea.Active!;
+            Ui.WaitFor(() => view.Markers.Count == 2, "the two properties the referenced project's view model lacks marked");
+            Assert.Equal(["Cannot resolve property 'Caption' on MainViewModel", "Cannot resolve property 'Subtitle' on MainViewModel"], view.Markers.Select(m => m.Message).Order());
+
+            // Written on disk (a pull, another editor), and typed into the view model open in the editor.
+            File.WriteAllText(viewModel, "namespace Shop.Core.ViewModels;\n\npublic class MainViewModel\n{\n    public string Greeting { get; set; } = \"Hello\";\n\n    public string Subtitle { get; set; } = \"\";\n}\n");
+            Ui.WaitFor(() => view.Markers.Count == 1, "the property written into the referenced project's view model no longer marked");
+            window.OpenFile(viewModel);
+            Ui.Settle();
+            CodeEditor code = window.EditorArea.CodeEditor;
+            PlaceAfter(code, "public string Subtitle { get; set; } = \"\";");
+            window.KeyTextInput("\n\n    public string Caption { get; set; } = \"\";");
+            Ui.WaitFor(() => view.Markers.Count == 0, "the property typed into the referenced project's view model no longer marked");
+
+            window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
+            Ui.Settle();
+            PlaceAfter(window.EditorArea.CodeEditor, "Text=\"{Binding ");
+            Ui.Run(window, AppActions.Complete);
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Caption"), "the property typed into the referenced project offered in a binding");
+            Assert.Contains("Subtitle", window.Assist.CompletionLabels);
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_restored_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands()
     {
         string folder = PathNames.Canonical(TestFolders.Create("xaml-restore-"));

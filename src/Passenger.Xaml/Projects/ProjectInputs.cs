@@ -378,6 +378,37 @@ public sealed record ProjectInputs(
         return [];
     }
 
+    /// <summary>Whether a C# file is one of the project's own, as <see cref="SourceFiles"/> reads them, there now or not.</summary>
+    public bool Compiles(string path)
+    {
+        if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || !Paths.IsUnder(path, Folder))
+        {
+            return false;
+        }
+        string top = Folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        for (string? at = Path.GetDirectoryName(path); at is not null && at.Length > top.Length; at = Path.GetDirectoryName(at))
+        {
+            string name = Path.GetFileName(at);
+            if (name is "bin" or "obj" or "node_modules" || name.StartsWith('.') || HasProject(at))
+            {
+                return false;
+            }
+        }
+        return true;
+
+        static bool HasProject(string folder)
+        {
+            try
+            {
+                return Directory.Exists(folder) && Directory.EnumerateFiles(folder, "*.csproj").Any();
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+    }
+
     /// <summary>The project's own C# files: under its folder, but for bin, obj, hidden folders and another project's.</summary>
     private static List<string> SourceFilesOf(string folder)
     {

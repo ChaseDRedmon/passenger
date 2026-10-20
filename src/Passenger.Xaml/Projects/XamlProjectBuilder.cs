@@ -127,15 +127,16 @@ public sealed class XamlProjectBuilder
         }
     }
 
-    /// <summary>A C# file's text changed (typed, or written on disk): its types are read again; a file deleted goes.</summary>
-    public XamlProject SourceChanged(string path, string? text)
+    /// <summary>A C# file's text changed (typed, or written on disk): its types are read again; a file deleted goes. Null
+    /// for a file neither the project nor one it references compiles.</summary>
+    public XamlProject? SourceChanged(string path, string? text)
     {
         lock (gate)
         {
             string? assembly = AssemblyOf(path);
             if (assembly is null)
             {
-                return Current;
+                return null;
             }
             if (text is null && !File.Exists(path))
             {
@@ -185,18 +186,8 @@ public sealed class XamlProjectBuilder
     }
 
     /// <summary>Which project's assembly a C# file is compiled into, of this one and those it references; null for none.</summary>
-    private string? AssemblyOf(string path)
-    {
-        if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || InBuildOutput(path))
-        {
-            return null;
-        }
-        if (Paths.IsUnder(path, inputs.Folder) && !referenced.Any(r => Paths.IsUnder(path, r.Inputs.Folder) && r.Inputs.Folder.Length > inputs.Folder.Length))
-        {
-            return inputs.AssemblyName;
-        }
-        return referenced.FirstOrDefault(r => Paths.IsUnder(path, r.Inputs.Folder)).Inputs?.AssemblyName;
-    }
+    private string? AssemblyOf(string path) =>
+        new[] { inputs }.Concat(referenced.Select(r => r.Inputs)).FirstOrDefault(project => project.Compiles(path))?.AssemblyName;
 
     private XamlProject Make()
     {
