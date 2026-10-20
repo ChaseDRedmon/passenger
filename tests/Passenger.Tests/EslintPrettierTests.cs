@@ -217,6 +217,38 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     }
 
     [AvaloniaFact]
+    public void Prettier_2_formats_as_Prettier_3_does_and_leaves_what_prettierignore_names()
+    {
+        Project.SkipWithoutNode();
+        MainWindow window = project.Open("src/format.js");
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "console.log(label, \"the price of a pot of tea\", \"with milk and sugar on the side\");\n")]);
+            // Each puts its own default trailing commas in the call it wraps: Prettier 3 all, Prettier 2 none after arguments.
+            const string formatted = "const label = { name: 'tea', price: 3 }\nconsole.log(label)\nconsole.log(\n  label,\n  'the price of a pot of tea',\n  'with milk and sugar on the side'";
+            ReformatWithPrettier(window);
+            Assert.Equal(formatted + ",\n)\n", editor.Document.Snapshot.ToString());
+            Ui.Run(window, EditorActions.Undo);
+
+            window.ApplySettings(window.Settings with { Prettier = ToolConfiguration.Manual, PrettierPackage = project.PathOf("node_modules/prettier2") });
+            ReformatWithPrettier(window);
+            Assert.True(editor.Document.Snapshot.ToString() == formatted + "\n)\n", $"Prettier 2 did not format the file under the .prettierignore ({window.Status}):\n{editor.Document.Snapshot}");
+            window.OpenFile(project.PathOf("src/legacy.js"));
+            Ui.Settle();
+            ReformatWithPrettier(window);
+            Assert.Equal("Prettier: file legacy.js was ignored with .prettierignore", window.Status);
+            Assert.Equal(Project.Legacy, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_json_listing_ESLint_and_Prettier_not_installed_says_so_in_the_banner_whose_link_runs_npm_install_there_and_a_Manual_ESLint_checks_it()
     {
         Project.SkipWithoutNode();

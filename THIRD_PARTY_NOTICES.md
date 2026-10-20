@@ -169,7 +169,7 @@ Packages the build or the tests use that no app carries.
 ### The tests' own ESLint and Prettier
 
 The npm packages `EslintPrettierTests` put in a test folder's node_modules as a project's own ESLint and Prettier:
-`tests/Passenger.Tests/NodePackages/package.json` pins the two and `package-lock.json` everything they bring, each with
+`tests/Passenger.Tests/NodePackages/package.json` pins them and `package-lock.json` everything they bring, each with
 its tarball's sha512, which the tests' build checks as `tools/Passenger.NodePackages` puts them in the tests' output
 (`node-packages/`). No app carries them, and no test fetches them from npm. Each is named by its npm name, with the
 licence its package.json states and the copyright line its licence file (else its source) carries, else its author.
@@ -178,7 +178,7 @@ licence its package.json states and the copyright line its licence file (else it
 | Package | In Passenger | Licence | Copyright |
 |---|---|---|---|
 | `eslint` | the project's own ESLint, which Passenger's ESLint support runs through the ESLint language server | MIT | Copyright OpenJS Foundation and other contributors, <www.openjsf.org> |
-| `prettier` | the project's own Prettier, which Passenger's Prettier runner formats with | MIT | Copyright © James Long and contributors |
+| `prettier`, `prettier2` (Prettier 2.8.8, under npm's alias) | the project's own Prettier, 3 and 2, which Passenger's Prettier runner formats with | MIT | Copyright © James Long and contributors |
 | `@eslint/config-array`, `@eslint/core`, `@eslint/object-schema`, `@eslint/plugin-kit`, `@humanfs/core`, `@humanfs/node`, `@humanfs/types` | eslint's configuration, rules and file system | Apache-2.0 | no copyright line; its author: Nicholas C. Zakas |
 | `@eslint/config-helpers` | eslint's configuration | Apache-2.0 | no copyright line or author; its repository is eslint/rewrite |
 | `@humanwhocodes/module-importer`, `@humanwhocodes/retry` | eslint's | Apache-2.0 | no copyright line; its author: Nicholas C. Zaks (as it is written) |

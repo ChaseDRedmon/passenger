@@ -41,7 +41,8 @@ async function answer(request) {
     if (typeof prettier.clearConfigCache === "function") {
         await prettier.clearConfigCache();
     }
-    const ignorePath = request.ignorePath ? [request.ignorePath] : undefined;
+    // A string, which Prettier 2 takes (it resolves it as a path) as well as 3 (a string or a list).
+    const ignorePath = request.ignorePath || undefined;
     const info = await prettier.getFileInfo(request.file, { ignorePath, resolveConfig: true });
     if (info.ignored) {
         return { ignored: true, version: prettier.version };
