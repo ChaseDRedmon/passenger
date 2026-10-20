@@ -69,7 +69,13 @@ public sealed class CsvTable : Table
     public override bool IsNumber(int row, int column)
     {
         ReadOnlySpan<char> field = Span(row + first, column);
-        return field.Length > 0 && field[0] != '"' && double.TryParse(field.Trim(), NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _);
+        // Quoted as a number with thousands' commas must be ("1,234.50"), and Excel reads it as the number it is.
+        if (field.Length > 1 && field[0] == '"' && field[^1] == '"')
+        {
+            field = field[1..^1];
+        }
+        field = field.Trim();
+        return field.Length > 0 && double.TryParse(field, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out _);
     }
 
     public override string Header(int column) => first == 1 ? Field(0, column) : Letters(column);

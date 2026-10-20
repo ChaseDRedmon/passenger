@@ -792,7 +792,7 @@ public partial class MainWindow : Window
         return language;
     }
 
-    private void UpdateCaret() => status.ShowCaret(Editors.Active is null ? null : Editors.CodeEditor);
+    private void UpdateCaret() => status.ShowCaret(Editors.Active is null or { IsWorkbook: true } ? null : Editors.CodeEditor);
 
     private void OnProjectClicked(object? sender, RoutedEventArgs e) => ShowProjectMenu();
 
