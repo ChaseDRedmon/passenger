@@ -279,10 +279,13 @@ public sealed class XamlService : IDisposable
             .OrderByDescending(l => l.Folder.Length).FirstOrDefault();
     }
 
+    /// <summary>A project's load begun again, its builder made again: what it references now says whether its XAML is one
+    /// Passenger reads and in which dialect (Avalonia added through NuGet, or restored at last for a fresh clone).</summary>
     private void Reload(XamlLoading loading)
     {
         Dictionary<string, TextSnapshot> texts = OpenTexts();
-        XamlLoading again = loading with { Loaded = LoadAsync(loading.Builder, texts) };
+        Task<XamlProjectBuilder?> builder = BackgroundWork.Run(() => XamlProjectBuilder.For(loading.ProjectPath, DotnetRoot.Value, IdeErrors.Report));
+        XamlLoading again = loading with { Builder = builder, Loaded = LoadAsync(builder, texts) };
         projects[loading.ProjectPath] = again;
         foreach (XamlDocument document in documents.Values.Where(d => d.Loading.ProjectPath == loading.ProjectPath))
         {

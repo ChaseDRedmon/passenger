@@ -191,7 +191,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
   project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
-  by `ProjectInputs.Compiles`), a project read again as a restore's
+  by `ProjectInputs.Compiles`), a project read again, its builder and dialect made anew (one that takes Avalonia later
+  gets its help), as its project file changes or a restore's
   `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
   the Explorer or Git), including one under `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder
   holds and `XamlService.RestoredFor` maps to its project by name; `LibrarySources` decompiles a library's

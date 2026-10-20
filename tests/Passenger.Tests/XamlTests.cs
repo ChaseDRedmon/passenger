@@ -336,6 +336,56 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_project_that_takes_avalonia_while_its_xaml_is_open_gets_its_xaml_help_once_the_restore_lands()
+    {
+        // A library with XAML in it but no Avalonia yet: nothing Passenger reads until the package is added and restored.
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-later-"));
+        string project = Path.Combine(folder, "Later.csproj");
+        const string Plain = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n";
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                File.WriteAllText(project, Plain + "</Project>\n");
+                File.WriteAllText(Path.Combine(folder, "MainView.axaml"), """
+                    <UserControl xmlns="https://github.com/avaloniaui"
+                                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                        <StackPanel>
+                            <TextBlock Text="Later" />
+                        </StackPanel>
+                    </UserControl>
+
+                    """);
+                Restore.Run(folder);
+            }, folder);
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(folder, "MainView.axaml"));
+            OpenDocument document = window.EditorArea.Active!;
+            Passenger.App.Xaml.XamlDocument xaml = window.XamlService.For(document) ?? throw new InvalidOperationException("The XAML file of a C# project was given no XAML");
+            Ui.WaitFor(() => xaml.Loaded.IsCompleted, "the project read and found to be neither Avalonia's nor WPF's");
+            Assert.False(xaml.IsLoaded, "A project referencing neither Avalonia nor WPF had its XAML read as one of theirs");
+
+            // Avalonia added, as NuGet's window or dotnet add package adds it, and restored.
+            File.WriteAllText(project, $"{Plain}  <ItemGroup>\n    <PackageReference Include=\"Avalonia\" Version=\"{AvaloniaApp.Version}\" />\n  </ItemGroup>\n</Project>\n");
+            Ui.Settle();
+            Restore.Run(folder);
+            Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read as Avalonia's once the package it now references was restored", TimeSpan.FromSeconds(30));
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            PlaceAfter(editor, "<TextBlock Text=\"Later\" />");
+            window.KeyTextInput("\n        ");
+            window.KeyTextInput("<");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<' once the project references it");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_restored_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands()
     {
         string folder = PathNames.Canonical(TestFolders.Create("xaml-restore-"));
