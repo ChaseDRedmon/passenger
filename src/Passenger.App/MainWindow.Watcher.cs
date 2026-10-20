@@ -66,6 +66,7 @@ public partial class MainWindow
         session.Xaml.FilesChanged(changes.Paths.Concat(changes.Restored));
         session.MSBuild.FilesChanged(changes.Paths);
         session.Web?.FilesChanged(changes.Paths);
+        EndpointFilesChanged(changes);
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
         {
             if (File.Exists(document.Path))

@@ -79,6 +79,7 @@ public partial class MainWindow : Window
         AddLiveTree();
         AddBreadcrumbs();
         AddBookmarks();
+        AddEndpoints();
         AddPlaces();
         AddHierarchy();
         AddFileOperations();
