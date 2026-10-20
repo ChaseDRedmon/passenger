@@ -137,9 +137,11 @@ public sealed class TestRun : IDisposable
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
         // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable;
         // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
-        // made of a save are followed for 3 s, not 10.
+        // made of a save are followed for 3 s, not 10, and an agent's call that takes a while tells it so every second, not
+        // every 10 s.
         Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "3000");
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
+        Environment.SetEnvironmentVariable(Passenger.App.Mcp.AgentCall.EveryVariable, "1000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }

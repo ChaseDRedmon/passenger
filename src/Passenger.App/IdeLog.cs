@@ -4,12 +4,11 @@ using Passenger.Lsp;
 
 namespace Passenger.App;
 
-/// <summary>The IDE's logs folder, Rider's log directory, which Help, Show Log opens: <c>passenger.log</c> (Rider's
-/// idea.log), each C# language server's own log under <c>roslyn/</c>, <c>dap.log</c> for the debugger, <c>vstest.log</c>
-/// for the test runner, and with <see cref="Traces"/> on <c>lsp.log</c>. A line is queued from any thread and written by
-/// the log's own thread, so no caller waits on the disk; each file is rotated by size, a dozen kept. The process's, as
-/// Rider's idea.log is: every window writes the same files, a line naming the folder where that matters (Opened, a
-/// language server's start), and each language server writes a log of its own, named for its process.</summary>
+/// <summary>The IDE's logs folder, which Help, Show Log opens: <c>passenger.log</c> (Rider's idea.log), each C# language
+/// server's own under <c>roslyn/</c>, <c>dap.log</c> for the debugger, <c>vstest.log</c> for the test runner, and with
+/// <see cref="Traces"/> on <c>lsp.log</c> and agents' <c>mcp.log</c>. A line is queued from any thread and written by the
+/// log's own thread; each file is rotated by size, a dozen kept. The process's, as Rider's idea.log is: every window writes
+/// the same files, a line naming the folder where that matters, each language server a log of its own.</summary>
 public static partial class IdeLog
 {
     /// <summary>The IDE's own log: errors, what the servers and programs it runs said went wrong, startup times.</summary>
@@ -24,6 +23,11 @@ public static partial class IdeLog
 
     /// <summary>The C# language servers' messages, written only with <see cref="Traces"/> on.</summary>
     public const string LspTrace = "lsp";
+
+    /// <summary>Agents' MCP calls, written only with <see cref="Traces"/> on: each call's start, what it waited on (being let
+    /// in, the person's leave, a window to join or start) with how long, and how it ended. Names and times, never what a
+    /// call was given.</summary>
+    public const string Mcp = "mcp";
 
     /// <summary>The rotated logs kept beside the current one, <c>passenger.1.log</c> the newest (Rider's idea.log.count).</summary>
     public const int Rotations = 12;
@@ -45,7 +49,7 @@ public static partial class IdeLog
 
     /// <summary>Settings' Trace protocol messages: every message to and from the C# language servers (lsp.log), the debug
     /// adapter (dap.log), VSTest and the Testing Platform's test hosts (vstest.log) is written as it goes, as a client's
-    /// verbose trace is.</summary>
+    /// verbose trace is, and each agent's MCP call (mcp.log).</summary>
     public static bool Traces
     {
         get => traces;

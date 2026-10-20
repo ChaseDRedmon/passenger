@@ -131,10 +131,11 @@ public static partial class McpHost
         "Attached to a person's Passenger (--mcp-attach), the first call joins the Passenger window open on the agent's folder (the folder " +
         "after --mcp-attach, else the agent's working folder). With none open, it has the running Passenger open that folder, or starts " +
         "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
-        "into that folder always, the window asks them to let the agent in, and the call waits for their answer (2 minutes at most); a call " +
-        "they refuse or leave unanswered says so, and a later one asks again. The person is also asked before the agent first uses each tool " +
+        "into that folder always, the window asks them to let the agent in. The person is also asked before the agent first uses each tool " +
         "that changes something (edit, rename, build, run, debug_start, vcs_commit and the like; reading never asks), and before it opens " +
-        "another folder in their window. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
+        "another folder in their window. A call waits for each answer 2 minutes at most, telling its progress meanwhile when asked to; " +
+        "one refused or left unanswered says so, and a later call asks again. Passenger --mcp FOLDER is an agent's own IDE with no " +
+        "window, which asks nothing.";
 
     /// <summary>The server as an agent sees it, whichever way it is reached.</summary>
     internal static Implementation ServerInfo => new()

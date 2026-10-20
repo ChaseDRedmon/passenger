@@ -1141,6 +1141,29 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>A call that takes a while tells an agent that asked for progress what it is doing as it goes (the run's
+    /// stages, then the wait for the program), at rising counts, so a client that gives up on a silent call (OpenCode's
+    /// 60 s) waits on; and the agent's own Passenger writes nothing to the standard error an agent may never read.</summary>
+    [Fact]
+    public async Task A_call_that_takes_a_while_tells_its_agent_what_it_is_doing_and_nothing_reaches_standard_error()
+    {
+        Write("Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+        Heard heard = new();
+        CallToolResult ran = await Result(client, "run", new() { ["waitSeconds"] = 4 }, heard: heard);
+        Assert.False(ran.IsError == true, $"run failed: {Text(ran)}{Said()}");
+        IReadOnlyList<ModelContextProtocol.ProgressNotificationValue> told = heard.Told;
+        Assert.True(told.Count >= 2, $"A run that waited 4 s for its program told its agent {told.Count} times (every second asked): {heard}");
+        // Each told once, under counts of its own: the SDK's client hands them over as they come, not always in order.
+        Assert.True(told.Select(t => t.Progress).Distinct().Count() == told.Count, $"The progress told repeated a count: {heard}");
+        Assert.True(told.Any(t => t.Message?.StartsWith("Running Sum: waiting up to 4 s for it to end", StringComparison.Ordinal) == true),
+            $"The agent was never told the run waits for its program: {heard}");
+        // Each word says how long the call has taken so far.
+        Assert.Matches(@"\(\d+\.\d s\)$", told[^1].Message ?? string.Empty);
+        await Call(client, "stop");
+        Assert.True(Errors().Length == 0, $"The agent's Passenger wrote to its standard error, which an agent may never read:\n{string.Join('\n', Errors())}");
+    }
+
     /// <summary>An agent runs and debugs a configuration that uses the terminal: run answers with what the program's tab of
     /// the Terminal window shows, stop ends it, debug_start stops at a breakpoint on Main's first line before any of it
     /// runs, debug_input types into its tab, and debug_output reads the tab, the program's end in it.</summary>
@@ -1608,9 +1631,37 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     }
 
     /// <summary>A tool's whole result, an error's included, within the time the tool may take, or until the test gives up
-    /// on it.</summary>
-    private Task<CallToolResult> Result(McpClient client, string tool, Dictionary<string, object?>? arguments = null, CancellationTokenSource? giveUp = null) =>
-        Exchange($"The {tool} call", Limit(tool), cancel => client.CallToolAsync(tool, arguments, cancellationToken: cancel).AsTask(), giveUp);
+    /// on it; with <paramref name="heard"/>, the call asks for progress and keeps what it is told.</summary>
+    private Task<CallToolResult> Result(McpClient client, string tool, Dictionary<string, object?>? arguments = null, CancellationTokenSource? giveUp = null, Heard? heard = null) =>
+        Exchange($"The {tool} call", Limit(tool), cancel => client.CallToolAsync(tool, arguments, heard, cancellationToken: cancel).AsTask(), giveUp);
+
+    /// <summary>The progress an agent's call was told, as the SDK hands it over, on any thread.</summary>
+    private sealed class Heard : IProgress<ModelContextProtocol.ProgressNotificationValue>
+    {
+        private readonly List<ModelContextProtocol.ProgressNotificationValue> told = [];
+
+        public IReadOnlyList<ModelContextProtocol.ProgressNotificationValue> Told
+        {
+            get
+            {
+                lock (told)
+                {
+                    return [.. told];
+                }
+            }
+        }
+
+        public void Report(ModelContextProtocol.ProgressNotificationValue value)
+        {
+            lock (told)
+            {
+                told.Add(value);
+            }
+        }
+
+        /// <summary>What it was told, as a failure quotes it.</summary>
+        public override string ToString() => Told.Count == 0 ? "nothing" : string.Join(" | ", Told.Select(t => $"{t.Progress}: {t.Message}"));
+    }
 
     /// <summary>A tool call the agent gives up on as the protocol has it: sent under an id of its own, and on giving up a
     /// "cancelled" notification naming that id. The SDK's own call can drop that notification: it registers sending it and

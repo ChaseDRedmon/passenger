@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using Avalonia.Controls;
@@ -155,6 +156,95 @@ public sealed partial class McpTests
             {
                 window.Close();
             }
+        }
+    }
+
+    /// <summary>Nobody at the window: an agent's call that waits for the person to let it in, and one that waits for their
+    /// leave to build, each come back once the window's limit is up, saying nobody answered, the question gone; meanwhile
+    /// the status bar says who waits on what and the agent hears, through --mcp-attach, what it waits on; a later call asks
+    /// again. With protocol traces on, mcp.log has each call's waits and ends with their times.</summary>
+    [AvaloniaFact]
+    public void An_agents_call_nobody_answers_comes_back_at_the_windows_limit_and_hears_what_it_waits_on_meanwhile()
+    {
+        TimeSpan limit = TimeSpan.FromSeconds(5).Scaled();
+        string unattended = Plain("mcp-unanswered-");
+        MainWindow window = new() { Width = 1200, Height = 800, AgentAnswerLimit = limit };
+        window.Show();
+        window.OpenFolder(unattended);
+        Ui.Settle();
+        window.ApplySettings(window.Settings with { TraceProtocols = true });
+        string where = $"the Passenger window on {window.Folder}";
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            // Enable MCP Server off: the first call waits for the person to let the agent in, and nobody does.
+            Heard letIn = new();
+            Stopwatch asked = Stopwatch.StartNew();
+            Task<CallToolResult> unanswered = Task.Run(() => Result(client, "workspace", heard: letIn));
+            string? said = null;
+            WaitFor(() => window.OwnedWindows.OfType<AgentAdmissionDialog>().Any(d => d.IsVisible) && (said = window.AgentStatus) is not null,
+                "the window to ask whether the agent may work there");
+            Assert.Equal("Test Agent waits for you: let it in?", said);
+            CallToolResult notLetIn = Await(unanswered, "the call nobody let in");
+            Assert.True(asked.Elapsed < limit + TimeSpan.FromSeconds(30).Scaled(), $"The call nobody answered came back {asked.Elapsed.TotalSeconds:0} s after it was asked, its limit {limit.TotalSeconds:0} s");
+            Assert.True(notLetIn.IsError == true && Text(notLetIn).Contains($"Nobody at {where} answered within {limit.TotalSeconds:0} s whether Test Agent may work there. A later call asks again.", StringComparison.Ordinal),
+                $"The call nobody answered was answered: {Text(notLetIn)}");
+            Assert.DoesNotContain(window.OwnedWindows.OfType<AgentAdmissionDialog>(), d => d.IsVisible);
+            Assert.Null(window.AgentStatus);
+            Assert.True(letIn.Told.Any(t => t.Message?.StartsWith($"Waiting for the person at {where} to let Test Agent in", StringComparison.Ordinal) == true),
+                $"The agent never heard what its call waited on: {letIn}");
+
+            // Let in, its first build waits for the person's leave, and nobody gives it.
+            window.ApplySettings(window.Settings with { McpServer = true });
+            Heard leave = new();
+            asked.Restart();
+            Task<CallToolResult> unallowed = Task.Run(() => Result(client, "build", heard: leave));
+            said = null;
+            WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(d => d.IsVisible) && (said = window.AgentStatus) is not null,
+                "the window to ask whether the agent may build");
+            Assert.Equal("Test Agent waits for you: allow build?", said);
+            Assert.Contains(Texts(window.OwnedWindows.OfType<ConfirmDialog>().Single(d => d.IsVisible)),
+                t => t.StartsWith("Test Agent, connected through Passenger's MCP server, wants to build", StringComparison.Ordinal));
+            CallToolResult notAllowed = Await(unallowed, "the build nobody allowed");
+            Assert.True(asked.Elapsed < limit + TimeSpan.FromSeconds(30).Scaled(), $"The build nobody allowed came back {asked.Elapsed.TotalSeconds:0} s after it was asked, its limit {limit.TotalSeconds:0} s");
+            Assert.True(notAllowed.IsError == true && Text(notAllowed).Contains($"Nobody at {where} answered within {limit.TotalSeconds:0} s whether Test Agent may use build. A later call asks again.", StringComparison.Ordinal),
+                $"The build nobody allowed was answered: {Text(notAllowed)}");
+            WaitFor(() => !window.OwnedWindows.OfType<ConfirmDialog>().Any(d => d.IsVisible) && window.AgentStatus == "Agent connected",
+                "the question nobody answered to close and the status bar to stop saying the agent waits");
+            Assert.False(window.Builder.IsRunning, "A build nobody allowed ran");
+            IReadOnlyList<ModelContextProtocol.ProgressNotificationValue> told = leave.Told;
+            Assert.True(told.Any(t => t.Message?.StartsWith($"Waiting for the person at {where} to allow Test Agent to use build", StringComparison.Ordinal) == true),
+                $"The agent never heard its build waited for the person: {leave}");
+            // Each told once, under counts of its own: the SDK's client hands them over as they come, not always in order.
+            Assert.True(told.Select(t => t.Progress).Distinct().Count() == told.Count, $"The progress told through --mcp-attach repeated a count: {leave}");
+            // The window's word passed on as it said it, never the proxy's own beat over it.
+            Assert.True(!told.Any(t => System.Text.RegularExpressions.Regex.IsMatch(t.Message ?? string.Empty, @"\(\d+\.\d s\) \(\d+\.\d s\)$")),
+                $"--mcp-attach told its own beat over the window's words: {leave}");
+
+            // A later call asks again.
+            Task<CallToolResult> again = Task.Run(() => Result(client, "build"));
+            Press(Question(window, "the question asked again"), "Deny");
+            Assert.Contains("did not allow build", Text(Await(again, "the build the person denied")), StringComparison.Ordinal);
+
+            // The trace has each call's waits, what they came to and their ends, with their times, and none of what they were given.
+            IdeLog.Flush();
+            string trace = Ui.Shared(IdeLog.PathOf(IdeLog.Mcp));
+            foreach (string line in (string[])[
+                "workspace] began, from Test Agent, told progress",
+                $"workspace] waiting: Waiting for the person at {where} to let Test Agent in",
+                "workspace] answered an error after ",
+                $"build] waiting: Waiting for the person at {where} to allow Test Agent to use build",
+                "build] answered an error after "])
+            {
+                Assert.True(trace.Contains(line, StringComparison.Ordinal), $"mcp.log does not have \"{line}\":\n{string.Join('\n', trace.Split('\n').TakeLast(30))}");
+            }
+            Assert.Matches(@"\[window call \d+ build\] waited \d+\.\d s \(Waiting for the person .* to allow Test Agent to use build .*\): Unanswered", trace);
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { TraceProtocols = false });
+            Gone(client);
+            window.Close();
         }
     }
 

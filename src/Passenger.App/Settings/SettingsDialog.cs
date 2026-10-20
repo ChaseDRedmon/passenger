@@ -417,9 +417,10 @@ public sealed partial class SettingsDialog : Window
 
         // Rider's Help, Diagnostic Tools: what is written where is said under each, the folder being Help, Show Log's.
         Add(DiagnosticsPage, "Trace protocol messages", Check(Working.TraceProtocols, v => Change(s => s with { TraceProtocols = v })),
-            "trace log lsp dap json-rpc language server debugger adapter vstest tests messages verbose",
+            "trace log lsp dap json-rpc language server debugger adapter vstest tests messages verbose mcp agent calls",
             "Every message to and from the C# language server, the debugger and the test runner is written to lsp.log, dap.log "
-            + "and vstest.log in the logs folder (Help, Show Log).");
+            + "and vstest.log in the logs folder (Help, Show Log), and each agent's MCP call, with what it waited on and for how "
+            + "long, to mcp.log.");
         Add(DiagnosticsPage, "Log every program started", Check(Working.LogEveryProgram, v => Change(s => s with { LogEveryProgram = v })),
             "debug log processes programs commands git dotnet exit code time",
             "Each program the IDE runs (git, dotnet, the servers) is written to passenger.log with its exit code and time. "
