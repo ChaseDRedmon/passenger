@@ -262,6 +262,44 @@ public sealed class ProfilerTests : IDisposable
         }
     }
 
+    /// <summary>Close Solution while a run is profiled ends it whole: the program killed, the profiler's port gone with its
+    /// listener, and the profiler window no longer following the run, its time no longer counting and its Kill and Get
+    /// Snapshot gone, rather than all left until the IDE quits.</summary>
+    [AvaloniaFact]
+    public void Leaving_the_folder_while_a_program_is_profiled_ends_the_program_its_port_and_the_window_s_run()
+    {
+        string written = Path.Combine(folder, "left.pid");
+        string project = Project("Left", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.ReadLine();\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<string> before = Ports();
+        int program = 0;
+        try
+        {
+            Ui.Launched(window, window.ProfileAsync(), "the build and the start", TimeSpan.FromMinutes(3));
+            program = Processes.WrittenId(written, "the profiled program to start");
+            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+            Assert.True(view.IsFollowing, "The profiler window does not follow the run");
+            Assert.NotEqual(before, Ports());
+
+            Assert.Null(window.CloseSolution());
+            Assert.True(Processes.Gone(program), $"Closing the folder left the program being profiled running: {Processes.Describe(program)}");
+            Ui.WaitFor(() => Ports().SequenceEqual(before), "the profiler's port to go with its folder");
+            Assert.False(view.IsFollowing, "The profiler window went on timing the run of the folder left");
+            Assert.False(view.CanKill, "The profiler window kept Kill for the program of the folder left");
+            Assert.Equal("Profiling Left ended with its folder", view.Status);
+            Ui.Hold(TimeSpan.FromMilliseconds(500), "the profiler window's clock to tick, were it still counting");
+            Assert.Equal("Profiling Left ended with its folder", view.Status);
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+        }
+    }
+
     /// <summary>Profile is refused while a profiled program is still starting, as it is while one runs: pressed again (the
     /// program's window slow to come), it started the program a second time, and the first, no longer the window's run,
     /// could be neither snapshotted nor killed until the profiler gave up on it.</summary>

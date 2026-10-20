@@ -95,6 +95,17 @@ public sealed class ProfilerCommands
 
     private ProjectSession Session => parts.Session();
 
+    /// <summary>The window follows another session from now: what the profiler window showed of the last one's run, which
+    /// that folder's end ended, goes with it, and Get Snapshot no longer answers with that run's reading.</summary>
+    public void Rebind()
+    {
+        snapshotting = null;
+        if (View.IsFollowing || View.CanKill)
+        {
+            View.Stopped($"Profiling {profilingName} ended with its folder");
+        }
+    }
+
     /// <summary>Where the open folder's snapshots are kept, a .nettrace file a run (which PerfView and speedscope read
     /// too): beside its state, as Rider keeps a solution's, the newest <see cref="Snapshots.Kept"/>. With no folder open,
     /// the store's own.</summary>
@@ -356,6 +367,11 @@ public sealed class ProfilerCommands
             {
                 _ = SnapshotAsync();
             }
+            else if (profiled.IsEnded)
+            {
+                // Its folder's end let go of the run, read by no one.
+                BackgroundWork.Track(running.DisposeAsync().AsTask());
+            }
         }), TaskScheduler.Default);
         return null;
     }
@@ -424,20 +440,28 @@ public sealed class ProfilerCommands
         try
         {
             Snapshot snapshot = await run.StopAsync();
+            string read = $"Snapshot of {name}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
+            if (profiled != Session)
+            {
+                // Its folder was left as it was read: it is that folder's to list when it opens again.
+                return new SnapshotRead(snapshot, read);
+            }
             shownProcess = run.ProcessId;
             View.Show(snapshot, name);
             // Brought forward over the console or Debug window the run's program was driven from.
             parts.Dock.Show("profiler");
             await KeepSnapshotsAsync(trim: true);
-            string read = $"Snapshot of {name}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
             parts.Say(read);
             return new SnapshotRead(snapshot, read);
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or TimeoutException)
         {
             string unread = $"The snapshot could not be read: {error.Message}";
-            View.Stopped(unread);
-            parts.Say(unread);
+            if (profiled == Session)
+            {
+                View.Stopped(unread);
+                parts.Say(unread);
+            }
             return new SnapshotRead(null, unread);
         }
         finally

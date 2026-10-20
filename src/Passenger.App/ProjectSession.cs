@@ -659,6 +659,10 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             parts.Add(("the program in the terminal", inTerminal.Ended));
         }
+        if (Profiled is { } program)
+        {
+            parts.Add(("the profiled program", program.Landed));
+        }
         Task ended = Within(MainWindow.EndLimit, Folder, End(parts));
         ending = LetGoOnceEnded();
         return ending;
@@ -687,8 +691,8 @@ public sealed class ProjectSession : IAsyncDisposable
 
     public ValueTask DisposeAsync() => new(CloseAsync());
 
-    /// <summary>What ends at once (the store's documents, the watcher, Local History, programs, builds, the profiled run, a
-    /// test run), and what is asked to end: the test runner and the language server, with the parts given.</summary>
+    /// <summary>What ends at once (the store's documents, the watcher, Local History, programs, builds, the profiled run and
+    /// its port, a test run), and what is asked to end: the test runner and the language server, with the parts given.</summary>
     private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts)
     {
         State = null;
@@ -702,8 +706,15 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder.Stop();
         InTerminal?.Stop();
         ProfileStarting?.Cancel();
-        // Profile's program ends with the others, its snapshot taken or not.
+        // Profile's program ends with the others, its snapshot taken or not, and each run, read by no one now, leaves no
+        // port listening.
         Profiled?.Run.Kill();
+        foreach (ProfilingSession run in new[] { Profiling, Profiled?.Run }.OfType<ProfilingSession>().Distinct())
+        {
+            // Not held, and off the window's thread, whose loop may stop first: nothing it does is drawn.
+            parts.Add(("the profiler", Task.Run(() => run.LetGoAsync().AsTask())));
+        }
+        Profiling = null;
         LiveApp?.Dispose();
         RunApp?.Dispose();
         ProfiledApp?.Dispose();
