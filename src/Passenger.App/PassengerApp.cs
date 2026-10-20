@@ -184,8 +184,8 @@ public static class PassengerApp
         }
     }
 
-    /// <summary>Solutions, projects or folders the system hands Passenger (the Finder's Open, a drop on the Dock's icon),
-    /// opened as File, Open opens them from the window in front: asked where, unless Settings says.</summary>
+    /// <summary>Files or folders the system hands Passenger (the Finder's Open, a drop on the Dock's icon), opened as File,
+    /// Open opens them from the window in front: a solution, project or folder asked where, unless Settings says.</summary>
     public static void OpenFromSystem(IReadOnlyList<string> paths)
     {
         UiThread.Check();

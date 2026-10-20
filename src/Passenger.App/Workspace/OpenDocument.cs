@@ -52,7 +52,8 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         crBreaks = file.CrBreaks;
-        Language = Language.ForPath(path);
+        IsBinary = file.IsBinary;
+        Language = IsBinary ? Language.PlainText : Language.ForPath(path);
         detected = Language.Detect(file.Text);
         Conventions = EditorConfig.For(path);
         Indentation = Choose();
@@ -336,7 +337,7 @@ public sealed class OpenDocument : Observable
     public void MoveTo(string path)
     {
         Path = path;
-        Language language = Language.ForPath(path);
+        Language language = IsBinary ? Language.PlainText : Language.ForPath(path);
         if (language != Language)
         {
             Language = language;
@@ -704,15 +705,21 @@ public sealed class OpenDocument : Observable
     public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
     /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
-    /// app carries, or an MSBuild file of the .NET SDK or a package that Go to Declaration went into.</summary>
-    public bool IsReadOnly => IsDecompiled || IsWorkbook || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+    /// app carries, an MSBuild file of the .NET SDK or a package that Go to Declaration went into, a workbook, or a binary
+    /// file shown as its bytes.</summary>
+    public bool IsReadOnly => IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
 
     /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
     /// written over it.</summary>
     public bool IsWorkbook => Tables.Workbook.IsWorkbook(Path);
 
+    /// <summary>Whether this is a binary file with no view of its own, shown as its bytes' text (<see cref="FileText.Bytes"/>),
+    /// which written back would no longer be the file.</summary>
+    public bool IsBinary { get; }
+
     /// <summary>What the bar over a read-only file says it came from.</summary>
     public string Origin => IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
+        : IsBinary ? "A binary file, shown as its bytes' text, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
@@ -741,7 +748,7 @@ public sealed class OpenDocument : Observable
         FileText? file;
         try
         {
-            file = File.Exists(Path) ? FileText.Load(Path, Chosen) : null;
+            file = File.Exists(Path) ? FromDisk() : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -762,6 +769,9 @@ public sealed class OpenDocument : Observable
     /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
     private Encoding? Chosen => encodingChosen ? Encoding : null;
 
+    /// <summary>The file's text on disk as it was read when opened: a binary file's as its bytes.</summary>
+    private FileText? FromDisk() => IsBinary ? FileText.Bytes(Path) : FileText.Load(Path, Chosen);
+
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
     /// changes only when asked (File Cache Conflict's Load File System Changes). Whether it changed the text.</summary>
@@ -770,7 +780,7 @@ public sealed class OpenDocument : Observable
         FileText? file;
         try
         {
-            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FileText.Load(Path, Chosen);
+            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FromDisk();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -808,6 +818,11 @@ public sealed class OpenDocument : Observable
         {
             // Its tab's text is no workbook's: written, it would empty the file.
             throw new IOException($"{Name} is a workbook, shown read-only.");
+        }
+        if (IsBinary)
+        {
+            // Its control characters are shown as signs: written, they would replace the bytes.
+            throw new IOException($"{Name} is a binary file, shown read-only.");
         }
         ReadConventions();
         string text = Text.Snapshot.ToString();

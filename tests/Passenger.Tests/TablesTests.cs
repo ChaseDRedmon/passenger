@@ -104,6 +104,21 @@ public sealed class TablesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void File_Open_on_a_workbook_with_nothing_open_shows_it_as_its_table()
+    {
+        string path = Path.Combine(folder, "sales.xlsx");
+        WriteWorkbook(path);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+
+        string? why = window.Open(path);
+        Assert.True(why is null, $"File, Open was to open the workbook, but said '{why}'");
+        Ui.WaitFor(() => window.EditorArea.ActiveGroup.Table?.Table is not null, "sales.xlsx's table to be read");
+        Assert.Equal("Widget", Grid(window).Table!.Cell(1, 0));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Keys_choose_a_range_of_cells_and_Copy_writes_them_as_tab_separated_lines()
     {
         string path = Path.Combine(folder, "numbers.tsv");

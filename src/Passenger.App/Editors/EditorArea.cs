@@ -131,7 +131,8 @@ public sealed partial class EditorArea : UserControl
         TitleWindows();
     }
 
-    /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be.</summary>
+    /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be
+    /// read. A binary file with no view of its own opens as its bytes' text, read-only (<see cref="FileText.Bytes"/>).</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
@@ -140,18 +141,14 @@ public sealed partial class EditorArea : UserControl
             Activate(open);
             return null;
         }
-        FileText? file;
+        FileText file;
         try
         {
-            file = Read(full);
+            file = Read(full) ?? FileText.Bytes(full);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return error.Message;
-        }
-        if (file is null)
-        {
-            return $"{Path.GetFileName(full)} looks like a binary file.";
         }
         OpenDocument document = new(full, file);
         Opened?.Invoke(this, document);
