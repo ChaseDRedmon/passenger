@@ -135,12 +135,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// rather than take it for a new file.</summary>
     public static bool IsSaving(string path) => path.EndsWith(SaveSuffix, StringComparison.Ordinal);
 
-    /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
-    /// where the old one was; a symlink is written through to its target, the file keeps its permissions (on macOS its
-    /// extended attributes, ACL and creation date too), one deleted since it was opened is written anew, and a read-only
-    /// one is refused. A text the encoding cannot hold is written as UTF-8 instead, never with a question mark for each
-    /// such character; the result is how it was written, with why when it changed. A CR file (<paramref name="crBreaks"/>)
-    /// has each of the text's breaks written as '\r'.</summary>
+    /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file;
+    /// a symlink is written through to its target, the file keeps what it was (<see cref="Over"/>; off Windows its mode,
+    /// on macOS its extended attributes, ACL and creation date), one deleted since it was opened is written anew, and a
+    /// read-only one is refused. A text the encoding cannot hold is written as UTF-8, never with question marks, the result
+    /// saying so. A CR file (<paramref name="crBreaks"/>) has each of the text's breaks written as '\r'.</summary>
     public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false)
     {
         string? unheld = Unheld(encoding, text);
@@ -252,7 +251,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         {
             try
             {
-                File.Move(temporary, target, overwrite: true);
+                Over(temporary, target);
                 return;
             }
             catch (Exception refused) when (OperatingSystem.IsWindows() && refused is IOException or UnauthorizedAccessException && File.Exists(target))
@@ -273,6 +272,26 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             stream.Flush(flushToDisk: true);
         });
         File.Delete(temporary);
+    }
+
+    /// <summary>Puts the written file in the target's place. On Windows that is ReplaceFile's, which keeps what the target
+    /// was (its attributes, Hidden and System among them, its explicit ACL, its alternate data streams, Zone.Identifier's
+    /// too, its creation date), where a move gives it the new file's attributes and the folder's inherited ACL.</summary>
+    private static void Over(string temporary, string target)
+    {
+        if (OperatingSystem.IsWindows() && File.Exists(target))
+        {
+            try
+            {
+                File.Replace(temporary, target, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                return;
+            }
+            catch (Exception refused) when (refused is IOException or UnauthorizedAccessException && !File.Exists(target) && File.Exists(temporary))
+            {
+                // ERROR_UNABLE_TO_MOVE_REPLACEMENT: the old file went but the new one could not take its name; the move gives it.
+            }
+        }
+        File.Move(temporary, target, overwrite: true);
     }
 
     /// <summary>A write made again while Windows refuses it because another program has the file open sharing no writes,
