@@ -228,6 +228,11 @@ public static class Extensions
     /// <summary>How long a rude abort may take before the evaluation is left to run on: 5 s of the 5 s.</summary>
     private static TimeSpan RudeAbortWait => EvaluationTimeout;
 
+    /// <summary>Why a read's evaluation did not run, or was left to end in the program: a continue, a step or a stop came for
+    /// the program, which does not wait for it (<see cref="ManagedDebugger.Leaving"/>).</summary>
+    internal const string NotEvaluated = "Not evaluated: the program went on";
+    private const string GaveWay = "The program went on before the evaluation ended";
+
     private static async Task<ICorDebugValue?> RunEvalAsync(ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, bool throwOnException, Action startEval, Func<EvalCompleteCorDebugManagedCallbackEventArgs, ICorDebugValue?> onComplete)
     {
         ICorDebugValue? returnValue = null;
@@ -236,6 +241,11 @@ public static class Extensions
         if (evalStatus.ImplicitOff is { } off && !evalStatus.Explicit)
         {
             throw new ManagedDebugger.EvalException(off);
+        }
+        CancellationToken leaving = evalStatus.Leaving;
+        if (leaving.IsCancellationRequested)
+        {
+            throw new ManagedDebugger.EvalException(NotEvaluated);
         }
         if (evalStatus.Abandoned.ContainsKey(thread.Id))
         {
@@ -262,7 +272,23 @@ public static class Extensions
             process.SetAllThreadsDebugState(CorDebugThreadState.THREAD_SUSPEND, thread);
             process.Continue(false);
             Task<CorDebugManagedCallbackEventArgs> waiting = processEventsUntilEvalEventFunc();
-            if (await Task.WhenAny(waiting, Task.Delay(EvaluationTimeout)) != waiting)
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool ended = await Task.WhenAny(waiting, Task.Delay(EvaluationTimeout, leaving)) == waiting;
+            if (!ended && leaving.IsCancellationRequested)
+            {
+                // Left to a request that leaves the stop, which neither waits on it nor aborts it early (an abort holds the
+                // runtime half a second): the program is taken back to go on with it, its end let go whenever it comes, and
+                // it is aborted only once its time is up, as it would have been. One that ended as it was given up is read.
+                ended = await GiveUp(waiting) is not null;
+                if (!ended)
+                {
+                    process.Stop(0);
+                    evalStatus.Abandoned[thread.Id] = eval;
+                    evalStatus.AbortWhenDue?.Invoke(thread.Id, eval, EvaluationTimeout - System.Diagnostics.Stopwatch.GetElapsedTime(began));
+                    throw new ManagedDebugger.EvalException(GaveWay);
+                }
+            }
+            if (!ended)
             {
                 // Abort, then a rude abort if that does not take; either way the runtime still ends the
                 // evaluation with its callback, which is waited for so no other request reads it.

@@ -591,12 +591,13 @@ public sealed class DebugController : IDisposable
     /// <summary>Why a step cannot go now: nothing is being debugged, or the program runs.</summary>
     private string? NotPaused() => !IsDebugging ? NothingDebugged : Session!.State != DebugState.Paused ? "The program is not paused" : null;
 
-    /// <summary>Sets the paused program going as an action asks. One the debugger refuses leaves it paused where it was,
-    /// the Debug window as it was, and the reason in the status bar. Edits made while it was paused are applied first, as
-    /// Rider's "Changes will be applied on the next step or resume": one that needs a restart restarts it (or asks, as
-    /// Settings says); one that does not compile is left, and the program goes on in the code it has, never stranded.</summary>
+    /// <summary>Sets the paused program going as an action asks, shown running at once; one the debugger refuses shows the
+    /// stop again, and the reason in the status bar. Edits made while it was paused are applied first, as Rider's "Changes
+    /// will be applied on the next step or resume": one that needs a restart restarts it (or asks, as Settings says); one
+    /// that does not compile is left, and the program goes on in the code it has, never stranded.</summary>
     private async Task ResumeAsync(Func<DebugSession, Task> resume, string action)
     {
+        asked = (action, System.Diagnostics.Stopwatch.GetTimestamp());
         if (Session is not { } session || !await ApplyBeforeResumingAsync(session))
         {
             return;
@@ -865,6 +866,7 @@ public sealed class DebugController : IDisposable
         frame = null;
         Stop = null;
         clearing.Stop();
+        showing = session.State == DebugState.Paused ? (System.Diagnostics.Stopwatch.GetTimestamp(), null) : null;
         switch (session.State)
         {
             case DebugState.Paused:
@@ -1067,6 +1069,10 @@ public sealed class DebugController : IDisposable
             bindingFrame = bindingStop is not null && shows ? top?.Id : null;
         }
         view.ShowFrames(threads, threads.FirstOrDefault(t => t.Id == thread), stack, top);
+        if (thread == session.StoppedThread)
+        {
+            FramesShown();
+        }
         UpdateAllMarks();
         if (top is not null)
         {
@@ -1093,7 +1099,8 @@ public sealed class DebugController : IDisposable
         await ShowVariables();
     }
 
-    /// <summary>The chosen frame's variables, under its watches and the last result evaluated.</summary>
+    /// <summary>The chosen frame's variables, under its watches and the last result evaluated; nothing more is asked once the
+    /// program has gone on.</summary>
     private async Task ShowVariables()
     {
         UiThread.Check();
@@ -1101,6 +1108,7 @@ public sealed class DebugController : IDisposable
         {
             return;
         }
+        int stop = shown;
         List<VariableNode> rows = [];
         if (bindingStop is { } failed && Stop is { } stopped && stopped.Frames.Any(f => f.Id == current.Id))
         {
@@ -1110,10 +1118,18 @@ public sealed class DebugController : IDisposable
         foreach (string watch in watches)
         {
             rows.Add(await Evaluated(session, current, watch, VariableRole.Watch));
+            if (stop != shown)
+            {
+                return;
+            }
         }
         if (lastResult is { } result)
         {
             rows.Add(await Evaluated(session, current, result.Expression, VariableRole.Result));
+            if (stop != shown)
+            {
+                return;
+            }
         }
         Dictionary<string, string> values = [];
         try
@@ -1121,6 +1137,10 @@ public sealed class DebugController : IDisposable
             IReadOnlyList<DapScope> scopes = await session.ScopesAsync(current.Id);
             foreach (DapScope scope in scopes)
             {
+                if (stop != shown)
+                {
+                    return;
+                }
                 IReadOnlyList<DapVariable> variables = await session.VariablesAsync(scope.VariablesReference);
                 foreach (DapVariable variable in variables)
                 {
@@ -1141,11 +1161,48 @@ public sealed class DebugController : IDisposable
         {
             rows.Add(new VariableNode("error", error.Reason, null, 0, 0, VariableRole.Error));
         }
-        if (frame == current)
+        if (frame == current && stop == shown)
         {
             view.Tree.Show(rows);
             ShowInlineValues(current, values);
+            LocalsShown();
         }
+    }
+
+    /// <summary>The stop being shown: when it came, and when its frames were shown, until its locals are.</summary>
+    private (long Came, long? Framed)? showing;
+
+    /// <summary>The continue or step the person last asked for, and when, until the stop it comes to is shown.</summary>
+    private (string Action, long At)? asked;
+
+    /// <summary>How long the last stop took to show, as passenger.log has it.</summary>
+    public StopTimes? LastStopTimes { get; private set; }
+
+    private void FramesShown()
+    {
+        if (showing is { Framed: null } came)
+        {
+            showing = came with { Framed = System.Diagnostics.Stopwatch.GetTimestamp() };
+        }
+    }
+
+    /// <summary>The stop's locals are shown: how long it took, from the step that came to it and from the stop, goes to
+    /// passenger.log, since it is what a person waits on at every step.</summary>
+    private void LocalsShown()
+    {
+        if (showing is not { } stop)
+        {
+            return;
+        }
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        showing = null;
+        TimeSpan framed = System.Diagnostics.Stopwatch.GetElapsedTime(stop.Came, stop.Framed ?? now);
+        TimeSpan listed = System.Diagnostics.Stopwatch.GetElapsedTime(stop.Came, now);
+        (string Action, TimeSpan After)? step = asked is { } going ? (going.Action, System.Diagnostics.Stopwatch.GetElapsedTime(going.At, stop.Came)) : null;
+        asked = null;
+        LastStopTimes = new StopTimes(step?.Action, step?.After, framed, listed);
+        IdeErrors.Write($"Debugging {name}: {(step is { } s ? $"{s.Action} stopped {s.After.TotalMilliseconds:0} ms after it was asked, and the stop" : "a stop")} "
+            + $"showed its frames {framed.TotalMilliseconds:0} ms and its locals {listed.TotalMilliseconds:0} ms after it came");
     }
 
     /// <summary>The chosen frame's values after the lines of its method, in its file and no other.</summary>
@@ -1400,6 +1457,10 @@ public sealed record DataWatchOffer(string Title, string? WhyNot)
     public const string Set = "Set Data Breakpoint";
     public const string Remove = "Remove Data Breakpoint";
 }
+
+/// <summary>How long a stop took to show: from the continue or step that came to it (as the status bar names it), when the
+/// person asked for one, and from the stop to its frames and to its locals shown.</summary>
+public sealed record StopTimes(string? Asked, TimeSpan? ToStop, TimeSpan Frames, TimeSpan Locals);
 
 /// <summary>A stop as the debugger read it: the thread that stopped and why, its frames (the top one with source among
 /// them), and the exception it stopped on, described as the stop's line shows it.</summary>

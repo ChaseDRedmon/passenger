@@ -108,6 +108,11 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.StepOver);
         Ui.WaitFor(() => editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line != 3), "the step");
         Ui.WaitFor(() => Value(window, "total") == "3", "the values after the step");
+        // How long the step's stop took to show is timed, and written to passenger.log, as it is what a person waits on.
+        Assert.True(window.Debugger.LastStopTimes is { Asked: "step over", ToStop: { } stepped, Frames: var framed, Locals: var listed }
+            && stepped + listed < TimeSpan.FromSeconds(1).Scaled() && framed <= listed,
+            $"The step's stop took too long to show, or was not timed: {window.Debugger.LastStopTimes}");
+        Assert.Contains("Debugging Sum: step over stopped", Ui.IdeLog(), StringComparison.Ordinal);
 
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
@@ -956,6 +961,60 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             return row.Children?.FirstOrDefault(c => c.Name == member)?.Value
                 ?? throw new InvalidOperationException($"{local} has no member {member}: {string.Join(", ", (row.Children ?? []).Select(c => c.Name))}");
         }
+    }
+
+    /// <summary>Continue pressed while a stop's values are still being read (a watch, a result and a ToString that each run
+    /// 1.5 s in the program) shows the program running at once and sets it going at once: the debugger took it in turn
+    /// behind every evaluation the stop had asked for, the window showing the stop meanwhile, so Continue seemed dead for
+    /// seconds. The program's other thread ticks again within 100 ms; the evaluation under way ends in the program, which
+    /// goes on from it to the next stop.</summary>
+    [AvaloniaFact]
+    public void Continue_pressed_while_a_stops_values_are_read_shows_the_program_running_at_once_and_sets_it_going()
+    {
+        string ticks = Path.Combine(Fresh(), "ticks.txt");
+        Write("Program.cs", "Slow slow = new();\n"
+            + $"new Thread(() =>\n{{\n    for (long n = 1; ; n++)\n    {{\n        try\n        {{\n            File.WriteAllText(@\"{ticks}\", n.ToString());\n        }}\n        catch (IOException)\n        {{\n        }}\n        Thread.Sleep(5);\n    }}\n}}) {{ IsBackground = true }}.Start();\n"
+            + "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n\n"
+            + "sealed class Slow\n{\n    public int Getter => Spin(1500);\n\n    public override string ToString() => $\"slow {Spin(1500)}\";\n\n"
+            + "    static int Spin(int ms)\n    {\n        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();\n"
+            + "        while (clock.ElapsedMilliseconds < ms)\n        {\n        }\n        return ms;\n    }\n}\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(18, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "i") == "1", "the first stop's locals");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("slow.Getter");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
+        Watched(view, "slow.Getter", "1500", "the slow watch");
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("slow.Getter + 1");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Result && r.Value == "1501"), "the slow result");
+
+        // The second stop's frames are shown, and the window has its slow values to read.
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => window.Debugger.Stop is not null, "the second stop's frames");
+        DebugSession session = window.Debugger.Session!;
+        long before = Ticks();
+        Stopwatch pressed = Stopwatch.StartNew();
+        Assert.True(window.Perform(AppActions.Resume), $"Resume was refused at the stop: {window.Status}");
+        Assert.True(session.State == DebugState.Running && !editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint)
+            && window.Status?.EndsWith(": running", StringComparison.Ordinal) == true,
+            $"Continue left the window showing the stop: the session was {session.State} and the status bar said \"{window.Status}\"");
+        Ui.PumpUntil(() => Ticks() > before, "the program to run on", TimeSpan.FromSeconds(30));
+        TimeSpan ran = pressed.Elapsed;
+        Assert.True(ran < TimeSpan.FromMilliseconds(100).Scaled(),
+            $"The program ran on {ran.TotalMilliseconds:0} ms after Continue was pressed: the debugger waited for the stop's evaluations");
+        WaitDebugging(window, () => Value(window, "i") == "3", "the third stop's locals, once the evaluation left running had ended");
+        Assert.Equal("3", Value(window, "total"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+
+        long Ticks() => long.TryParse(Ui.Shared(ticks), out long n) ? n : 0;
     }
 
     [AvaloniaFact]

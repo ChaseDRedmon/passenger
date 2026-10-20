@@ -64,8 +64,8 @@ public sealed class DebugSession
     /// <summary>How many stops the adapter has told of, so a resume's answer that comes after the next stop leaves it be.</summary>
     private int stops;
 
-    /// <summary>A continue or step was asked and its answer is awaited.</summary>
-    private bool resuming;
+    /// <summary>The stop last taken, shown again when the continue or step that left it is refused.</summary>
+    private StoppedEvent? stoppedAt;
     private volatile bool killed;
 
     /// <summary>The adapter said the program ended: with its exit code, or (attached, where none can be known) without.</summary>
@@ -328,23 +328,17 @@ public sealed class DebugSession
 
     public Task StepOutAsync() => Resume("stepOut");
 
-    /// <summary>Runs on to a line: a breakpoint the user never sees, gone again at the next stop.</summary>
-    public async Task RunToCursorAsync(string path, int line)
+    /// <summary>Runs on to a line: a breakpoint the user never sees, gone again at the next stop (the stop shown again when the
+    /// continue is refused among them, so no later run stops at a breakpoint no one set).</summary>
+    public Task RunToCursorAsync(string path, int line)
     {
         UiThread.Check();
+        if (State != DebugState.Paused)
+        {
+            return Task.CompletedTask;
+        }
         runToCursor = (path, lines.ToBuilt(path, line));
-        await SendBreakpointsAsync(path);
-        try
-        {
-            await ContinueAsync();
-        }
-        catch (DapException)
-        {
-            // Refused, the program never went: the place is let go, so no later run stops at a breakpoint no one set.
-            runToCursor = null;
-            await SendBreakpointsAsync(path);
-            throw;
-        }
+        return Resume("continue", before: () => SendBreakpointsAsync(path));
     }
 
     /// <summary>Text for the program's standard input.</summary>
@@ -626,30 +620,32 @@ public sealed class DebugSession
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
         connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));
 
-    /// <summary>Sets the paused program going (a continue or a step), saying it runs only once the adapter has: a request it
-    /// refuses throws its reason with the program still paused where it was. A stop that came before the answer (a step
-    /// that ends at once) stands. One asked while another's answer is awaited is let go, as a press while running is.</summary>
-    private async Task Resume(string command, Func<int, object>? arguments = null)
+    /// <summary>Sets the paused program going (a continue or a step), saying it runs at once, as the adapter takes it ahead
+    /// of what the stop still reads: a request it refuses throws its reason, and the stop is shown again as it was, the
+    /// program still paused there. A stop that comes before the answer (a step that ends at once) stands.
+    /// <paramref name="before"/> is sent first, the stop still there (Run to Cursor's place).</summary>
+    private async Task Resume(string command, Func<int, object>? arguments = null, Func<Task>? before = null)
     {
         UiThread.Check();
-        if (State != DebugState.Paused || resuming || disconnected is not null || StoppedThread is not int thread)
+        if (State != DebugState.Paused || disconnected is not null || StoppedThread is not int thread || stoppedAt is not { } at)
         {
             return;
         }
         int stop = stops;
-        resuming = true;
+        SetState(DebugState.Running);
+        // Sent with the request, never awaited before it: the adapter takes the two in turn, ahead of the stop's reads.
+        Task placed = before?.Invoke() ?? Task.CompletedTask;
+        _ = placed.ContinueWith(static failed => failed.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         try
         {
             await connection.RequestAsync(command, arguments?.Invoke(thread) ?? new ThreadArguments(thread));
         }
-        finally
+        catch (DapException) when (stops == stop && State == DebugState.Running && disconnected is null)
         {
-            resuming = false;
+            TakeStop(at);
+            throw;
         }
-        if (stops == stop)
-        {
-            SetState(DebugState.Running);
-        }
+        await placed;
     }
 
     /// <summary>Sends a file's breakpoints at their built lines; one on a line written since the build is refused here, as
@@ -910,6 +906,7 @@ public sealed class DebugSession
     private void TakeStop(StoppedEvent stopped)
     {
         stops++;
+        stoppedAt = stopped;
         StoppedThread = stopped.ThreadId;
         StopReason = stopped.Reason;
         DataStop = stopped.Reason == "data breakpoint" && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched

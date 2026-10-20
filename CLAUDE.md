@@ -755,7 +755,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   in the status bar, annotates the line, lists `$bindingError` in Variables and writes a linked console line. A function
   breakpoint's binding is told apart by its module, not its base address: the inspector is two modules over one image.
   The engine's lock (`EngineLock`) is held by one request or runtime event at a time and is not re-entrant: code under
-  it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold).
+  it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold). A read of the stop (threads, frames,
+  scopes, variables, evaluate, exceptionInfo: `DebugAdapter.Read`, `ReadLockAsync`) waits behind every other holder, so
+  continue, the steps, pause, disconnect and terminate never queue behind a stop's reads; one that leaves the stop
+  (`DebugAdapter.Leave`: continue, the steps, disconnect, terminate) is in line before it calls `ManagedDebugger.Leaving`,
+  and the read under way then starts no evaluation and leaves the one it runs to the program (`Abandoned`, aborted only
+  once its time is up, `AbortWhenDueAsync`), since `ICorDebugEval::Abort` answers only after half a second, the program
+  running or stopped, every other call into the runtime waiting meanwhile. The window shows the program running as a
+  continue or step is asked (`DebugSession.Resume`; refused, the stop is shown again), asks nothing more of a stop once
+  it is gone, and writes each stop's time to its frames and locals to passenger.log (`DebugController.LastStopTimes`).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
