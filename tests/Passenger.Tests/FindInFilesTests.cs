@@ -113,6 +113,41 @@ public sealed class FindInFilesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Replace_all_across_a_read_only_file_replaces_in_the_rest_and_says_which_file_it_left_and_why()
+    {
+        // As Perforce or TFVC leave a file not checked out; first by name, so the files after it show the replace went on.
+        string locked = Path.Combine(folder, "Aardvark.cs");
+        File.WriteAllText(locked, "class Aardvark { int count; }\n");
+        File.SetAttributes(locked, FileAttributes.ReadOnly);
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "Beta.cs"));
+        Ui.Settle();
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.Words = true;
+        Search(popup, "count");
+        Assert.Equal(4, popup.Matches.Count);
+
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        popup.Replacement = "total";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.Contains("Replaced", StringComparison.Ordinal) == true || window.Status?.StartsWith("Nothing", StringComparison.Ordinal) == true, "the replacement");
+        Assert.Equal("Replaced 3 matches in 2 files; not replaced: Aardvark.cs (read-only)", window.Status);
+        Assert.Equal("class Aardvark { int count; }\n", File.ReadAllText(locked));
+        Assert.True(new FileInfo(locked).IsReadOnly, "Replace in Files made the read-only file writable");
+        Assert.Equal("class Alpha\n{\n    int total;\n}\n", File.ReadAllText(Path.Combine(folder, "Alpha.cs")));
+        Assert.Contains("void total()", window.EditorArea.Active!.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // An agent's replace_in_files hears the same, and the open file it changed is saved.
+        Task<string> replacing = new Passenger.App.Mcp.PassengerTools(window).ReplaceInFiles("count|total", "sum", wholeWords: true, regex: true);
+        Ui.WaitFor(() => replacing.IsCompleted, "replace_in_files' answer");
+        Assert.Contains(replacing.Result, new[] { "Alpha.cs, Beta.cs", "Beta.cs, Alpha.cs" }.Select(files => $"Replaced 3 matches in 2 files: {files}; not replaced: Aardvark.cs (read-only)"));
+        Assert.Equal("class Alpha\n{\n    int sum;\n}\n", File.ReadAllText(Path.Combine(folder, "Alpha.cs")));
+        Assert.Contains("void sum()", File.ReadAllText(Path.Combine(folder, "Beta.cs")), StringComparison.Ordinal);
+        Assert.Equal("class Aardvark { int count; }\n", File.ReadAllText(locked));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Replace_all_over_an_open_file_keeps_its_caret_folds_and_breakpoints()
     {
         const string Source = "class Gamma\n{\n    int Count()\n    {\n        int count = 0;\n        return count;\n    }\n\n"
