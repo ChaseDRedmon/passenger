@@ -196,7 +196,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
   the Explorer or Git), including one under `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder
   holds and `XamlService.RestoredFor` maps to its project by name; `LibrarySources` decompiles a library's
-  type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
+  type read-only, once per assembly version (`Entry`: a folder named by a SHA-256 of the assembly's path, time and
+  length, alike in every session; Source Link's too), pruned at a process's first use as the debugger's symbol cache is
+  (30 days unused, 256 MB, never one used in the last day); `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
   request needs the `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
   ChildProcesses over Avalonia.Remote.Protocol, restarted by `BuildRunController.BuildFinished`; frames are bitmaps at

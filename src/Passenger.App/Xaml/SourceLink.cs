@@ -1,6 +1,7 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using Passenger.Editor;
 
 namespace Passenger.App.Xaml;
 
@@ -30,7 +31,11 @@ public sealed class SourceLink : ILibraryFiles
 
     public async Task<string?> FileAsync(string assembly, string assemblyName, string path, IProgress<string>? why, CancellationToken cancel)
     {
-        string folder = Path.Combine(LibrarySources.Folder, "SourceLink", assemblyName, LibrarySources.Stamp(assembly));
+        if (await BackgroundWork.Run(() => LibrarySources.Entry("SourceLink", assemblyName, assembly)) is not { } folder)
+        {
+            why?.Report($"{assemblyName} is no name to keep its sources under");
+            return null;
+        }
         string local = Path.Combine(folder, path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(local))
         {
