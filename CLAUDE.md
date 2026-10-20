@@ -858,8 +858,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   stop on another thread shows none, saying so. The startup hook turns on Avalonia's
   `Avalonia.Diagnostics.Diagnostic.IsEnabled` switch, so Avalonia makes its `Avalonia.Diagnostic.Source` Measure and
   Arrange activities (tagged `Control`) and `Avalonia.Diagnostic.Meter` histograms; `FrameRecorder` (`Frames.cs`)
-  listens only while a session enables Passenger's EventSource `Passenger-Avalonia`, so they land in the .nettrace.
-  Protocol v5 `overlays` sets each window's `RendererDiagnostics.DebugOverlays` (the Run and Debug windows' toggle,
+  listens only while a session enables Passenger's EventSource `Passenger-Avalonia`, so they land in the .nettrace; a
+  session's end lets go, on the UI thread, of the layout it had under way, whose own end it no longer hears. Protocol v5 `overlays` sets each window's `RendererDiagnostics.DebugOverlays` (the Run and Debug windows' toggle,
   `LiveTree/OverlaysCommands`, `ToolWindows/OverlaysButton`, Run > Avalonia Debug Overlays; the last choice is the next
   launch's `PASSENGER_INSPECTOR_OVERLAYS`). Profile launches get the inspector too (`ProjectSession.InspectedProfile`).
   `src/Passenger.Inspector.Wpf` is the WPF counterpart (MIT, net8.0-windows, built everywhere with EnableWindowsTargeting,

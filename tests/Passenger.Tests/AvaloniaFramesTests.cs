@@ -15,8 +15,8 @@ namespace Passenger.Tests;
 /// <summary>An Avalonia app's frames, layout and rendering in the profiler, and Avalonia's renderer debug overlays from the
 /// Run and Debug windows: tests/Debuggees/FramesApp, written into a folder of its own with a project file on the tests' own
 /// Avalonia, headless, whose SlowPanel spins 30 ms in each measure ("--frames N" measures it again N times and ends the app;
-/// "slow N" typed into its console does the same and leaves it running). Profiled and debugged through the window, so run
-/// alone.</summary>
+/// "slow N" typed into its console does the same and leaves it running, "stall MS" spins one measure that long, "listened"
+/// says whether its layout is listened to). Profiled and debugged through the window, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDisposable
 {
@@ -119,6 +119,9 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
             console.Flush();
             return console.Document.Snapshot.ToString().Contains("measured 5 times", StringComparison.Ordinal);
         }, "the app to measure its slow panel five times");
+        Type(window, console, "listened");
+        Ui.WaitFor(() => Said(console, "layout listened") is not null, "the app to say whether its layout is listened to");
+        Assert.Equal("layout listened: activities True, meters True", Said(console, "layout listened"));
         SnapshotRead read = Ui.Await(window.SnapshotAsync(), "the attached run's snapshot", TimeSpan.FromMinutes(2));
         Assert.True(read.Snapshot is not null, read.Message);
         Assert.True(window.Debugger.IsDebugging, "The debugged app ended with the profiler's snapshot");
@@ -133,6 +136,22 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         Open(window, frames, frames.Rows[1]);
         Ui.WaitFor(() => window.LiveTree.Details?.Name == "Slow", "the Live Visual Tree to choose the slow panel");
         Assert.Equal(Xaml, window.EditorArea.Active?.Path);
+
+        // Attached again and stopped in the middle of a layout, the app lays out as before: the end let go of the layout the
+        // recording had under way, whose own end it no longer hears.
+        Ui.Launched(window, window.AttachProfilerAsync(), "the profiler to attach to the debugged app again");
+        Type(window, console, "stall 6000");
+        Ui.WaitFor(() => Said(console, "measuring, stalled") is not null, "the app to begin a long layout");
+        SnapshotRead stalled = Ui.Await(window.SnapshotAsync(), "the snapshot taken mid-layout", TimeSpan.FromMinutes(2));
+        Assert.True(stalled.Snapshot is not null, stalled.Message);
+        Type(window, console, "slow 1");
+        Ui.WaitFor(() => Said(console, "measured 1 times") is not null, "the app's UI thread to lay out again once the profiler had gone");
+
+        // Nothing in the app listens to its layout any more.
+        Type(window, console, "listened");
+        Ui.WaitFor(() => Said(console, "layout listened", 1) is not null, "the app to say again whether its layout is listened to");
+        Assert.True(Said(console, "layout listened", 1) == "layout listened: activities False, meters False",
+            $"The app's frames were still recorded once the profiler's session had ended: {Said(console, "layout listened", 1)}");
 
         // The Debug window's toggle sets an overlay on the app's window, read back from its renderer.
         DebugView debug = window.BottomPanel.Debug;
@@ -230,6 +249,13 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
         window.KeyTextInput(text);
         Ui.Press(window, "ENTER");
+    }
+
+    /// <summary>The line of a console beginning so, the first or a later one, or null while it has not come.</summary>
+    private static string? Said(OutputView console, string start, int skipped = 0)
+    {
+        console.Flush();
+        return console.Document.Snapshot.ToString().Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith(start, StringComparison.Ordinal)).Skip(skipped).FirstOrDefault();
     }
 
     private MainWindow Opened()
