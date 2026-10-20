@@ -35,6 +35,8 @@ public sealed class ProfilingSession : IAsyncDisposable
     private readonly string? port;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private int stopped;
+    private int letGo;
+    private int disposed;
     private HeapHistory? heapHistory;
 
     private ProfilingSession(Process process, DiagnosticsClientConnector? connector, EventPipeSession session, Task copying, Task reading, string trace, string? port)
@@ -46,11 +48,15 @@ public sealed class ProfilingSession : IAsyncDisposable
         this.reading = reading;
         this.port = port;
         TracePath = trace;
+        ProcessId = process.Id;
     }
 
-    public int ProcessId => process.Id;
+    /// <summary>The program's process, known after the run is put away too.</summary>
+    public int ProcessId { get; }
 
-    public bool HasExited => process.HasExited;
+    /// <summary>Whether the program has ended, as far as the run can tell: one put away (<see cref="DisposeAsync"/>) is
+    /// heard of no more.</summary>
+    public bool HasExited => Volatile.Read(ref disposed) != 0 || process.HasExited;
 
     /// <summary>Whether the program was running before the profiler came, and is not the profiler's to end or to type to.</summary>
     public bool Attached => connector is null;
@@ -335,21 +341,31 @@ public sealed class ProfilingSession : IAsyncDisposable
         }
     }
 
-    /// <summary>Ends the run (the program goes on) and reads what it found.</summary>
+    /// <summary>Ends the run and reads what it found. The program goes on, the person's to end (<see cref="Kill"/>), with
+    /// nothing of the profiler's left listening for it.</summary>
     public async Task<Snapshot> StopAsync()
     {
         if (Interlocked.Exchange(ref stopped, 1) == 0 && !process.HasExited)
         {
+            // A program gone mid-request would leave the port's endpoint waiting for its runtime for good.
+            using CancellationTokenSource limit = new(TimeSpan.FromSeconds(10));
             try
             {
-                await session.StopAsync(CancellationToken.None);
+                await session.StopAsync(limit.Token);
             }
-            catch (Exception error) when (error is ServerNotAvailableException or IOException or TimeoutException)
+            catch (Exception error) when (error is ServerNotAvailableException or IOException or TimeoutException or OperationCanceledException)
             {
                 // The program ended as the run did; its stream is closed anyway.
             }
         }
-        await copying.WaitAsync(TimeSpan.FromSeconds(30));
+        try
+        {
+            await copying.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            await LetGoAsync();
+        }
         return await Task.Run(() => Snapshot.Read(TracePath));
     }
 
@@ -385,14 +401,21 @@ public sealed class ProfilingSession : IAsyncDisposable
     /// <summary>Ends the program, unless it was attached to: that one is another's to end.</summary>
     public void Kill()
     {
-        if (!Attached)
+        if (!Attached && Volatile.Read(ref disposed) == 0)
         {
             ChildProcesses.Kill(process);
         }
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>Lets go of the run as it is, unread, as its folder's end does: what was written stays, and nothing of the
+    /// profiler's is left listening for the program (its session, the port and the port's socket, the heap's history),
+    /// which goes on or ends as it would. Once is enough; again does nothing.</summary>
+    public async ValueTask LetGoAsync()
     {
+        if (Interlocked.Exchange(ref letGo, 1) != 0)
+        {
+            return;
+        }
         if (heapHistory is not null)
         {
             await heapHistory.DisposeAsync();
@@ -403,6 +426,14 @@ public sealed class ProfilingSession : IAsyncDisposable
             await connector.DisposeAsync();
         }
         RemovePort(port);
+    }
+
+    /// <summary>Lets go of the run and of the program's process, whose end is never heard after (<see cref="ExitedAsync"/>):
+    /// a program the profiler started is put away once it has ended.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        await LetGoAsync();
+        Volatile.Write(ref disposed, 1);
         process.Dispose();
     }
 }

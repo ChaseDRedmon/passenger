@@ -58,7 +58,7 @@ public sealed class ProfilerCommands
         });
         parts.Actions.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
         {
-            WhyNot = _ => Busy(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
+            WhyNot = _ => Busy(Session) ?? GoesOn(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
             Menus = [new MenuPlace("Run", 0, 2)],
         });
         parts.Actions.Add(new IdeAction(AppActions.AttachProfiler, "Attach Profiler to Running Program", "Run", context => _ = AttachReportingAsync())
@@ -75,7 +75,7 @@ public sealed class ProfilerCommands
             }
             else
             {
-                Session.Profiling?.Kill();
+                Session.Profiled?.Run.Kill();
             }
         };
         View.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
@@ -125,7 +125,7 @@ public sealed class ProfilerCommands
     public async Task<string?> ProfileAsync(string? arguments = null)
     {
         ProjectSession profiled = Session;
-        if (Busy(profiled) is { } busy)
+        if ((Busy(profiled) ?? GoesOn(profiled)) is { } busy)
         {
             return busy;
         }
@@ -155,6 +155,11 @@ public sealed class ProfilerCommands
 
     /// <summary>Why another run cannot be profiled in a folder now: one is, or one is still starting.</summary>
     private string? Busy(ProjectSession folder) => folder.Profiling is not null || launching == folder ? "A run is already being profiled" : null;
+
+    /// <summary>Why Profile cannot start another program: the one it started last goes on after its snapshot, and Kill, Stop
+    /// and the folder's end reach one such program at a time.</summary>
+    private static string? GoesOn(ProjectSession folder) =>
+        folder.Profiled is { } program ? $"{program.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again" : null;
 
     private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments, Working work)
     {
@@ -208,6 +213,12 @@ public sealed class ProfilerCommands
             }
             starting = null;
             profiled.Profiling = running;
+            TaskCompletionSource landed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ProfiledProgram program = new(running, chosen.Name, target.Name, landed.Task);
+            profiled.Profiled = program;
+            ConsoleInput? input = running.Input is { } writer ? ProgramInput.Of(writer) : null;
+            // Only its end puts the run away, however that comes: a snapshot leaves the program running.
+            _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() => Ended(profiled, program, inspected, console, input, landed)), TaskScheduler.Default);
             if (profiled.IsEnded)
             {
                 // Its folder was left as it started: it ends with the folder's other programs.
@@ -215,25 +226,9 @@ public sealed class ProfilerCommands
                 return "The solution was closed";
             }
             profilingName = chosen.Name;
-            run.Input = running.Input is { } input ? ProgramInput.Of(input) : null;
+            run.Input = input;
             View.Running(chosen.Name, () => running.Elapsed);
             parts.Say($"Profiling {chosen.Name}");
-            // A program that ends by itself ends the run, and its snapshot shows.
-            _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
-            {
-                inspected?.Dispose();
-                console.End(ConsoleStream.Output);
-                console.End(ConsoleStream.Error);
-                if (!profiled.Runner.IsRunning)
-                {
-                    run.Input = null;
-                }
-                run.Flush();
-                if (profiled.Profiling == running && profiled == Session)
-                {
-                    _ = SnapshotAsync();
-                }
-            }), TaskScheduler.Default);
             return null;
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -276,9 +271,50 @@ public sealed class ProfilerCommands
         }
     }
 
-    /// <summary>Attach Profiler: profiles the program Debug or Run started, from now until Get Snapshot or its end, as
-    /// dotTrace attaches to a running process; an Avalonia app's inspector records its frames for as long. The program goes
-    /// on as it was, after too. Null once it is profiled, else why not, which the profiler window says too.</summary>
+    /// <summary>A program Profile started has ended (by itself, killed, or with its folder) and the Run console has the last
+    /// of what it wrote: a run still recording shows its snapshot, and the run is put away.</summary>
+    private void Ended(ProjectSession profiled, ProfiledProgram program, LiveApp? inspected, ConsoleSink console, ConsoleInput? input, TaskCompletionSource landed)
+    {
+        try
+        {
+            inspected?.Dispose();
+            console.End(ConsoleStream.Output);
+            console.End(ConsoleStream.Error);
+            OutputView run = parts.RunConsole;
+            if (!profiled.Runner.IsRunning)
+            {
+                run.Input = null;
+            }
+            run.Flush();
+            if (profiled.Profiled == program)
+            {
+                profiled.Profiled = null;
+            }
+            if (profiled.Profiling == program.Run && profiled == Session)
+            {
+                // Read, then put away.
+                _ = SnapshotAsync();
+                return;
+            }
+            BackgroundWork.Track(program.Run.DisposeAsync().AsTask());
+            if (profiled == Session)
+            {
+                ShowKill();
+            }
+        }
+        finally
+        {
+            landed.TrySetResult();
+        }
+    }
+
+    /// <summary>Kill is there while the program Profile started runs, unless the window follows another's run.</summary>
+    private void ShowKill() =>
+        View.ShowKill(starting is not null || Session.Profiled is { } program && (Session.Profiling is not { } recording || recording.ProcessId == program.Run.ProcessId));
+
+    /// <summary>Attach Profiler: profiles the program Debug, Run or Profile started, from now until Get Snapshot or its
+    /// end, as dotTrace attaches to a running process; an Avalonia app's inspector records its frames for as long. The
+    /// program goes on as it was, after too. Null once it is profiled, else why not, which the profiler window says too.</summary>
     public async Task<string?> AttachAsync()
     {
         ProjectSession profiled = Session;
@@ -311,7 +347,8 @@ public sealed class ProfilerCommands
         }
         profiled.Profiling = running;
         profilingName = target.Name;
-        View.Running(target.Name, () => running.Elapsed, attached: true);
+        // Profile's own program, profiled again, is still Kill's to end.
+        View.Running(target.Name, () => running.Elapsed, killable: profiled.Profiled?.Run.ProcessId == target.ProcessId);
         parts.Say($"Profiling {target.Name} from now: Get Snapshot when it has done what is to be measured");
         _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
         {
@@ -323,9 +360,9 @@ public sealed class ProfilerCommands
         return null;
     }
 
-    /// <summary>The program Attach Profiler profiles: the one being debugged, else the one Run runs (an Avalonia app by the
-    /// process its inspector said it is, which under Hot Reload is not dotnet watch's); its name as the window says it,
-    /// and as its snapshot's file is named.</summary>
+    /// <summary>The program Attach Profiler profiles: the one being debugged, else the one Profile started that goes on
+    /// after its snapshot, else the one Run runs (an Avalonia app by the process its inspector said it is, which under Hot
+    /// Reload is not dotnet watch's); its name as the window says it, and as its snapshot's file is named.</summary>
     private (int ProcessId, string Name, string File)? Attachable()
     {
         ProjectSession current = Session;
@@ -335,6 +372,10 @@ public sealed class ProfilerCommands
             LiveApp? app = current.LiveApp is { ProcessId: int inspected } live && inspected == process ? live : null;
             string program = app?.Plan?.Built ?? debugging.Program;
             return (process, app?.Name ?? Path.GetFileNameWithoutExtension(program), FileName(Path.GetFileNameWithoutExtension(program)));
+        }
+        if (current.Profiled is { } profiled)
+        {
+            return (profiled.Run.ProcessId, profiled.Name, profiled.File);
         }
         if (current.Runner.IsRunning && (current.RunApp?.ProcessId ?? current.Runner.ProcessId) is int running)
         {
@@ -370,12 +411,12 @@ public sealed class ProfilerCommands
         if (Session.Profiling is { } run)
         {
             Session.Profiling = null;
-            snapshotting = ReadSnapshotAsync(run);
+            snapshotting = ReadSnapshotAsync(Session, run);
         }
         return snapshotting ?? Task.FromResult(new SnapshotRead(null, "Nothing has been profiled"));
     }
 
-    private async Task<SnapshotRead> ReadSnapshotAsync(ProfilingSession run)
+    private async Task<SnapshotRead> ReadSnapshotAsync(ProjectSession profiled, ProfilingSession run)
     {
         string name = profilingName;
         parts.Say($"Reading the snapshot of {name}...");
@@ -401,7 +442,12 @@ public sealed class ProfilerCommands
         }
         finally
         {
-            await run.DisposeAsync();
+            // A program Profile started goes on, Kill's to end, and is put away once it has ended.
+            if (profiled.Profiled?.Run != run)
+            {
+                await run.DisposeAsync();
+            }
+            ShowKill();
         }
     }
 
@@ -441,6 +487,7 @@ public sealed class ProfilerCommands
             Snapshot snapshot = await BackgroundWork.Run(() => Snapshot.Read(path));
             shownProcess = null;
             View.Show(snapshot, Path.GetFileNameWithoutExtension(path));
+            ShowKill();
             parts.Say($"{Path.GetFileName(path)}: {snapshot.Samples:N0} samples");
             return snapshot;
         }
@@ -514,3 +561,8 @@ public sealed class ProfilerCommands
 /// <summary>A profiled run's snapshot as read at its end, or none, and what the person is told of it: the profiler window
 /// and the status bar say the same.</summary>
 public sealed record SnapshotRead(Snapshot? Snapshot, string Message);
+
+/// <summary>A program Profile started: its run, which records it until Get Snapshot or its end and holds it after; its
+/// configuration's name, as the window says it, and its program's, as its snapshots' files are named; and its end, done
+/// once the Run console has the last of what it wrote.</summary>
+public sealed record ProfiledProgram(ProfilingSession Run, string Name, string File, Task Landed);

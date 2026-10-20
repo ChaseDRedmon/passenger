@@ -4,6 +4,7 @@ using Passenger.App.Editors;
 using Passenger.App.History;
 using Passenger.App.LiveTree;
 using Passenger.App.Navigation;
+using Passenger.App.Profiling;
 using Passenger.App.Run;
 using Passenger.App.State;
 using Passenger.App.Testing;
@@ -194,6 +195,23 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>The run being profiled, or null.</summary>
     public ProfilingSession? Profiling { get; set; }
+
+    /// <summary>The program Profile started, from its hand-over until its end has landed in the Run console, its snapshot
+    /// taken or not: Kill, Stop and the folder's end end it.</summary>
+    public ProfiledProgram? Profiled
+    {
+        get => profiled;
+        set
+        {
+            profiled = value;
+            ProfiledChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private ProfiledProgram? profiled;
+
+    /// <summary>Profile's program was handed over or has ended: the toolbar's Stop follows.</summary>
+    public event EventHandler? ProfiledChanged;
 
     /// <summary>Ends the Profile still starting (its program running, not yet at the profiler, so not yet <see cref="Profiling"/>),
     /// with the folder as Kill ends it; null when none is.</summary>
@@ -684,7 +702,8 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder.Stop();
         InTerminal?.Stop();
         ProfileStarting?.Cancel();
-        Profiling?.Kill();
+        // Profile's program ends with the others, its snapshot taken or not.
+        Profiled?.Run.Kill();
         LiveApp?.Dispose();
         RunApp?.Dispose();
         ProfiledApp?.Dispose();

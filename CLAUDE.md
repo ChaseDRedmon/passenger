@@ -446,8 +446,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   process, choosing it there; `UiFrames.Percentile` (interpolated) is the one percentile for frames, and MCP's
   `profile` of an inspected Avalonia app always answers `frames`, with `why` when there are none (AgentApp takes
   `--quit-once-drawn` / `--quit-at-once` for its tests). `ProjectSession.ProfileStarting` is a Profile not yet handed
-  over, which the folder's end cancels. `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port
-  (Run > Attach Profiler to Running Program: the debugged one, else Run's); an `Attached` one is never killed.
+  over, which the folder's end cancels; `ProjectSession.Profiled` is the program it handed over, until its end has landed
+  (`ProfiledProgram.Landed`): Get Snapshot ends the run and lets go of its port (`StopAsync`), but the program goes on,
+  Kill, Stop and the folder's end ending it, and is put away (`DisposeAsync`, after which its end is never heard) only
+  once it has ended. `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port (Run > Attach
+  Profiler to Running Program: the debugged one, else Profile's going on, else Run's); an `Attached` one is never killed.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;

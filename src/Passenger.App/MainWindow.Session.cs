@@ -193,6 +193,13 @@ public partial class MainWindow
                 ShowHotReloadButtons();
             }
         };
+        next.ProfiledChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                ShowStop();
+            }
+        };
         BindTests(next);
         BindDebug(next);
         liveTree?.Bind(next);

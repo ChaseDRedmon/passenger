@@ -574,6 +574,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         Session.Runner.Stop();
         Session.InTerminal?.Stop();
+        Session.Profiled?.Run.Kill();
         await Session.Debug.StopAsync();
         return "Stopped";
     });

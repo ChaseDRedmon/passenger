@@ -269,7 +269,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "profile", Title = "Profile a configuration", Destructive = true), Description(
         "Builds and runs a run configuration (the chosen one by default) under the sampling profiler from its start, as " +
-        "Profile does, until it ends or, with seconds, for that long (then the snapshot is taken and it goes on). Returns the " +
+        "Profile does, until it ends or, with seconds, for that long (then the snapshot is taken and it goes on until stop). Returns the " +
         "run's length, the hot spots by their own time (the folder's own with their source, path:line), the busiest thread's " +
         "hot path, and for an Avalonia app its frames: their UI thread's time at the median and longest, measure, arrange, " +
         "render and compositor time in all, the layout table by control type with the heaviest controls and their XAML lines, " +

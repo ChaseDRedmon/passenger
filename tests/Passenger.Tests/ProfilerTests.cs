@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.Profiler;
@@ -342,6 +344,54 @@ public sealed class ProfilerTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Get Snapshot ends the run, not the program Profile started: it goes on, read from and typed to in the Run
+    /// console, with Kill there and Stop able to end it, and nothing of the profiler's left listening for it; meanwhile
+    /// Profile starts no other, which Kill and Stop could not reach.</summary>
+    [AvaloniaFact]
+    public void A_profiled_program_goes_on_after_its_snapshot_until_stop_ends_it()
+    {
+        string written = Path.Combine(folder, "lasting.pid");
+        string project = Project("Lasting", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.WriteLine(\"waiting\");\n"
+            + "while (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<string> before = Ports();
+        int program = 0;
+        try
+        {
+            Ui.Launched(window, window.ProfileAsync(), "the build and the start", TimeSpan.FromMinutes(3));
+            program = Processes.WrittenId(written, "the profiled program to start");
+            Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
+            Ui.WaitFor(() => Shows(run, "waiting"), "the program to wait on its input");
+
+            Passenger.App.Profiling.SnapshotRead read = Ui.Await(window.SnapshotAsync(), "the snapshot", TimeSpan.FromMinutes(2));
+            Assert.True(read.Snapshot is not null, read.Message);
+            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+            Assert.True(Processes.IsRunning(program), "The program Profile started ended with its snapshot");
+            Assert.True(view.CanKill, "Kill went with the snapshot, though the program Profile started goes on");
+            Assert.Null(window.Actions.WhyNot(AppActions.Stop, window.Actions.Context()));
+            Assert.Equal(before, Ports());
+            Assert.Equal($"{window.Configuration!.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again",
+                window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+            Type(window, run, "after the snapshot");
+            Ui.WaitFor(() => Shows(run, "read after the snapshot"), "the program to read what was typed after its snapshot");
+
+            Ui.Run(window, AppActions.Stop);
+            Assert.True(Processes.Gone(program), $"Stop left the program Profile started running: {Processes.Describe(program)}");
+            Ui.WaitFor(() => !view.CanKill, "Kill to go with the program");
+            Assert.Equal("Nothing is running", window.Actions.WhyNot(AppActions.Stop, window.Actions.Context()));
+            Assert.Null(window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+            Assert.Null(window.Profiling);
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+        }
+    }
+
     [AvaloniaFact]
     public void Profiling_a_configuration_whose_working_folder_is_gone_says_why_in_the_profiler_window()
     {
@@ -440,6 +490,25 @@ public sealed class ProfilerTests : IDisposable
         File.WriteAllText(Path.Combine(project, "Program.cs"), program);
         Restore.Run(project);
         return project;
+    }
+
+    /// <summary>Whether a console shows a line holding this, what is on its way there taken in first.</summary>
+    private static bool Shows(Passenger.App.ToolWindows.OutputView console, string text)
+    {
+        console.Flush();
+        return console.Document.Snapshot.ToString().Contains(text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A line typed into a console, which sends it to the program's input.</summary>
+    private static void Type(MainWindow window, Passenger.App.ToolWindows.OutputView console, string text)
+    {
+        window.ShowToolWindow("run");
+        Ui.Settle();
+        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(inside, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
+        window.KeyTextInput(text);
+        Ui.Press(window, "ENTER");
     }
 
     /// <summary>The diagnostic ports this process's profiler is listening at: a socket in /tmp each, or a named pipe on Windows.</summary>

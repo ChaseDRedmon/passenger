@@ -703,13 +703,15 @@ public sealed class BuildRunController
     }
 
     /// <summary>Stop: any start under way (Run's, Debug's or Profile's, ended at whatever stage it is), the debugger's session,
-    /// the program Run started (in the Run window or the terminal) and the build.</summary>
+    /// the program Run started (in the Run window or the terminal), the one Profile started (its snapshot taken or not) and
+    /// the build.</summary>
     public void Stop()
     {
         parts.Work.Stop();
         _ = session.Debug.StopAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
+        session.Profiled?.Run.Kill();
         session.Builder.Stop();
     }
 
@@ -723,5 +725,5 @@ public sealed class BuildRunController
     }
 
     /// <summary>Why Stop cannot run now: nothing it stops is running.</summary>
-    public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Builder.IsRunning || parts.Work.CanStop ? null : "Nothing is running";
+    public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Profiled is not null || session.Builder.IsRunning || parts.Work.CanStop ? null : "Nothing is running";
 }

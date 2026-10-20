@@ -340,13 +340,13 @@ public sealed class ProfilerView : DockPanel
         status.Text = $"Starting {name} under the profiler…";
     }
 
-    /// <summary>A run has begun; one attached to a program already running has no Kill, the program being another's.</summary>
-    public void Running(string name, Func<TimeSpan> clock, bool attached = false)
+    /// <summary>A run has begun; one attached to a program Profile did not start has no Kill, the program being another's.</summary>
+    public void Running(string name, Func<TimeSpan> clock, bool killable = true)
     {
         running = name;
         elapsed = clock;
         stop.IsVisible = true;
-        kill.IsVisible = !attached;
+        kill.IsVisible = killable;
         heap.IsVisible = true;
         placeholder.Text = $"Profiling {name}. Get Snapshot when it has done what is to be measured.";
         ticking.Start();
@@ -374,6 +374,15 @@ public sealed class ProfilerView : DockPanel
             }
         }
     }
+
+    /// <summary>Kill shown or not whatever the run: the program Profile started goes on after its snapshot, until it ends.</summary>
+    public void ShowKill(bool shown) => kill.IsVisible = shown;
+
+    /// <summary>Whether Kill is there.</summary>
+    public bool CanKill => kill.IsVisible;
+
+    /// <summary>Whether the window follows a run as it goes: its time ticking, Get Snapshot there.</summary>
+    public bool IsFollowing => ticking.IsEnabled;
 
     /// <summary>What the window's middle says while it has nothing on the page shown.</summary>
     public string Placeholder => placeholder.IsVisible ? placeholder.Text ?? string.Empty : string.Empty;
