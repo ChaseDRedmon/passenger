@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -249,6 +250,45 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     }
 
     [AvaloniaFact]
+    public void Save_saves_the_file_though_Prettiers_runner_ends_or_the_folder_closes_while_it_formats()
+    {
+        Project.SkipWithoutNode();
+        string held = project.AddFolder("src/held", (".prettierrc.cjs", Project.Holding), ("first.js", "const first = 1;\n"));
+        string path = project.PathOf("src/held/first.js");
+        MainWindow window = project.Open("src/held/first.js");
+        try
+        {
+            window.ApplySettings(window.Settings with { PrettierOnSave = true });
+            OpenDocument first = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "let  more = 2;\n")]);
+            Assert.True(window.Perform(AppActions.Save), "Save did not run");
+            using (Process runner = Process.GetProcessById(Processes.WrittenId(Path.Combine(held, "started"), "Prettier to start formatting first.js")))
+            {
+                runner.Kill();
+            }
+            Ui.WaitFor(() => !first.IsModified, "first.js saved, though Prettier's runner ended as it formatted it");
+            Assert.Equal("const first = 1;\nlet  more = 2;\n", File.ReadAllText(path));
+            Assert.StartsWith("Prettier: Prettier's runner ended", window.Status, StringComparison.Ordinal);
+
+            File.Delete(Path.Combine(held, "started"));
+            editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "let  last = 3;\n")]);
+            Assert.True(window.Perform(AppActions.Save), "Save did not run");
+            Processes.WrittenId(Path.Combine(held, "started"), "Prettier to start formatting first.js again, in a runner of its own");
+            Assert.Null(window.CloseSolution());
+            // The close saved the file; the format in flight ends with its runner, and Save after it throws nothing.
+            Ui.Settle();
+            Assert.Equal("const first = 1;\nlet  more = 2;\nlet  last = 3;\n", File.ReadAllText(path));
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_json_listing_ESLint_and_Prettier_not_installed_says_so_in_the_banner_whose_link_runs_npm_install_there_and_a_Manual_ESLint_checks_it()
     {
         Project.SkipWithoutNode();
@@ -411,6 +451,14 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         public const string Format = "const  label = {name:\"tea\",price:3};\nconsole.log(label);\n";
 
         public const string Legacy = "const  kept   =   \"as written\";\nconsole.log(kept);\n";
+
+        /// <summary>A Prettier configuration that holds its runner as it loads, until the test writes <c>go</c> beside it,
+        /// having written the runner's process id to <c>started</c>: so a test acts while Prettier formats.</summary>
+        public const string Holding = "const fs = require(\"fs\");\nconst path = require(\"path\");\n"
+            + "fs.writeFileSync(path.join(__dirname, \"started\"), String(process.pid));\n"
+            + "const pause = new Int32Array(new SharedArrayBuffer(4));\nconst until = Date.now() + 60000;\n"
+            + "while (!fs.existsSync(path.join(__dirname, \"go\")) && Date.now() < until) {\n  Atomics.wait(pause, 0, 0, 20);\n}\n"
+            + "module.exports = { semi: false, singleQuote: true };\n";
 
         private readonly List<string> added = [];
 

@@ -251,7 +251,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   Prettier 2 or 3: a request's answer is the line of its id (any other line ends the runner), and what a plugin or
   configuration prints goes to its standard error, the IDE's log.
   `CodeAssist.Linting.cs` is ESLint's context actions, Fix ESLint Problems, Reformat Code / Reformat with Prettier and
-  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only. A banner's link is
+  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only, then saving the files whatever
+  came of them. A banner's link is
   `OpenDocument.NoticeAction` (Run 'npm install', through ChildProcesses).
 - `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
   `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one
@@ -1093,7 +1094,8 @@ screenshot's `--type` sends its text as one input, so completion opens only when
 the PATH and skip, saying why, without it (the TypeScript ones also on a Node.js older than typescript-language-server's
 `engines.node`). `EslintPrettierTests` copy the tests' own eslint and prettier, and Prettier 2 as `prettier2` (npm's
 alias, named as Settings' Manual package) (`tests/Passenger.Tests/NodePackages`, put in `node-packages/` at build by
-`tools/Passenger.NodePackages`) into their project; the run's npm is offline with
+`tools/Passenger.NodePackages`) into their project, `Project.Holding` a configuration that holds Prettier while a test
+acts; the run's npm is offline with
 its own cache and config (`TestRun`), so Run 'npm install' fails fast without the registry. The Windows VM has no
 Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with XAML Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on

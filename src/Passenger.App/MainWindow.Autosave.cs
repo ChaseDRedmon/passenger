@@ -93,16 +93,24 @@ public partial class MainWindow
 
     /// <summary>File, Save (the file shown) or Save All: each changed file first gets what Settings ask of a save, Rider's
     /// actions on save (Run eslint --fix on save, then Prettier's Run on save), which Rider runs on an explicit save and
-    /// never on autosave, each one undoable edit.</summary>
+    /// never on autosave, each one undoable edit. The files are saved whatever came of those.</summary>
     private async Task SaveExplicitly(bool all)
     {
         List<OpenDocument> saving = all ? [.. Editors.Documents.Where(d => d.IsModified)] : Editors.Active is { IsModified: true } shown ? [shown] : [];
         BackgroundWork.Begin();
         try
         {
-            foreach (OpenDocument document in saving)
+            foreach (OpenDocument document in saving.Where(d => Editors.Documents.Contains(d)).ToList())
             {
-                await assist.BeforeSave(document);
+                try
+                {
+                    await assist.BeforeSave(document);
+                }
+                catch (Exception error)
+                {
+                    // The save goes on without what failed, which IDE Internal Errors shows.
+                    IdeErrors.Report(error);
+                }
             }
             if (all)
             {
