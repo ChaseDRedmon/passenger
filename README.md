@@ -262,7 +262,8 @@ timeout of 10 minutes on a call:
 ```
 
 OpenCode 2 lists its servers under `mcp.servers`. Turn Code Mode off for Passenger, so OpenCode calls its tools
-itself (Code Mode's permission prompts can leave a call waiting), and give a call 10 minutes rather than 12 hours:
+itself (Code Mode's permission prompts can leave a call waiting), and give a call 30 minutes rather than 12 hours (OpenCode 2
+counts a call's whole time whatever progress it hears, so a long build or test run needs the room):
 
 ```json
 {
@@ -272,7 +273,7 @@ itself (Code Mode's permission prompts can leave a call waiting), and give a cal
         "type": "local",
         "command": ["/Applications/Passenger.app/Contents/MacOS/Passenger", "--mcp-attach"],
         "codemode": false,
-        "timeout": { "execution": 600000 }
+        "timeout": { "execution": 1800000 }
       }
     }
   }

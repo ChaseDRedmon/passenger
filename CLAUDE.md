@@ -658,7 +658,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   page (`SettingsDialog.Mcp.cs`) lists the
   folders, each taken back by Remove, and each agent's setup (`AgentSetup`: Claude Code's and Codex's commands, a
   repository's `.mcp.json`, Codex's config.toml, Claude Desktop's with the window's folder after `--mcp-attach`,
-  OpenCode 1's opencode.json and OpenCode 2's `mcp.servers` with Code Mode off, each with a 10-minute timeout) naming
+  OpenCode 1's opencode.json with a 10-minute timeout, which progress starts over, and OpenCode 2's `mcp.servers` with
+  Code Mode off and a 30-minute execution timeout, which progress does not: checked against both by hand, #255) naming
   this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy, and says when `--mcp FOLDER` (asks
   nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent to
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window

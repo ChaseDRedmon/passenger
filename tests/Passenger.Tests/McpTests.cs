@@ -1450,8 +1450,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     private string EngineLog => Path.Combine(settings, "engine.log");
 
     /// <summary>Passenger started as an agent's MCP server (<see cref="StartPassenger"/>), and the agent's client to it.</summary>
-    private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null) =>
-        Connect(StartPassenger(arguments, workingDirectory, environment), arguments);
+    private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null, string? protocol = null) =>
+        Connect(StartPassenger(arguments, workingDirectory, environment), arguments, protocol);
 
     /// <summary>Passenger started as the IDE starts a child, with a state folder of the test's own for its log (or, joining
     /// a window, the run's, where the windows' sockets are), the engine's log and any other change to the environment
@@ -1495,10 +1495,11 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         return passenger;
     }
 
-    /// <summary>An agent's client to a Passenger this test started, over its standard input and output.</summary>
-    private Task<McpClient> Connect(Process passenger, IList<string> arguments) =>
+    /// <summary>An agent's client to a Passenger this test started, over its standard input and output, asking for the
+    /// protocol version given (the SDK's latest else).</summary>
+    private Task<McpClient> Connect(Process passenger, IList<string> arguments, string? protocol = null) =>
         Exchange($"Starting passenger {string.Join(' ', arguments)}", TimeSpan.FromMinutes(1),
-            cancel => McpClient.CreateAsync(new PassengerTransport(passenger), new McpClientOptions { ClientInfo = Agent }, cancellationToken: cancel));
+            cancel => McpClient.CreateAsync(new PassengerTransport(passenger), new McpClientOptions { ClientInfo = Agent, ProtocolVersion = protocol }, cancellationToken: cancel));
 
     /// <summary>The agent as its client names itself, which a window asking to let it in shows the person.</summary>
     private static readonly Implementation Agent = new() { Name = "test-agent", Title = "Test Agent", Version = "1.0" };

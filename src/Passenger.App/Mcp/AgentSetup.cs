@@ -44,9 +44,13 @@ public sealed record AgentSetup(string Executable, string? Folder)
     /// <summary>Claude Desktop's claude_desktop_config.json entry, with the folder to work in.</summary>
     public string ClaudeDesktop => Json(["--mcp-attach", Folder ?? FolderPlaceholder]);
 
-    /// <summary>How long OpenCode is told a call may take: past the person's two questions (2 minutes each at most) and a
-    /// build, yet a call that never came back would fail in minutes rather than OpenCode 2's 12 hours.</summary>
+    /// <summary>How long OpenCode 1 lets a call go without hearing of it: past the person's two questions (2 minutes each at
+    /// most), and Passenger's progress, every 10 s, starts it over, so a long build never reaches it.</summary>
     public const int OpenCodeTimeout = 600_000;
+
+    /// <summary>How long OpenCode 2 lets a call take in all, which progress does not start over: past a long build or test
+    /// run, yet a call that never came back would fail in half an hour rather than its 12 hours.</summary>
+    public const int OpenCode2Timeout = 1_800_000;
 
     /// <summary>OpenCode 1's opencode.json entry: a local server, its command one list, its one timeout every request's.</summary>
     public string OpenCode =>
@@ -64,7 +68,7 @@ public sealed record AgentSetup(string Executable, string? Folder)
         "        \"type\": \"local\",\n" +
         $"        \"command\": [{Quoted(Executable)}, \"--mcp-attach\"],\n" +
         "        \"codemode\": false,\n" +
-        $"        \"timeout\": {{ \"execution\": {OpenCodeTimeout} }}\n" +
+        $"        \"timeout\": {{ \"execution\": {OpenCode2Timeout} }}\n" +
         "      }\n    }\n  }\n}";
 
     private string Json(IReadOnlyList<string> arguments) =>

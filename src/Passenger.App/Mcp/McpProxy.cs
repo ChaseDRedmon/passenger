@@ -125,7 +125,7 @@ public sealed class McpProxy
         McpClient window;
         try
         {
-            window = await JoinAsync(request.Server.ClientInfo, call, cancel);
+            window = await JoinAsync(request.Server.ClientInfo, request.Server.NegotiatedProtocolVersion, call, cancel);
         }
         catch (NotJoined why)
         {
@@ -223,8 +223,9 @@ public sealed class McpProxy
     }
 
     /// <summary>The window the agent works in: the one joined, while it stays, else one over the folder, which a running
-    /// Passenger is asked to open or a new one started on, waited for.</summary>
-    private async Task<McpClient> JoinAsync(Implementation? agent, AgentCall call, CancellationToken cancel)
+    /// Passenger is asked to open or a new one started on, waited for. Joined in the protocol version the agent agreed
+    /// with this server, so what the window answers, passed on as it is, has nothing of a later version in it.</summary>
+    private async Task<McpClient> JoinAsync(Implementation? agent, string? protocol, AgentCall call, CancellationToken cancel)
     {
         await joining.WaitAsync(cancel);
         try
@@ -254,7 +255,7 @@ public sealed class McpProxy
             {
                 // The agent's own name, which the window shows the person when it asks.
                 joined = await McpClient.CreateAsync(new StreamClientTransport(stream, stream),
-                    new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" } }, cancellationToken: handshake.Token);
+                    new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" }, ProtocolVersion = protocol }, cancellationToken: handshake.Token);
                 joined.RegisterNotificationHandler(NotificationMethods.ProgressNotification, Heard);
                 joinedSocket = stream.Socket;
             }

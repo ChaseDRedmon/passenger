@@ -159,6 +159,35 @@ public sealed partial class McpTests
         }
     }
 
+    /// <summary>An agent that agreed an older protocol version with --mcp-attach (OpenCode's 2025-11-25) is answered in
+    /// that version: the window is joined in it, so nothing of a later one (a result's serverInfo and resultType) reaches
+    /// an agent that never asked for it.</summary>
+    [AvaloniaFact]
+    public void An_agent_on_an_older_protocol_is_answered_in_its_own_version_through_attach()
+    {
+        string folder = Plain("mcp-older-");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        window.ApplySettings(window.Settings with { McpServer = true });
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId], protocol: "2025-11-25")), "the agent attaching");
+        try
+        {
+            Assert.Equal("2025-11-25", client.NegotiatedProtocolVersion);
+            CallToolResult answer = Await(Task.Run(() => Result(client, "workspace")), "the workspace call");
+            Assert.True(answer.IsError != true, $"workspace failed: {Text(answer)}");
+            Assert.True(answer.Meta is null && answer.ResultType is null,
+                $"An agent on 2025-11-25 was answered with a later version's fields: _meta {answer.Meta?.ToJsonString()}, resultType {answer.ResultType}");
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { McpServer = false });
+            Gone(client);
+            window.Close();
+        }
+    }
+
     /// <summary>An agent that gives up on the call the window's let-in question holds takes the question away, as a tool's
     /// is: nothing waits on it, and a later "Allow" would let in an agent that asked nothing. The window's limit is long,
     /// so only the giving up can close it within the wait.</summary>
@@ -323,7 +352,7 @@ public sealed partial class McpTests
                 Assert.Equal([passenger, "--mcp-attach"], server.GetProperty("command").EnumerateArray().Select(a => a.GetString()!));
             }
             Assert.Equal((true, 600_000), (openCode.GetProperty("enabled").GetBoolean(), openCode.GetProperty("timeout").GetInt32()));
-            Assert.Equal((false, 600_000), (openCode2.GetProperty("codemode").GetBoolean(), openCode2.GetProperty("timeout").GetProperty("execution").GetInt32()));
+            Assert.Equal((false, 1_800_000), (openCode2.GetProperty("codemode").GetBoolean(), openCode2.GetProperty("timeout").GetProperty("execution").GetInt32()));
 
             // Copy puts the text on the clipboard whole, and says it did until another is copied.
             Button copy = dialog.CopyButtons["Claude Desktop"];

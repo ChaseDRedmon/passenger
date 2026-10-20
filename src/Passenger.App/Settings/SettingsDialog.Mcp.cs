@@ -108,7 +108,7 @@ public sealed partial class SettingsDialog
         Setup("OpenCode 2", setup.OpenCode2,
             "OpenCode 2 lists servers under mcp.servers, in opencode.jsonc or opencode.json. With Code Mode off it calls "
             + "Passenger's tools itself, as Code Mode's permission prompts can leave a call waiting, and a call that never "
-            + "came back would end after 10 minutes rather than 12 hours.",
+            + "came back would end after 30 minutes rather than 12 hours: OpenCode 2 counts a call's whole time, its progress or not, so a long build or test run needs the room.",
             "opencode.jsonc codemode code mode execution timeout");
         AgentSetups = setups;
 
