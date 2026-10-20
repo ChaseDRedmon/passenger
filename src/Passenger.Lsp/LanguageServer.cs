@@ -42,6 +42,7 @@ public sealed class LanguageServer : IAsyncDisposable
     private volatile bool hung;
     private volatile bool killed;
     private volatile bool disposing;
+    private volatile string? ended;
 
     /// <summary>The server as a test's quiet wait names it, among the requests in flight (<see cref="InFlight"/>).</summary>
     private readonly string who;
@@ -78,6 +79,8 @@ public sealed class LanguageServer : IAsyncDisposable
         {
             if (!disposing)
             {
+                // Noted before it is told, so a handler added meanwhile hears it or finds it in Ended.
+                ended = e.Description;
                 Exited?.Invoke(this, e.Description);
             }
         };
@@ -85,8 +88,11 @@ public sealed class LanguageServer : IAsyncDisposable
     }
 
     /// <summary>The connection to the server ended without being asked to (it crashed or was killed), with why;
-    /// raised on any thread.</summary>
+    /// raised on any thread, once: a handler added after the server started reads <see cref="Ended"/> after adding it.</summary>
     public event EventHandler<string>? Exited;
+
+    /// <summary>Why the connection ended without being asked to, once <see cref="Exited"/> has been raised; else null.</summary>
+    public string? Ended => ended;
 
     /// <summary>The server stopped answering: a request waited <see cref="SlowRequest"/>, and a question it answers at
     /// once then went unanswered for <see cref="ResponseLimit"/> (it is deadlocked, suspended or thrashing). Raised once,

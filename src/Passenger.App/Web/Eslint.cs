@@ -319,7 +319,7 @@ public sealed class EslintService : IAsyncDisposable
                 }
             }
         });
-        server.Exited += (_, why) => UiThread.Post(() =>
+        void Lose(string why) => UiThread.Post(() =>
         {
             if (!disposed && session == started)
             {
@@ -327,6 +327,12 @@ public sealed class EslintService : IAsyncDisposable
                 Lost("The ESLint language server ended");
             }
         });
+        server.Exited += (_, why) => Lose(why);
+        // One that ended before it was listened to is lost as any that ends.
+        if (server.Ended is { } gone)
+        {
+            Lose(gone);
+        }
         server.NotResponding += (_, why) => UiThread.Post(() =>
         {
             if (!disposed && session == started)

@@ -619,7 +619,7 @@ public sealed class WebLanguages : IAsyncDisposable
                 }
             }
         });
-        language.Exited += (_, why) => UiThread.Post(() =>
+        void Lose(string why) => UiThread.Post(() =>
         {
             if (!disposed && server.Session == started)
             {
@@ -627,6 +627,12 @@ public sealed class WebLanguages : IAsyncDisposable
                 Lost(server, $"The {name} language server ended");
             }
         });
+        language.Exited += (_, why) => Lose(why);
+        // One that ended before it was listened to is lost as any that ends.
+        if (language.Ended is { } gone)
+        {
+            Lose(gone);
+        }
         language.NotResponding += (_, why) => UiThread.Post(() =>
         {
             if (!disposed && server.Session == started)

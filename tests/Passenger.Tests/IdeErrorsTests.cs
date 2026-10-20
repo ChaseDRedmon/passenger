@@ -305,6 +305,67 @@ public sealed class IdeErrorsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A server that ends as its start comes back to the window, before the window listens for its end, is
+    /// started again as one that ends later is, never left loading.</summary>
+    [AvaloniaFact]
+    public void A_language_server_that_ends_just_as_it_starts_is_started_again()
+    {
+        MainWindow window = OpenProgram();
+        Passenger.App.CSharp.CSharpService csharp = window.CSharpService!;
+        int first = csharp.Session!.Server.ProcessId;
+        int next = 0;
+        EventHandler<Passenger.Core.ChildStart> started = (_, child) =>
+        {
+            if (child.Command.Contains("Microsoft.CodeAnalysis.LanguageServer", StringComparison.Ordinal))
+            {
+                Interlocked.CompareExchange(ref next, child.ProcessId, 0);
+            }
+        };
+        Passenger.Core.ChildProcesses.Started += started;
+        try
+        {
+            // The next start's projects handed over, the window's thread is held until that start has come back and its server is gone.
+            Assert.NotNull(csharp.Feed);
+            csharp.Feed = new EndingOnce(csharp.Feed, () =>
+            {
+                Ui.Stall(TimeSpan.FromMilliseconds(500), "the server's start to come back to the held window");
+                using Process server = Process.GetProcessById(Volatile.Read(ref next));
+                server.Kill();
+                server.WaitForExit();
+                Ui.Stall(TimeSpan.FromMilliseconds(500), "the connection to the ended server to be closed");
+            });
+            Process.GetProcessById(first).Kill();
+            Ui.WaitFor(() => next != 0 && !Running(next), "the server started again to be ended as its start came back");
+            Ui.WaitFor(() => csharp.Session is { IsLoaded: true } session && session.Server.ProcessId != first && session.Server.ProcessId != next,
+                $"the language server ended as it started to be started again ({csharp.State})");
+            Assert.Contains($"process {next}) ended", Ui.IdeLog());
+        }
+        finally
+        {
+            Passenger.Core.ChildProcesses.Started -= started;
+        }
+        TypeAnErrorAndSeeItReported(window);
+        window.Close();
+    }
+
+    /// <summary>The window's projects, the first time asked, then once on the window's thread what ends its server.</summary>
+    private sealed class EndingOnce(Passenger.Lsp.IProjectFeed feed, Action end) : Passenger.Lsp.IProjectFeed
+    {
+        private int ended;
+
+        public async Task<(IReadOnlyList<Passenger.Roslyn.Extension.ProjectToOpen> First, IReadOnlyList<Passenger.Roslyn.Extension.ProjectToOpen> Later)?> ProjectsAsync(CancellationToken cancel)
+        {
+            (IReadOnlyList<Passenger.Roslyn.Extension.ProjectToOpen> First, IReadOnlyList<Passenger.Roslyn.Extension.ProjectToOpen> Later)? projects = await feed.ProjectsAsync(cancel);
+            if (Interlocked.Exchange(ref ended, 1) == 0)
+            {
+                Dispatcher.UIThread.Post(end);
+            }
+            return projects;
+        }
+
+        public Task<Passenger.Roslyn.Extension.ProjectInfoResult> InfoAsync(string path, CancellationToken cancel) => feed.InfoAsync(path, cancel);
+    }
+
     [AvaloniaFact]
     public void The_hierarchy_window_shown_before_the_language_server_started_again_still_opens_a_row_after_it()
     {

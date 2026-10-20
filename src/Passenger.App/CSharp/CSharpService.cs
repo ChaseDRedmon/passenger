@@ -487,6 +487,11 @@ public sealed class CSharpService : IAsyncDisposable
                 started.Server.NotResponding -= onHung;
             });
             session = started;
+            // One that ended before Exited was listened to (as its start came back to this thread) is replaced as any that ends.
+            if (started.Server.Ended is { } gone)
+            {
+                UiThread.Post(() => OnExited(started, gone));
+            }
             if (told != startedWith)
             {
                 started.Server.SetOptions(IndentSettings(told));
