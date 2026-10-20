@@ -398,7 +398,7 @@ public sealed partial class CodeEditor : Control
             document.Changed -= OnDocumentChanged;
             document = value;
             document.Changed += OnDocumentChanged;
-            // A template's places, a composition and a GoTo waiting for layout are offsets in the text left behind.
+            // A template's places, a composition, a GoTo waiting for layout and the folds are offsets in the text left behind.
             snippet = null;
             CancelChoices();
             pendingGoTo = null;
@@ -408,6 +408,7 @@ public sealed partial class CodeEditor : Control
             HoveredLink = null;
             pressedLink = null;
             HideFoldPreview();
+            folds = [];
             EndComposition();
             selections = SelectionSet.Single(0);
             caretsText = value.Snapshot;
@@ -500,7 +501,8 @@ public sealed partial class CodeEditor : Control
         caretsText = shown.Snapshot;
         leaning = [];
         wrapLeaning = [];
-        scroll = offset;
+        // Kept for rows the text may no longer have (its file reloaded shorter while its tab was hidden or closed).
+        scroll = new Vector(offset.X, WithinRows(offset.Y));
         UpdateScrollBars();
         InvalidateVisual();
         FollowInputMethod();
@@ -580,7 +582,7 @@ public sealed partial class CodeEditor : Control
 
     public void ScrollTo(Vector offset)
     {
-        double maxY = Math.Max(0, (RowCount - 1) * metrics.LineHeight);
+        double maxY = MaxScrollY;
         double maxX = MaxScrollX;
         Vector clamped = new(Math.Clamp(offset.X, 0, maxX), Math.Clamp(offset.Y, 0, maxY));
         if (clamped == scroll)
@@ -764,6 +766,8 @@ public sealed partial class CodeEditor : Control
             caretsText = e.After;
             FollowInputMethod();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
+            // Fewer rows may leave the view past the last (another split deleting, the file reloaded shorter).
+            ScrollWithinRows();
         }
         widestStale = true;
         InvalidateArrange();
@@ -802,7 +806,7 @@ public sealed partial class CodeEditor : Control
     {
         updatingBars = true;
         Size viewport = Viewport;
-        double maxY = Math.Max(0, (RowCount - 1) * metrics.LineHeight);
+        double maxY = MaxScrollY;
         vertical.Maximum = maxY;
         vertical.ViewportSize = viewport.Height;
         vertical.LargeChange = viewport.Height;
@@ -819,6 +823,28 @@ public sealed partial class CodeEditor : Control
         horizontal.Value = scroll.X;
         horizontal.IsVisible = ShowScrollBars && maxX > 0;
         updatingBars = false;
+    }
+
+    /// <summary>How far the view scrolls down: to where the last row stands at its top.</summary>
+    private double MaxScrollY => Math.Max(0, (RowCount - 1) * metrics.LineHeight);
+
+    /// <summary>A scroll's height brought within the rows: from past the last, to where the last stands at the view's foot,
+    /// so as many show as fit; as it is while soft wrap waits for the width that makes them.</summary>
+    private double WithinRows(double y)
+    {
+        double max = softWrap && Wraps is null ? y : MaxScrollY;
+        return y <= max ? y : Math.Min(max, Math.Max(0, (RowCount * metrics.LineHeight) - Viewport.Height));
+    }
+
+    /// <summary>Brings the view back within the rows once they are fewer (a shorter text, lines folded): past the last row
+    /// it would draw nothing, not even the gutter, until scrolled.</summary>
+    private void ScrollWithinRows()
+    {
+        double y = WithinRows(scroll.Y);
+        if (y < scroll.Y)
+        {
+            ScrollTo(new Vector(scroll.X, y));
+        }
     }
 
     /// <summary>How far the view scrolls sideways: to the widest line drawn and a little more, or nowhere while the lines

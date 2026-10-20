@@ -38,6 +38,7 @@ public sealed partial class CodeEditor
         folds = InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
         InvalidateVisual();
         UpdateScrollBars();
+        ScrollWithinRows();
         FollowInputMethod();
     }
 
@@ -156,6 +157,8 @@ public sealed partial class CodeEditor
             SetSelections(selections.With(s => IsHidden(text.GetLineFromOffset(s.Caret)) ? Selection.At(HeaderEnd(text, s.Caret)) : s), reveal: true);
         }
         UpdateScrollBars();
+        // A caret left showing moves nothing, so the view may stand below the rows folding left (Collapse All).
+        ScrollWithinRows();
         InvalidateVisual();
         FollowInputMethod();
         FoldsToggled?.Invoke(this, folds);

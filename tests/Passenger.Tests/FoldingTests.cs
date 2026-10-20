@@ -466,6 +466,43 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Collapse All and Collapse to Definitions with the view wheeled down to the file's end and the caret left on
+    /// its first line: the rows left are far fewer, and the view comes back within them, where it stood past the last of
+    /// them, blank, gutter and all, until scrolled.</summary>
+    [AvaloniaFact]
+    public void Collapsing_with_the_view_wheeled_down_past_where_the_folded_rows_end_draws_them()
+    {
+        StringBuilder text = new("class Many\n{\n");
+        for (int i = 0; i < 60; i++)
+        {
+            text.Append($"    int Method{i}()\n    {{\n        int value = {i};\n        return value;\n    }}\n\n");
+        }
+        text.Append("}\n");
+        string path = Path.Combine(folder, "Many.cs");
+        File.WriteAllText(path, text.ToString());
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.EditorArea.Active!.FoldsFound && editor.FoldRegions.Count == 61, "the file's regions");
+        editor.Focus();
+        foreach (string collapse in new[] { EditorActions.FoldAll, EditorActions.FoldToDefinitions })
+        {
+            Point middle = editor.TranslatePoint(new Point(editor.Bounds.Width / 2, editor.Bounds.Height / 2), window)!.Value;
+            window.MouseWheel(middle, new Vector(0, -1000));
+            Ui.Settle();
+            Assert.True(editor.ScrollOffset.Y >= (editor.RowsShown - 2) * editor.LineHeight, $"The wheel left the view {editor.ScrollOffset.Y / editor.LineHeight:0.#} rows down a text of {editor.RowsShown}");
+            Assert.Equal(0, editor.Selections.Primary.Caret);
+            Ui.Run(window, collapse);
+            Assert.Contains(editor.FoldRegions, r => r.Folded);
+            Ui.DrawsText(window, editor, $"{window.Actions[collapse]!.Title} with the view wheeled down to the end");
+            Ui.Run(window, EditorActions.UnfoldAll);
+        }
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_project_file_folds_by_its_elements_and_a_JSON_file_by_its_braces_and_typing_keeps_their_folds()
     {

@@ -971,6 +971,43 @@ public static class Ui
             : Avalonia.Media.Color.FromRgb(pixel[2], pixel[1], pixel[0]);
     }
 
+    /// <summary>Fails unless an editor's gutter and text, as the compositor last drew them, each show more than a ground: an
+    /// editor drawing no rows leaves both a colour or two, where line numbers and code bring the shades of their glyphs.</summary>
+    public static void DrawsText(TopLevel window, CodeEditor editor, string after)
+    {
+        Settle();
+        using Avalonia.Media.Imaging.WriteableBitmap frame = window.CaptureRenderedFrame()
+            ?? throw new InvalidOperationException("The window has drawn no frame.");
+        double textLeft = editor.PointOf(0).X + editor.ScrollOffset.X;
+        int gutter = Colours(new Rect(0, 0, textLeft - 2, editor.Bounds.Height));
+        // Short of the scroll bar's error stripe and the problem counts over it.
+        int text = Colours(new Rect(textLeft, 0, Math.Max(1, editor.Bounds.Width - textLeft - 80), editor.Bounds.Height));
+        Assert.True(gutter > 4 && text > 4,
+            $"After {after} the editor drew no rows ({gutter} colours in its gutter, {text} in its text), scrolled {editor.ScrollOffset.Y / editor.LineHeight:0.#} rows down a text of {editor.RowsShown}");
+
+        int Colours(Rect area)
+        {
+            Point from = editor.TranslatePoint(area.TopLeft, window)!.Value;
+            PixelRect pixels = new(PixelPoint.FromPoint(from, window.RenderScaling), PixelSize.FromSize(area.Size, window.RenderScaling));
+            byte[] bytes = new byte[pixels.Width * pixels.Height * 4];
+            System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(bytes, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                frame.CopyPixels(pixels, pinned.AddrOfPinnedObject(), bytes.Length, pixels.Width * 4);
+            }
+            finally
+            {
+                pinned.Free();
+            }
+            HashSet<int> seen = [];
+            for (int i = 0; i < bytes.Length; i += 4)
+            {
+                seen.Add(bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16));
+            }
+            return seen.Count;
+        }
+    }
+
     /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>
     public static void Run(TopLevel window, string action)
     {
