@@ -1,10 +1,13 @@
 <!doctype html>
-<!-- The site's share card (site/images/social.png, 1200x630), drawn by Chrome from the site's dark editor picture, with a
-     profile of its own under artifacts/ (never the person's):
+<!-- The site's share card (site/images/social-<first 8 of its SHA-256>.png, 1200x630, named by its content because
+     Cloudflare and the sites that embed it keep an image by its URL for a week), drawn by Chrome from the site's dark
+     editor picture, with a profile of its own under artifacts/ (never the person's):
      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
        --user-data-dir=artifacts/social-card-chrome --window-size=1200,630 --force-device-scale-factor=2 \
        --screenshot=artifacts/card.png tools/social-card.html
-     then halved to 1200x630 (sips -z 630 1200 artifacts/card.png --out site/images/social.png). -->
+     then halved to 1200x630 (sips -z 630 1200 artifacts/card.png --out artifacts/social.png), moved to
+     site/images/social-$(shasum -a 256 artifacts/social.png | cut -c1-8).png in place of the old one, and named so in
+     site/index.html and site/linux.html (og:image, twitter:image, the JSON-LD image). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">

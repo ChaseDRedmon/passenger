@@ -834,7 +834,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` when run by hand
   (`gh workflow run Site --ref main`). Its downloads are the latest GitHub release's assets, by fixed names (#56); its pictures are
   `just site-shots`' (each scene in both themes, a `<picture>` choosing by `prefers-color-scheme`, as the README's do);
-  its share card, `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment)
+  its share card, `images/social-<hash>.png`, is drawn from `tools/social-card.html` (the command is in its first comment)
+  and named by its content, since Cloudflare and the sites that embed it keep `/images/*` by URL for a week (`_headers`):
+  a changed image takes a new name, never the old one's
   after the pictures.
 - `.github/workflows`: `test.yml` is every test on macOS, Windows and Linux, each system's suite in four shards run at
   once (jobs named as "macOS (arm64), shard 1 of 4"), then a summary job per system named as the system ("macOS
