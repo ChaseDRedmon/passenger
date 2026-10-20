@@ -286,7 +286,7 @@ public sealed class MSBuildDocument : IDisposable
                 AdvisorySeverity.Moderate => "NU1902",
                 AdvisorySeverity.High => "NU1903",
                 _ => "NU1904",
-            }, $"Package '{id}' {version} has a known {gravest.Severity.ToString().ToLowerInvariant()} severity vulnerability, {gravest.Url}")
+            }, $"Package '{id}' {version} has a known {gravest.Severity.ToString().ToLowerInvariant()} severity vulnerability, {gravest.Address}")
             : null;
 
     /// <summary>The evaluation's problems in this file placed on its lines, with the advisories.</summary>

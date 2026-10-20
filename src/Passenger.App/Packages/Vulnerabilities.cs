@@ -15,9 +15,13 @@ public enum AdvisorySeverity
 }
 
 /// <summary>A known vulnerability of a package, as a feed's VulnerabilityInfo resource gives it: how grave it is, its
-/// advisory's page, and the versions it affects as a NuGet version range ("(, 1.4.1)", "[2.0.0, 2.3.1)").</summary>
-public sealed record Advisory(AdvisorySeverity Severity, Uri Url, string Versions)
+/// advisory's address as the feed wrote it, and the versions it affects as a NuGet version range ("(, 1.4.1)",
+/// "[2.0.0, 2.3.1)").</summary>
+public sealed record Advisory(AdvisorySeverity Severity, string Address, string Versions)
 {
+    /// <summary>The advisory's page to open, only where its address is http or https: a feed may name any scheme.</summary>
+    public Uri? Link { get; } = Updates.Releases.Web(Address);
+
     /// <summary>Whether a version is in the range, NuGet's notation read as NuGet reads it: a bare version is the least
     /// version, a bracket includes its end and a parenthesis leaves it out, an end left empty is unbounded, and
     /// "[1.0]" is that version alone. A version that is not plain (a floating "1.*") is in none.</summary>
@@ -117,7 +121,7 @@ public sealed class VulnerabilityData
             {
                 if (Uri.TryCreate(entry.Url, UriKind.Absolute, out Uri? url) && entry.Versions is { Length: > 0 } versions)
                 {
-                    advisories.Add(new Advisory((AdvisorySeverity)Math.Clamp(entry.Severity, 0, 3), url, versions));
+                    advisories.Add(new Advisory((AdvisorySeverity)Math.Clamp(entry.Severity, 0, 3), url.OriginalString, versions));
                 }
             }
             read[id] = advisories;

@@ -666,8 +666,13 @@ public sealed class NuGetView : DockPanel
         });
         foreach (Advisory advisory in advisories)
         {
-            Button link = new() { Classes = { "link" }, Content = advisory.Url.OriginalString, VerticalAlignment = VerticalAlignment.Center };
-            link.Click += (_, _) => LinkClicked?.Invoke(this, advisory.Url);
+            Control link = new TextBlock { Text = advisory.Address, VerticalAlignment = VerticalAlignment.Center };
+            if (advisory.Link is { } page)
+            {
+                Button button = new() { Classes = { "link" }, Content = advisory.Address, VerticalAlignment = VerticalAlignment.Center };
+                button.Click += (_, _) => LinkClicked?.Invoke(this, page);
+                link = button;
+            }
             said.Children.Add(new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -710,7 +715,7 @@ public sealed class NuGetView : DockPanel
             Panel mark = new() { Width = 14, VerticalAlignment = VerticalAlignment.Center };
             if (affecting.Count > 0)
             {
-                mark.Children.Add(Warning($"Known security vulnerability in {at}: {affecting[0].Severity} severity ({affecting[0].Url.OriginalString})"));
+                mark.Children.Add(Warning($"Known security vulnerability in {at}: {affecting[0].Severity} severity ({affecting[0].Address})"));
             }
             StackPanel line = new()
             {
@@ -759,7 +764,7 @@ public sealed class NuGetView : DockPanel
         }
         if (row.IsVulnerable)
         {
-            PathIcon warning = Warning($"Known security vulnerability: {row.Advisories[0].Severity} severity ({row.Advisories[0].Url.OriginalString})");
+            PathIcon warning = Warning($"Known security vulnerability: {row.Advisories[0].Severity} severity ({row.Advisories[0].Address})");
             warning.Margin = new Thickness(6, 0, 0, 0);
             line.Children.Add(warning);
         }
