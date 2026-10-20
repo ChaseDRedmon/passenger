@@ -523,8 +523,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   nuget.config or Directory.Packages.props saves that file first if it's open (`MainWindow.SaveBeforeWriting`, or
   SaveAll before `dotnet add package`) and then loads what it wrote (`FollowWritten`); a delete saves the open files
   under it first, and holds off design-time builds under it (`ProjectBuilds.HoldOff`). Every write of a workspace file
-  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on macOS its tags, ACL
-  and creation date (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
+  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on Windows its
+  attributes, ACL and streams (ReplaceFile, `FileText.Over`), on macOS its tags, ACL and creation date
+  (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
   window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), Local History given the old bytes; projects,
   solutions, nuget.config, .gitignore and merge results included, never `File.WriteAll*`. A server's edit to files not
   open goes through `WorkspaceEdits.StaleAsync` (refused if one was written within 2 s of the request or its text differs
