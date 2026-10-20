@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using Passenger.App.Settings;
 using Passenger.Editor;
 
 namespace Passenger.App;
@@ -22,7 +23,62 @@ public partial class MainWindow
     private void AddMainMenu()
     {
         BuildMenuBar();
-        MenuButton.IsVisible = !OperatingSystem.IsMacOS();
+        MainMenuPlace.IsVisible = !OperatingSystem.IsMacOS();
+    }
+
+    /// <summary>The main menu as a bar on the toolbar or behind its button, as Settings says; its titles made once.</summary>
+    private void FollowMainMenu(AppSettings next)
+    {
+        MainMenuPlace.ShowsBar = next.MainMenuBar && !OperatingSystem.IsMacOS();
+        if (MainMenuPlace.ShowsBar && MainMenuPlace.Children.Count == 1)
+        {
+            foreach (MenuEntry menu in MainMenu.Build(actions!.All))
+            {
+                Button title = new() { Content = menu.Title, Classes = { "widget", "menuBarItem" } };
+                title.Click += (_, _) => OpenBarMenu(title, menu);
+                // While one of the bar's menus is open, the pointer moving to another title opens that one, as a menu bar does.
+                title.PointerEntered += (_, _) =>
+                {
+                    if (barMenu is { IsOpen: true } && barMenuFrom != title)
+                    {
+                        OpenBarMenu(title, menu);
+                    }
+                };
+                MainMenuPlace.Children.Add(title);
+            }
+        }
+    }
+
+    private MenuFlyout? barMenu;
+    private Button? barMenuFrom;
+    private ActionContext? barMenuContext;
+
+    /// <summary>One of the bar's menus opened under its title, built as it opens, in the context the first of them opened in
+    /// (the focus is the menu's once one is open).</summary>
+    private void OpenBarMenu(Button title, MenuEntry entry)
+    {
+        ActionContext context = barMenu is { IsOpen: true } && barMenuContext is { } kept ? kept : actions!.Context();
+        barMenu?.Hide();
+        MenuFlyout flyout = new() { Placement = PlacementMode.BottomEdgeAlignedLeft, OverlayDismissEventPassThrough = true };
+        if (FlyoutEntry(entry, context) is MenuItem built)
+        {
+            foreach (object? item in built.Items.ToList())
+            {
+                built.Items.Remove(item);
+                flyout.Items.Add(item);
+            }
+        }
+        (barMenu, barMenuFrom, barMenuContext) = (flyout, title, context);
+        Action release = KeepKeys(title, () => flyout.IsOpen ? flyout.Items.OfType<Control>().FirstOrDefault()?.FindLogicalAncestorOfType<MenuBase>() : null);
+        flyout.Closed += (_, _) =>
+        {
+            release();
+            if (barMenu == flyout)
+            {
+                (barMenu, barMenuFrom, barMenuContext) = (null, null, null);
+            }
+        };
+        flyout.ShowAt(title);
     }
 
     /// <summary>The menus again, with the shortcuts in force now (after Settings changed the keymap). The window keeps the
@@ -114,12 +170,13 @@ public partial class MainWindow
         return actionItem;
     }
 
-    /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens.</summary>
+    /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens: those the bar
+    /// has no room for while it shows.</summary>
     private void OnMenuClicked(object? sender, RoutedEventArgs e)
     {
         ActionContext context = actions!.Context();
         MenuFlyout flyout = new();
-        foreach (MenuEntry menu in MainMenu.Build(actions.All))
+        foreach (MenuEntry menu in MainMenu.Build(actions.All).Skip(MainMenuPlace.ShowsBar ? MainMenuPlace.MenusShown : 0))
         {
             flyout.Items.Add(FlyoutEntry(menu, context));
         }

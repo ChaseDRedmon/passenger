@@ -154,7 +154,7 @@ public sealed class SettingsTests : IDisposable
         again.Close();
     }
 
-    /// <summary>Appearance's Theme: Passenger's own or Harbour, each in the dark or light the next row says, the window
+    /// <summary>Appearance's Theme: Passenger's own first, then Harbour and the rest, each in the dark or light the next row says, the window
     /// dressed in the one chosen the moment it is applied; Editor's Colour scheme: the theme's own or Rider's.</summary>
     [AvaloniaFact]
     public void Harbour_chosen_as_the_theme_dresses_the_window_at_once_beside_passengers_own()
@@ -166,7 +166,7 @@ public sealed class SettingsTests : IDisposable
             Ui.Settle();
             Assert.Equal(["Theme", "Dark or light"], dialog.Shown.Take(2));
             ComboBox theme = Editor<ComboBox>(dialog, "Theme");
-            Assert.Equal(["Passenger", "Harbour"], theme.Items.Cast<string>());
+            Assert.Equal(Enum.GetNames<Look>(), theme.Items.Cast<string>());
             Assert.Equal("Passenger", theme.SelectedItem);
             Assert.Equal(["System", "Dark", "Light"], Editor<ComboBox>(dialog, "Dark or light").Items.Cast<string>());
             Border stripe = window.GetVisualDescendants().OfType<Border>().First(b => b.Classes.Contains("stripeBar") && b.IsEffectivelyVisible);

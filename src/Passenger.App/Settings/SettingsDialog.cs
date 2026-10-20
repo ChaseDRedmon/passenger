@@ -229,6 +229,12 @@ public sealed partial class SettingsDialog : Window
                 "title bar window header toolbar decorations frame caption buttons minimize maximize close system linux",
                 TitleBars.NotOnThisDesktop ?? TitleBars.OwnFrame);
         }
+        if (!OperatingSystem.IsMacOS())
+        {
+            Add(Appearance, "Show main menu as a menu bar", Check(Working.MainMenuBar, v => Change(s => s with { MainMenuBar = v })),
+                "main menu bar hamburger file edit view toolbar ribbon menus",
+                "File, Edit, View and the rest side by side on the toolbar rather than behind its button. Those the toolbar has no room for go behind the button after them.");
+        }
 
         Add(SystemPage, "Reopen projects on startup", Check(Working.ReopenProjectsOnStartup, v => Change(s => s with { ReopenProjectsOnStartup = v })),
             "reopen last solution project folder startup start launch welcome screen recent");

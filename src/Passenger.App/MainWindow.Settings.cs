@@ -81,6 +81,7 @@ public partial class MainWindow
         }
         FollowViewSettings(before, next);
         FollowTitleBar(next);
+        FollowMainMenu(next);
         Explorer.NestFiles = next.NestFiles;
         assist.Templates = CSharp.TemplateSet.Of(next);
         assist.XamlFormat = next.XamlFormat;

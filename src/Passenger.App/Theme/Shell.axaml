@@ -549,6 +549,10 @@
     <Style Selector="Border.titleBar PathIcon.toolbarHotReload">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.HotReload}" />
     </Style>
+    <!-- A menu of the main menu's bar: its title alone, as a widget's words. -->
+    <Style Selector="Button.menuBarItem">
+        <Setter Property="Padding" Value="8,0" />
+    </Style>
     <Style Selector="Border.titleBar Button.widget">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.Text}" />
     </Style>
