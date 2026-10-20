@@ -184,9 +184,10 @@ public partial class MainWindow
         return await RevertAsync(files, HistoryTab.RevertName(row));
     }
 
-    /// <summary>Puts files back to versions, as one activity of the history: an open file's text as one undoable step over
-    /// the lines that differ, then saved, as Rider's revert writes the file; a closed one's bytes written as they were; one
-    /// that did not exist then deleted (to the Trash, and kept in the history). Null once all are written, else why not.</summary>
+    /// <summary>Puts files back to versions, as one activity of the history: an open file's text and encoding as one
+    /// undoable step over the lines that differ, written as Rider's revert writes the file (<see cref="OpenDocument.Revert"/>);
+    /// a closed one's bytes written as they were; one that did not exist then deleted (to the Trash, and kept in the
+    /// history). Null once all are written, else why not.</summary>
     private async Task<string?> RevertAsync(IReadOnlyList<(string Path, string? Version)> files, string activity)
     {
         if (session.LocalHistory is not { } history)
@@ -212,29 +213,26 @@ public partial class MainWindow
                     refused.Add($"{Path.GetFileName(path)} (its content is no longer kept)");
                     continue;
                 }
-                if (Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path)) is { } open)
-                {
-                    string text = FileText.FromBytes(bytes, open.Encoding)?.Text ?? string.Empty;
-                    string now = open.Text.Snapshot.ToString();
-                    if (text != now)
-                    {
-                        open.Text.BreakUndoGroup();
-                        CSharp.WorkspaceEdits.ApplyTo(Editors, open, LineDiff.Edits(now, text));
-                        open.Text.BreakUndoGroup();
-                    }
-                    if (open.IsModified && !Editors.Save(open))
-                    {
-                        refused.Add(open.Name);
-                    }
-                    continue;
-                }
+                OpenDocument? open = Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path));
                 try
                 {
-                    FileText.Restore(path, bytes);
+                    if (open is null)
+                    {
+                        FileText.Restore(path, bytes);
+                    }
+                    else
+                    {
+                        open.Revert(bytes);
+                    }
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
                     refused.Add($"{Path.GetFileName(path)} ({error.Message})");
+                    continue;
+                }
+                if (open is { IsModified: true } && !Editors.Save(open))
+                {
+                    refused.Add(open.Name);
                 }
             }
         }

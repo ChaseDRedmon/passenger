@@ -486,6 +486,24 @@ public sealed class OpenDocument : Observable
     public void ConvertTo(FileEncoding to) =>
         Change(EncodingChange.Lost(to.Encoding, Text.Snapshot.ToString()), Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: true);
 
+    /// <summary>Local History's revert: a version's bytes read as that version was written (UTF-8 before the encoding the
+    /// file has now, which a Convert since may have changed), its text and how it was stored taken as one undoable step
+    /// and written, as Convert writes, its undo and redo writing too. Nothing changes when the version is what it holds.</summary>
+    public void Revert(byte[] bytes)
+    {
+        FileEncoding now = FileEncoding.Of(Encoding, HasBom);
+        FileText version = FileText.FromBytes(bytes, null, () => now.IsUnicode ? Conventions.Charset : now) ?? new FileText(string.Empty, Encoding, HasBom);
+        string text = Text.Snapshot.ToString();
+        LineSeparator separator = version.Text.Contains('\n', StringComparison.Ordinal) ? SeparatorOf(version) : Separator;
+        // Bytes the encoding now writes as the version had them (ASCII in UTF-8 or Latin-1) keep it.
+        bool stored = version.IsStoredAs(Encoding, HasBom);
+        if (version.Text == text && stored && separator == Separator)
+        {
+            return;
+        }
+        Change(LineDiff.Edits(text, version.Text), stored ? Current with { Separator = separator } : Current with { Encoding = version.Encoding, Bom = version.HasBom, Separator = separator }, write: true);
+    }
+
     /// <summary>Rider's change and forget: an encoding that reads the file's bytes as the text it has and writes the text as
     /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step.</summary>
     public void TakeEncoding(FileEncoding to) =>

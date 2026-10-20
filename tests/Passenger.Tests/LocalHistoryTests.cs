@@ -150,6 +150,40 @@ public sealed class LocalHistoryTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Revert_across_a_conversion_brings_back_the_versions_text_in_its_own_encoding()
+    {
+        const string Cafe = "public class Café { }\n";
+        string path = Write("Cafe.cs", "class Café { }\n");
+        MainWindow window = Open("Cafe.cs");
+        Save(window, 0, 0, "public ");
+        // Converted to Latin-1 from the status bar's encoding widget: é, two bytes in UTF-8, is one now.
+        FilePropertiesTests.Click(window, "EncodingButton");
+        FilePropertiesTests.Choose(window, "ISO-8859-1");
+        FilePropertiesTests.Answer(window, "Cafe.cs: Reload or Convert to ISO-8859-1", "Convert");
+        Assert.Equal(System.Text.Encoding.Latin1.GetBytes(Cafe), File.ReadAllBytes(path));
+
+        // The version before the conversion was UTF-8: it comes back as the text it held, written in UTF-8 again.
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Ui.Landed(() => history.Rows.Count == 2, "the save and the conversion");
+        history.Select(history.Rows[0]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Cafe, "the version before the conversion");
+        Task reverting = history.RevertAsync();
+        Ui.WaitFor(() => reverting.IsCompleted, "the revert");
+        Assert.True(Text(window) == Cafe, $"The revert read the UTF-8 version in Latin-1: {Text(window)}");
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(Cafe), File.ReadAllBytes(path));
+        Assert.Equal("UTF-8", FilePropertiesTests.Shown(window, "EncodingText"));
+        Assert.False(window.EditorArea.Active!.IsModified, $"The revert was not written: {window.Status}");
+
+        // One undo puts the converted file back, encoding and all.
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(Cafe, Text(window));
+        Assert.Equal(System.Text.Encoding.Latin1.GetBytes(Cafe), File.ReadAllBytes(path));
+        Assert.Equal("ISO-8859-1", FilePropertiesTests.Shown(window, "EncodingText"));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Put_label_puts_a_label_among_the_versions_that_shows_the_file_as_it_was_then()
     {
         Write("Shop.cs", Original);
