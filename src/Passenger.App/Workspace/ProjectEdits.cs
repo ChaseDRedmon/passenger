@@ -29,7 +29,16 @@ public static partial class ProjectEdits
         {
             int lineEnd = text.IndexOf('\n', last.End);
             int at = lineEnd < 0 ? text.Length : lineEnd + 1;
-            file.Write(text.Insert(at, $"{LineIndent(text, last.Start)}{element}{eol}"));
+            if (text[last.End..(lineEnd < 0 ? text.Length : lineEnd)].Trim().Length > 0)
+            {
+                // The group's close (or more) follows it on its line: the new one goes between them, on that line.
+                file.Write(text.Insert(last.End, element));
+                return null;
+            }
+            // On a line of its own, indented as the last one's, a level deeper when that line begins with its group.
+            int lineStart = text.LastIndexOf('\n', Math.Max(0, last.Start - 1)) + 1;
+            string under = text[lineStart..last.Start].Trim().Length > 0 ? indent : string.Empty;
+            file.Write(text.Insert(at, $"{LineIndent(text, last.Start)}{under}{element}{eol}"));
             return null;
         }
         int close = text.LastIndexOf("</Project>", StringComparison.Ordinal);
@@ -149,10 +158,16 @@ public static partial class ProjectEdits
     /// <summary>The indentation one level of the file takes: its first indented element's.</summary>
     private static string IndentUnit(string text) => IndentedLine().Match(text) is { Success: true } line ? line.Groups[1].Value : "  ";
 
+    /// <summary>The whitespace the line holding a place begins with, never what stands on it before the place.</summary>
     private static string LineIndent(string text, int at)
     {
         int lineStart = text.LastIndexOf('\n', Math.Max(0, at - 1)) + 1;
-        return text[lineStart..at];
+        int end = lineStart;
+        while (end < at && text[end] is ' ' or '\t')
+        {
+            end++;
+        }
+        return text[lineStart..end];
     }
 
     [GeneratedRegex(@"\n([ \t]+)<")]

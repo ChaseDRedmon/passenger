@@ -21,9 +21,9 @@ namespace Passenger.Tests;
 
 /// <summary>The Solution view's file commands as Rider's: Cut, Copy and Paste by their keys and its Edit menu, and drags,
 /// move or copy files and folders into another folder or another project's, an open file's tab, undo and edits going with
-/// it; Add, Reference... adds and takes out a project reference, which the Dependencies, the build and the language server
-/// follow, leaving the rest of the project file as it was; Add, Class/Interface... writes each of Rider's kinds of type;
-/// Open In, Terminal starts a shell in the folder; and Tools' Compare shows two files' differences.</summary>
+/// it; Add, Reference... adds and takes out a project reference, however the others are laid out, which the Dependencies,
+/// the build and the language server follow, the rest of the project file as it was; Add, Class/Interface... writes each of
+/// Rider's kinds of type; Open In, Terminal starts a shell in the folder; and Tools' Compare shows two files' differences.</summary>
 public sealed class SolutionViewTests : IDisposable
 {
     private const string Library = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
@@ -266,6 +266,47 @@ public sealed class SolutionViewTests : IDisposable
         Ui.Settle();
         Assert.False(dialog.IsVisible, "Escape left the dialog open");
         Assert.True(original.AsSpan().SequenceEqual(File.ReadAllBytes(app)), "Cancelling the dialog changed the project file");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Add_reference_beside_one_that_shares_its_line_with_its_groups_tags_writes_a_project_MSBuild_loads_and_remove_puts_it_back()
+    {
+        string app = Path.Combine(folder, "Shop.App", "Shop.App.csproj");
+        string core = Path.Combine(folder, "Shop.Core", "Shop.Core.csproj");
+        string lib = Path.Combine(folder, "Shop.Lib", "Shop.Lib.csproj");
+        string data = Path.Combine(folder, "Shop.Data", "Shop.Data.csproj");
+        Write("Shop.Lib/Shop.Lib.csproj", Library);
+        Write("Shop.Data/Shop.Data.csproj", Library);
+        // Shop.App's reference shares its line with its group's start and end, Shop.Core's with its group's end alone.
+        string reference = "<ProjectReference Include=\"..\\Shop.Lib\\Shop.Lib.csproj\" />";
+        string program = Library.Replace("    <TargetFramework>", "    <OutputType>Exe</OutputType>\n    <TargetFramework>", StringComparison.Ordinal);
+        Write("Shop.App/Shop.App.csproj", program.Replace("</Project>", $"  <ItemGroup>{reference}</ItemGroup>\n</Project>", StringComparison.Ordinal));
+        Write("Shop.Core/Shop.Core.csproj", Library.Replace("</Project>", $"  <ItemGroup>\n    {reference}</ItemGroup>\n</Project>", StringComparison.Ordinal));
+        Write("Shop.slnx", "<Solution>\n  <Project Path=\"Shop.App/Shop.App.csproj\" />\n  <Project Path=\"Shop.Core/Shop.Core.csproj\" />\n"
+            + "  <Project Path=\"Shop.Data/Shop.Data.csproj\" />\n  <Project Path=\"Shop.Lib/Shop.Lib.csproj\" />\n</Solution>\n");
+        string[] written = [File.ReadAllText(app), File.ReadAllText(core)];
+        MainWindow window = Open();
+        ProjectModel Project(string path) => window.Projects.First(p => p.Path == PathNames.Canonical(path));
+        Ui.WaitFor(() => Project(app).IsEvaluated && Project(core).IsEvaluated, "MSBuild to evaluate the projects as written");
+
+        Heard(window, app, () => Assert.Null(window.SetReferences(app, [lib, core])));
+        Heard(window, core, () => Assert.Null(window.SetReferences(core, [lib, data])));
+        Assert.Equal(program.Replace("</Project>", $"  <ItemGroup>{reference}<ProjectReference Include=\"..\\Shop.Core\\Shop.Core.csproj\" /></ItemGroup>\n</Project>", StringComparison.Ordinal),
+            File.ReadAllText(app));
+        Assert.Equal(Library.Replace("</Project>", $"  <ItemGroup>\n    {reference}<ProjectReference Include=\"..\\Shop.Data\\Shop.Data.csproj\" /></ItemGroup>\n</Project>", StringComparison.Ordinal),
+            File.ReadAllText(core));
+        foreach ((string project, string added) in new[] { (app, core), (core, data) })
+        {
+            Ui.WaitFor(() => Project(project).Problem is not null || Project(project).ProjectReferences.Count == 2, $"MSBuild to evaluate {Path.GetFileName(project)} again");
+            Assert.True(Project(project) is { Problem: null } loaded && loaded.ProjectReferences.Contains(PathNames.Canonical(added)),
+                $"MSBuild does not load {Path.GetFileName(project)} with the reference added: {Project(project).Problem}");
+        }
+
+        // Each taken out again, the project files are as they were.
+        Heard(window, app, () => Assert.Null(window.SetReferences(app, [lib])));
+        Heard(window, core, () => Assert.Null(window.SetReferences(core, [lib])));
+        Assert.Equal<string>(written, [File.ReadAllText(app), File.ReadAllText(core)]);
         window.Close();
     }
 
