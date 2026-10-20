@@ -145,8 +145,15 @@
                             <TextBlock Name="ErrorsCount" Classes="status" Foreground="{DynamicResource Passenger.Error}" />
                         </StackPanel>
                     </Button>
-                    <TextBlock Name="AgentText" Classes="status" IsVisible="False"
-                               ToolTip.Tip="An agent is using this window through Passenger's MCP server" />
+                    <!-- Agents on the window: how many, what one runs, or a question one waits on, which stands out (the
+                         accent's pill with a bell) and a click brings forward, since the person may not have seen it. -->
+                    <Button Name="AgentButton" Classes="statusItem" IsVisible="False" Click="OnAgentClicked"
+                            ToolTip.Tip="An agent is using this window through Passenger's MCP server">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <PathIcon Name="AgentIcon" Data="{StaticResource Icon.Notifications}" Width="12" Height="12" IsVisible="False" />
+                            <TextBlock Name="AgentText" Classes="status" />
+                        </StackPanel>
+                    </Button>
                     <TextBlock Name="CaretText" Classes="status" />
                     <!-- Rider's line separator and encoding widgets: a click offers the others. Their frames reach into
                          the spacing, so their words stand where the other items' do. -->

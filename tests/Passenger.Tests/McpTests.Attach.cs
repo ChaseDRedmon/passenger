@@ -205,9 +205,14 @@ public sealed partial class McpTests
             using CancellationTokenSource giveUp = new();
             Task<CallToolResult> givenUp = Task.Run(() => CallGivingUp(client, "workspace", new(), giveUp.Token));
             WaitFor(() => window.OwnedWindows.OfType<AgentAdmissionDialog>().Any(d => d.IsVisible), "the window to ask whether the agent may work there");
+            // The status bar's words stand out while the question waits (a click bringing it forward, which headless windows,
+            // never losing activation, cannot show).
+            Button agent = window.FindControl<Button>("AgentButton")!;
+            Assert.True(agent.Classes.Contains("asking"), "The status bar's words on a question an agent waits on should stand out (asking)");
             giveUp.Cancel();
             WaitFor(() => givenUp.IsCompleted && !window.OwnedWindows.OfType<AgentAdmissionDialog>().Any(d => d.IsVisible) && window.AgentStatus is null,
                 "the question to go once the agent gave up on the call that waited on it");
+            Assert.False(agent.Classes.Contains("asking"), "The status bar's words should stop standing out once no question waits");
         }
         finally
         {

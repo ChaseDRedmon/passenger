@@ -19,6 +19,10 @@ public partial class MainWindow
     /// <summary>The questions agents' calls wait on, as the status bar says them, while the person is asked.</summary>
     private readonly List<string> agentQuestions = [];
 
+    /// <summary>The questions' dialogs, as <see cref="agentQuestions"/> words them, which a click on the status bar's words
+    /// brings forward.</summary>
+    private readonly List<Window> agentDialogs = [];
+
     private Mcp.AgentSocket? agentSocket;
     private int agents;
 
@@ -48,7 +52,7 @@ public partial class MainWindow
     }
 
     /// <summary>What the status bar says of agents on the window, or null while it says nothing.</summary>
-    public string? AgentStatus => AgentText.IsVisible ? AgentText.Text : null;
+    public string? AgentStatus => AgentButton.IsVisible ? AgentText.Text : null;
 
     /// <summary>Whether nobody is at the window to ask: a screenshot's that runs an agent (<c>--agent</c>), which lets in
     /// its agent unasked and lets it use every tool. Set before its agent starts.</summary>
@@ -213,6 +217,7 @@ public partial class MainWindow
             }
         }));
         agentQuestions.Add(waiting);
+        agentDialogs.Add(dialog);
         ShowAgents();
         // The agent's call waits on the person, who may be in another window or program.
         PassengerApp.BringForward(this);
@@ -225,6 +230,7 @@ public partial class MainWindow
         finally
         {
             agentQuestions.Remove(waiting);
+            agentDialogs.Remove(dialog);
             ShowAgents();
         }
     }
@@ -245,14 +251,26 @@ public partial class MainWindow
     /// what one runs, then how many are on the window.</summary>
     private void ShowAgents()
     {
-        AgentText.IsVisible = agents > 0 || agentWork.Count > 0 || agentQuestions.Count > 0;
-        AgentText.Text = agentQuestions.Count > 0 ? agentQuestions[^1]
+        bool asking = agentQuestions.Count > 0;
+        AgentButton.IsVisible = agents > 0 || agentWork.Count > 0 || asking;
+        AgentButton.Classes.Set("asking", asking);
+        AgentIcon.IsVisible = asking;
+        AgentText.Text = asking ? agentQuestions[^1]
             : agentWork.Count > 0 ? $"Agent: {agentWork[^1]}"
             : agents == 1 ? "Agent connected"
             : $"{agents} agents connected";
-        ToolTip.SetTip(AgentText, agentQuestions.Count > 0
-            ? "An agent's call waits for your answer to the question this window shows; unanswered, it is told so once the time is up"
+        ToolTip.SetTip(AgentButton, asking
+            ? "An agent's call waits for your answer to the question this window asks: click to see it. Unanswered, the agent is told so once the time is up"
             : "An agent is using this window through Passenger's MCP server");
+    }
+
+    /// <summary>The status bar's words on agents, clicked: the question one waits on comes forward.</summary>
+    private void OnAgentClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (agentDialogs.LastOrDefault() is { } dialog)
+        {
+            dialog.Activate();
+        }
     }
 
     private static Control AgentArguments(IReadOnlyList<(string Name, string Value)> arguments)

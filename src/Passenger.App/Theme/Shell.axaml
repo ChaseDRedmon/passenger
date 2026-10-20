@@ -635,6 +635,21 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
+    <!-- An agent's question waiting on the person: the accent's pill, which the eye finds in the bar (after the bar's
+         muted words, which it is laid over). -->
+    <Style Selector="Button.statusItem.asking /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />
+    </Style>
+    <Style Selector="Button.statusItem.asking:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.AccentHover}" />
+    </Style>
+    <Style Selector="Button.statusItem.asking TextBlock.status">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+    <Style Selector="Button.statusItem.asking PathIcon">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
     <!-- What the status bar says: words as wide as they are (cut where the widgets begin), out of the keys' way, until it
          has a place to go (StatusBar.Say's), when it is a link: the hand, a key's reach, and the link's colour underlined
          under the pointer. Its whole text shows above it, where the words it was cut from stay in sight. -->
