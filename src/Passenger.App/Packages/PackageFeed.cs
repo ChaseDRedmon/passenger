@@ -126,9 +126,9 @@ public sealed class FeedSet(string name, IReadOnlyList<IPackageFeed> feeds, Func
             or IOException or UnauthorizedAccessException or UriFormatException or NotSupportedException;
 }
 
-/// <summary>A feed's HTTP: its requests, with its credentials sent to its own host (those of its nuget.config, else what a
-/// credential provider gives when it answers 401 without any), the certificate check its configuration may turn off, and
-/// HTTP refused unless the feed allows insecure connections, as restore refuses it. Credentials are never logged.</summary>
+/// <summary>A feed's HTTP: its requests, with its credentials sent to its own host alone (those of its nuget.config, else
+/// what a credential provider gives when it answers 401 without any), the certificate check its configuration may turn
+/// off, and HTTP refused unless the feed allows insecure connections, as restore refuses it. Credentials are never logged.</summary>
 public sealed class FeedClient
 {
     private static readonly HttpClient Shared = new(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(30) };
@@ -174,6 +174,12 @@ public sealed class FeedClient
             return response;
         }
         response.Dispose();
+        // A URL off the feed's host comes from the feed's own answers, which may name any host: never one to give credentials.
+        if (!own)
+        {
+            throw new HttpRequestException($"{url.Authority}, where {Name} sent Passenger, asks for credentials (401 Unauthorized); {Name}'s go only to {Index.Authority}",
+                null, HttpStatusCode.Unauthorized);
+        }
         FeedCredentials? retry = Volatile.Read(ref credentials);
         if (retry is null || retry == sent)
         {

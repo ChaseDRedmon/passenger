@@ -127,6 +127,27 @@ public sealed class PackageSourcesTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A feed's answers can send Passenger to any host: a search there that asks for credentials is refused, and
+    /// the feed's own credentials never go to it.</summary>
+    [AvaloniaFact]
+    public void A_feeds_search_on_another_host_that_asks_for_credentials_is_refused_and_never_sent_the_feeds_credentials()
+    {
+        using StandInFeed elsewhere = new("someone", "else");
+        feed.SearchAt = new Uri($"{elsewhere.Root}/query");
+        MainWindow window = Open();
+        NuGetView nuget = window.NuGet;
+        nuget.ChosenFeed = "private";
+        nuget.Query = "private";
+        Task searched = nuget.RefreshAsync();
+        Ui.Landed(() => searched.IsCompleted, "the private feed's search");
+        Assert.True(nuget.Status.Contains("asks for credentials (401 Unauthorized)", StringComparison.Ordinal) && nuget.Rows.Count == 0,
+            $"The private feed's search on another host that asks for credentials found [{string.Join(", ", Ids(nuget))}] and said \"{nuget.Status}\"");
+        Assert.True(feed.Requests.Any(r => r.Path == "/v3/index.json" && r.Authorized), "The private feed's own service index was not read with its credentials");
+        Assert.True(elsewhere.Requests.Count > 0 && elsewhere.Requests.All(r => r.Authorization is null),
+            $"The other host was sent [{string.Join(", ", elsewhere.Requests.Select(r => r.Authorization ?? "nothing"))}] for the private feed's search");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Installing_from_the_private_feed_restores_with_its_credentials_which_nothing_logs()
     {

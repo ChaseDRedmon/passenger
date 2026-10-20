@@ -373,7 +373,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   NuGet.Configuration as restore does (feeds, credentials, packageSourceMapping); `FeedSet` searches All Feeds or one,
   over `V3Feed`, `V2Feed` and `FolderFeed` (what the tests use offline); each HTTP feed's requests go through
   `FeedClient`, with its own credentials or else `CredentialProviders` (NuGet's plugin protocol, through
-  ChildProcesses), never logged. `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
+  ChildProcesses), never logged, and only to the feed's own host: another its answers name that asks for them is
+  refused. `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
