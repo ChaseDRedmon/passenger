@@ -789,7 +789,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`DapConnection.Handle`'s `evenIfFailed`). A debug session is `DebugController.Session` from its first moment
   (`DebugSession.LaunchAsync`/`AttachAsync`'s `starting`), Starting until configurationDone answers: Stop then
   disconnects at once (a launched program ends, one being attached to is let go), the start failing as "Debugging NAME
-  was stopped as it started", and a start a disconnect was asked of sends no configurationDone. Profile's Kill shows
+  was stopped as it started", and a start a disconnect was asked of sends no configurationDone. A breakpoint changed
+  while it starts goes once configurationDone has answered, with whatever else differs from what was sent
+  (`DebugSession.SendChangedAsync`). Profile's Kill shows
   while its program has yet to reach the profiler and cancels the start.
   Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
   `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit

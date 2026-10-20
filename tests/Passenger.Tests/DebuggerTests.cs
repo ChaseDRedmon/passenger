@@ -1728,6 +1728,57 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
+    /// <summary>A breakpoint set while the debugger still waits for the program's runtime (here held at its start, a
+    /// diagnostic port of the test's own), the first in a file of its own, reaches the program once it runs and stops it:
+    /// changes made while the session started were never sent, the breakpoint never bound.</summary>
+    [AvaloniaFact]
+    public void A_breakpoint_set_while_debugging_starts_reaches_the_program_and_stops_it()
+    {
+        Write("Program.cs", "Console.ReadLine();\nOther.Run();\n");
+        string other = Write("Other.cs", "static class Other\n{\n    public static void Run()\n    {\n        Console.WriteLine(\"other ran\");\n    }\n}\n");
+        using Debugging.Helpers.StartHold hold = new();
+        MainWindow window = Open();
+        window.SetConfigurations([new Passenger.App.Run.RunConfiguration
+        {
+            Name = "Sum held",
+            Project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj"),
+            Environment = new Dictionary<string, string>(hold.Environment),
+        }], "Sum held");
+        Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
+        int program = 0;
+        int adapter = 0;
+        try
+        {
+            // Not settled: the start holds the window's background work for as long as the debugger waits for the program.
+            Assert.True(window.Perform(AppActions.Debug), $"Debug did not start: {Ui.Said(window)}");
+            Ui.PumpUntil(() => held.IsCompleted, "the build, then the program's runtime to come to the hold", TimeSpan.FromMinutes(3));
+            program = held.Result;
+            DebugSession starting = window.Debugger.Session ?? throw new InvalidOperationException($"No session while the program was held: {window.Status}");
+            adapter = starting.AdapterProcessId;
+            Assert.Equal(DebugState.Starting, starting.State);
+            window.OpenFile(other);
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.GoTo(new TextPosition(4, 8));
+            Assert.True(window.Perform(AppActions.ToggleBreakpoint), $"Toggle Breakpoint was refused: {window.Status}");
+
+            Task letGo = hold.LetGo();
+            Ui.PumpUntil(() => letGo.IsCompleted && starting.State != DebugState.Starting, "the program to run", TimeSpan.FromSeconds(60));
+            WaitDebugging(window, () => editor.LineMarks.Contains(new LineMark(4, LineMarkKind.BreakpointBound)),
+                "the breakpoint set while the debugger started to be bound in the program");
+            _ = starting.InputAsync("go\n");
+            WaitDebugging(window, () => starting.State == DebugState.Paused && editor.LineMarks.Contains(new LineMark(4, LineMarkKind.ExecutionPoint)),
+                "the program to stop at the breakpoint set while it started");
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+            Processes.Kill(adapter);
+        }
+    }
+
     /// <summary>A debug session is Stop's from its first moment, as Rider's is: one whose program's runtime is slow to start
     /// (here held at its start, a diagnostic port of the test's own) shows Stop on the toolbar and in the Debug window while
     /// the debugger waits, and Stop ends it at once, the program and the debugger with it, the Debug window and the status

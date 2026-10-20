@@ -16,7 +16,7 @@ public enum DebugState
 /// <summary>One program under the debugger: the adapter's process (debugger/ beside the app), the
 /// conversation with it, and what the program is doing. A UI-thread object: every event and state change
 /// lands on the UI thread. A file's breakpoints go to the adapter whenever what they ask of it changes, while it
-/// runs, at their lines in the build it runs (<see cref="BuiltLines"/>).</summary>
+/// runs (those changed while it starts once it does), at their lines in the build it runs (<see cref="BuiltLines"/>).</summary>
 public sealed class DebugSession
 {
     /// <summary>How many of the adapter's last lines on standard error go to the IDE's log when it dies.</summary>
@@ -277,15 +277,7 @@ public sealed class DebugSession
             await session.connection.RequestAsync(request, arguments);
             await Task.WhenAny(session.initialized.Task, session.ending.Task).WaitAsync(TimeSpan.FromSeconds(30));
             session.GoingOn();
-            foreach (string path in breakpoints.Files)
-            {
-                await session.SendBreakpointsAsync(path);
-            }
-            await session.SendExceptionBreakpointsAsync();
-            if (session.FunctionSignature().Length > 0)
-            {
-                await session.SendFunctionBreakpointsAsync();
-            }
+            await session.SendChangedAsync();
             // Never asked of an adapter already told to go: it would start the program as it went.
             session.GoingOn();
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
@@ -294,6 +286,8 @@ public sealed class DebugSession
             {
                 session.SetState(DebugState.Running);
             }
+            // What changed while the debugger waited for the program's runtime, when nothing could be sent, goes now.
+            session.Sending(session.SendChangedAsync());
             return session;
         }
         catch
@@ -683,6 +677,34 @@ public sealed class DebugSession
         breakpoints.Report(path,
             [.. response.Breakpoints.Take(built.Count).Select(Status), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
             [.. built.Take(response.Breakpoints.Count), .. unbuilt]);
+    }
+
+    /// <summary>Sends every breakpoint whose request differs from what the debugger was last sent: each file's (one that lost
+    /// its last breakpoint too), then the exception, function and data breakpoints. The start sends them all, from a list of
+    /// the files taken first, and once configurationDone has answered what changed meanwhile, when no change could go.</summary>
+    private async Task SendChangedAsync()
+    {
+        foreach (string path in breakpoints.Files.Concat(sent.Keys).Distinct(StringComparer.Ordinal).ToList())
+        {
+            if (Open() && (!sent.TryGetValue(path, out string? last) || last != Signature(path)))
+            {
+                await SendBreakpointsAsync(path);
+            }
+        }
+        if (Open() && exceptionsSent != ExceptionSignature())
+        {
+            await SendExceptionBreakpointsAsync();
+        }
+        if (Open() && functionsSent != FunctionSignature())
+        {
+            await (functionsAnswered = SendFunctionBreakpointsAsync());
+        }
+        if (Open() && DataBreakpointsUnavailable is null && (dataSent ?? string.Empty) != DataSignature())
+        {
+            await SendDataBreakpointsAsync();
+        }
+
+        bool Open() => disconnected is null && State != DebugState.Ended;
     }
 
     private void OnBreakpointsChanged(object? sender, string path)
