@@ -362,9 +362,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   favourites are the folder's `gitBranches.json`. `MergeState` is what a merge, rebase, cherry-pick or
   revert stopped on and Rider's words for its sides (during a rebase yours is git's theirs); `ConflictsDialog` is
   Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge` (each stage read with
-  `git cat-file --filters` in the conflicted file's encoding, the result written with its encoding and breaks);
-  `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
-  agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
+  `git cat-file --filters` in the conflicted file's encoding, the result written with its encoding and breaks), only
+  for a file both sides have (`GitConflict.CanMerge`: one a side lacks is kept or deleted whole, so the Commit window's
+  Merge shows it chosen in the Conflicts dialog); `MainWindow.Conflicts.cs` wires them with Continue Rebase and the
+  aborts, and `vcs_status`/`vcs_resolve` give an agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions; the widget gives each local
   branch the branches panel's `Menu(branch)` as its submenu (`MenuChoice.Holding`), so nothing checks out until
   Checkout is chosen.
