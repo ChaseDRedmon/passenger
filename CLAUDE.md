@@ -809,7 +809,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`Driver.cs`: raw input into the window's `ITopLevelImpl.Input` with a mouse device of its own, so the window is never
   activated and the real pointer never moves, waiting for a rendered frame before and after, since hit testing reads
   the last one). `LiveTree/AppQuery` is how an agent names elements (`@id`, type, #name, .class, "text", steps by /,
-  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process. Binding values
+  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process, whose input never
+  reaches a question Passenger asks the person for an agent nor Settings (`MainWindow.KeptFromAgents`, given to the
+  inspector's `Agent.Guard`, weighed at each event the driver sends); a headless test gets a dispatcher of its own, so
+  one test a run inspects Passenger in the test process (`McpTests.AvaloniaApp`'s person's window). Binding values
   (`BindingValues.cs`, protocol v4 `values`): each element by its XamlSourceInfo place (a root by x:Class), of several
   instances the one nearest the element chosen in the Live Visual Tree, each binding's path walked from Avalonia's
   binding expression nodes. Paused, the IDE evaluates `Wire.ReadValues` on the UI thread (the stop's, else the main
