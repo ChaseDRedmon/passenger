@@ -41,8 +41,9 @@ public partial class MainWindow
     /// <summary>Opens what File, Open or Open Folder chose (or the recent solutions, the system, a new solution or a clone):
     /// a solution (.sln, .slnx) or C# project (.csproj) as the workspace over its folder, or a folder, in this window or
     /// another as Settings says or the person answers (<see cref="Asking"/>). Null once it is open or asked where, else why
-    /// not (it is not there, or is another kind of file), which the status bar and the Welcome screen say.</summary>
-    public string? Open(string path)
+    /// not (it is not there, or is another kind of file), which the status bar and the Welcome screen say;
+    /// <paramref name="then"/> is told the window it opened in once its session has begun there, whenever that is.</summary>
+    public string? Open(string path, Action<MainWindow>? then = null)
     {
         string full = PathNames.Canonical(path);
         string? why = Directory.Exists(full) || (File.Exists(full) && WorkspaceModel.Opens(full)) ? null
@@ -54,7 +55,7 @@ public partial class MainWindow
             status.Text = why;
             return why;
         }
-        OpenChosen(full);
+        OpenChosen(full, then);
         return null;
     }
 

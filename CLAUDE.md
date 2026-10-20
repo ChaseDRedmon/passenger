@@ -560,9 +560,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   front, and the one `OpenProject(path, ThisWindow | NewWindow)` that a start, Open, the recent solutions, the Welcome
   screen, the Window menu, the system's file activation (`App.OnActivated`) and `--mcp` go through; `NewWindow` makes a
   window as the one it is opened from. `MainWindow.Open` asks Rider's Open Solution (`OpenProjectDialog`) unless
-  Settings' Open project in answers. Quit keeps every window's solution for the next start; a window closed alone does
-  not. Discord's one presence (the front window's) and the one watch for updates live here. A window's state is its
-  own fields, and a static says why it belongs to the process.
+  Settings' Open project in answers; what follows an open (New Solution's build) is its `then`, told the window it opened
+  in once the session has begun there (`OpenFolder`'s `opened`), never when it was not opened. Quit keeps every
+  window's solution for the next start; a window closed alone does not. Discord's one presence (the front window's) and
+  the one watch for updates live here. A window's state is its own fields, and a static says why it belongs to the
+  process.
 - `src/Passenger.App/ProjectSession.cs`: one open folder's services, made together and ended together: the folder and
   its solution, the language server, index, watcher, Local History, state, recent files and places, run
   configurations, the build and run runners, terminal and profiled runs, tests, the debugger and breakpoints, Git and

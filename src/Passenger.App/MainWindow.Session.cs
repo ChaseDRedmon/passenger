@@ -52,8 +52,9 @@ public partial class MainWindow
     /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
     /// read again: its language server and open files are kept. Another folder's session is left first, and the new one
     /// made once what it ran has ended: the task is done once the folder is open (at once when nothing had to end), or
-    /// once a later open has taken its place. <paramref name="opener"/> is the agent whose own open it is, which stays let in.</summary>
-    public Task OpenFolder(string path, Mcp.AgentConnection? opener = null)
+    /// once a later open has taken its place. <paramref name="opener"/> is the agent whose own open it is, which stays let in;
+    /// <paramref name="opened"/> runs once the folder's session has begun (or been read again), never for an open given up.</summary>
+    public Task OpenFolder(string path, Mcp.AgentConnection? opener = null, Action? opened = null)
     {
         UiThread.Check();
         string named = PathNames.Canonical(path);
@@ -62,6 +63,7 @@ public partial class MainWindow
         if (opening == session.Folder)
         {
             ReadAgain(opening, fileNamed ? named : null);
+            opened?.Invoke();
             return Task.CompletedTask;
         }
         // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
@@ -83,9 +85,10 @@ public partial class MainWindow
         if (ending.IsCompleted)
         {
             Begin(opening, fileNamed ? named : null);
+            opened?.Invoke();
             return Task.CompletedTask;
         }
-        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null);
+        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null, opened);
     }
 
     /// <summary>The folder open now, opened again: with the solution it has, read again; with another (a solution or project
@@ -106,7 +109,7 @@ public partial class MainWindow
         Remember();
     }
 
-    private async Task BeginOnceEndedAsync(int open, string folder, string? named)
+    private async Task BeginOnceEndedAsync(int open, string folder, string? named, Action? opened)
     {
         // Held while it waits, so a screenshot or a test finds the folder open rather than the moment between.
         using IDisposable held = BackgroundWork.Scope();
@@ -115,6 +118,7 @@ public partial class MainWindow
         if (open == opens && Ended is null)
         {
             Begin(folder, named);
+            opened?.Invoke();
         }
     }
 
