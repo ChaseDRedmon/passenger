@@ -707,8 +707,9 @@ public static class XmlEntities
         {
             bool hex = name[1] is 'x' or 'X';
             ReadOnlySpan<char> digits = hex ? name[2..] : name[1..];
+            // A surrogate's reference (an emoji written as two, &#xD83D;&#xDE00;) is no character XML allows: left as written.
             if (int.TryParse(digits, hex ? System.Globalization.NumberStyles.HexNumber : System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture, out int code) && code is > 0 and <= 0x10FFFF)
+                System.Globalization.CultureInfo.InvariantCulture, out int code) && code is > 0 and <= 0x10FFFF and not (>= 0xD800 and <= 0xDFFF))
             {
                 return char.ConvertFromUtf32(code);
             }

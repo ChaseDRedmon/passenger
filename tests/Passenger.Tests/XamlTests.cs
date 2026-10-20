@@ -227,6 +227,46 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_character_reference_to_half_a_surrogate_pair_leaves_its_file_and_the_projects_others_with_their_help()
+    {
+        // An emoji written as two references, each half a UTF-16 pair: no character XML allows, read as written. The file is
+        // on disk as the project loads, and the window's own file has one typed into it.
+        string emoji = app.Write("Emoji.axaml", """
+            <UserControl xmlns="https://github.com/avaloniaui"
+                         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                         x:Class="Gallery.Emoji">
+                <StackPanel>
+                    <TextBlock Text="&#xD83D;&#xDE00;" />
+                    <TextBlock Text="&#55357;" />
+                </StackPanel>
+            </UserControl>
+
+            """);
+        app.Write("Emoji.axaml.cs", "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class Emoji : UserControl\n{\n}\n");
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument view = window.EditorArea.Active!;
+        Ui.WaitFor(() => window.XamlService.For(view)?.IsLoaded == true, "the project's XAML read, the file with the references among it");
+        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        window.KeyTextInput("\n        <TextBlock Text=\"&#xD83D;\" />\n        ");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered beside a typed reference to half a pair");
+        Ui.Press(window, "ESCAPE");
+        Ui.Press(window, "BACK_SPACE");
+        Ui.Settle();
+        Assert.Empty(view.Markers);
+
+        window.OpenFile(emoji);
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<TextBlock Text=\"&#55357;\"");
+        window.KeyTextInput(" ");
+        window.KeyTextInput("F");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Foreground"), "a TextBlock's properties in the file holding the references");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_package_restored_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands()
     {
         string folder = PathNames.Canonical(TestFolders.Create("xaml-restore-"));

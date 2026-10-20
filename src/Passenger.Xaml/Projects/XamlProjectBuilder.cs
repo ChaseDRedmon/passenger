@@ -12,6 +12,7 @@ public sealed class XamlProjectBuilder
 {
     private readonly object gate = new();
     private readonly string? dotnetRoot;
+    private readonly Action<Exception>? failed;
     private readonly Dictionary<string, SourceTypes> sources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, XamlFileSummary> files = new(StringComparer.Ordinal);
     private ProjectInputs inputs;
@@ -25,11 +26,12 @@ public sealed class XamlProjectBuilder
     /// declares none anew keeps it.</summary>
     private string classes = string.Empty;
 
-    private XamlProjectBuilder(ProjectInputs inputs, XamlDialect dialect, string? dotnetRoot)
+    private XamlProjectBuilder(ProjectInputs inputs, XamlDialect dialect, string? dotnetRoot, Action<Exception>? failed)
     {
         this.inputs = inputs;
         Dialect = dialect;
         this.dotnetRoot = dotnetRoot;
+        this.failed = failed;
     }
 
     public XamlDialect Dialect { get; }
@@ -38,11 +40,12 @@ public sealed class XamlProjectBuilder
 
     public string Folder => inputs.Folder;
 
-    /// <summary>A builder for a project whose XAML Passenger reads (an Avalonia or WPF project), or null for another.</summary>
-    public static XamlProjectBuilder? For(string projectPath, string? dotnetRoot)
+    /// <summary>A builder for a project whose XAML Passenger reads (an Avalonia or WPF project), or null for another;
+    /// <paramref name="failed"/> hears of a file a load could not read, which it leaves out.</summary>
+    public static XamlProjectBuilder? For(string projectPath, string? dotnetRoot, Action<Exception>? failed = null)
     {
         ProjectInputs inputs = ProjectInputs.Read(projectPath, dotnetRoot);
-        return DialectOf(inputs) is { } dialect ? new XamlProjectBuilder(inputs, dialect, dotnetRoot) : null;
+        return DialectOf(inputs) is { } dialect ? new XamlProjectBuilder(inputs, dialect, dotnetRoot, failed) : null;
     }
 
     /// <summary>The dialect a project's XAML is in, by the framework it references: Avalonia's for a project that references
@@ -77,7 +80,7 @@ public sealed class XamlProjectBuilder
             sources.Clear();
             List<(string Path, string Assembly)> cs = [.. inputs.SourceFiles.Select(f => (f, inputs.AssemblyName))];
             cs.AddRange(referenced.SelectMany(r => r.Inputs.SourceFiles.Select(f => (f, r.Inputs.AssemblyName))));
-            foreach (SourceTypes read in cs.AsParallel().Select(f => SourceTypes.Read(f.Path, open?.Invoke(f.Path) ?? ReadText(f.Path), f.Assembly)))
+            foreach (SourceTypes read in cs.AsParallel().Select(f => Reading(() => SourceTypes.Read(f.Path, open?.Invoke(f.Path) ?? ReadText(f.Path), f.Assembly))).OfType<SourceTypes>())
             {
                 sources[read.Path] = read;
             }
@@ -87,10 +90,28 @@ public sealed class XamlProjectBuilder
             XamlProject shell = Make();
             foreach (string path in xaml)
             {
-                string text = open?.Invoke(path) ?? ReadText(path);
-                files[path] = XamlFileSummary.Of(path, XmlTree.Parse(text), shell.ResolveSource);
+                if (Reading(() => XamlFileSummary.Of(path, XmlTree.Parse(open?.Invoke(path) ?? ReadText(path)), shell.ResolveSource)) is { } summary)
+                {
+                    files[path] = summary;
+                }
             }
             return built = Make();
+        }
+    }
+
+    /// <summary>One file read as the project loads; null for one the reader trips on, said to <see cref="failed"/>, so the
+    /// project's other files keep their help.</summary>
+    private T? Reading<T>(Func<T> read)
+        where T : class
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            failed?.Invoke(error);
+            return null;
         }
     }
 

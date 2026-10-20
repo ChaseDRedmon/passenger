@@ -208,7 +208,7 @@ public sealed class XamlService : IDisposable
             return loading;
         }
         Dictionary<string, TextSnapshot> texts = OpenTexts();
-        Task<XamlProjectBuilder?> builder = BackgroundWork.Run(() => XamlProjectBuilder.For(project, DotnetRoot.Value));
+        Task<XamlProjectBuilder?> builder = BackgroundWork.Run(() => XamlProjectBuilder.For(project, DotnetRoot.Value, IdeErrors.Report));
         loading = new XamlLoading(project, builder, LoadAsync(builder, texts));
         projects[project] = loading;
         _ = AnnounceAsync(loading);
