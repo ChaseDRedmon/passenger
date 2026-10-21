@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Fonts;
@@ -20,9 +21,13 @@ public sealed class AssetPreview : IDisposable
 
     private readonly IFontCollection? fonts;
 
-    private AssetPreview(Bitmap bitmap)
+    /// <summary>The SHA-256 of the bytes it was decoded from.</summary>
+    private byte[] read = [];
+
+    private AssetPreview(Bitmap bitmap, int frames)
     {
         Bitmap = bitmap;
+        Frames = frames;
     }
 
     private AssetPreview(GlyphTypeface typeface, IFontCollection fonts)
@@ -33,6 +38,9 @@ public sealed class AssetPreview : IDisposable
 
     /// <summary>The decoded image, or null for a font; borrowed by views, never disposed by them.</summary>
     public Bitmap? Bitmap { get; }
+
+    /// <summary>How many frames the image has (an animated GIF's or WebP's), of which the first is shown; 0 for a font.</summary>
+    public int Frames { get; }
 
     /// <summary>The file's own glyph face, or null for an image, without installed-font substitution.</summary>
     public GlyphTypeface? Typeface { get; }
@@ -62,14 +70,25 @@ public sealed class AssetPreview : IDisposable
             throw new IOException("Font collections are not supported.");
         }
         using MemoryStream stream = new(bytes, writable: false);
+        AssetPreview asset;
         try
         {
-            return font ? LoadFont(stream) : LoadImage(stream);
+            asset = font ? LoadFont(stream) : LoadImage(stream);
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or NotSupportedException)
         {
             throw new IOException($"The {(font ? "font" : "image")} could not be decoded: {error.Message}", error);
         }
+        asset.read = SHA256.HashData(bytes);
+        return asset;
+    }
+
+    /// <summary>Whether a file holds the bytes this was decoded from: the same file under another name, once another
+    /// program moved its folder.</summary>
+    public bool IsOf(string path)
+    {
+        FileInfo file = new(path);
+        return file.Exists && file.Length is > 0 and <= ImageBytes && SHA256.HashData(File.ReadAllBytes(path)).AsSpan().SequenceEqual(read);
     }
 
     /// <summary>Loads a face in a collection private to this asset, so opening it changes no installed-font lookup.</summary>
@@ -112,7 +131,7 @@ public sealed class AssetPreview : IDisposable
                     throw new IOException("The image pixel data is incomplete or invalid.");
                 }
             }
-            return new AssetPreview(bitmap);
+            return new AssetPreview(bitmap, Math.Max(1, codec.FrameCount));
         }
         catch
         {

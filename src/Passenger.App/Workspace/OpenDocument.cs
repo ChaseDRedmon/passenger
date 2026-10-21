@@ -769,8 +769,18 @@ public sealed class OpenDocument : Observable
     /// written over it.</summary>
     public bool IsWorkbook => Tables.Workbook.IsWorkbook(Path);
 
+    /// <summary>Whether its tab holds the file's text: an asset preview's and a workbook's hold an empty stand-in, so
+    /// nothing searches, reads, edits or writes it as the file's (<see cref="ShownAs"/> says what the file is instead).</summary>
+    public bool HoldsText => Asset is null && !IsWorkbook;
+
+    /// <summary>What a file whose tab holds no text is shown as, for what refuses its text to say; null for text.</summary>
+    public string? ShownAs => Asset is { Bitmap: not null } ? "an image, shown as a read-only preview"
+        : Asset is not null ? "a font, shown as a read-only preview"
+        : IsWorkbook ? "an Excel workbook, shown as its sheets' cells" : null;
+
     /// <summary>What the bar over a read-only file says it is and where it came from.</summary>
-    public string Origin => Asset is not null ? "Asset preview, read-only"
+    public string Origin => Asset is { Bitmap: not null } ? "An image, shown as its pixels, read-only"
+        : Asset is not null ? "A font, shown in its own glyphs, read-only"
         : IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
@@ -828,13 +838,13 @@ public sealed class OpenDocument : Observable
         return false;
     }
 
-    /// <summary>Whether a file holds the text this one was last loaded or saved with, read as this one is read: the same
-    /// file under another name, once its folder was moved.</summary>
+    /// <summary>Whether a file holds the text this one was last loaded or saved with, read as this one is read (an asset's
+    /// bytes): the same file under another name, once its folder was moved.</summary>
     public bool IsSavedAt(string path)
     {
         try
         {
-            return File.Exists(path) && FileText.Load(path, Chosen)?.Text == Text.Saved.ToString();
+            return Asset is { } asset ? asset.IsOf(path) : File.Exists(path) && FileText.Load(path, Chosen)?.Text == Text.Saved.ToString();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

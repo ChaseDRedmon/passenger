@@ -80,6 +80,10 @@ public partial class MainWindow
 
     private static string? NeedsFile(ActionContext context) => context.File is null ? NoFile : null;
 
+    /// <summary>Why a line of the file shown cannot be acted on: none is shown, or its tab holds no lines (a preview, a workbook).</summary>
+    private static string? NeedsLines(ActionContext context) =>
+        NeedsFile(context) ?? (context.File is { HoldsText: false } file ? $"{file.Name} is {file.ShownAs}, with no lines" : null);
+
     private string? NeedsFolder(ActionContext _) => Folder is null ? NoFolder : null;
 
     /// <summary>The scope of the rows chosen in the Explorer while it has the keys, as Rider's Find in Files takes the
@@ -138,7 +142,7 @@ public partial class MainWindow
         Add(A.GoToEverything, "Search Everywhere", "Navigate", _ => navigator.ShowGoToEverything(), NeedsFolder, ("Navigate", 1, 0));
         Add(A.GoToFile, "Go to File", "Navigate", _ => navigator.ShowGoToFile(), NeedsFolder, ("Navigate", 1, 1));
         Add(A.GoToSymbol, "Go to Symbol", "Navigate", _ => navigator.ShowGoToSymbol(), NeedsFolder, ("Navigate", 1, 2));
-        Add(A.GoToLine, "Go to Line:Column", "Navigate", _ => navigator.ShowGoToLine(), NeedsFile, ("Navigate", 1, 3));
+        Add(A.GoToLine, "Go to Line:Column", "Navigate", _ => navigator.ShowGoToLine(), NeedsLines, ("Navigate", 1, 3));
         Add(A.FileStructure, "File Structure", "Navigate", _ => navigator.ShowFileStructure(), NeedsFile, ("Navigate", 1, 4));
 
         AddBuilding();

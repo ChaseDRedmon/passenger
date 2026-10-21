@@ -163,8 +163,9 @@ public sealed class StatusBar
         ShowCaret(textual is null ? null : editor);
     }
 
-    /// <summary>The file shown while it is text: a workbook's tab holds none, so it has no breaks, encoding, indent or caret.</summary>
-    private static OpenDocument? Textual(OpenDocument? active) => active is { IsWorkbook: false } ? active : null;
+    /// <summary>The file shown while it is text: a workbook's or an asset preview's tab holds none, so it has no breaks,
+    /// encoding, indent or caret.</summary>
+    private static OpenDocument? Textual(OpenDocument? active) => active is { HoldsText: true } ? active : null;
 
     /// <summary>The file's line separator and encoding, which a click there offers others of.</summary>
     public void ShowStorage(OpenDocument? shown)

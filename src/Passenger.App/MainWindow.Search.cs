@@ -199,6 +199,11 @@ public partial class MainWindow
         {
             if (Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open)
             {
+                if (!open.HoldsText)
+                {
+                    // A preview's or a workbook's tab holds no text of the file's to replace in, and its bytes are no text.
+                    continue;
+                }
                 IReadOnlyList<TextEdit> edits = FileSearch.Replacements(open.Text.Snapshot, query, replacement);
                 if (edits.Count > 0)
                 {
@@ -270,12 +275,13 @@ public partial class MainWindow
 
     private Task<IReadOnlyList<SearchMatch>> SearchFiles(SearchQuery query, SearchScope scope, CancellationToken cancellation)
     {
-        Dictionary<string, TextSnapshot> open = Editors.Documents.ToDictionary(d => d.Path, d => d.Text.Snapshot);
+        // A preview's or a workbook's tab holds no text, so its file is searched as a closed one is, and passed over as binary.
+        Dictionary<string, TextSnapshot> open = Editors.Documents.Where(d => d.HoldsText).ToDictionary(d => d.Path, d => d.Text.Snapshot);
         return FileSearch.FindAsync(session.Index.Root ?? Folder!, session.Index.Files, Place(scope), query, open, cancellation);
     }
 
     /// <summary>A file's text for the preview: the editor's when it is open.</summary>
     private TextSnapshot? TextOf(string path) =>
-        Editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot
+        Editors.Documents.FirstOrDefault(d => d.Path == path && d.HoldsText)?.Text.Snapshot
         ?? (FileSearch.Read(path) is { } text ? TextSnapshot.From(text) : null);
 }

@@ -29,12 +29,25 @@ public sealed class AssetPreviewControl : DockPanel, IDisposable
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
         if (asset.Bitmap is { } bitmap)
         {
-            TextBlock dimensions = Label($"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} pixels · Read-only · Static frame");
+            // Inset as the font's samples are, its words and picture on one edge.
+            DockPanel picture = new() { Margin = new Thickness(2 * Gap) };
+            TextBlock dimensions = Label($"{bitmap.PixelSize.Width} × {bitmap.PixelSize.Height} pixels"
+                + (asset.Frames > 1 ? $" · the first of its {asset.Frames} frames" : ""));
             SetDock(dimensions, Dock.Top);
-            Children.Add(dimensions);
-            Image image = new() { Source = bitmap, Stretch = Stretch.Uniform, Margin = new Thickness(2 * Gap) };
+            picture.Children.Add(dimensions);
+            // Shrunk to fit but never enlarged, so a small icon shows as it is rather than blurred, its bounds the picture's.
+            Image image = new()
+            {
+                Source = bitmap,
+                Stretch = Stretch.Uniform,
+                StretchDirection = StretchDirection.DownOnly,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(Gap),
+            };
             AutomationProperties.SetName(image, "Image preview");
-            Children.Add(image);
+            picture.Children.Add(image);
+            Children.Add(picture);
             return;
         }
         if (asset.Typeface is not { } typeface)
@@ -42,7 +55,7 @@ public sealed class AssetPreviewControl : DockPanel, IDisposable
             return;
         }
         StackPanel content = new() { Spacing = 12, Margin = new Thickness(2 * Gap) };
-        content.Children.Add(Label($"{typeface.FamilyName} · Local font · Read-only"));
+        content.Children.Add(Label($"{typeface.FamilyName} · Local font"));
         AddSample(content, typeface, "Uppercase A–Z", Uppercase);
         AddSample(content, typeface, "Lowercase a–z", Lowercase);
         AddSample(content, typeface, "Digits 0–9", Digits);

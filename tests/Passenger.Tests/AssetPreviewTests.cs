@@ -10,6 +10,7 @@ using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Editors;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using SkiaSharp;
 
 namespace Passenger.Tests;
@@ -265,6 +266,70 @@ public sealed class AssetPreviewTests : IDisposable
         Assert.Null(window.EditorArea.Active!.Asset);
         Assert.True(window.EditorArea.CodeEditor.IsVisible);
         window.Close();
+    }
+
+    /// <summary>A preview's tab holds an empty stand-in for text: nothing that reads or changes a file's text may take it for
+    /// the image's, or an agent's replace would claim to have changed a picture, and a bookmark would mark a line it lacks.</summary>
+    [AvaloniaFact]
+    public void A_preview_has_no_text_for_the_status_bar_an_agent_find_and_replace_in_files_or_a_bookmark()
+    {
+        string picture = Path.Combine(folder, "picture.png");
+        byte[] original = ImageBytes(".png");
+        File.WriteAllBytes(picture, original);
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "Keep these notes.\n");
+        MainWindow window = Open();
+        window.OpenFile("notes.txt");
+        Ui.Settle();
+        Assert.True(window.FindControl<Button>("EncodingButton")!.IsVisible, "A text file's encoding is not shown");
+        window.OpenFile("picture.png");
+        Ui.Settle();
+
+        Assert.False(window.FindControl<Button>("EncodingButton")!.IsVisible, "An image's preview shows a text encoding");
+        Assert.False(window.FindControl<Button>("LineSeparatorButton")!.IsVisible, "An image's preview shows a line separator");
+        Assert.False(window.Perform(AppActions.ToggleBookmark), "A bookmark was put on a line of an image");
+        Assert.False(window.Perform(AppActions.ToggleBreakpoint), "A breakpoint was put on a line of an image");
+        Assert.Empty(window.Bookmarks.All);
+
+        Passenger.App.Mcp.PassengerTools agent = new(window);
+        foreach (Task asked in new Task[] { agent.EditorText("picture.png"), agent.Edit("picture.png", "x", "y") })
+        {
+            Ui.WaitFor(() => asked.IsCompleted, "the agent's answer");
+            Assert.True(asked.IsFaulted, "An agent read or edited an image's preview as text");
+            Assert.Contains("picture.png is an image, shown as a read-only preview", asked.Exception!.InnerException!.Message, StringComparison.Ordinal);
+        }
+        // A pattern that matches an empty line finds the text file's lines, never the image's empty stand-in.
+        Task<Passenger.App.Mcp.FindInFilesResult> finding = agent.FindInFiles("^", regex: true);
+        Ui.WaitFor(() => finding.IsCompleted, "find_in_files' answer");
+        Assert.DoesNotContain(finding.Result.Matches, m => m.Path == "picture.png");
+        Assert.Contains(finding.Result.Matches, m => m.Path == "notes.txt");
+        Task<string> replacing = agent.ReplaceInFiles("^", "// ", regex: true);
+        Ui.WaitFor(() => replacing.IsCompleted, "replace_in_files' answer");
+        Assert.DoesNotContain("picture.png", replacing.Result, StringComparison.Ordinal);
+        Assert.Equal(original, File.ReadAllBytes(picture));
+        Assert.Empty(window.EditorArea.Active!.Text.Snapshot.ToString());
+        window.Close();
+    }
+
+    /// <summary>A folder renamed elsewhere (mv, git mv, Finder) takes its open files with it: an image's tab follows it as
+    /// a text file's does, known by its bytes, rather than closing as if it had been deleted.</summary>
+    [AvaloniaFact]
+    public void An_open_preview_follows_its_folder_renamed_elsewhere()
+    {
+        string old = Path.Combine(folder, "art", "Old");
+        string renamed = Path.Combine(folder, "art", "New");
+        Directory.CreateDirectory(old);
+        File.WriteAllBytes(Path.Combine(old, "picture.png"), ImageBytes(".png"));
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(old, "picture.png"));
+        Ui.Settle();
+
+        Directory.Move(old, renamed);
+        Ui.WaitFor(() => window.EditorArea.Documents.Count == 1 && PathNames.IsUnder(window.EditorArea.Documents[0].Path, PathNames.Canonical(renamed)),
+            "the image's tab to follow its folder to its new name");
+        Assert.Equal("picture.png", window.EditorArea.Active!.Name);
+        Assert.NotNull(Preview(window.EditorArea.ActiveGroup));
+        window.Close();
+        Assert.False(Directory.Exists(old), "The folder renamed elsewhere was made again under its old name");
     }
 
     private MainWindow Open()
