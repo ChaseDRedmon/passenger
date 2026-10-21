@@ -32,6 +32,7 @@ internal static class Program
             _ = Discord.DiscordIpc.Default;
             Web.JsonSchemas.CheckVariable();
             Web.DockerHubTags.CheckVariable();
+            _ = Containers.BuildKitChecks.ByDefault;
             Mcp.McpProxy.CheckVariable();
             _ = MainWindow.WatchSaysLater;
             _ = Mcp.AgentCall.Every;

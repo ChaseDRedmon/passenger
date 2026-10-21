@@ -232,6 +232,12 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// image, as <c>FROM image:</c> is completed. Off, it asks Docker Hub nothing and offers no tags.</summary>
     public bool DockerHubTags { get; init; } = true;
 
+    /// <summary>"Check Dockerfiles with BuildKit": as a Dockerfile opens and is saved, the engine's BuildKit runs its build
+    /// checks on it, reading each base image's metadata from its registry. Off, none runs (a compose file's hints and
+    /// errors, which Compose works out on this computer, stay). On unless <c>PASSENGER_BUILDKIT_CHECKS</c> is off, as the
+    /// tests' run has it (<see cref="Containers.BuildKitChecks"/>).</summary>
+    public bool BuildKitChecks { get; init; } = Containers.BuildKitChecks.ByDefault;
+
     /// <summary>Rider's Enable MCP Server: agents reaching the window through its socket (<c>passenger --mcp-attach</c>)
     /// are let in without asking. Off until the person turns it on, since any program running as them could then act with
     /// the IDE's permissions; off, the window asks the person before each agent's first call goes on.</summary>

@@ -118,6 +118,9 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.Web.JsonSchemas.Variable, "http://127.0.0.1:9/");
         // Nor Docker Hub for an image's tags after FROM image:, which a Dockerfile server without a stand-in of its window's asks of where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Web.DockerHubTags.Variable, "http://127.0.0.1:9/");
+        // Nor a registry for a Dockerfile's base images: BuildKit's checks, which read their metadata there, are off in every
+        // window's settings but in the one test that turns them on.
+        Environment.SetEnvironmentVariable(Passenger.App.Containers.BuildKitChecks.Variable, "off");
         // Nor the person's Passenger: an agent's call with no window to join starts this build headless, in the run's state.
         Environment.SetEnvironmentVariable(Passenger.App.Mcp.McpProxy.StartVariable, "headless");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.

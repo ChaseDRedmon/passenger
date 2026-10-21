@@ -77,7 +77,7 @@ public sealed class WebLanguages : IAsyncDisposable
         Schemas = new JsonSchemas(() => settings().DownloadJsonSchemas);
         Eslint = new EslintService(folder, settings, FindNodeAsync);
         Prettier = new PrettierService(folder, settings, FindNodeAsync);
-        Checks = new Containers.EngineChecks(engine ?? (() => Containers.ContainerEngine.Shared));
+        Checks = new Containers.EngineChecks(engine ?? (() => Containers.ContainerEngine.Shared), now.BuildKitChecks);
         Eslint.Message += (_, message) => Message?.Invoke(this, message);
     }
 

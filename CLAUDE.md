@@ -498,7 +498,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   the file's `Checking()`, one at a time, dropped when the text moved on before it landed: BuildKit's own checks as a
   Dockerfile opens and is saved (`DockerfileCheck`: `docker buildx build --call=check,format=json -` on its text, on the
   context's own builder, no context sent; a rule's warning linked to its page, a build error but for a parse error,
-  which the server marks, or a registry out of reach), and Compose's model of a compose file as typed (`ComposeCheck`,
+  which the server marks, or a registry out of reach), while Settings' Check Dockerfiles with BuildKit (its Docker page,
+  `AppSettings.BuildKitChecks`) is on, since BuildKit reads each base image's metadata from its registry; and Compose's
+  model of a compose file as typed, which needs no network (`ComposeCheck`,
   for the files Compose reads unasked: the first of compose.yaml, compose.yml, docker-compose.yml and
   docker-compose.yaml in a folder and the first override beside it; `docker compose --project-directory … -f - [-f
   override] config --format json --no-path-resolution`, the text typed as `-`, again as the other or the .env changes).
@@ -506,10 +508,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   reading of block YAML, finds), else on the first line, or listed as the other file's; each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
-  scalar written (a value it normalizes gets none). Their problems are Problems' Containers tab by file
+  scalar written (a value it normalizes gets none). A secret's value (a word of its variable's or key's name, split at
+  `_`, `-`, `.` and case turns, is PASSWORD, PASSWD, PWD, SECRET, TOKEN, KEY or CREDENTIAL, or its plural, or two make
+  CONNECTIONSTRING: `ComposeCheck.Secret`) shows as the same dots whatever its length. Their problems are Problems'
+  Containers tab by file
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
-  run), so no setting turns them off.
+  run).
   Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop.
@@ -1218,7 +1223,10 @@ a server that was only slow. Nothing changes those variables afterwards; a test 
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
 log, history or Git signing and hooks. Nor does a test start the person's Passenger: the run sets `PASSENGER_START=headless`, so an agent's
 `--mcp-attach` with no window to join starts this build with `--headless` (a person's window on the headless platform,
-ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
+ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test
+reaches a registry through a Dockerfile it opens: the run sets `PASSENGER_BUILDKIT_CHECKS=off`, the default of Check
+Dockerfiles with BuildKit (`Containers.BuildKitChecks`), which `EngineChecksTests`' one test of it turns on in its window's
+Settings. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
 an update gives its window the updater of a copy installed in a test folder, and no other window has one; each
 version's disk image is made once a class (`UpdatesTests.DiskImages`), since hdiutil takes seconds over each. After every window test, pass or fail, the windows it left open are closed,

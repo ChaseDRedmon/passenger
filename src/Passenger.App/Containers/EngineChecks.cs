@@ -22,7 +22,30 @@ public sealed class EngineChecks : IDisposable
     private ContainerEngine? followed;
     private bool disposed;
 
-    public EngineChecks(Func<ContainerEngine> engine) => this.engine = engine;
+    /// <param name="buildKit">Whether BuildKit checks Dockerfiles (Settings' Check Dockerfiles with BuildKit).</param>
+    public EngineChecks(Func<ContainerEngine> engine, bool buildKit)
+    {
+        this.engine = engine;
+        BuildKit = buildKit;
+    }
+
+    /// <summary>Whether BuildKit checks the Dockerfiles, which reads their base images' metadata from their registries.</summary>
+    public bool BuildKit { get; private set; }
+
+    /// <summary>Settings' Check Dockerfiles with BuildKit changed: each open Dockerfile is checked now, or its checks taken away.</summary>
+    public void UseBuildKit(bool on)
+    {
+        UiThread.Check();
+        if (disposed || on == BuildKit)
+        {
+            return;
+        }
+        BuildKit = on;
+        foreach (DockerfileCheck check in checks.Values.OfType<DockerfileCheck>())
+        {
+            check.Run();
+        }
+    }
 
     /// <summary>A file's problems changed (<see cref="Problems"/>), on the UI thread.</summary>
     public event EventHandler? Changed;
@@ -167,7 +190,6 @@ internal abstract class EngineCheck : IDisposable
     /// <summary>How long typing must pause before a file is checked again.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(500);
 
-    private readonly EngineChecks owner;
     private readonly WebDocument web;
     private readonly Debounce later;
     private CancellationTokenSource? running;
@@ -175,7 +197,7 @@ internal abstract class EngineCheck : IDisposable
 
     protected EngineCheck(EngineChecks owner, OpenDocument document, WebDocument web)
     {
-        this.owner = owner;
+        Owner = owner;
         this.web = web;
         Document = document;
         later = new Debounce(Settle, () =>
@@ -188,6 +210,11 @@ internal abstract class EngineCheck : IDisposable
     }
 
     protected OpenDocument Document { get; }
+
+    protected EngineChecks Owner { get; }
+
+    /// <summary>Whether the check runs at all, as Settings say: when it does not, what it found before is taken away.</summary>
+    protected virtual bool Wanted => true;
 
     /// <summary>The file's folder, where the engine's command runs.</summary>
     public string Folder => Path.GetDirectoryName(Document.Path)!;
@@ -212,6 +239,12 @@ internal abstract class EngineCheck : IDisposable
         }
         later.Stop();
         running?.Cancel();
+        if (!Wanted)
+        {
+            running = null;
+            Show(Outcome.None);
+            return;
+        }
         CancellationTokenSource cancel = new();
         running = cancel;
         _ = RunAsync(Document.Text.Snapshot, Document.Text.Version, cancel, Document.Checking());
@@ -230,7 +263,7 @@ internal abstract class EngineCheck : IDisposable
     {
         try
         {
-            ContainerEngine engine = owner.Engine;
+            ContainerEngine engine = Owner.Engine;
             string path = Document.Path;
             string written = text.ToString();
             Outcome found = await BackgroundWork.Run(() => CheckAsync(engine, path, text, written, cancel.Token), cancel.Token);
@@ -282,7 +315,7 @@ internal abstract class EngineCheck : IDisposable
         if (!problems.SequenceEqual(Problems))
         {
             Problems = problems;
-            owner.Told();
+            Owner.Told();
         }
     }
 
@@ -307,7 +340,7 @@ internal abstract class EngineCheck : IDisposable
     private void OnSaved(object? sender, EventArgs e)
     {
         Run();
-        owner.Saved(this);
+        Owner.Saved(this);
     }
 
     public void Dispose()
@@ -359,6 +392,8 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
     protected override bool AsTyped => false;
 
     protected override bool Hints => false;
+
+    protected override bool Wanted => Owner.BuildKit;
 
     protected override async Task<Outcome> CheckAsync(ContainerEngine engine, string path, TextSnapshot snapshot, string text, CancellationToken cancel)
     {
@@ -427,4 +462,20 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
         !message.Contains("dockerfile parse error", StringComparison.OrdinalIgnoreCase)
         && !((string[])["dial tcp", "no such host", "i/o timeout", "connection refused", "network is unreachable", "TLS handshake timeout",
             "context deadline exceeded", "server misbehaving", "connection reset"]).Any(n => message.Contains(n, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>Whether Settings' Check Dockerfiles with BuildKit is on in a Passenger with no settings.json saying otherwise
+/// (a headless window's, a test's): on, unless the IDE's <c>PASSENGER_BUILDKIT_CHECKS</c> is <c>off</c>, as the tests' run
+/// sets it, so no test reaches a registry through a Dockerfile it opens but the one that turns the setting on.</summary>
+public static class BuildKitChecks
+{
+    public const string Variable = "PASSENGER_BUILDKIT_CHECKS";
+
+    /// <summary>The setting's default; a value of the variable other than <c>off</c> or <c>on</c> is fatal as the IDE starts.</summary>
+    public static bool ByDefault => Environment.GetEnvironmentVariable(Variable) switch
+    {
+        null or "" or "on" => true,
+        "off" => false,
+        string other => throw new FormatException($"{Variable} takes off or on, not '{other}'"),
+    };
 }

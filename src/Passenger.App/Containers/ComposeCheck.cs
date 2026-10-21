@@ -85,7 +85,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         {
             if (resolved.TryGetValue(expression, out string? value))
             {
-                hints.Add(new InlayHint(end, $"= {Label(value)}", PadLeft: true, Kind: InlayHintKind.Value));
+                hints.Add(new InlayHint(end, $"= {(Names(expression).Any(Secret) ? Masked : Label(value))}", PadLeft: true, Kind: InlayHintKind.Value));
             }
         }
         if (isBase && partner is not null && model.Succeeded && self is { Succeeded: true })
@@ -188,7 +188,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
                 }
                 if (At(after.RootElement, entry.Path) is { } now && Scalar(now) is { } ends && ends != value)
                 {
-                    hints.Add(new InlayHint(entry.ValueEnd, $"{overrideName}: {Label(ends)}", PadLeft: true, Kind: InlayHintKind.Value));
+                    hints.Add(new InlayHint(entry.ValueEnd, $"{overrideName}: {(entry.Path.Any(Secret) ? Masked : Label(ends))}", PadLeft: true, Kind: InlayHintKind.Value));
                 }
             }
         }
@@ -228,6 +228,39 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => element.GetRawText(),
         _ => null,
     };
+
+    /// <summary>What a hint shows of a secret's value: the same dots whatever its length, so a shared screen never shows it.</summary>
+    private const string Masked = "••••••";
+
+    /// <summary>The words that make a variable's or key's value a secret, as a word of its name.</summary>
+    private static readonly HashSet<string> Secrets = new(StringComparer.Ordinal) { "PASSWORD", "PASSWD", "PWD", "SECRET", "TOKEN", "KEY", "CREDENTIAL", "CONNECTIONSTRING" };
+
+    /// <summary>Whether a name's value is a secret: a word of it (between underscores, dashes or dots, or where its case
+    /// turns, as apiKey's Key) is one of <see cref="Secrets"/> or its plural, or two words make one (CONNECTION_STRING), so
+    /// API_KEY and dbPassword are and MONKEY is not.</summary>
+    internal static bool Secret(string name)
+    {
+        string[] words = [.. Words().Split(name).Where(w => w.Length > 0).Select(w => w.ToUpperInvariant())];
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (IsSecret(words[i]) || (i + 1 < words.Length && IsSecret(words[i] + words[i + 1])))
+            {
+                return true;
+            }
+        }
+        return false;
+
+        static bool IsSecret(string word) => Secrets.Contains(word) || (word.Length > 1 && word[^1] == 'S' && Secrets.Contains(word[..^1]));
+    }
+
+    /// <summary>Every variable an expression reads, its default's included (<c>${A:-${DB_PASSWORD}}</c>).</summary>
+    private static IEnumerable<string> Names(string expression) => VariableName().Matches(expression).Select(m => m.Groups[1].Value);
+
+    [GeneratedRegex(@"[_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")]
+    private static partial Regex Words();
+
+    [GeneratedRegex(@"\$\{?([A-Za-z_][A-Za-z0-9_]*)")]
+    private static partial Regex VariableName();
 
     /// <summary>A value as a hint shows it: its first line, cut at <see cref="Longest"/>; an empty one as "".</summary>
     private static string Label(string value)

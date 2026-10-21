@@ -1,7 +1,13 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Containers;
 using Passenger.App.Run;
+using Passenger.App.Settings;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -30,6 +36,27 @@ public sealed class EngineChecksTests
         {
             OpenDocument document = window.EditorArea.Active!;
             TextSnapshot text = document.Text.Snapshot;
+            // Off, as every other test has it: no registry is asked, nothing is marked.
+            Assert.False(window.Settings.BuildKitChecks, "Check Dockerfiles with BuildKit is on in the tests' run, which reaches registries");
+            Assert.DoesNotContain(document.Markers, m => m.Message.StartsWith("BuildKit:", StringComparison.Ordinal));
+
+            // Turned on, on Settings' Docker page, which says what it reads.
+            SettingsDialog dialog = DialogButtonsTests.Check(window.ShowSettings());
+            dialog.Query = "buildkit";
+            Ui.Settle();
+            Assert.Equal([SettingsDialog.DockerPage], dialog.Pages);
+            Assert.Equal([BuildKitSetting], dialog.Shown);
+            Assert.Contains(dialog.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible
+                && t.Text?.Contains("reads each base image's metadata from its registry", StringComparison.Ordinal) == true);
+            CheckBox on = ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == BuildKitSetting).Parent!).GetVisualDescendants().OfType<CheckBox>().First();
+            Point at = on.TranslatePoint(new Point(on.Bounds.Width / 2, on.Bounds.Height / 2), dialog)!.Value;
+            dialog.MouseDown(at, MouseButton.Left);
+            dialog.MouseUp(at, MouseButton.Left);
+            Ui.Settle();
+            dialog.Ok();
+            Ui.Settle();
+            Assert.True(window.Settings.BuildKitChecks, "Ticking Check Dockerfiles with BuildKit left it off");
+
             Ui.WaitFor(() => document.Markers.Any(m => m.Message.EndsWith("(FromAsCasing)", StringComparison.Ordinal)), $"BuildKit's FromAsCasing on the first line ({window.Status})");
             Marker casing = document.Markers.Single(m => m.Message.EndsWith("(FromAsCasing)", StringComparison.Ordinal));
             Assert.Equal(MarkerKind.Warning, casing.Kind);
@@ -46,8 +73,8 @@ public sealed class EngineChecksTests
             Assert.Equal([(0, "Dockerfile", "1 problem"), (1, casing.Message, "Dockerfile:1:1")], problems.Rows.Select(r => (r.Depth, r.Label, r.Detail)));
 
             // Fixed and saved, the check runs again and finds nothing.
-            int at = text.ToString().IndexOf(" as ", StringComparison.Ordinal);
-            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, 4, " AS ")]);
+            int casingAt = text.ToString().IndexOf(" as ", StringComparison.Ordinal);
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(casingAt, 4, " AS ")]);
             Ui.Run(window, AppActions.Save);
             Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("BuildKit:", StringComparison.Ordinal)) && problems.ContainerProblems.Count == 0,
                 $"BuildKit's warning gone once the fix was saved: [{string.Join(", ", problems.ContainerProblems.Select(p => p.Message))}]");
@@ -59,26 +86,34 @@ public sealed class EngineChecksTests
         }
     }
 
+    private const string BuildKitSetting = "Check Dockerfiles with BuildKit";
+
     [AvaloniaFact]
     public void A_compose_file_shows_what_its_variables_come_to_and_the_values_its_override_changes_as_hints()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         const string Compose = "services:\n  web:\n    image: \"busybox:${TAG:-1.36}\"\n    ports:\n      - \"${PORT:-8080}:80\"  # the host's port\n"
-            + "    environment:\n      GREETING: hello $NAME\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_USER: shop\n";
-        string folder = Folder(("compose.yaml", Compose), (".env", "PORT=9090\nNAME=world\n"),
-            ("compose.override.yaml", "services:\n  db:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: shop\n"));
+            + "    environment:\n      GREETING: hello $NAME\n      ZOO: $MONKEY\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_USER: shop\n"
+            + "      POSTGRES_PASSWORD: ${DB_PASSWORD:-hunter2}\n";
+        string folder = Folder(("compose.yaml", Compose), (".env", "PORT=9090\nNAME=world\nMONKEY=banana\nDB_PASSWORD=s3cret-value\n"),
+            ("compose.override.yaml", "services:\n  db:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: shop\n      POSTGRES_PASSWORD: other-s3cret\n"));
         MainWindow window = Open(folder, "compose.yaml");
         try
         {
             OpenDocument document = window.EditorArea.Active!;
-            string[] expected = ["${TAG:-1.36}|= 1.36", "${PORT:-8080}|= 9090", "$NAME|= world", "postgres:16|compose.override.yaml: postgres:17"];
+            // A secret's value (a password's, as a word of its variable's or key's name says) is masked, the same dots whatever its
+            // length; MONKEY has no word KEY.
+            string[] expected = ["${TAG:-1.36}|= 1.36", "${PORT:-8080}|= 9090", "$NAME|= world", "$MONKEY|= banana", "postgres:16|compose.override.yaml: postgres:17",
+                "${DB_PASSWORD:-hunter2}|= ••••••", "${DB_PASSWORD:-hunter2}|compose.override.yaml: ••••••"];
             Ui.WaitFor(() => Hints(document, expected).SequenceEqual(expected), $"Compose's values after the text, not [{string.Join(", ", Hints(document, expected))}]");
+            Assert.DoesNotContain(document.InlayHints, h => h.Label.Contains("s3cret", StringComparison.Ordinal));
 
             // Typed, the file is read again once typing pauses: a default of a variable the .env leaves unset is its value.
             string text = document.Text.Snapshot.ToString();
             int port = text.IndexOf("${PORT:-8080}", StringComparison.Ordinal);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(port, "${PORT:-8080}".Length, "${HOST_PORT:-8081}")]);
-            string[] typed = ["${TAG:-1.36}|= 1.36", "${HOST_PORT:-8081}|= 8081", "$NAME|= world", "postgres:16|compose.override.yaml: postgres:17"];
+            string[] typed = ["${TAG:-1.36}|= 1.36", "${HOST_PORT:-8081}|= 8081", "$NAME|= world", "$MONKEY|= banana", "postgres:16|compose.override.yaml: postgres:17",
+                "${DB_PASSWORD:-hunter2}|= ••••••", "${DB_PASSWORD:-hunter2}|compose.override.yaml: ••••••"];
             Ui.WaitFor(() => Hints(document, typed).SequenceEqual(typed), $"the new variable's default, not [{string.Join(", ", Hints(document, typed))}]");
             Assert.Empty(window.BottomPanel.Problems.ContainerProblems);
         }

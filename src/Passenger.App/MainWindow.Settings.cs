@@ -102,6 +102,7 @@ public partial class MainWindow
         session.Web?.UseNode(next.NodeInterpreter);
         session.Web?.UseTools();
         session.Web?.UseDockerHub(next.DockerHubTags);
+        session.Web?.Checks.UseBuildKit(next.BuildKitChecks);
         ListenForAgents(next.McpServer);
         FollowAgentFolders(before, next);
         WatchUpdates(next.CheckForUpdates);
