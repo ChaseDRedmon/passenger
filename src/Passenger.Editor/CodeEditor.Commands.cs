@@ -173,16 +173,16 @@ public sealed partial class CodeEditor
                 Apply(TextEditing.Outdent(text, selections, Indent));
                 return true;
             case EditorActions.Duplicate:
-                Apply(TextEditing.Duplicate(text, selections, eol));
+                Apply(TextEditing.Duplicate(text, selections, eol, Folding.Hidden));
                 return true;
             case EditorActions.DeleteLine:
-                Apply(TextEditing.DeleteLines(text, selections));
+                Apply(TextEditing.DeleteLines(text, selections, Folding.Hidden));
                 return true;
             case EditorActions.MoveLineUp:
-                Apply(TextEditing.MoveLines(text, selections, eol, up: true));
+                Apply(TextEditing.MoveLines(text, selections, eol, up: true, Folding.Hidden));
                 return true;
             case EditorActions.MoveLineDown:
-                Apply(TextEditing.MoveLines(text, selections, eol, up: false));
+                Apply(TextEditing.MoveLines(text, selections, eol, up: false, Folding.Hidden));
                 return true;
             case EditorActions.ToggleLineComment:
                 Apply(LineComments(text, add: null));
@@ -209,7 +209,7 @@ public sealed partial class CodeEditor
                 return true;
             case EditorActions.Cut:
                 CopyToClipboard();
-                Apply(TextEditing.Cut(text, selections));
+                Apply(TextEditing.Cut(text, selections, Folding.Hidden));
                 return true;
             case EditorActions.Paste:
                 PasteFromClipboard();
@@ -244,6 +244,7 @@ public sealed partial class CodeEditor
         {
             return;
         }
+        IReadOnlyList<FoldRegion> foldsBefore = folds;
         editing = true;
         try
         {
@@ -253,6 +254,7 @@ public sealed partial class CodeEditor
         {
             editing = false;
         }
+        FollowMoves(foldsBefore, plan);
         // A caret the edit leaves where a row wraps stands after the text it typed, at the end of the row before.
         nextWrapLeaning = CaretsAtWraps(plan.Selections);
         SetSelections(plan.Selections, reveal: true);
@@ -336,7 +338,7 @@ public sealed partial class CodeEditor
 
     private void CopyToClipboard()
     {
-        (string copied, bool wholeLines) = TextEditing.Copy(document.Snapshot, selections, document.LineEnding);
+        (string copied, bool wholeLines) = TextEditing.Copy(document.Snapshot, selections, document.LineEnding, Folding.Hidden);
         SetClipboard(copied, wholeLines);
     }
 

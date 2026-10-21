@@ -83,6 +83,80 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A folded method is one line to every line command, as the person sees it: Move Line takes it whole and steps
+    /// whole over a folded method beside it, both staying folded, and Duplicate, Copy, Cut and Delete Line take its body
+    /// with its signature. Each command leaves every method whole, where moving the signature alone put it inside the
+    /// hidden body beside it, or left its body behind the placeholder.</summary>
+    [AvaloniaFact]
+    public void Line_commands_take_a_folded_method_whole_and_step_over_one_whole_leaving_every_body_whole()
+    {
+        const string Area = "    int Area(int w, int h)\n    {\n        int area = w * h;\n        return area;\n    }\n";
+        const string Perimeter = "    int Perimeter(int w, int h)\n    {\n        return 2 * (w + h);\n    }\n";
+        const string Twice = "    int Twice(int x) => x * 2;\n";
+        static string Shapes(params string[] members) => "class Shapes\n{\n" + string.Concat(members) + "}\n";
+        string path = Path.Combine(folder, "Shapes.cs");
+        File.WriteAllText(path, Shapes(Area, Perimeter, Twice));
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
+        editor.Focus();
+        Ui.Run(window, EditorActions.FoldToDefinitions);
+
+        // Each command at a member's signature, the caret's column kept; then the text, the caret and the folded methods.
+        void At(string member, int nth, string action)
+        {
+            string text = editor.Document.Snapshot.ToString();
+            int found = -1;
+            for (int i = 0; i <= nth; i++)
+            {
+                found = text.IndexOf(member.Split('\n')[0], found + 1, StringComparison.Ordinal);
+            }
+            Assert.True(found >= 0, $"The text has no {nth + 1}. '{member.Split('\n')[0].Trim()}' to run {action} at");
+            editor.Selections = SelectionSet.Single(found + 8);
+            Ui.Run(window, action);
+            Ui.Settle();
+        }
+        void Shows(string what, string expected, string[] folded, string caretOn)
+        {
+            TextSnapshot text = editor.Document.Snapshot;
+            Assert.True(expected == text.ToString(), $"After {what} the text is not the members whole:\n{text}");
+            string Named(FoldRegion r) => text.GetLineText(text.GetLineFromOffset(r.Start)).Trim();
+            string[] shown = [.. Folded(editor).Select(Named)];
+            Assert.True(folded.SequenceEqual(shown), $"After {what} the folded methods are [{string.Join(", ", shown)}], not [{string.Join(", ", folded)}]");
+            string on = text.GetLineText(editor.CaretPosition.Line).Trim();
+            Assert.True(caretOn == on && editor.CaretPosition.Column == 8, $"After {what} the caret is on '{on}' at {editor.CaretPosition.Column}, not on '{caretOn}' at 8");
+        }
+
+        At(Area, 0, EditorActions.MoveLineDown);
+        Shows("Move Line Down on folded Area", Shapes(Perimeter, Area, Twice), ["int Perimeter(int w, int h)", "int Area(int w, int h)"], "int Area(int w, int h)");
+        At(Area, 0, EditorActions.MoveLineUp);
+        Shows("Move Line Up on folded Area", Shapes(Area, Perimeter, Twice), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Area(int w, int h)");
+        // A line moved up over a folded method goes above its signature, never into the body it hides.
+        At(Twice, 0, EditorActions.MoveLineUp);
+        Shows("Move Line Up past folded Perimeter", Shapes(Area, Twice, Perimeter), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Twice(int x) => x * 2;");
+        At(Twice, 0, EditorActions.MoveLineDown);
+        Shows("Move Line Down past folded Perimeter", Shapes(Area, Perimeter, Twice), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Twice(int x) => x * 2;");
+
+        At(Perimeter, 0, EditorActions.Copy);
+        Assert.Equal(Perimeter, Ui.Clipboard(window));
+        At(Area, 0, EditorActions.Duplicate);
+        Shows("Duplicate on folded Area", Shapes(Area, Area, Perimeter, Twice), ["int Area(int w, int h)", "int Perimeter(int w, int h)"], "int Area(int w, int h)");
+        Assert.Equal(7, editor.CaretPosition.Line);
+        // The copy is open, as the code it is: Delete Line on the folded one above it takes that one whole.
+        At(Area, 0, EditorActions.DeleteLine);
+        Shows("Delete Line on folded Area", Shapes(Area, Perimeter, Twice), ["int Perimeter(int w, int h)"], "int Area(int w, int h)");
+        At(Perimeter, 0, EditorActions.Cut);
+        Assert.Equal(Perimeter, Ui.Clipboard(window));
+        Shows("Cut on folded Perimeter", Shapes(Area, Twice), [], "int Twice(int x) => x * 2;");
+        At(Area, 0, EditorActions.Paste);
+        Shows("Paste of the cut method above Area", Shapes(Perimeter, Area, Twice), [], "int Area(int w, int h)");
+        window.Close();
+    }
+
     /// <summary>Folding is what makes a long method cheap to scroll past: with its 5,000 lines folded, a key typed below it
     /// colours the lines on screen, never the folded ones between them, and a frame with nothing new (a caret's blink)
     /// colours nothing.</summary>

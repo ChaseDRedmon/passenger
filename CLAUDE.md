@@ -117,7 +117,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
   `TextEditing.MapOffset`/`MapRange`/`MapThrough` carry an offset through a key's edits by halving: pass `e.Edits` as
   it came, not a copy), carets
-  (`SelectionSet`) and every editing command as a pure function to an `EditPlan`. `MarkupIndent` is Enter's indent in
+  (`SelectionSet`) and every editing command as a pure function to an `EditPlan`. A line command (Move Line, Delete
+  Line, Duplicate, a line's Copy and Cut) takes a line with the lines folds hide behind it (`folded`, the editor's
+  hidden ranges), and Move Line keeps the lines moved in place and takes their neighbour round them, which
+  `EditPlan.Moved` names so the editor carries the folds in it along. `MarkupIndent` is Enter's indent in
   XAML, MSBuild files, XML and HTML, as Rider's: in after a start tag, the end tag split onto its own line, under the
   first attribute inside a tag, HTML's void elements known and its optional end tags closed as HTML's parser closes
   them; XML reads back from the caret 4 KB at a time (widening ×4) and forward from the start only where tags don't
