@@ -23,11 +23,27 @@ public sealed class ShrinkingRow : Panel
             total += widths[i];
         }
         double excess = double.IsInfinity(availableSize.Width) ? 0 : total - availableSize.Width;
+        // A child that gives way first does so before any other gives a pixel, down to its least, and before the row takes
+        // the room it leaves free beside the row.
+        double free = Children.OfType<IGivesWayFirst>().Sum(c => c.LeavesFree);
+        double before = double.IsInfinity(availableSize.Width) ? 0 : total - Math.Max(0, availableSize.Width - free);
+        for (int i = Children.Count - 1; i >= 0 && before > 0; i--)
+        {
+            if (Children[i] is IGivesWayFirst first)
+            {
+                double give = Math.Min(before, Math.Max(0, widths[i] - (first.LeastWidth + Children[i].Margin.Left + Children[i].Margin.Right)));
+                widths[i] -= give;
+                before -= give;
+                excess -= give;
+            }
+        }
         for (int i = Children.Count - 1; i >= 0 && excess > 0; i--)
         {
-            Control child = Children[i];
-            double least = double.IsNaN(child.Width) ? child.MinWidth + child.Margin.Left + child.Margin.Right : widths[i];
-            double give = Math.Min(excess, Math.Max(0, widths[i] - least));
+            if (Children[i] is IGivesWayFirst)
+            {
+                continue;
+            }
+            double give = Math.Min(excess, Math.Max(0, widths[i] - Least(Children[i], i)));
             widths[i] -= give;
             excess -= give;
         }
@@ -36,9 +52,16 @@ public sealed class ShrinkingRow : Panel
         {
             Children[i].Measure(new Size(widths[i], availableSize.Height));
             height = Math.Max(height, Children[i].DesiredSize.Height);
+            if (Children[i] is IGivesWayFirst)
+            {
+                // It gives way by whole parts (a menu's title), so it may want less than it was given: no gap after it.
+                widths[i] = Math.Min(widths[i], Children[i].DesiredSize.Width);
+            }
         }
         return new Size(widths.Sum(), height);
     }
+
+    private double Least(Control child, int i) => double.IsNaN(child.Width) ? child.MinWidth + child.Margin.Left + child.Margin.Right : widths[i];
 
     protected override Size ArrangeOverride(Size finalSize)
     {
@@ -50,4 +73,16 @@ public sealed class ShrinkingRow : Panel
         }
         return finalSize;
     }
+}
+
+/// <summary>A child of a <see cref="ShrinkingRow"/> that gives way before the others do, down to its least: the main
+/// menu's bar, its menus going behind its button one by one before the project's and branch's names narrow.</summary>
+public interface IGivesWayFirst
+{
+    /// <summary>The least it takes, known once it has been measured.</summary>
+    double LeastWidth { get; }
+
+    /// <summary>The room beside the row it gives way to keep free while it has more to give (the title bar's caption,
+    /// which moves the window).</summary>
+    double LeavesFree { get; }
 }

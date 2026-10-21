@@ -138,9 +138,9 @@ public sealed partial class EditorArea : UserControl
         TitleWindows();
     }
 
-    /// <summary>Opens text or a read-only asset in the active group (or shows its tab if open), returning why not when
-    /// the file cannot be read; an asset whose decode fails once its tab shows it loading says so through
-    /// <see cref="OpenFailed"/>.</summary>
+    /// <summary>Opens text, a read-only asset, or a binary file with no view of its own as its bytes' text, read-only
+    /// (<see cref="FileText.Bytes"/>), in the active group (or shows its tab if open), returning why not when the file
+    /// cannot be read; an asset whose decode fails once its tab shows it loading says so through <see cref="OpenFailed"/>.</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
@@ -200,7 +200,8 @@ public sealed partial class EditorArea : UserControl
 
     /// <summary>A file's document for something beside the tabs to show and edit (Local History's diff): the open one, else
     /// one read from disk with no tab, held (<see cref="Hold"/>) until the hold is disposed. Null when it cannot be read as
-    /// text. An asset is never borrowed as editable text, even if its file has since been renamed.</summary>
+    /// text. An asset, or a binary file's bytes, is never borrowed as editable text, even if its file has since been
+    /// renamed.</summary>
     public (OpenDocument Document, IDisposable Hold)? Borrow(string path)
     {
         string full = PathNames.Canonical(path);
@@ -208,7 +209,7 @@ public sealed partial class EditorArea : UserControl
         {
             return null;
         }
-        return Load(full) is { Asset: null } document ? (document, Hold(document)) : null;
+        return Load(full, asBytes: false) is { Asset: null, IsBinary: false } document ? (document, Hold(document)) : null;
     }
 
     /// <summary>Names a change made across files through these editors (a refactoring's), for Local History: held while
@@ -685,9 +686,9 @@ public sealed partial class EditorArea : UserControl
         return new EditorFrame.Leaf(group);
     }
 
-    /// <summary>A file's document, open already or loaded as text, a workbook or an asset now (still decoding); null when
-    /// it cannot be loaded.</summary>
-    private OpenDocument? Load(string path)
+    /// <summary>A file's document, open already or loaded as text, a workbook, an asset now (still decoding) or, when
+    /// <paramref name="asBytes"/>, a binary file's bytes; null when it cannot be loaded.</summary>
+    private OpenDocument? Load(string path, bool asBytes = true)
     {
         string full = PathNames.Canonical(path);
         if (documents.FirstOrDefault(d => d.Path == full) is { } open)
@@ -696,7 +697,7 @@ public sealed partial class EditorArea : UserControl
         }
         try
         {
-            OpenDocument document = OpenDocument.Load(full);
+            OpenDocument document = OpenDocument.Load(full, asBytes);
             document.PreviewFailed += OnPreviewFailed;
             Opened?.Invoke(this, document);
             documents.Add(document);

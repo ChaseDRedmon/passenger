@@ -1,4 +1,5 @@
 using System.Text;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
@@ -81,16 +82,92 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_binary_file_is_refused_rather_than_opened_as_text()
+    public void A_binary_file_opens_as_its_bytes_text_read_only_and_typing_never_changes_it()
     {
-        string path = Path.Combine(folder, "image.png");
-        File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x1A, 0x0A]);
+        // A file with no view of its own: an image's name would open it as a preview.
+        string path = Path.Combine(folder, "data.bin");
+        byte[] bytes = [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x1A, 0x0A];
+        File.WriteAllBytes(path, bytes);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
-        window.OpenFile("image.png");
+        Assert.Null(window.OpenFile("data.bin"));
         Ui.Settle();
-        Assert.Null(window.EditorArea.Active);
+        Assert.True(window.EditorArea.Active is { IsBinary: true, IsReadOnly: true }, "data.bin should open as its bytes' text, read-only");
+
+        Ui.Type(window, "x", "x");
+        window.Perform(AppActions.SaveAll);
+        Ui.Settle();
+        Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "Typing in a binary file's tab should never change the file");
+        window.Close();
+    }
+
+    /// <summary>A file past what the editor opens as text or bytes (64 MB) is refused at once, nothing of it read, with why in
+    /// the status bar, as a preview past its limit is: opened, a file holds about six and a half times its size.</summary>
+    [AvaloniaFact]
+    public void A_file_too_large_to_open_as_text_or_bytes_is_refused_with_why_in_the_status_bar()
+    {
+        string log = Path.Combine(folder, "huge.log");
+        using (FileStream file = File.Create(log))
+        {
+            file.SetLength(65 * 1024 * 1024);
+        }
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        string? why = window.OpenFile("huge.log");
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Ui.Settle();
+        Assert.Equal("huge.log is 65 MB: the editor opens a file of up to 64 MB as text", why);
+        Assert.Equal(why, window.Status);
+        Assert.Empty(window.EditorArea.Documents);
+        Assert.True(allocated < 16 << 20, $"Refusing huge.log allocated {allocated >> 20} MB on the UI thread: it was read first");
+
+        // Through File, Open too, with nothing open.
+        window.Close();
+        MainWindow front = new() { Width = 1200, Height = 800 };
+        front.Show();
+        Ui.Settle();
+        Assert.Equal("huge.log is 65 MB: the editor opens a file of up to 64 MB as text", front.Open(log));
+        Assert.Empty(front.EditorArea.Documents);
+        front.Close();
+    }
+
+    /// <summary>A binary file's tab shows its bytes drawn as signs, none of the file's text: what reads or changes a file's
+    /// text leaves it alone, as it leaves a preview, or an agent's replace would write the signs over its bytes.</summary>
+    [AvaloniaFact]
+    public void A_binary_files_bytes_are_no_text_for_the_status_bar_an_agent_replace_in_files_or_a_bookmark()
+    {
+        string path = Path.Combine(folder, "data.bin");
+        byte[] bytes = [(byte)'k', (byte)'e', (byte)'y', 0, (byte)'\n', (byte)'k', (byte)'e', (byte)'y', 0xFF];
+        File.WriteAllBytes(path, bytes);
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "key\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("data.bin");
+        Ui.Settle();
+        Assert.True(window.EditorArea.Active is { IsBinary: true, HoldsText: false }, "data.bin did not open as its bytes' text");
+        Assert.Equal("A binary file, shown as its bytes' text, read-only", window.EditorArea.Active!.Origin);
+
+        Assert.False(window.FindControl<Button>("EncodingButton")!.IsVisible, "A binary file's tab shows a text encoding");
+        Assert.False(window.Perform(AppActions.ToggleBookmark), "A bookmark was put on a line of a binary file");
+        Assert.Empty(window.Bookmarks.All);
+        Passenger.App.Mcp.PassengerTools agent = new(window);
+        foreach (Task asked in new Task[] { agent.EditorText("data.bin"), agent.Edit("data.bin", "key", "lock") })
+        {
+            Ui.WaitFor(() => asked.IsCompleted, "the agent's answer");
+            Assert.True(asked.IsFaulted, "An agent read or edited a binary file's bytes as its text");
+            Assert.Contains("data.bin is a binary file, shown as its bytes' text", asked.Exception!.InnerException!.Message, StringComparison.Ordinal);
+        }
+        Task<string> replacing = agent.ReplaceInFiles("key", "lock");
+        Ui.WaitFor(() => replacing.IsCompleted, "replace_in_files' answer");
+        Assert.DoesNotContain("data.bin", replacing.Result, StringComparison.Ordinal);
+        Assert.Equal("lock\n", File.ReadAllText(Path.Combine(folder, "notes.txt")));
+        Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "Replace in Files wrote over a binary file's bytes");
+        Assert.False(window.EditorArea.Active.IsModified, "Replace in Files changed a binary file's tab");
         window.Close();
     }
 

@@ -217,9 +217,14 @@ public partial class MainWindow
                 OpenDocument? open = Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path));
                 try
                 {
-                    if (open is null)
+                    // A tab holding none of the file's text (a preview's, a workbook's, a binary file's) shows the bytes written.
+                    if (open is not { HoldsText: true })
                     {
                         FileText.Restore(path, bytes);
+                        if (open is not null)
+                        {
+                            FollowDisk(open);
+                        }
                     }
                     else
                     {

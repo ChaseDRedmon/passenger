@@ -1,8 +1,10 @@
 using System.Windows.Input;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using Passenger.App.Settings;
 using Passenger.Editor;
 
 namespace Passenger.App;
@@ -19,10 +21,277 @@ public partial class MainWindow
     /// <summary>The menu bar's menus, as macOS shows them.</summary>
     public NativeMenu MenuBar => menuBar!;
 
+    /// <summary>Whether the system shows the main menu in a menu bar of its own (macOS's), so the toolbar has neither the
+    /// menu button nor the bar; read as a window is made. A test sets it to drive the toolbar's menus on macOS too.</summary>
+    public static bool SystemMenuBar { get; set; } = OperatingSystem.IsMacOS();
+
     private void AddMainMenu()
     {
         BuildMenuBar();
-        MenuButton.IsVisible = !OperatingSystem.IsMacOS();
+        MainMenuPlace.IsVisible = !SystemMenuBar;
+    }
+
+    /// <summary>The main menu as a bar on the toolbar or behind its button, as Settings says; its titles made once, each
+    /// menu built from the actions as it opens.</summary>
+    private void FollowMainMenu(AppSettings next)
+    {
+        MainMenuPlace.ShowsBar = next.MainMenuBar && MainMenuPlace.IsVisible;
+        if (MainMenuPlace.ShowsBar && MainMenuPlace.Children.Count == 1)
+        {
+            foreach (string menu in MainMenu.Titles)
+            {
+                Button title = new() { Content = menu, Tag = menu, Classes = { "widget", "menuBarItem" } };
+                title.Click += (_, _) => OnBarTitleClicked(title);
+                MainMenuPlace.Children.Add(title);
+            }
+            AddHandler(PointerPressedEvent, NoteBarPress, RoutingStrategies.Tunnel, handledEventsToo: true);
+            AddHandler(KeyDownEvent, OnBarKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+            AddHandler(KeyUpEvent, OnBarKeyUp, RoutingStrategies.Tunnel, handledEventsToo: true);
+        }
+    }
+
+    /// <summary>What has the keys before the bar took them (Alt, or a press on a title), given them back as the bar lets go.</summary>
+    private IInputElement? barReturn;
+
+    /// <summary>The context the bar's keys were taken in, which a menu they open runs its items in.</summary>
+    private ActionContext? barKeysContext;
+
+    /// <summary>Whether Alt went down alone and nothing else has come since: its release takes the bar.</summary>
+    private bool altAlone;
+
+    /// <summary>The bar's titles and button a key moves among, as shown, in order.</summary>
+    private List<Button> BarStops() =>
+        [.. MainMenuPlace.Children.OfType<Button>().Where(b => b.Tag is string && b.IsHitTestVisible), .. MenuButton.IsHitTestVisible ? [MenuButton] : Array.Empty<Button>()];
+
+    private bool IsBarStop(object? focused) => focused is Button button && MainMenuPlace.ShowsBar && BarStops().Contains(button);
+
+    /// <summary>Alt tapped alone takes the bar's first title, as a menu bar's does (its menus then opened by the keys), or
+    /// gives the keys back when the bar has them. F10 stays Step Over, as Rider's Visual Studio keymap has it.</summary>
+    private void OnBarKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.LeftAlt or Key.RightAlt) || !altAlone || !MainMenuPlace.ShowsBar)
+        {
+            return;
+        }
+        altAlone = false;
+        e.Handled = true;
+        if (barMenu is { IsOpen: true } || IsBarStop(FocusManager?.GetFocusedElement()))
+        {
+            LeaveBar();
+            return;
+        }
+        barReturn = FocusManager?.GetFocusedElement();
+        barKeysContext = actions!.Context();
+        BarStops().FirstOrDefault()?.Focus(NavigationMethod.Tab);
+    }
+
+    /// <summary>The bar's keys: Left and Right move among its titles, or with a menu open open the next one's; Down, Enter
+    /// or Space open the title's menu; Escape gives the keys back to what had them.</summary>
+    private void OnBarKeyDown(object? sender, KeyEventArgs e)
+    {
+        altAlone = e.Key is Key.LeftAlt or Key.RightAlt && (e.KeyModifiers & ~KeyModifiers.Alt) == KeyModifiers.None;
+        if (!MainMenuPlace.ShowsBar || e.Handled && barMenu is not { IsOpen: true })
+        {
+            return;
+        }
+        object? focused = FocusManager?.GetFocusedElement();
+        if (barMenu is { IsOpen: true } && barMenuFrom is { } from)
+        {
+            // Heard by the window and the item both where the menu stands in the window's own tree: once.
+            if (e.Handled || focused is not MenuItem item)
+            {
+                return;
+            }
+            bool atTop = item.Parent is not MenuItem;
+            if (e.Key == Key.Left && atTop || e.Key == Key.Right && item.ItemCount == 0)
+            {
+                e.Handled = true;
+                Button next = Beside(from, e.Key == Key.Left ? -1 : 1);
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => OpenByKeys(next));
+            }
+            else if (e.Key == Key.Escape && atTop)
+            {
+                e.Handled = true;
+                LeaveBar();
+            }
+            return;
+        }
+        if (!IsBarStop(focused))
+        {
+            return;
+        }
+        Button title = (Button)focused!;
+        switch (e.Key)
+        {
+            case Key.Left or Key.Right:
+                Beside(title, e.Key == Key.Left ? -1 : 1).Focus(NavigationMethod.Directional);
+                e.Handled = true;
+                break;
+            case Key.Down or Key.Enter or Key.Space:
+                OpenByKeys(title);
+                e.Handled = true;
+                break;
+            case Key.Escape:
+                LeaveBar();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    /// <summary>The title (or button) a step to one side of another, round from one end to the other.</summary>
+    private Button Beside(Button title, int step)
+    {
+        List<Button> stops = BarStops();
+        int at = stops.IndexOf(title);
+        return at < 0 ? title : stops[(at + step + stops.Count) % stops.Count];
+    }
+
+    /// <summary>A title's menu (the button's, those it holds) opened from the keys, its first item taking them.</summary>
+    private void OpenByKeys(Button title)
+    {
+        if (title == MenuButton)
+        {
+            barMenu?.Hide();
+            OnMenuClicked(MenuButton, new RoutedEventArgs());
+            return;
+        }
+        OpenBarMenu(title);
+        if (barMenu is { } flyout)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                flyout.Items.OfType<MenuItem>().FirstOrDefault(i => i.IsEffectivelyEnabled)?.Focus(NavigationMethod.Directional));
+        }
+    }
+
+    /// <summary>The bar lets go: its menu closed and the keys back with what had them before (the editor when nothing did).</summary>
+    private void LeaveBar()
+    {
+        IInputElement? back = barReturn;
+        (barReturn, barKeysContext) = (null, null);
+        barMenu?.Hide();
+        if (back is Visual visual && TopLevel.GetTopLevel(visual) is not null && back.Focus())
+        {
+            return;
+        }
+        if (Editors.Active is not null)
+        {
+            Editors.CodeEditor.Focus();
+        }
+    }
+
+    /// <summary>A title clicked opens its menu, or closes it when that menu was open as the press came: the press closed
+    /// it, passing through to the title, which would open it again.</summary>
+    private void OnBarTitleClicked(Button title)
+    {
+        if (barPressedOpen == title)
+        {
+            barPressedOpen = null;
+            return;
+        }
+        OpenBarMenu(title);
+    }
+
+    /// <summary>Which open menu's title a press came on, before the menu's light dismiss closes it, and what had the keys
+    /// before a press on a title took them.</summary>
+    private void NoteBarPress(object? sender, PointerPressedEventArgs e)
+    {
+        altAlone = false;
+        Button? title = BarTitleAt(this, e);
+        barPressedOpen = barMenu is { IsOpen: true } && title is not null && title == barMenuFrom ? title : null;
+        if (title is not null && FocusManager?.GetFocusedElement() is { } focused && !IsBarStop(focused) && focused is not MenuItem)
+        {
+            barReturn = focused;
+        }
+    }
+
+    /// <summary>The bar's title shown under the pointer, an event of the window's or of a menu's own popup turned into the
+    /// window's place through the screen.</summary>
+    private Button? BarTitleAt(Visual root, PointerEventArgs e)
+    {
+        Point at = this.PointToClient(root.PointToScreen(e.GetPosition(root)));
+        return MainMenuPlace.Children.OfType<Button>().FirstOrDefault(t => t.Tag is string && t.IsHitTestVisible
+            && t.TranslatePoint(default, this) is { } corner && new Rect(corner, t.Bounds.Size).Contains(at));
+    }
+
+    /// <summary>While one of the bar's menus is open, the pointer moving over another title opens that one, as a menu bar
+    /// does. The open menu holds the pointer, so its moves are followed from the menu's own popup as well as the window.</summary>
+    private void FollowBarPointer(object? sender, PointerEventArgs e)
+    {
+        if (barMenu is not { IsOpen: true } || sender is not Visual root)
+        {
+            return;
+        }
+        Button? over = BarTitleAt(root, e);
+        if (over is not null && over != barMenuFrom)
+        {
+            // Not inside the event of the popup the switch closes.
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (barMenu is { IsOpen: true } && barMenuFrom != over)
+                {
+                    OpenBarMenu(over);
+                }
+            });
+        }
+    }
+
+    private MenuFlyout? barMenu;
+    private Button? barMenuFrom;
+    private ActionContext? barMenuContext;
+    private Button? barPressedOpen;
+
+    /// <summary>One of the bar's menus opened under its title, built from the actions as it opens, in the context the first
+    /// of them opened in (the focus is the menu's once one is open).</summary>
+    private void OpenBarMenu(Button title)
+    {
+        ActionContext context = barMenu is { IsOpen: true } && barMenuContext is { } kept ? kept : barKeysContext ?? actions!.Context();
+        barMenu?.Hide();
+        MenuEntry entry = MainMenu.Build(actions!.All).First(m => m.Title == (string)title.Tag!);
+        MenuFlyout flyout = new() { Placement = PlacementMode.BottomEdgeAlignedLeft, OverlayDismissEventPassThrough = true };
+        if (FlyoutEntry(entry, context) is MenuItem built)
+        {
+            foreach (object? item in built.Items.ToList())
+            {
+                built.Items.Remove(item);
+                flyout.Items.Add(item);
+            }
+        }
+        (barMenu, barMenuFrom, barMenuContext) = (flyout, title, context);
+        // Shown pressed while its menu is open, as a menu bar's title is.
+        title.Classes.Add("open");
+        Action release = KeepKeys(title, () => flyout.IsOpen ? flyout.Items.OfType<Control>().FirstOrDefault()?.FindLogicalAncestorOfType<MenuBase>() : null);
+        AddHandler(PointerMovedEvent, FollowBarPointer, RoutingStrategies.Tunnel, handledEventsToo: true);
+        flyout.ShowAt(title);
+        // A popup of its own where the platform gives one; headless, the menu stands in the window's own tree.
+        TopLevel? popup = flyout.Items.OfType<Control>().FirstOrDefault() is { } first ? TopLevel.GetTopLevel(first) : null;
+        if (popup is not null && popup != this)
+        {
+            popup.AddHandler(PointerMovedEvent, FollowBarPointer, RoutingStrategies.Tunnel, handledEventsToo: true);
+        }
+        // Its items' keys, which reach them in a popup of its own (the window's tunnel never sees them there).
+        foreach (MenuItem item in flyout.Items.OfType<MenuItem>())
+        {
+            item.AddHandler(KeyDownEvent, OnBarKeyDown, RoutingStrategies.Tunnel);
+        }
+        flyout.Closed += (_, _) =>
+        {
+            release();
+            title.Classes.Remove("open");
+            popup?.RemoveHandler(PointerMovedEvent, FollowBarPointer);
+            if (barMenu == flyout)
+            {
+                RemoveHandler(PointerMovedEvent, FollowBarPointer);
+                (barMenu, barMenuFrom, barMenuContext) = (null, null, null);
+                // Closed with an item chosen or by a click elsewhere: the keys go back, unless what ran took them.
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    if (barMenu is null && FocusManager?.GetFocusedElement() is var focused && (focused is null or MenuItem || IsBarStop(focused)))
+                    {
+                        LeaveBar();
+                    }
+                });
+            }
+        };
     }
 
     /// <summary>The menus again, with the shortcuts in force now (after Settings changed the keymap). The window keeps the
@@ -114,12 +383,13 @@ public partial class MainWindow
         return actionItem;
     }
 
-    /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens.</summary>
+    /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens: those the bar
+    /// has no room for while it shows.</summary>
     private void OnMenuClicked(object? sender, RoutedEventArgs e)
     {
         ActionContext context = actions!.Context();
         MenuFlyout flyout = new();
-        foreach (MenuEntry menu in MainMenu.Build(actions.All))
+        foreach (MenuEntry menu in MainMenu.Build(actions.All).Skip(MainMenuPlace.ShowsBar ? MainMenuPlace.MenusShown : 0))
         {
             flyout.Items.Add(FlyoutEntry(menu, context));
         }

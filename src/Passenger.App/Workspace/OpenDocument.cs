@@ -77,9 +77,10 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Opens a supported image or font as a read-only asset with an empty text placeholder, otherwise as text.
     /// An asset's tab shows it loading until its decode lands off the UI thread; a missing, empty or oversized one is
-    /// refused at once. Unsupported binary content is refused with an <see cref="IOException"/>, never exposed to text
-    /// editing or saving.</summary>
-    public static OpenDocument Load(string path)
+    /// refused at once. Other binary content opens as its bytes' text, read-only and never written
+    /// (<see cref="FileText.Bytes"/>), or, unless <paramref name="asBytes"/> (for what would edit it), is refused with an
+    /// <see cref="IOException"/>, as is one past <see cref="LargestText"/>.</summary>
+    public static OpenDocument Load(string path, bool asBytes = true)
     {
         if (AssetPreview.KindOf(path) is { } kind)
         {
@@ -92,10 +93,24 @@ public sealed class OpenDocument : Observable
             return asset;
         }
         // A workbook's tab holds no text, since its table is read from the file itself.
-        FileText file = Tables.Workbook.IsWorkbook(path) ? new FileText(string.Empty, new UTF8Encoding(false), false)
-            : FileText.Load(path) ?? throw new IOException($"{System.IO.Path.GetFileName(path)} looks like a binary file.");
+        if (Tables.Workbook.IsWorkbook(path))
+        {
+            return new OpenDocument(path, new FileText(string.Empty, new UTF8Encoding(false), false));
+        }
+        string name = System.IO.Path.GetFileName(path);
+        long length = new FileInfo(path).Length;
+        if (length > LargestText)
+        {
+            throw new IOException($"{name} is {length / (1024.0 * 1024):0.#} MB: the editor opens a file of up to {LargestText / (1024 * 1024)} MB as text");
+        }
+        FileText file = FileText.Load(path) ?? (asBytes ? FileText.Bytes(path) : throw new IOException($"{name} looks like a binary file."));
         return new OpenDocument(path, file);
     }
+
+    /// <summary>The largest file opened as text or as its bytes, as an image's preview is bounded too: plain text that size
+    /// opens in a moment and takes keys at once, but the editor holds about six and a half times a file's size (a 100 MB
+    /// log, 850 MB), and .NET holds no string past a billion characters.</summary>
+    public const long LargestText = 64 * 1024 * 1024;
 
     /// <summary>Decodes the asset off the UI thread, the one shown (the stand-in at first) kept until the new one lands;
     /// while one decode is under way, one more follows it, so a file written in several steps is read once more, never
@@ -170,7 +185,8 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         crBreaks = file.CrBreaks;
-        Language = Language.ForPath(path);
+        IsBinary = file.IsBinary;
+        Language = IsBinary ? Language.PlainText : Language.ForPath(path);
         detected = Language.Detect(file.Text);
         Conventions = EditorConfig.For(path);
         Indentation = Choose();
@@ -444,11 +460,12 @@ public sealed class OpenDocument : Observable
     public string Name => System.IO.Path.GetFileName(Path);
 
     /// <summary>Takes the file's new path once it moved on disk, keeping its text, undo, carets and folds; a new name
-    /// of another language takes that language's parser. An asset keeps its preview rather than becoming text.</summary>
+    /// of another language takes that language's parser. An asset keeps its preview, and a binary file its bytes' plain
+    /// text, rather than becoming another language's.</summary>
     public void MoveTo(string path)
     {
         Path = path;
-        Language language = Asset is null ? Language.ForPath(path) : Language;
+        Language language = Asset is null && !IsBinary ? Language.ForPath(path) : Language;
         if (language != Language)
         {
             Language = language;
@@ -646,7 +663,8 @@ public sealed class OpenDocument : Observable
     /// encoding taken, is the text.</summary>
     private void Change(IReadOnlyList<TextEdit> edits, Stored after, bool write)
     {
-        if (Asset is not null)
+        // A workbook's empty stand-in or a binary file's signs, written, would replace the file.
+        if (!HoldsText)
         {
             return;
         }
@@ -853,27 +871,34 @@ public sealed class OpenDocument : Observable
     public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
     /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
-    /// app carries, a workbook, an asset preview, or an MSBuild file of the .NET SDK or a package that Go to Declaration
-    /// went into.</summary>
-    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+    /// app carries, a workbook, an asset preview, a binary file shown as its bytes, or an MSBuild file of the .NET SDK or
+    /// a package that Go to Declaration went into.</summary>
+    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
 
     /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
     /// written over it.</summary>
     public bool IsWorkbook => Tables.Workbook.IsWorkbook(Path);
 
-    /// <summary>Whether its tab holds the file's text: an asset preview's and a workbook's hold an empty stand-in, so
-    /// nothing searches, reads, edits or writes it as the file's (<see cref="ShownAs"/> says what the file is instead).</summary>
-    public bool HoldsText => Asset is null && !IsWorkbook;
+    /// <summary>Whether this is a binary file with no view of its own, shown as its bytes' text (<see cref="FileText.Bytes"/>),
+    /// which written back would no longer be the file.</summary>
+    public bool IsBinary { get; }
+
+    /// <summary>Whether its tab holds the file's text: an asset preview's and a workbook's hold an empty stand-in and a
+    /// binary file's its bytes drawn as signs, so nothing searches, reads, edits or writes it as the file's
+    /// (<see cref="ShownAs"/> says what the file is instead).</summary>
+    public bool HoldsText => Asset is null && !IsWorkbook && !IsBinary;
 
     /// <summary>What a file whose tab holds no text is shown as, for what refuses its text to say; null for text.</summary>
     public string? ShownAs => Asset is { Kind: AssetKind.Image } ? "an image, shown as a read-only preview"
         : Asset is not null ? "a font, shown as a read-only preview"
-        : IsWorkbook ? "an Excel workbook, shown as its sheets' cells" : null;
+        : IsWorkbook ? "an Excel workbook, shown as its sheets' cells"
+        : IsBinary ? "a binary file, shown as its bytes' text" : null;
 
     /// <summary>What the bar over a read-only file says it is and where it came from.</summary>
     public string Origin => Asset is { Kind: AssetKind.Image } ? "An image, shown as its pixels, read-only"
         : Asset is not null ? "A font, shown in its own glyphs, read-only"
         : IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
+        : IsBinary ? "A binary file, shown as its bytes' text, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
@@ -912,7 +937,7 @@ public sealed class OpenDocument : Observable
         FileText? file;
         try
         {
-            file = File.Exists(Path) ? FileText.Load(Path, Chosen) : null;
+            file = File.Exists(Path) ? FromDisk() : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -936,7 +961,7 @@ public sealed class OpenDocument : Observable
     {
         try
         {
-            return Asset is { } asset ? asset.IsOf(path) : File.Exists(path) && FileText.Load(path, Chosen)?.Text == Text.Saved.ToString();
+            return Asset is { } asset ? asset.IsOf(path) : File.Exists(path) && FromDisk(path)?.Text == Text.Saved.ToString();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -946,6 +971,10 @@ public sealed class OpenDocument : Observable
 
     /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
     private Encoding? Chosen => encodingChosen ? Encoding : null;
+
+    /// <summary>A file's text on disk (this one's, unless another is named) read as this one was when opened: a binary
+    /// file's as its bytes.</summary>
+    private FileText? FromDisk(string? path = null) => IsBinary ? FileText.Bytes(path ?? Path) : FileText.Load(path ?? Path, Chosen);
 
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
@@ -962,7 +991,7 @@ public sealed class OpenDocument : Observable
         FileText? file;
         try
         {
-            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FileText.Load(Path, Chosen);
+            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FromDisk();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -1006,6 +1035,11 @@ public sealed class OpenDocument : Observable
         {
             // Its tab's text is no workbook's: written, it would empty the file.
             throw new IOException($"{Name} is a workbook, shown read-only.");
+        }
+        if (IsBinary)
+        {
+            // Its control characters are shown as signs: written, they would replace the bytes.
+            throw new IOException($"{Name} is a binary file, shown read-only.");
         }
         ReadConventions();
         string text = Text.Snapshot.ToString();

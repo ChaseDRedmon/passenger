@@ -221,21 +221,34 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
     }
 
     [AvaloniaFact]
-    public void Open_refuses_a_file_that_is_no_solution_or_project_and_a_path_that_is_not_there_and_says_why()
+    public void Open_opens_any_other_file_in_an_editor_a_binary_one_as_its_bytes_read_only_and_refuses_a_path_that_is_not_there()
     {
         using IDisposable theme = TestsTheme();
         string notes = Path.Combine(alpha, "notes.txt");
         File.WriteAllText(notes, "No solution\n");
+        string blob = Path.Combine(alpha, "blob.bin");
+        byte[] bytes = [(byte)'P', 0, (byte)'K', (byte)'\r', (byte)'\n', 0x7F, 0x90, 0xE9];
+        File.WriteAllBytes(blob, bytes);
         MainWindow window = Started(LaunchOptions.Empty);
 
         string? why = window.Open(notes);
-        Assert.True(why == "notes.txt was not opened: Open takes a solution (.sln, .slnx), a C# project (.csproj) or a folder" && window.Folder is null,
-            $"notes.txt was to be refused with the reason; Open said '{why}' and opened {window.Folder ?? "nothing"}");
-        Assert.True(window.Status == why && window.Welcome.Notice == why, $"The status bar says '{window.Status}' and the Welcome screen '{window.Welcome.Notice}', not why");
+        Assert.True(why is null && window.EditorArea.Active?.Path == PathNames.Canonical(notes) && window.Folder is null,
+            $"notes.txt was to open in an editor with no folder; Open said '{why}', shows {window.EditorArea.Active?.Path ?? "nothing"} and opened {window.Folder ?? "no folder"}");
+        Assert.Equal("No solution\n", window.EditorArea.Active!.Text.Snapshot.ToString());
+
+        why = window.Open(blob);
+        Assert.True(why is null && window.EditorArea.Active?.Path == PathNames.Canonical(blob),
+            $"blob.bin, a binary file, was to open as its bytes' text; Open said '{why}'");
+        Assert.Equal("P\u2400K\u240D\n\u2421\u00B7\u00E9", window.EditorArea.Active!.Text.Snapshot.ToString());
+        Assert.True(window.EditorArea.Active.IsReadOnly, "A binary file's tab should be read-only, since its text is no longer its bytes");
+        window.Perform(AppActions.SaveAll);
+        Ui.Settle();
+        Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(blob)), "A binary file shown as text should never be written over");
 
         why = window.Open(Path.Combine(alpha, "Gone.sln"));
         Assert.True(why?.EndsWith("Gone.sln was not opened: it does not exist", StringComparison.Ordinal) == true && window.Folder is null,
             $"Gone.sln, which is not there, was to be refused with the reason; Open said '{why}' and opened {window.Folder ?? "nothing"}");
+        Assert.True(window.Status == why && window.Welcome.Notice == why, $"The status bar says '{window.Status}' and the Welcome screen '{window.Welcome.Notice}', not why");
         window.Close();
     }
 
