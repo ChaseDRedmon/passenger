@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Passenger.App.Containers;
 using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Editor;
@@ -96,6 +97,12 @@ public partial class MainWindow
     /// runs (a debugged program, tests, a build) runs on.</summary>
     private async Task RerunAsync()
     {
+        // A container run builds again and restarts only the services whose build changed, its log followed on.
+        if (buildRun.Containers is { Plan.Mode: ContainerMode.Fast } && buildRun.IsRunning)
+        {
+            await buildRun.RerunContainersAsync();
+            return;
+        }
         if (buildRun.IsRunning)
         {
             Task<int> ended = buildRun.RunEnd;

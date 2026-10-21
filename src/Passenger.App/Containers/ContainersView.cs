@@ -178,6 +178,24 @@ public sealed class ContainersView : DockPanel
         return true;
     }
 
+    /// <summary>A Compose project a run brought up, chosen once the window lists it (now, or when it next reads the engine).</summary>
+    private string? revealing;
+
+    /// <summary>Chooses a Compose project (a run's), its group and row opened, now or once the window lists it.</summary>
+    public void Reveal(string project)
+    {
+        string key = $"project:{project}";
+        collapsed.Remove(key);
+        if (!Choose(r => r.Key == key))
+        {
+            revealing = key;
+            if (shown)
+            {
+                refreshing.Restart();
+            }
+        }
+    }
+
     /// <summary>Shows a detail tab, as its tab's click does.</summary>
     public void ShowTab(string name)
     {
@@ -251,6 +269,10 @@ public sealed class ContainersView : DockPanel
         HasRead = true;
         empty.Text = state.Problem ?? problem ?? "The engine holds no containers, images, volumes or networks";
         Fill();
+        if (revealing is { } project && Choose(r => r.Key == project))
+        {
+            revealing = null;
+        }
         if (changed)
         {
             StateRead?.Invoke(this, state);

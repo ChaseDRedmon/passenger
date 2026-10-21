@@ -70,7 +70,7 @@ public sealed class ProjectSession : IAsyncDisposable
     {
         this.setup = setup;
         Folder = folder;
-        Configurations = new RunConfigurations(folder);
+        Configurations = new RunConfigurations(folder, () => Workspace);
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
@@ -198,6 +198,28 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>The program Run last started in a tab of the Terminal window, until a run in the Run console comes after it.</summary>
     public TerminalRun? InTerminal { get; set; }
+
+    /// <summary>The container configuration Run brought up, its log followed by <see cref="Runner"/>, until Stop takes it
+    /// down (or the next run comes); its containers are the folder's (<see cref="Containers"/>) until then.</summary>
+    public Containers.ContainerRun? ContainerRun { get; set; }
+
+    /// <summary>Stop of a container run: its log no longer followed, and its containers taken down (the .NET services alone
+    /// when backing services are kept, which then go with the folder); done once the engine has answered.</summary>
+    public Task StopContainersAsync()
+    {
+        UiThread.Check();
+        if (ContainerRun is not { } run)
+        {
+            return Task.CompletedTask;
+        }
+        Runner.Stop();
+        Task stopped = run.StopAsync();
+        if (!run.Plan.KeepBacking || run.Plan.Backing.Count == 0)
+        {
+            Containers.EndedProject(run.Plan.Compose);
+        }
+        return stopped;
+    }
 
     /// <summary>The run being profiled, or null.</summary>
     public ProfilingSession? Profiling { get; set; }
@@ -738,6 +760,7 @@ public sealed class ProjectSession : IAsyncDisposable
         parts.Add(("the web language servers", Web?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         Web = null;
         // No child holds a container: what the folder started is ended by asking the engine.
+        ContainerRun?.Abandon();
         parts.Add(("the folder's containers", Containers.EndAsync()));
         Xaml.Dispose();
         MSBuild.Dispose();

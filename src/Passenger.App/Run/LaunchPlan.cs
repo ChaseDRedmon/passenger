@@ -10,7 +10,7 @@ namespace Passenger.App.Run;
 public sealed record BuildStep(string Project, string? Framework);
 
 /// <summary>Why a configuration cannot be launched, in words for the person.</summary>
-public sealed class LaunchException(string message) : Exception(message);
+public class LaunchException(string message) : Exception(message);
 
 /// <summary>What a run configuration launches, worked out once: the program (the project's built assembly under the
 /// <c>dotnet</c> that builds it, or another program), its arguments, working folder and environment, and the build that
@@ -77,6 +77,11 @@ public sealed partial record LaunchPlan
         {
             throw new LaunchException($"{configuration.Name} cannot run here: {why}");
         }
+        if (configuration.IsContainer)
+        {
+            // Run brings containers up itself (Containers.ContainerRun); Debug and Profile in a container come later.
+            throw new LaunchException(InContainers(configuration.Name));
+        }
         ProjectModel project = projects.FirstOrDefault(p => PathNames.Same(p.Path, configuration.Project))
             ?? throw new LaunchException($"{configuration.Name} cannot run: its project {System.IO.Path.GetFileName(configuration.Project)} is not loaded in the open folder");
         string? framework = configuration.Framework is { Length: > 0 } chosen ? chosen
@@ -142,6 +147,10 @@ public sealed partial record LaunchPlan
         };
     }
 
+    /// <summary>Why a container configuration is not debugged or profiled: only Run starts containers yet.</summary>
+    public static string InContainers(string name) =>
+        $"{name} runs in containers, which Passenger runs but does not debug or profile yet: Run starts it";
+
     /// <summary>The state folder a Passenger launched from this one is given, as IntelliJ's DevKit runs the IDE it develops
     /// on a sandbox: sandbox/ in this one's, so the two never share settings, recent solutions, a folder's editors and
     /// breakpoints, the log or agents' sockets, and the one debugged starts on Passenger's defaults (no MCP server, no
@@ -167,16 +176,27 @@ public sealed partial record LaunchPlan
         return Programs.OnPath(named) ?? Programs.OnPath(named + (OperatingSystem.IsWindows() ? ".exe" : string.Empty)) ?? named;
     }
 
-    /// <summary>The properties MSBuild evaluates for the project (with its framework when it has several), in one request.</summary>
-    private static async Task<IReadOnlyDictionary<string, string>> EvaluateAsync(ProjectModel project, string? framework, IReadOnlyCollection<string> names, CancellationToken cancel)
+    /// <summary>The properties MSBuild evaluates for the project (with its framework when it has several), in one request;
+    /// given a target, as they stand once it has run (the SDK's ComputeContainerBaseImage for ContainerBaseImage), and as
+    /// evaluated when it does not run (a project not restored yet).</summary>
+    internal static async Task<IReadOnlyDictionary<string, string>> EvaluateAsync(ProjectModel project, string? framework, IReadOnlyCollection<string> names, CancellationToken cancel,
+        string? target = null)
     {
         List<string> args = ["msbuild", project.Path, "-nologo", .. names.Select(n => $"-getProperty:{n}")];
         if (framework is not null)
         {
             args.Add($"-property:TargetFramework={framework}");
         }
+        if (target is not null)
+        {
+            args.Add($"-target:{target}");
+        }
         ChildResult msbuild = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(args, project.Folder), cancel: cancel);
         string output = msbuild.Output.Trim();
+        if (target is not null && (!msbuild.Succeeded || output.Length == 0))
+        {
+            return await EvaluateAsync(project, framework, names, cancel);
+        }
         if (!msbuild.Succeeded || output.Length == 0)
         {
             throw new LaunchException($"MSBuild could not say what {project.Name} builds: {msbuild.Error.Trim()} {output}".Trim());

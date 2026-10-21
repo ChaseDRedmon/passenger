@@ -45,6 +45,10 @@ public sealed partial class ConsoleLinks : IHighlighter
     /// <summary>Where a relative path is looked for, in order: the project the output came from first.</summary>
     public Func<IReadOnlyList<string>> Folders { get; set; } = () => [];
 
+    /// <summary>Where the paths of the containers whose output this is are the workspace's files (a container run's images),
+    /// tried first for a path that starts at the root; null for output from this machine alone.</summary>
+    public Func<Containers.ContainerPaths?> Paths { get; set; } = () => null;
+
     /// <summary>Whether any path to a file is a link (hidden), as in Rider's terminal; a console links only frames and
     /// compiler messages.</summary>
     public bool FilePaths { get; init; }
@@ -116,7 +120,9 @@ public sealed partial class ConsoleLinks : IHighlighter
                 Claim(found, new FoundLink(url.Index, url.Length, target));
             }
         }
-        if (Frame().Match(line) is { Success: true } frame && Resolve(frame.Groups["path"].Value.Trim(), deterministic: true) is { } framed)
+        // A Compose log's line starts with its service's container ("web-1  | "), the program's own after it.
+        int skip = ComposePrefix().Match(line) is { Success: true } prefix ? prefix.Length : 0;
+        if (Frame().Match(line, skip, line.Length - skip) is { Success: true } frame && Resolve(frame.Groups["path"].Value.Trim(), deterministic: true) is { } framed)
         {
             Group path = frame.Groups["path"];
             Claim(found, new FoundLink(path.Index, frame.Index + frame.Length - path.Index,
@@ -143,7 +149,7 @@ public sealed partial class ConsoleLinks : IHighlighter
                 }
             }
         }
-        else if (Compiler().Match(line) is { Success: true } message && Resolve(message.Groups["path"].Value, project: ProjectOf(line)) is { } source)
+        else if (Compiler().Match(line, skip, line.Length - skip) is { Success: true } message && Resolve(message.Groups["path"].Value, project: ProjectOf(line)) is { } source)
         {
             Group path = message.Groups["path"];
             Claim(found, new FoundLink(path.Index, message.Groups["close"].Index + 1 - path.Index,
@@ -215,6 +221,10 @@ public sealed partial class ConsoleLinks : IHighlighter
             return null;
         }
         string relative = path;
+        if (path.StartsWith('/') && Paths() is { IsEmpty: false } map && map.ToHost(path) is { } host && Exists(host) is { } mapped)
+        {
+            return mapped;
+        }
         if (deterministic && (path.StartsWith("/_/", StringComparison.Ordinal) || path.StartsWith(@"\_\", StringComparison.Ordinal)))
         {
             relative = path[3..];
@@ -278,6 +288,10 @@ public sealed partial class ConsoleLinks : IHighlighter
     /// /path/File.cs:line 12", the path after the method's closing parenthesis, so one with spaces (or " in ") is whole.</summary>
     [GeneratedRegex(@"^\s*at\s[^\r\n]*?\) in (?<path>[^\r\n]+?):line (?<line>\d{1,9})\b")]
     private static partial Regex Frame();
+
+    /// <summary>The container's name and bar <c>docker compose logs</c> puts before each line of a service's.</summary>
+    [GeneratedRegex(@"^[\w.-]+-\d+\s+\| ")]
+    private static partial Regex ComposePrefix();
 
     /// <summary>A compiler's or MSBuild's message, the place first on its line: "File.cs(12,5): error CS1002: ...", "1>"
     /// before it when Visual Studio numbered the projects. The path may hold parentheses of its own ("Shop (copy)").</summary>

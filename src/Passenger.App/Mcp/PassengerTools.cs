@@ -555,7 +555,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Runs a run configuration (the chosen one by default) as Run does, built first when it says so, and waits up to " +
         "waitSeconds for it to end or an Avalonia or WPF app's UI to be up. Returns its output so far and its exit code once " +
         "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
-        "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it.")]
+        "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
+        "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -570,6 +571,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         if (await builds.RunAsync(arguments, hotReload).WaitAsync(cancel) is { } refused)
         {
             throw new InvalidOperationException(WithBuildErrors(refused));
+        }
+        if (builds.Containers is { } running)
+        {
+            // Its services are up once Run answers: what an agent wants is how each stands and what they said.
+            return new RunResult(true, null, await ServicesAsync(running, cancel), Tail(Session.Runner.Shown(), 200));
         }
         Task<int> ended = builds.RunEnd;
         AgentCall.Say($"Running {name}: waiting up to {Math.Max(0, waitSeconds)} s for it to end or its UI to be up");
@@ -587,10 +593,28 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
         "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
         "watch's words too), or a terminal configuration's tab as it shows now.")]
-    public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(
-        Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(Session.Runner.Shown(), lines)));
+    public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines)
+        : Builds.Containers is { } running ? $"{await ServicesAsync(running, cancel)}\n{Tail(Session.Runner.Shown(), lines)}"
+        : Tail(Session.Runner.Shown(), lines));
 
-    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does.")]
+    /// <summary>A container run's services as the engine has them now, one line each: its state, health and ports.</summary>
+    private static async Task<string> ServicesAsync(global::Passenger.App.Containers.ContainerRun run, CancellationToken cancel)
+    {
+        try
+        {
+            IReadOnlyList<(string Service, string State, string? Health, string Ports)> states = await run.StatesAsync(cancel);
+            return $"Running {run.Plan.Name} (Compose project {run.Plan.ProjectName}):\n" + string.Join('\n', states.Select(s =>
+                $"  {s.Service}: {s.State}{(s.Health is { } health ? $" ({health})" : string.Empty)}{(s.Ports.Length > 0 ? $", ports {s.Ports}" : string.Empty)}"
+                + (run.Plan.Dotnet.Any(d => d.Service == s.Service) ? ", from Passenger's build" : string.Empty)));
+        }
+        catch (Exception failed) when (failed is global::Passenger.App.Containers.ContainerCommandException or TimeoutException or System.Text.Json.JsonException)
+        {
+            return $"Running {run.Plan.Name}: the engine did not say how its services stand ({failed.Message})";
+        }
+    }
+
+    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does; a container run's containers are taken down.")]
     public Task<string> Stop(string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (session is not null)
@@ -599,10 +623,13 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await Session.Debug.StopAsync(tab.Name);
             return $"Stopped {tab.Name}";
         }
+        // A container run's containers are taken down, not left running as its log's end would leave them.
+        Task takingDown = Session.StopContainersAsync();
         Session.Runner.Stop();
         Session.InTerminal?.Stop();
         Session.Profiled?.Run.Kill();
         await Session.Debug.StopAllAsync();
+        await takingDown.WaitAsync(cancel);
         return "Stopped";
     });
 

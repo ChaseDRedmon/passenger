@@ -7,7 +7,9 @@ namespace Passenger.App.Run;
 /// <summary>A launch profile from a project's <c>Properties/launchSettings.json</c>, as <c>dotnet run</c>, Visual Studio
 /// and Rider read one: what it launches (its <c>commandName</c>), with what arguments, environment and working directory,
 /// and the browser it opens. Passenger launches the two kinds that run a program (<see cref="ProjectCommand"/> and
-/// <see cref="ExecutableCommand"/>); every other kind Rider knows is read too, and says why it does not run here.</summary>
+/// <see cref="ExecutableCommand"/>) and the two that run the project in a container (<c>Docker</c>, <c>SdkContainer</c>,
+/// with Visual Studio's container properties: its ports, whether it serves HTTPS, its <c>docker run</c> words and env
+/// files); every other kind Rider knows is read too, and says why it does not run here.</summary>
 public sealed record LaunchProfile(
     string Name,
     string? Command,
@@ -19,6 +21,32 @@ public sealed record LaunchProfile(
     bool LaunchBrowser,
     string? LaunchUrl)
 {
+    /// <summary>A container profile's host port for the container's HTTP port (<c>httpPort</c>), or null for the engine's choice.</summary>
+    public int? HttpPort { get; init; }
+
+    /// <summary>A container profile's host port for its HTTPS port (<c>sslPort</c>).</summary>
+    public int? SslPort { get; init; }
+
+    /// <summary>Whether the container serves HTTPS (<c>useSSL</c>), which takes the development certificate.</summary>
+    public bool UseSsl { get; init; }
+
+    /// <summary>Whether every port the image exposes is published (<c>publishAllPorts</c>).</summary>
+    public bool PublishAllPorts { get; init; }
+
+    /// <summary>The container's <c>docker run</c> words (<c>DockerfileRunArguments</c> or <c>containerRunArguments</c>).</summary>
+    public string? RunArguments { get; init; }
+
+    /// <summary>The env files the container reads (<c>containerRunEnvironmentFiles</c>, separated by ';').</summary>
+    public string? EnvironmentFiles { get; init; }
+
+    /// <summary>Whether it runs the project in a container: a <c>Docker</c> (its Dockerfile) or <c>SdkContainer</c>
+    /// (the SDK's own container) profile.</summary>
+    public bool RunsInContainer => Is(DockerCommand) || Is(SdkContainerCommand);
+
+    public const string DockerCommand = "Docker";
+
+    public const string SdkContainerCommand = "SdkContainer";
+
     /// <summary>The project's own program, built.</summary>
     public const string ProjectCommand = "Project";
 
@@ -33,12 +61,12 @@ public sealed record LaunchProfile(
     public string? Unsupported => Command switch
     {
         null or "" => "its profile names no commandName",
-        _ when Is(ProjectCommand) || Is(ExecutableCommand) => null,
+        _ when Is(ProjectCommand) || Is(ExecutableCommand) || RunsInContainer => null,
         _ when Is("IISExpress") => "an IIS Express profile runs under IIS Express on Windows, which Passenger does not start",
         _ when Is("IIS") => "an IIS profile runs under IIS on Windows, which Passenger does not drive",
         _ when Is("MsixPackage") => "an MSIX package profile runs a deployed Windows package, which Passenger does not deploy",
         _ when Is("DebugRoslynComponent") => "a Roslyn component profile runs the compiler over another project, which Passenger does not",
-        _ when Is("Docker") || Is("DockerCompose") || Is("SdkContainer") => "a container profile runs in Docker, which Passenger does not start",
+        _ when Is("DockerCompose") => "a Docker Compose profile belongs to a Docker Compose project (.dcproj), whose configurations run it",
         _ when Is("WSL2") => "a WSL 2 profile runs in Linux under Windows, which Passenger does not start",
         _ => $"Passenger does not know the {Command} command",
     };
@@ -46,7 +74,7 @@ public sealed record LaunchProfile(
     /// <summary>Whether this profile runs the project's own program.</summary>
     public bool RunsProject => Is(ProjectCommand);
 
-    private bool Is(string command) => string.Equals(Command, command, StringComparison.OrdinalIgnoreCase);
+    public bool Is(string command) => string.Equals(Command, command, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The project's profiles of every kind in the file's order; none when it has no settings or they do not read.</summary>
     public static IReadOnlyList<LaunchProfile> Read(ProjectModel project)
@@ -81,7 +109,15 @@ public sealed record LaunchProfile(
                 }
                 bool browser = value.TryGetProperty("launchBrowser", out JsonElement launch) && launch.ValueKind == JsonValueKind.True;
                 found.Add(new LaunchProfile(profile.Name, Text(value, "commandName"), Text(value, "executablePath"), Text(value, "commandLineArgs"),
-                    Text(value, "workingDirectory"), environment, Text(value, "applicationUrl"), browser, Text(value, "launchUrl")));
+                    Text(value, "workingDirectory"), environment, Text(value, "applicationUrl"), browser, Text(value, "launchUrl"))
+                {
+                    HttpPort = Number(value, "httpPort"),
+                    SslPort = Number(value, "sslPort"),
+                    UseSsl = value.TryGetProperty("useSSL", out JsonElement ssl) && ssl.ValueKind == JsonValueKind.True,
+                    PublishAllPorts = value.TryGetProperty("publishAllPorts", out JsonElement all) && all.ValueKind == JsonValueKind.True,
+                    RunArguments = Text(value, "DockerfileRunArguments") ?? Text(value, "containerRunArguments"),
+                    EnvironmentFiles = Text(value, "containerRunEnvironmentFiles"),
+                });
             }
             return found;
         }
@@ -92,6 +128,18 @@ public sealed record LaunchProfile(
 
         static string? Text(JsonElement value, string key) =>
             value.TryGetProperty(key, out JsonElement found) && found.ValueKind == JsonValueKind.String ? found.GetString() : null;
+
+        static int? Number(JsonElement value, string key)
+        {
+            if (!value.TryGetProperty(key, out JsonElement found))
+            {
+                return null;
+            }
+            int port = 0;
+            bool read = found.ValueKind == JsonValueKind.Number ? found.TryGetInt32(out port)
+                : found.ValueKind == JsonValueKind.String && int.TryParse(found.GetString(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port);
+            return read && port is > 0 and < 65536 ? port : null;
+        }
     }
 
     /// <summary>The environment a run of the profile gets: its variables, with its application URL as ASP.NET Core's

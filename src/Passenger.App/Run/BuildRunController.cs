@@ -27,7 +27,11 @@ public sealed record BuildRunParts(
     Func<string, ProcessStartInfo, Task<TerminalRun>> InTerminal,
     Action<LaunchPlan, Task> OpenBrowser,
     Func<string> StateFolder,
-    ActionWork Work);
+    ActionWork Work)
+{
+    /// <summary>Shows a Compose project in the Containers window, chosen there, as a container run comes up.</summary>
+    public Action<string>? Reveal { get; init; }
+}
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of
 /// projects one after another (the output in the Build window, what they find in Problems, the window brought forward as
@@ -35,7 +39,7 @@ public sealed record BuildRunParts(
 /// in the Run window, a tab of the Terminal window or under the debugger. The window makes one for each session it binds
 /// (<see cref="ProjectSession"/> owns the runners it drives), so a build or run never outlives its folder. A UI-thread
 /// object.</summary>
-public sealed class BuildRunController
+public sealed partial class BuildRunController
 {
     /// <summary>How many of a build's last lines its outcome carries.</summary>
     private const int BuiltLinesKept = 20;
@@ -96,7 +100,7 @@ public sealed class BuildRunController
         {
             parts.Views.Run.SetRunning(false);
             RunningChanged?.Invoke(this, EventArgs.Empty);
-            parts.Say(RunEnded(ran, code), StatusPlace.Window(parts.Dock, "run"));
+            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, "run"));
         };
     }
 
@@ -420,6 +424,13 @@ public sealed class BuildRunController
         if (parts.Work.Begin(AppActions.RunProgram, $"Working out how to run {chosen.Name}…") is not { } work)
         {
             return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
+        }
+        if (chosen.IsContainer)
+        {
+            using (work)
+            {
+                return await RunContainersAsync(chosen, work);
+            }
         }
         using IDisposable held = BackgroundWork.Scope();
         try
@@ -753,6 +764,7 @@ public sealed class BuildRunController
 
     private void StopRest()
     {
+        _ = session.StopContainersAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Profiled?.Run.Kill();
@@ -764,6 +776,7 @@ public sealed class BuildRunController
     public void StopRun()
     {
         parts.Work.Of(AppActions.RunProgram)?.Cancel();
+        _ = session.StopContainersAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
     }

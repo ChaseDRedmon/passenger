@@ -122,6 +122,13 @@ internal static class Docker
                 {
                     Ask(["volume", "rm", "-f", .. kept], TimeSpan.FromSeconds(60));
                 }
+                // A container run's images (its builds carry the state's label), never a base image they share layers with.
+                ChildResult images = Ask(["images", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                string[] built = [.. images.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct()];
+                if (built.Length > 0)
+                {
+                    Ask(["rmi", "-f", .. built], TimeSpan.FromSeconds(60));
+                }
             }
         }
         catch (Exception failed) when (failed is TimeoutException or System.ComponentModel.Win32Exception or IOException)

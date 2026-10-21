@@ -47,8 +47,16 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
             return new WorkspaceModel(folder, null, [ProjectModel.Unevaluated(named)]) { ProjectFile = named };
         }
         string? path = named is not null && IsSolution(named) && File.Exists(named) ? named : SolutionModel.Find(folder);
-        return path is not null && SolutionModel.Load(path) is { } solution ? new WorkspaceModel(folder, solution, [.. solution.Projects]) : null;
+        // A Docker Compose project (.dcproj) is Visual Studio's alone (its SDK is not .NET's): read as XML for its run
+        // configurations, never loaded, built or evaluated as a project.
+        return path is not null && SolutionModel.Load(path) is { } solution
+            ? new WorkspaceModel(folder, solution, [.. solution.Projects.Where(p => !Containers.ContainerConfigurations.IsComposeProject(p.Path))])
+            : null;
     }
+
+    /// <summary>The solution's Docker Compose projects (.dcproj), each a compose configuration of its own.</summary>
+    public IReadOnlyList<string> ComposeProjects => Solution is null ? []
+        : [.. Solution.Projects.Where(p => p.Exists && Containers.ContainerConfigurations.IsComposeProject(p.Path)).Select(p => p.Path)];
 
     /// <summary>The same workspace with each project as <paramref name="map"/> gives it: MSBuild's evaluation of it, in
     /// the solution's folders and in <see cref="Projects"/> alike.</summary>
@@ -63,7 +71,7 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     /// <summary>What building the whole builds: the solution, or each project loaded in turn when some are unloaded or
     /// there is no solution; the folder when it has neither, for the .NET command line to say why.</summary>
     public IReadOnlyList<string> BuildTargets(IReadOnlyList<ProjectModel> loaded) =>
-        Solution is not null && loaded.Count == Projects.Count ? [Solution.Path]
+        Solution is not null && loaded.Count == Projects.Count && ComposeProjects.Count == 0 ? [Solution.Path]
         : Solution is null && Projects.Count == 0 ? [Folder]
         : [.. loaded.Select(p => p.Path)];
 

@@ -161,6 +161,20 @@ public static partial class BuildOutput
         return new Problem(severity, message, match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project) { Link = Problem.LinkIn(message) };
     }
 
+    /// <summary>A compiler's message from a build inside an image, as BuildKit writes it ("#12 3.456 /src/Web/Program.cs(3,1):
+    /// error CS1002: ..."), its file the workspace's through the image's paths; null for any other line.</summary>
+    public static Problem? Parse(string line, Containers.ContainerPaths paths)
+    {
+        if (Parse(BuildKitStep().Replace(line, string.Empty)) is not { } problem)
+        {
+            return null;
+        }
+        return problem.Path is { } path && path.StartsWith('/') && paths.ToHost(path) is { } host ? problem with { Path = PathNames.Canonical(host) } : problem;
+    }
+
+    [GeneratedRegex(@"^#\d+\s+\d+(?:\.\d+)?\s+")]
+    private static partial Regex BuildKitStep();
+
     /// <summary>The problem before with this line's text added, when the line goes on with its message: MSBuild's console
     /// logger writes each further line of a message (Avalonia's XAML compiler's stack trace, NuGet's dependency chains) as
     /// a line of its own with the same place, code and project and the text indented past the one space after the code,

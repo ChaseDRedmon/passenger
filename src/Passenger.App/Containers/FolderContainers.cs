@@ -34,6 +34,16 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
     /// <summary>A container or project ended by other means (its Stop), which the folder's end leaves alone.</summary>
     public void Ended(string container) => containers.Remove(container);
 
+    /// <summary>A Compose project taken down by other means (a run's Stop), which the folder's end leaves alone.</summary>
+    public void EndedProject(IReadOnlyList<string> compose)
+    {
+        UiThread.Check();
+        projects.RemoveAll(p => p.SequenceEqual(compose));
+    }
+
+    /// <summary>Whether a Compose project (its words) is one the folder started and has yet to end.</summary>
+    public bool Holds(IReadOnlyList<string> compose) => projects.Any(p => p.SequenceEqual(compose));
+
     /// <summary>Ends what the folder started: its containers removed and its projects taken down, off the UI thread, done
     /// once the engine has answered (or given up after its limit).</summary>
     public Task EndAsync()
