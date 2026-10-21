@@ -215,6 +215,49 @@ public sealed class ContainerRunsTests
         Assert.NotNull(project);
     }
 
+    [AvaloniaFact]
+    public void The_Compose_page_lists_the_services_Compose_reads_and_keeps_a_services_project_and_what_Run_does_with_each()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, _) = Shop("table");
+        // A service built from a Dockerfile that names no project: its project is the person's to choose.
+        Write(folder, "Worker/Dockerfile", $"FROM {Docker.Image}\nCMD [\"sleep\", \"600\"]\n");
+        File.AppendAllText(Path.Combine(folder, "compose.yaml"), "  worker:\n    build: { context: ., dockerfile: Worker/Dockerfile }\n");
+        MainWindow window = Open(folder);
+        RunConfigurationsDialog dialog = DialogButtonsTests.Check(window.ShowRunConfigurations());
+        Assert.True(dialog.Choose("Compose: compose.yaml"));
+        Press(dialog.CopyButton);
+        ComposeServicesTable table = dialog.ServicesTable;
+        Ui.WaitFor(() => table.Rows.Count == 4, $"the services read from Compose's model: {table.Said}", TimeSpan.FromMinutes(1));
+        Assert.Equal(["api", "cache", "web", "worker"], table.Rows.Select(r => r.Service));
+        ComposeServicesTable.Row Row(string service) => table.Rows.Single(r => r.Service == service);
+        // A service's Dockerfile names its project; an image's service has none; the worker's is not known.
+        Assert.Equal("Web", Row("web").Project.SelectedItem);
+        Assert.False(Row("cache").Project.IsVisible, "A service that runs an image offers a project");
+        Assert.Equal(["Start", "Don't start"], (string[])Row("cache").Action.ItemsSource!);
+        Assert.False(Row("worker").IsDotnet, "The worker's project was guessed");
+        Row("worker").Project.SelectedItem = "Api";
+        Ui.Settle();
+        Assert.Equal(["Run", "Debug", "Don't start"], (string[])Row("worker").Action.ItemsSource!);
+        Row("web").Action.SelectedItem = "Debug";
+        Row("cache").Action.SelectedItem = "Don't start";
+        Ui.Settle();
+        Press(dialog.OkButton);
+        RunConfiguration made = window.Configurations.Single(c => c.Name == "Compose: compose.yaml (1)");
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Api", "Api.csproj")), made.ServiceProjects["worker"]);
+        Assert.False(made.ServiceProjects.ContainsKey("web"), "The project web's Dockerfile names was kept as a choice");
+        Assert.Equal(ServiceStart.Debug, made.ServiceActions["web"]);
+        Assert.Equal(ServiceStart.DontStart, made.ServiceActions["cache"]);
+        Assert.False(made.ServiceActions.ContainsKey("api"), "A service left to run was kept as a choice");
+        window.Close();
+    }
+
+    private static void Press(Avalonia.Controls.Button button)
+    {
+        button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Settle();
+    }
+
     /// <summary>A port nothing listens on now, for a profile that names its own.</summary>
     private static int FreePort()
     {

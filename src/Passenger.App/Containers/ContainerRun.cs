@@ -103,20 +103,7 @@ public static class ContainerPlans
             files = [composed];
             runsIn = single.Folder;
         }
-        List<string> compose = ["compose"];
-        foreach (string each in files)
-        {
-            compose.AddRange(["-f", each]);
-        }
-        foreach (string env in configuration.EnvFiles)
-        {
-            compose.AddRange(["--env-file", env]);
-        }
-        foreach (string profile in configuration.Profiles)
-        {
-            compose.AddRange(["--profile", profile]);
-        }
-        compose.AddRange(["--project-directory", runsIn]);
+        List<string> compose = Words(files, configuration, runsIn);
         ComposeModel model;
         try
         {
@@ -191,6 +178,43 @@ public static class ContainerPlans
         {
             WriteOverride = WriteOverride,
         };
+    }
+
+    /// <summary>The <c>compose -f … --env-file … --profile … --project-directory …</c> words of files and a configuration.</summary>
+    private static List<string> Words(IReadOnlyList<string> files, RunConfiguration configuration, string runsIn)
+    {
+        List<string> compose = ["compose"];
+        foreach (string each in files)
+        {
+            compose.AddRange(["-f", each]);
+        }
+        foreach (string env in configuration.EnvFiles)
+        {
+            compose.AddRange(["--env-file", env]);
+        }
+        foreach (string profile in configuration.Profiles)
+        {
+            compose.AddRange(["--profile", profile]);
+        }
+        compose.AddRange(["--project-directory", runsIn]);
+        return compose;
+    }
+
+    /// <summary>A Compose configuration's services as Compose's own model has them (Edit Configurations' table), each with
+    /// the project it runs as a run would find it, and whether it is built from a Dockerfile here (whose project a person
+    /// may choose); a <see cref="ContainerCommandException"/> with what Compose said when it cannot read the files.</summary>
+    public static async Task<IReadOnlyList<(ComposeService Service, string? Project, bool Built)>> ServicesAsync(RunConfiguration configuration,
+        IReadOnlyList<ProjectModel> projects, ContainerEngine engine, CancellationToken cancel = default)
+    {
+        List<string> files = [.. configuration.ComposeFiles.Where(File.Exists)];
+        if (files.Count == 0)
+        {
+            throw new ContainerCommandException(configuration.ComposeFiles.Count == 0 ? "It names no compose file" : $"{configuration.ComposeFiles[0]} is not there");
+        }
+        string runsIn = Path.GetDirectoryName(files[0])!;
+        ComposeModel model = await ComposeModel.ReadAsync(engine, Words(files, configuration, runsIn), runsIn, cancel);
+        Dictionary<string, string> chosen = new(configuration.ServiceProjects, StringComparer.Ordinal);
+        return [.. model.Services.Select(s => (s, DotnetProject(s, projects, null, configuration, chosen)?.Path, s.DockerfilePath is { } file && File.Exists(file)))];
     }
 
     /// <summary>The project a service runs: its Dockerfile's (by ENTRYPOINT's assembly, else its dotnet publish), else the

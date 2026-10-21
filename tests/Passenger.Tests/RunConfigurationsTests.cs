@@ -286,7 +286,6 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Assert.Equal("compose.yaml; compose.override.yaml", dialog.ComposeFilesBox.Text);
         Type(dialog.NameBox, "Everything");
         Type(dialog.ProfilesBox, "tools");
-        Type(dialog.ServiceActionsBox, "web=Don't start");
         dialog.ModeBox.SelectedIndex = 1;
         dialog.KeepBackingBox.IsChecked = true;
         Ui.Settle();
@@ -296,7 +295,6 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         Assert.Equal(RunKind.Compose, made.Kind);
         Assert.Equal([Path.Combine(PathNames.Canonical(folder), "compose.yaml"), Path.Combine(PathNames.Canonical(folder), "compose.override.yaml")], made.ComposeFiles);
         Assert.Equal(["tools"], made.Profiles);
-        Assert.Equal(ServiceStart.DontStart, made.ServiceActions["web"]);
         Assert.Equal(ContainerMode.Images, made.Mode);
         Assert.True(made.KeepBackingServices, "Keep backing services was not kept");
         window.Close();
@@ -306,7 +304,6 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         RunConfiguration kept = again.Configurations.Single(c => c.Name == "Everything");
         Assert.Equal(made.ComposeFiles, kept.ComposeFiles);
         Assert.Equal(ContainerMode.Images, kept.Mode);
-        Assert.Equal(ServiceStart.DontStart, kept.ServiceActions["web"]);
         again.Close();
     }
 

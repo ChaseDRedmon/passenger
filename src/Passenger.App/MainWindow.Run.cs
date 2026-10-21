@@ -45,6 +45,7 @@ public partial class MainWindow
             configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects))
         {
             Folder = Folder,
+            ReadServices = ReadServices(Projects, Engine),
         };
         RunConfigurationsDialog = dialog;
         dialog.Closed += (_, _) =>
@@ -57,6 +58,16 @@ public partial class MainWindow
         _ = dialog.ShowDialog(this);
         return dialog;
     }
+
+    /// <summary>How Edit Configurations reads a Compose configuration's services: Compose's model through the window's engine,
+    /// asked only once the engine answers as ready.</summary>
+    private static Func<RunConfiguration, CancellationToken, Task<IReadOnlyList<(ComposeService Service, string? Project, bool Built)>>> ReadServices(
+        IReadOnlyList<Workspace.ProjectModel> projects, ContainerEngine engine) => async (configuration, cancel) =>
+        {
+            EngineState state = await engine.StateAsync(cancel: cancel);
+            return state.IsReady ? await ContainerPlans.ServicesAsync(configuration, projects, engine, cancel)
+                : throw new ContainerCommandException(state.Problem ?? "the container engine is not ready");
+        };
 
     /// <summary>Runs the chosen configuration as Run does: null once it runs (<see cref="RunEnd"/> is its end), else why it
     /// could not, which the status bar says too.</summary>

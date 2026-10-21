@@ -95,9 +95,13 @@ public sealed class RunConfigurationsDialog : Window
         ComposeFilesBox = Field("compose.yaml; compose.override.yaml");
         EnvFilesBox = Field("The .env beside the first file");
         ProfilesBox = Field("None");
-        ServicesBox = Field("Every service");
-        ServiceActionsBox = Field("web=Run, worker=Don't start");
-        ToolTip.SetTip(ServiceActionsBox, "What each .NET service does: Run, Debug or Don't start, as name=action, separated by commas; a service unnamed runs");
+        ServicesTable.Changed += (_, _) => Edit(c => c with
+        {
+            ServiceProjects = ServicesTable.Projects(c.ServiceProjects, shownServices),
+            ServiceActions = ServicesTable.Actions(),
+            // The table says which start: a list kept from before it gives way to its choices.
+            Services = [],
+        });
         LaunchServiceBox = Field("The first .NET service");
         ModeBox = new ComboBox { Classes = { "form" }, ItemsSource = (string[])[FastMode, ImagesMode] };
         ToolTip.SetTip(ModeBox, "Fast runs each .NET service in its image's runtime stage with Passenger's build mounted in, so a code change needs no image rebuild; the other builds every image as Compose says");
@@ -109,8 +113,11 @@ public sealed class RunConfigurationsDialog : Window
         ComposeFilesBox.TextChanged += (_, _) => Edit(c => c with { ComposeFiles = Paths(ComposeFilesBox.Text) });
         EnvFilesBox.TextChanged += (_, _) => Edit(c => c with { EnvFiles = Paths(EnvFilesBox.Text) });
         ProfilesBox.TextChanged += (_, _) => Edit(c => c with { Profiles = Names(ProfilesBox.Text) });
-        ServicesBox.TextChanged += (_, _) => Edit(c => c with { Services = Names(ServicesBox.Text) });
-        ServiceActionsBox.TextChanged += (_, _) => Edit(c => c with { ServiceActions = Actions(ServiceActionsBox.Text) });
+        foreach (TextBox read in (TextBox[])[ComposeFilesBox, EnvFilesBox, ProfilesBox])
+        {
+            // Compose's model of what was typed, once the person moves on from it.
+            read.LostFocus += (_, _) => ShowServices();
+        }
         LaunchServiceBox.TextChanged += (_, _) => Edit(c => c with { LaunchService = LaunchServiceBox.Text?.Trim() ?? string.Empty });
         ModeBox.SelectionChanged += (_, _) => Edit(c => c with { Mode = ModeBox.SelectedIndex == 1 ? ContainerMode.Images : ContainerMode.Fast });
         KeepBackingBox.IsCheckedChanged += (_, _) => Edit(c => c with { KeepBackingServices = KeepBackingBox.IsChecked == true });
@@ -150,8 +157,7 @@ public sealed class RunConfigurationsDialog : Window
             (Row("Compose files", ComposeFilesBox), [RunKind.Compose]),
             (Row("Env files", EnvFilesBox), [RunKind.Compose]),
             (Row("Profiles", ProfilesBox), [RunKind.Compose]),
-            (Row("Services", ServicesBox), [RunKind.Compose]),
-            (Row(".NET services", ServiceActionsBox), [RunKind.Compose]),
+            (Row("Services", ServicesTable, top: true), [RunKind.Compose]),
             (Row("Dockerfile", DockerfileBox), [RunKind.Dockerfile]),
             (Row("Context", ContextBox), [RunKind.Dockerfile]),
             (Row("Build arguments", BuildArgumentsBox), [RunKind.Dockerfile]),
@@ -236,11 +242,80 @@ public sealed class RunConfigurationsDialog : Window
 
     public TextBox ProfilesBox { get; }
 
-    /// <summary>The services started, separated by commas; empty for every one.</summary>
-    public TextBox ServicesBox { get; }
+    /// <summary>A Compose configuration's services from Compose's own model: each .NET service's project and what Run does
+    /// with each.</summary>
+    public ComposeServicesTable ServicesTable { get; } = new();
 
-    /// <summary>What each .NET service does, as name=Run, Debug or Don't start, separated by commas.</summary>
-    public TextBox ServiceActionsBox { get; }
+    /// <summary>Reads a Compose configuration's services (Compose's model, through the window's engine); null where there is
+    /// no engine to ask.</summary>
+    public Func<RunConfiguration, CancellationToken, Task<IReadOnlyList<(Containers.ComposeService Service, string? Project, bool Built)>>>? ReadServices { get; init; }
+
+    /// <summary>The services the table shows, as last read, and the files, env files and profiles they were read for.</summary>
+    private IReadOnlyList<(Containers.ComposeService Service, string? Project, bool Built)> shownServices = [];
+
+    private readonly Dictionary<string, IReadOnlyList<(Containers.ComposeService Service, string? Project, bool Built)>> readServices = new(StringComparer.Ordinal);
+
+    private int reading;
+
+    /// <summary>The table filled for the Compose configuration chosen: from what was read for its files before, else read
+    /// now, off the UI thread; it says why while it cannot.</summary>
+    private void ShowServices()
+    {
+        if (Chosen is not { Kind: RunKind.Compose } shown)
+        {
+            return;
+        }
+        string key = ServicesKey(shown);
+        bool editable = !shown.Generated;
+        if (readServices.TryGetValue(key, out IReadOnlyList<(Containers.ComposeService, string?, bool)>? known))
+        {
+            shownServices = known;
+            ServicesTable.Set(known, projects, shown, editable);
+            return;
+        }
+        if (ReadServices is not { } read)
+        {
+            ServicesTable.Say("Its services are listed once a container engine answers");
+            return;
+        }
+        ServicesTable.Say("Reading its services from Compose…");
+        int mine = ++reading;
+        _ = Fill();
+
+        async Task Fill()
+        {
+            string? problem = null;
+            IReadOnlyList<(Containers.ComposeService, string?, bool)> services = [];
+            try
+            {
+                services = await Editor.BackgroundWork.Run(() => read(shown, CancellationToken.None));
+            }
+            catch (Exception failed) when (failed is Containers.ContainerCommandException or TimeoutException or IOException or System.Text.Json.JsonException
+                or System.ComponentModel.Win32Exception)
+            {
+                problem = failed.Message;
+            }
+            if (mine != reading)
+            {
+                return;
+            }
+            if (problem is not null)
+            {
+                ServicesTable.Say($"Compose could not read its files: {problem}");
+                return;
+            }
+            readServices[key] = services;
+            if (Chosen is { Kind: RunKind.Compose } still && ServicesKey(still) == key)
+            {
+                shownServices = services;
+                ServicesTable.Set(services, projects, still, !still.Generated);
+            }
+        }
+    }
+
+    /// <summary>What a Compose configuration's services are read for: its files, env files, profiles and projects chosen.</summary>
+    private static string ServicesKey(RunConfiguration shown) =>
+        string.Join('|', [.. shown.ComposeFiles, "--", .. shown.EnvFiles, "--", .. shown.Profiles, "--", .. shown.ServiceProjects.Select(p => $"{p.Key}={p.Value}")]);
 
     public TextBox LaunchServiceBox { get; }
 
@@ -275,13 +350,6 @@ public sealed class RunConfigurationsDialog : Window
         _ => ".NET Project",
     };
 
-    private static string ActionName(ServiceStart action) => action switch
-    {
-        ServiceStart.Debug => "Debug",
-        ServiceStart.DontStart => "Don't start",
-        _ => "Run",
-    };
-
     /// <summary>A path as the form shows it: relative to the open folder when inside it.</summary>
     private string Shown(string path) => Folder is { } folder && path.Length > 0 && Core.PathNames.IsUnder(path, folder)
         ? Path.GetRelativePath(folder, path).Replace('\\', '/')
@@ -294,24 +362,6 @@ public sealed class RunConfigurationsDialog : Window
     private List<string> Paths(string? typed) => [.. (typed ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Full)];
 
     private static List<string> Names(string? typed) => [.. (typed ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
-
-    private static Dictionary<string, ServiceStart> Actions(string? typed)
-    {
-        Dictionary<string, ServiceStart> actions = new(StringComparer.Ordinal);
-        foreach (string pair in Names(typed))
-        {
-            if (pair.Split('=', 2, StringSplitOptions.TrimEntries) is [{ Length: > 0 } service, var action])
-            {
-                actions[service] = action.Replace(" ", string.Empty, StringComparison.Ordinal).Replace("'", string.Empty, StringComparison.Ordinal).ToLowerInvariant() switch
-                {
-                    "debug" => ServiceStart.Debug,
-                    "dontstart" => ServiceStart.DontStart,
-                    _ => ServiceStart.Run,
-                };
-            }
-        }
-        return actions;
-    }
 
     /// <summary>Every configuration listed: the generated ones, then the folder's own as they stand in the dialog.</summary>
     public IReadOnlyList<RunConfiguration> Rows => [.. Entries.Select(e => e.Configuration)];
@@ -564,8 +614,6 @@ public sealed class RunConfigurationsDialog : Window
             ComposeFilesBox.Text = string.Join("; ", shown.ComposeFiles.Select(Shown));
             EnvFilesBox.Text = string.Join("; ", shown.EnvFiles.Select(Shown));
             ProfilesBox.Text = string.Join(", ", shown.Profiles);
-            ServicesBox.Text = string.Join(", ", shown.Services);
-            ServiceActionsBox.Text = string.Join(", ", shown.ServiceActions.Select(a => $"{a.Key}={ActionName(a.Value)}"));
             LaunchServiceBox.Text = shown.LaunchService;
             ModeBox.SelectedIndex = shown.Mode == ContainerMode.Images ? 1 : 0;
             KeepBackingBox.IsChecked = shown.KeepBackingServices;
@@ -586,7 +634,7 @@ public sealed class RunConfigurationsDialog : Window
             note.IsVisible = note.Text.Length > 0;
             bool editable = !shown.Generated;
             foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BrowserBox, BrowserUrlBox, BuildBox, AddVariableButton, variables,
-                ComposeFilesBox, EnvFilesBox, ProfilesBox, ServicesBox, ServiceActionsBox, LaunchServiceBox, ModeBox, KeepBackingBox, DockerfileBox, ContextBox, BuildArgumentsBox, RunArgumentsBox])
+                ComposeFilesBox, EnvFilesBox, ProfilesBox, LaunchServiceBox, ModeBox, KeepBackingBox, DockerfileBox, ContextBox, BuildArgumentsBox, RunArgumentsBox])
             {
                 field.IsEnabled = editable;
             }
@@ -595,6 +643,7 @@ public sealed class RunConfigurationsDialog : Window
         {
             showing = false;
         }
+        ShowServices();
     }
 
     /// <summary>What the fields cannot say: where a generated one comes from, and why one cannot run here.</summary>
@@ -715,7 +764,7 @@ public sealed class RunConfigurationsDialog : Window
         DockPanel.SetDock(name, Dock.Left);
         row.Children.Add(name);
         row.Children.Add(editor);
-        editor.HorizontalAlignment = editor is TextBox or StackPanel ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        editor.HorizontalAlignment = editor is TextBox or StackPanel or ComposeServicesTable ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
         return row;
     }
 
