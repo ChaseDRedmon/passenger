@@ -364,11 +364,15 @@ public sealed class DebugController : IDisposable
 
     /// <summary>Attaches the debugger to a running .NET process, as Attach to Process does, beside any other program debugged:
     /// what it writes goes where it always went, as Rider's Console says. With <paramref name="hotReload"/> the program was
-    /// started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so Hot Reload is offered as for a launch; with
+    /// started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so Hot Reload is offered as for a launch (while
+    /// Settings' Hot Reload while debugging is on); with
     /// <paramref name="elsewhere"/> it runs on another machine. Null once the session is open, else why it could not.</summary>
-    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false) =>
-        OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReload, elsewhere), name,
-            launched: false, hotReloadOn: hotReload);
+    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false)
+    {
+        bool hotReloadOn = hotReload && HotReloadOn();
+        return OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReloadOn, elsewhere), name,
+            launched: false, hotReloadOn: hotReloadOn);
+    }
 
     /// <summary>Starts a session in a tab of its own, its output in the tab's Console; a program it launched reads what is
     /// typed there, as in Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the

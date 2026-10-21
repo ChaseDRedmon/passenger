@@ -155,6 +155,55 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         }
     }
 
+    /// <summary>A program started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, as a container service's
+    /// debug start will start one, attached to with Hot Reload: an edit made while it is paused goes into it as it resumes,
+    /// and it runs the edited code to its end.</summary>
+    [AvaloniaFact]
+    public void An_attach_to_a_program_started_held_for_it_has_hot_reload_and_runs_an_edit_made_while_paused()
+    {
+        MainWindow window = pair.Open(Counter);
+        Process? program = null;
+        try
+        {
+            window.Build(Passenger.App.Run.BuildKind.Build);
+            Ui.WaitFor(() => !window.IsBuilding, "the build");
+            string built = Path.Combine(pair.Folder, "First", "bin", "Debug", "net10.0", OperatingSystem.IsWindows() ? "First.exe" : "First");
+            Assert.True(File.Exists(built), $"The build made no {built}: {Ui.Said(window)}");
+            string main = Path.Combine(PathNames.Canonical(pair.Folder), "First", "Program.cs");
+            window.Debugger.Breakpoints.Toggle(main, 3);
+
+            ProcessStartInfo start = ChildProcesses.Command(built, []);
+            start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+            start.Environment["DOTNET_MODIFIABLE_ASSEMBLIES"] = "debug";
+            start.RedirectStandardOutput = true;
+            program = ChildProcesses.Start(start);
+            Task<string> output = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+            Task<string?> attaching = window.Debugger.AttachAsync(program.Id, "First", hotReload: true);
+            Ui.WaitFor(() => attaching.IsCompleted, "the debugger to attach");
+            Assert.Null(attaching.Result);
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Paused } && window.Debugger.Stop is not null, "the program to stop at the breakpoint");
+            Assert.True(window.Debugger.HotReload is not null && window.Debugger.WhyNotApply() is null, $"Hot Reload was not offered for the attach: {window.Debugger.WhyNotApply()}");
+
+            window.OpenFile(Counter);
+            Typing.Replace(window, "value + 1", "value + 2");
+            window.Debugger.Breakpoints.Toggle(main, 3);
+            Ui.Run(window, AppActions.Resume);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the program to run on to its end");
+            Assert.True(window.Debugger.LastApplied?.Result == HotReloadResult.Applied, $"The edit was not applied as the program resumed: {window.Debugger.LastApplied?.Said}");
+            Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30).Scaled()), "The program attached to did not end");
+            Assert.Equal("first 6", output.Result.Trim());
+        }
+        finally
+        {
+            window.Close();
+            if (program is not null)
+            {
+                Processes.Kill(program.Id);
+                program.Dispose();
+            }
+        }
+    }
+
     /// <summary>Debug with a configuration chosen, as Alt+F5 starts it; its program's session once it has stopped at the
     /// breakpoint, its tab chosen.</summary>
     internal static DebugSession Debug(MainWindow window, string configuration)
