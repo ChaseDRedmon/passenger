@@ -274,38 +274,9 @@ public sealed class XamlProjectBuilder
         return keys;
     }
 
-    private IEnumerable<string> XamlFilesUnder(string folder)
-    {
-        Stack<string> waiting = new([folder]);
-        while (waiting.Count > 0)
-        {
-            string at = waiting.Pop();
-            IEnumerable<string> found;
-            try
-            {
-                found = Directory.EnumerateFileSystemEntries(at).ToList();
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-            foreach (string entry in found)
-            {
-                string name = Path.GetFileName(entry);
-                if (Directory.Exists(entry))
-                {
-                    if (name is not ("bin" or "obj" or "node_modules") && !name.StartsWith('.') && (entry == folder || !Directory.EnumerateFiles(entry, "*.csproj").Any()))
-                    {
-                        waiting.Push(entry);
-                    }
-                }
-                else if (Dialect.Extensions.Contains(Path.GetExtension(name).ToLowerInvariant()))
-                {
-                    yield return entry;
-                }
-            }
-        }
-    }
+    /// <summary>The project's own XAML files: under its folder, but for bin, obj, hidden folders and another project's.</summary>
+    private IEnumerable<string> XamlFilesUnder(string folder) =>
+        ProjectInputs.OwnFolders(folder).SelectMany(f => ProjectInputs.FilesIn(f, "*")).Where(f => Dialect.Extensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
 
     private bool InBuildOutput(string path)
     {

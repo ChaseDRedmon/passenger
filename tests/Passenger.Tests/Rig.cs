@@ -506,6 +506,22 @@ public static class TestFolders
         }
     }
 
+    /// <summary>A symlink to a folder; where Windows lets this user make none (no Developer Mode), a junction, which any
+    /// user may make and which a walk of the folders goes through as it goes through a symlink.</summary>
+    public static void LinkFolder(string path, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(path, target);
+        }
+        catch (Exception refused) when (OperatingSystem.IsWindows() && refused is IOException or UnauthorizedAccessException)
+        {
+            Passenger.Core.ChildResult made = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
+                Passenger.Core.ChildProcesses.Command("cmd.exe", ["/c", "mklink", "/J", path, target]), limit: TimeSpan.FromMinutes(1).Scaled())).GetAwaiter().GetResult();
+            Assert.True(made.Succeeded, $"Windows made neither a symlink ({refused.Message}) nor a junction at {path}: {made.Output}{made.Error}");
+        }
+    }
+
     public static void Begin(string test) => Made[test] = [];
 
     public static void End(string test)

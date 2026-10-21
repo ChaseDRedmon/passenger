@@ -336,6 +336,56 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_project_holding_folder_links_back_up_its_own_tree_gets_its_xaml_help()
+    {
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-links-"));
+        string shop = Path.Combine(folder, "Shop");
+        string views = Path.Combine(shop, "Views");
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                AvaloniaApp.Create(shop, "Shop");
+                Directory.CreateDirectory(Path.Combine(views, "Parts"));
+                File.WriteAllText(Path.Combine(views, "Parts", "Palette.axaml"), Gallery.Palette);
+                File.WriteAllText(Path.Combine(shop, "MainWindow.axaml"), """
+                    <Window xmlns="https://github.com/avaloniaui"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            x:Class="Shop.MainWindow"
+                            Title="Shop">
+                        <StackPanel>
+                        </StackPanel>
+                    </Window>
+
+                    """);
+                Restore.Run(shop);
+            }, folder);
+            // Links to the folder each is in and to the one above it, at the project's top and inside it: the two inside
+            // lead back to Views from Views, so a walk that followed them would find twice the folders at every level.
+            TestFolders.LinkFolder(Path.Combine(shop, "self"), shop);
+            TestFolders.LinkFolder(Path.Combine(shop, "up"), folder);
+            TestFolders.LinkFolder(Path.Combine(views, "here"), views);
+            TestFolders.LinkFolder(Path.Combine(views, "Parts", "up"), views);
+
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            PlaceAfter(editor, "<StackPanel>");
+            Ui.Press(window, "ENTER");
+            window.KeyTextInput("<");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<', once the project's XAML files are read");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void A_project_that_takes_avalonia_while_its_xaml_is_open_gets_its_xaml_help_once_the_restore_lands()
     {
         // A library with XAML in it but no Avalonia yet: nothing Passenger reads until the package is added and restored.

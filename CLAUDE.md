@@ -157,7 +157,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Xaml`: Passenger's own XAML core, no UI and no Avalonia, which WPF (#187) shares: `Syntax` (XmlTree and
   MarkupExtension, positions kept, tolerant of half-typed markup), `Metadata` (a TypeSystem over the project's
   assemblies through System.Reflection.Metadata and its C# through Roslyn's parser), `Projects` (ProjectInputs reads
-  project.assets.json; XamlProjectBuilder keeps a project's types and XAML under its own lock), `Dialects`
+  project.assets.json; XamlProjectBuilder keeps a project's types and XAML under its own lock; every walk of a project's
+  folders is `ProjectInputs.FoldersUnder`, each folder once whatever links reach it and none a link goes up to, as
+  MSBuild's globs walk them), `Dialects`
   (AvaloniaDialect, WpfDialect) and `Features` (XamlCompletion, XamlDiagnostics, XamlNavigation, ThemeVariants, Colours). Not
   Avalonia.Ide.CompletionEngine, which is archived, predates Avalonia 12 and went with AvaloniaVS into Accelerate.
   A project's dialect is the framework it references (`XamlProjectBuilder.DialectOf`): Avalonia's package, or WPF's
