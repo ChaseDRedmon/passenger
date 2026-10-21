@@ -114,7 +114,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "A file's text as the editor holds it, unsaved changes included, its lines numbered; opened if it is not.")]
     public Task<string> EditorText(string path, int? from = null, int? to = null, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        TextSnapshot text = Document(path).Text.Snapshot;
+        TextSnapshot text = Textual(path).Text.Snapshot;
         int first = Math.Clamp((from ?? 1) - 1, 0, text.LineCount - 1);
         int last = Math.Clamp((to ?? text.LineCount) - 1, first, text.LineCount - 1);
         return Task.FromResult(string.Join('\n', Enumerable.Range(first, last - first + 1).Select(i => $"{i + 1,6}\t{text.GetLineText(i)}")));
@@ -1406,6 +1406,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         return Editors.Documents.FirstOrDefault(d => d.Path == full)
             ?? throw new FileNotFoundException($"{full} is not open in the editor");
+    }
+
+    /// <summary>A file opened as <see cref="Document"/> opens it, refused when its tab holds no text of the file's (an
+    /// image's or a font's preview, a workbook's cells), so no tool reads or edits that empty stand-in as the file.</summary>
+    private OpenDocument Textual(string path)
+    {
+        OpenDocument document = Document(path);
+        return document.HoldsText ? document
+            : throw new InvalidOperationException($"{Relative(document.Path)} is {document.ShownAs}: it has no text to read or edit");
     }
 
     private static int Offset(OpenDocument document, int line, int column)

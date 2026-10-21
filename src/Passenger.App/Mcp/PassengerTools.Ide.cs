@@ -254,7 +254,7 @@ public sealed partial class PassengerTools
         {
             throw new ArgumentException("Give oldText, the text to replace as the file has it; to add text, give the line before it as oldText and that line with the new text after it as newText");
         }
-        OpenDocument document = Document(path);
+        OpenDocument document = Textual(path);
         TextSnapshot text = document.Text.Snapshot;
         string eol = document.Text.LineEnding;
         string needle = LineEndings.In(oldText, eol);

@@ -564,7 +564,9 @@ public sealed class DebugController : IDisposable
 
     private const string NothingDebugged = "Nothing is being debugged";
 
-    private static string? NeedsFile(ActionContext context) => context.File is null ? "No file is open" : null;
+    /// <summary>Why the caret's line has nothing to stop at: no file is open, or its tab holds no lines (a preview, a workbook).</summary>
+    private static string? NeedsFile(ActionContext context) => context.File is not { } file ? "No file is open"
+        : file.HoldsText ? null : $"{file.Name} is {file.ShownAs}, with no lines";
 
     /// <summary>The Avalonia XAML attribute the caret is on, whose own breakpoint Toggle Breakpoint sets; null elsewhere.</summary>
     public static string? AttributeAtCaret(ActionContext context) =>

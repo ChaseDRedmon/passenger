@@ -57,7 +57,7 @@ public partial class MainWindow
     {
         actions!.Add(new IdeAction(AppActions.ToggleBookmark, "Toggle Bookmark", "Bookmarks", context => session.Bookmarks.Toggle(context.File!.Path, context.Caret.Line))
         {
-            WhyNot = NeedsFile,
+            WhyNot = NeedsLines,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, 0)],
         });
         Step(AppActions.NextBookmark, "Next Bookmark", 1);
