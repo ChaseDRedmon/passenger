@@ -71,12 +71,13 @@ public sealed class TitleBarTests : IDisposable
         MainWindow.SystemMenuBar = false;
         try
         {
-            MainWindow window = Open();
+            // Wide enough for several titles beside Windows' own window buttons: at 1200 wide Windows fits three, the rest behind the button.
+            MainWindow window = Open(width: 1600);
             Assert.SkipUnless(window.TitleBarMerged, $"This desktop keeps the system's title bar: {TitleBars.NotOnThisDesktop}");
             window.ApplySettings(window.Settings with { MainMenuBar = true });
             Ui.Settle();
             Button[] titles = [.. Find<Control>(window, "MainMenuPlace").GetVisualChildren().OfType<Button>().Where(b => b.Tag is string && b.IsHitTestVisible)];
-            Assert.True(titles.Length > 3, $"The bar shows {titles.Length} of the main menu's titles at 1200 wide");
+            Assert.True(titles.Length > 3, $"The bar shows {titles.Length} of the main menu's titles at 1600 wide");
             foreach (Button title in titles)
             {
                 Assert.True(ChromeAt(window, Centre(window, title)) == WindowDecorationsElementRole.User,
@@ -201,10 +202,10 @@ public sealed class TitleBarTests : IDisposable
         window.Close();
     }
 
-    private MainWindow Open()
+    private MainWindow Open(double width = 1200)
     {
         File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = width, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile("One.cs");

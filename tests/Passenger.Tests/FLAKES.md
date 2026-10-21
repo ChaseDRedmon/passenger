@@ -72,3 +72,10 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   returned". A small picture's decode on the pool can finish before the open reaches its await, which then goes on at
   once, so the open returns with the picture in place. **The test**, which held every open to still be loading: only the
   large picture's is now; the small one's off-thread decode is shown by the allocations compared.
+- The Windows VM's final full run at d77d3222, run unscaled beside the Mac's and Ubuntu's: `DebuggerTests`' Continue
+  test saw the program run on 110 ms after Continue against its 100 ms bound (CI's Windows scale makes that 250), and
+  `BuildRunTests`' build beside an Avalonia design-time build could not delete its folder while a `dotnet.exe` still
+  held it. Both passed run again on their own. Neither: **the machine's load**, not changed.
+- `TitleBarTests`' menu bar titles, the same run: "The bar shows 3 of the main menu's titles at 1200 wide". The test was
+  first run only on macOS, where the bar holds no window buttons; at 1200 wide Windows fits three titles beside its own,
+  the rest behind the button as designed. **The test**, now opened 1600 wide.
