@@ -99,6 +99,51 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
+    /// <summary>Avalonia's XAML compiler counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028
+    /// or U+2029, so below a lone '\r' in the window's tag and a comment holding all four before the caption on the caption's
+    /// own line, the place the app reports runs two lines ahead of the editor's and its column starts after the comment's:
+    /// the Run window's line, its link, Problems and the fix all find the misspelt member at its own line.</summary>
+    [AvaloniaFact]
+    public void A_misspelt_binding_below_line_breaks_only_an_xml_reader_counts_is_placed_at_the_editors_line()
+    {
+        string text = File.ReadAllText(Xaml)
+            .Replace("Title=\"Binding Errors App\" Width", "Title=\"Binding Errors App\"\r        Width", StringComparison.Ordinal)
+            .Replace("<TextBlock x:Name=\"Caption\"", $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd --> <TextBlock x:Name=\"Caption\"", StringComparison.Ordinal);
+        File.WriteAllText(Xaml, text);
+        (int line, int column) = EditorPlace(text, "Nmae");
+        TextPosition misspelt = new(line, column);
+        MainWindow window = Opened();
+        Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
+        OutputView run = window.BottomPanel.Run;
+        string said = WaitForLine(run, "the Run window to say the caption's binding failed");
+        Assert.StartsWith($"MainWindow.axaml({line + 1},{column + 1}): ", said, StringComparison.Ordinal);
+        ClickLink(window, run, said);
+        Assert.Equal((Xaml, misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
+
+        // The app reports XamlIl's place of the caption's element: past both lone '\r's, at the column after the comment's.
+        ProblemsView problems = window.BottomPanel.Problems;
+        BindingProblem caption = Assert.Single(problems.BindingProblems);
+        int element = text.IndexOf("TextBlock x:Name=\"Caption\"", StringComparison.Ordinal);
+        Assert.Equal((EditorPlace(text, "TextBlock x:Name=\"Caption\"").Line + 3, element - text.LastIndexOf('\r', element)),
+            (caption.Failure.Place?.Line, caption.Failure.Place?.Column));
+        Assert.Equal((Xaml, misspelt), (caption.Problem.Path, caption.Problem.Position));
+
+        // Its fix, from Problems, at the misspelt member.
+        window.Perform(AppActions.ShowProblems);
+        problems.Shown = ProblemsTab.Bindings;
+        Ui.Settle();
+        ListBox list = problems.GetVisualDescendants().OfType<ListBox>().First();
+        list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
+        Ui.ChooseFromMenu(list, "Show Context Actions");
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the binding's fixes");
+        Assert.Equal("Change 'Nmae' to 'Name'", window.Assist.Offered[0]);
+        Ui.Press(window, "ENTER");
+        Assert.Contains("Text=\"{Binding Name}\"", window.EditorArea.CodeEditor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        Stop(window);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_debugged_apps_misspelt_binding_shows_in_the_debug_console_linked_to_its_line_and_in_problems()
     {
@@ -403,6 +448,13 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     {
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Runner.IsRunning, "the app to stop");
+    }
+
+    /// <summary>Where (line and column from zero) some text begins in a text as the editor counts lines, at each '\n' alone.</summary>
+    private static (int Line, int Column) EditorPlace(string text, string find)
+    {
+        int at = text.IndexOf(find, StringComparison.Ordinal);
+        return (text.AsSpan(0, at).Count('\n'), at - text.LastIndexOf('\n', at) - 1);
     }
 
     /// <summary>The line (from one) of MainWindow.axaml holding some text, so a test names what it means rather than a number.</summary>

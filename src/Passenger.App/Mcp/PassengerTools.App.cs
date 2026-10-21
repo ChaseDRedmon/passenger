@@ -132,7 +132,7 @@ public sealed partial class PassengerTools
         LiveApp live = await InspectedAsync(app, cancel);
         (List<AppNode> nodes, AppNode chosenWindow) = await TreeOf(live, window, cancel);
         AppNode element = AppQuery.One(Within(nodes, window is null ? null : chosenWindow), control);
-        ElementDetails details = await live.DetailsAsync(element.Element.Id);
+        ElementDetails details = AppPlaces.InEditor(await live.DetailsAsync(element.Element.Id), Editors);
         string typed = properties?.Trim() ?? string.Empty;
         BreakpointStore breakpoints = Session.Debug.Breakpoints;
         bool watchable = live == Session.LiveApp;
@@ -164,7 +164,7 @@ public sealed partial class PassengerTools
     });
 
     /// <summary>A place in the app's XAML as every other tool gives one: the folder's path, the line (none for a root the build
-    /// recorded by its file alone) and the column.</summary>
+    /// recorded by its file alone) and the column, the editor's (<see cref="AppPlaces"/>).</summary>
     private string Placed(SourcePlace place)
     {
         string file = Relative(PathNames.Canonical(place.File));

@@ -28,7 +28,7 @@ public partial class MainWindow
 
     private void AddLiveTree()
     {
-        liveTree = new LiveTreeController(new LiveTreeParts(Dock, actions!, text => status.Text = text, NavigateTo));
+        liveTree = new LiveTreeController(new LiveTreeParts(Dock, actions!, text => status.Text = text, NavigateTo, Editors));
         bindingValues = new BindingValuesController(Editors, liveTree);
         overlays = new OverlaysCommands(new OverlaysParts(Bottom, actions!, text => status.Text = text));
         overlays.Bind(session);

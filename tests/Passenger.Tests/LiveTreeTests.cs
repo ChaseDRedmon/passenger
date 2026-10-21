@@ -111,6 +111,47 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         window.Close();
     }
 
+    /// <summary>The app's XAML compiler counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028
+    /// or U+2029, so below a lone '\r' in the window's tag and a comment holding all four before Delete on Delete's own line,
+    /// the places the app reports run two lines ahead of the editor's at Delete and one at the danger style: the details name
+    /// each at its own line, and Go to Source lands on it.</summary>
+    [AvaloniaFact]
+    public void Below_line_breaks_only_an_xml_reader_counts_the_details_name_and_go_to_each_place_at_the_editors_line()
+    {
+        string xaml = Path.Combine(folder, "MainWindow.axaml");
+        string text = File.ReadAllText(xaml)
+            .Replace("Title=\"Live Tree App\" Width", "Title=\"Live Tree App\"\r        Width", StringComparison.Ordinal)
+            .Replace("<Button x:Name=\"Delete\"", $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd --> <Button x:Name=\"Delete\"", StringComparison.Ordinal);
+        File.WriteAllText(xaml, text);
+        (int delete, int button) = EditorPlace(text, "Button x:Name=\"Delete\"");
+        int danger = EditorPlace(text, "Selector=\"Button.danger\"").Line;
+
+        MainWindow window = Debugged();
+        LiveTreeView tree = window.LiveTree;
+        ElementDetails details = Choose(window, "Delete");
+        // The app reports XamlIl's place: past both lone '\r's, at the column after the comment's.
+        SourcePlace reported = Ui.Await(window.LiveApp!.DetailsAsync(details.Id), "Delete's details as the app reports them").Source!;
+        int named = text.IndexOf("Button x:Name=\"Delete\"", StringComparison.Ordinal);
+        Assert.Equal((delete + 3, named - text.LastIndexOf('\r', named)), (reported.Line, reported.Column));
+        Assert.Equal((delete + 1, button + 1), (details.Source?.Line, details.Source?.Column));
+        Assert.Equal($"MainWindow.axaml:{delete + 1}", (tree.GoToSource?.Content as TextBlock)?.Text);
+        Assert.Equal(danger + 1, details.Styles.Single(s => s.Selector == "Button.danger").Place?.Line);
+
+        Click(tree.GoToSource!);
+        Assert.Equal(xaml, window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(delete, button), window.EditorArea.CodeEditor.CaretPosition);
+        tree.ShowPage(LiveTreePage.Styles);
+        Ui.Settle();
+        Control block = tree.StyleBlocks.First(b => b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Button.danger"));
+        Button link = block.GetLogicalDescendants().OfType<Button>().First();
+        Assert.Equal($"MainWindow.axaml:{danger + 1}", (link.Content as TextBlock)?.Text);
+        Click(link);
+        Assert.Equal(danger, window.EditorArea.CodeEditor.CaretPosition.Line);
+
+        Stop(window);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Select_element_chooses_the_control_clicked_in_the_app()
     {
@@ -188,6 +229,13 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
         Ui.WaitFor(() => window.LiveApp?.State == LiveAppState.Ended, "the app's inspector to end with it");
+    }
+
+    /// <summary>Where (line and column from zero) some text begins in a text as the editor counts lines, at each '\n' alone.</summary>
+    private static (int Line, int Column) EditorPlace(string text, string find)
+    {
+        int at = text.IndexOf(find, StringComparison.Ordinal);
+        return (text.AsSpan(0, at).Count('\n'), at - text.LastIndexOf('\n', at) - 1);
     }
 
     /// <summary>The line (from one) of a file of the app holding some text, so a test names what it means rather than a number.</summary>

@@ -373,6 +373,7 @@ public sealed partial class PassengerTools
             };
         }
         double[] times = [.. frames.Select(f => f.DurationMs).Order()];
+        Func<string, TextSnapshot?> texts = CSharp.ServerPlaces.Texts(Editors);
         IReadOnlyList<Passenger.Profiler.LayoutCost> types = Passenger.Profiler.UiFrames.ByType(frames);
         IEnumerable<Passenger.Profiler.LayoutCost> controls = types.SelectMany(type => type.Controls);
         Passenger.Profiler.UiFrame longest = frames.MaxBy(f => f.DurationMs)!;
@@ -394,7 +395,7 @@ public sealed partial class PassengerTools
 
         ControlLayoutInfo Layout(Passenger.Profiler.LayoutCost c) => new(c.Name, c.Work.Measures, Math.Round(c.Work.MeasureMs, 1),
             c.Work.Arranges, Math.Round(c.Work.ArrangeMs, 1), Math.Round(c.Work.SelfMs, 1),
-            c.Control?.File is { } file ? $"{Relative(file)}:{c.Control.Line}" : null);
+            c.Control?.File is { } file ? $"{Relative(file)}:{LiveTree.AppPlaces.LineOf(c.Control, texts)}" : null);
     }
 
     // The terminal

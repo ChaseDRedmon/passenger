@@ -191,7 +191,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `WpfPreviewHost` copies the project's last build to the state's `previews/<pid>-<guid>` (as Visual Studio's shadow
   cache, so `bin/` is never locked) and runs it with `dotnet exec` on the project's runtimeconfig and deps.json (or its
   own rolling-forward one for a library or a project before .NET 8); JSON lines over stdio (`Protocol.cs`, compiled
-  into both), each frame a PNG at 96 DPI with the elements' boxes from `VisualDiagnostics.GetXamlSourceInfo`. The file
+  into both), each frame a PNG at 96 DPI with the elements' boxes from `VisualDiagnostics.GetXamlSourceInfo`, placed in
+  an XML reader's lines (`ServerLines.OfXml`, a lone '\r' ending one, as `LooseXaml` blanks by them). The file
   loads as loose XAML (`LooseXaml`: the root of its tag's type, x:Class, events, EventSetters and x:Code blanked);
   App.xaml's resources become the application's; `pack://application:,,,/` is the project's through WPF's private
   resource-assembly fields. A WPF control with no code-behind has no constructor calling `InitializeComponent`, so it
@@ -260,6 +261,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   line now, and Hot Reload's rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
   does (`ServerLines.OfXml`: a lone '\r' ends a line, U+0085, U+2028 and U+2029 do not), and `ServerPlaces.Compiled`
   gives any file's lines as its compiler counts them, which BuiltLines and a profile's hot spots read the PDB through.
+  The places a running app reports of its XAML (each element's XamlSourceInfo, in the Live Visual Tree's details and Go
+  to, a failed binding's in Problems, the consoles and its fixes, the Frames page's rows, `app_details` and `profile`)
+  are its XAML compiler's lines too, WPF's BAML as Avalonia's XamlIl, and `LiveTree/AppPlaces` reads them at the editor's.
   `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
   HTML in the HTML server (`LanguageServer.HtmlServer`) as `<uri>__virtual.html` and forwards Razor's HTML questions

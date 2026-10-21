@@ -105,6 +105,10 @@ public sealed class FramesView : DockPanel
     /// <summary>A control's row opened (double-click, Enter): its XAML, or its place in the Live Visual Tree.</summary>
     public event EventHandler<UiControl>? ControlOpened;
 
+    /// <summary>The line (from one) a control's row names: where its element is in the editor's lines (the app's count is
+    /// its XAML compiler's).</summary>
+    public Func<UiControl, int>? LineOf { get; set; }
+
     /// <summary>The frames shown, in order: the run's, or the stretch's chosen on the timeline.</summary>
     public IReadOnlyList<UiFrame> Frames => frames;
 
@@ -250,7 +254,7 @@ public sealed class FramesView : DockPanel
             FontWeight = row.Depth == 0 ? FontWeight.SemiBold : FontWeight.Normal,
         };
         ToolTip.SetTip(name, row.Cost.Control is { } control
-            ? $"{control.FullType}{(control.File is { } file ? $"\n{Path.GetFileName(file)}:{control.Line}" : string.Empty)}"
+            ? $"{control.FullType}{(control.File is { } file ? $"\n{Path.GetFileName(file)}:{LineOf?.Invoke(control) ?? control.Line}" : string.Empty)}"
             : $"{row.Cost.Controls.Count} control{(row.Cost.Controls.Count == 1 ? "" : "s")}");
         LayoutWork work = row.Cost.Work;
         return Row(columns,

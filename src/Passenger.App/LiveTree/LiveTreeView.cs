@@ -225,7 +225,7 @@ public sealed class LiveTreeView : DockPanel
 
     public ListBox Tree => tree;
 
-    /// <summary>The control chosen, as last shown; null with none.</summary>
+    /// <summary>The control chosen, as last shown, its places at the editor's lines (<see cref="AppPlaces"/>); null with none.</summary>
     public ElementDetails? Details { get; private set; }
 
     /// <summary>The chosen control's properties as the Properties page lists them (filtered, defaults as chosen).</summary>

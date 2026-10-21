@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
+using Passenger.App.Editors;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Inspector;
@@ -8,9 +9,9 @@ using Passenger.Text;
 
 namespace Passenger.App.LiveTree;
 
-/// <summary>What a window lends its Live Visual Tree: the tool windows' frame, the window's actions, the status bar, and
-/// going to a place in a file.</summary>
-public sealed record LiveTreeParts(DockHost Dock, ActionRegistry Actions, Action<string> Say, Action<string, TextPosition> Navigate);
+/// <summary>What a window lends its Live Visual Tree: the tool windows' frame, the window's actions, the status bar, going to
+/// a place in a file, and the editors, whose text the app's XAML places are read in.</summary>
+public sealed record LiveTreeParts(DockHost Dock, ActionRegistry Actions, Action<string> Say, Action<string, TextPosition> Navigate, EditorArea Editors);
 
 /// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia or WPF app the session's debugger
 /// launched (<see cref="ProjectSession.LiveApp"/>), shows its window as the app's UI comes up, and asks the app for its tree
@@ -459,7 +460,7 @@ public sealed class LiveTreeController
             ElementDetails details = await live.DetailsAsync(id);
             if (ask == detailAsks && app == live)
             {
-                View.ShowDetails(details, null);
+                View.ShowDetails(AppPlaces.InEditor(details, parts.Editors), null);
                 watchedShown = WatchedNow();
             }
         }
@@ -531,8 +532,8 @@ public sealed class LiveTreeController
         }
     }
 
-    /// <summary>Opens the XAML a link names: a control's element, a style's selector or a setter, at its line; a root
-    /// recorded by its file alone at its root element.</summary>
+    /// <summary>Opens the XAML a link names: a control's element, a style's selector or a setter, at its line (the details
+    /// shown have the editor's, <see cref="AppPlaces"/>); a root recorded by its file alone at its root element.</summary>
     private void GoTo(SourcePlace place)
     {
         string path = PathNames.Canonical(place.File);
@@ -541,18 +542,19 @@ public sealed class LiveTreeController
             parts.Say($"{place.File} is not on this machine");
             return;
         }
-        TextPosition at = place.Line > 0 ? new TextPosition(place.Line - 1, Math.Max(0, place.Column - 1)) : RootElement(path);
+        TextPosition at = place.Line > 0 ? new TextPosition(place.Line - 1, Math.Max(0, place.Column - 1)) : RootElement(CSharp.ServerPlaces.TextOf(parts.Editors, path));
         parts.Navigate(path, at);
     }
 
-    /// <summary>Where a XAML file's root element starts: its first tag that is no declaration or comment.</summary>
-    private static TextPosition RootElement(string path)
+    /// <summary>Where a XAML file's root element starts in the editor's lines: its first tag that is no declaration or comment.</summary>
+    private static TextPosition RootElement(TextSnapshot? text)
     {
-        string[] lines = File.ReadAllLines(path);
-        for (int line = 0; line < lines.Length; line++)
+        for (int line = 0; text is not null && line < text.LineCount; line++)
         {
-            int tag = lines[line].IndexOf('<', StringComparison.Ordinal);
-            if (tag >= 0 && !lines[line].AsSpan(tag).StartsWith("<?") && !lines[line].AsSpan(tag).StartsWith("<!"))
+            LineSpan span = text.GetLine(line);
+            string shown = text.GetText(span.Start, span.Length);
+            int tag = shown.IndexOf('<', StringComparison.Ordinal);
+            if (tag >= 0 && !shown.AsSpan(tag).StartsWith("<?") && !shown.AsSpan(tag).StartsWith("<!"))
             {
                 return new TextPosition(line, tag + 1);
             }

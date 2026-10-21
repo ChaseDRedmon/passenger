@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -14,7 +15,9 @@ namespace Passenger.Tests;
 
 /// <summary>The Avalonia app McpTests' agents run and drive: tests/Debuggees/AgentApp (a counter's button, a name box that
 /// greets on Enter, a binding and a misspelt one, a drop-down and a list to scroll), written once for the class with a project file on
-/// the tests' own Avalonia and restored. Headless, so nothing of it shows on the screen.</summary>
+/// the tests' own Avalonia and restored. Headless, so nothing of it shows on the screen. Its window's tag holds a lone '\r',
+/// which XamlIl counts as a line's end and the editor does not, so every place below it the app reports is a line on from
+/// the editor's, and an agent is told the editor's.</summary>
 public sealed class AgentAppFolder : IDisposable
 {
     public AgentAppFolder()
@@ -26,6 +29,8 @@ public sealed class AgentAppFolder : IDisposable
             {
                 File.Copy(file, Path.Combine(Folder, Path.GetFileName(file)));
             }
+            string xaml = Path.Combine(Folder, "MainWindow.axaml");
+            File.WriteAllText(xaml, File.ReadAllText(xaml).Replace("Title=\"Agent App\" Width", "Title=\"Agent App\"\r        Width", StringComparison.Ordinal));
             File.WriteAllText(Path.Combine(Folder, "AgentApp.csproj"), AvaloniaApp.HeadlessProject());
             Restore.Run(Folder);
         }, Folder);
@@ -110,7 +115,7 @@ public sealed partial class McpTests
         JsonElement failed = Assert.Single((await Call(client, "app_binding_errors")).EnumerateArray());
         Assert.Equal(("TextBlock#Caption", "Nmae", "Name"), (failed.GetProperty("control").GetString(), failed.GetProperty("path").GetString(),
             failed.GetProperty("nearest").EnumerateArray().Single().GetString()));
-        Assert.StartsWith("MainWindow.axaml:", failed.GetProperty("place").GetString(), StringComparison.Ordinal);
+        Assert.Equal(AppXamlPlace("Nmae"), failed.GetProperty("place").GetString());
 
         // Passenger's own window is an Avalonia app too: its controls by name.
         Assert.Contains("TextBlock#ProjectName", Text(await Call(client, "app_tree", new() { ["app"] = "ide", ["filter"] = "#ProjectName" })), StringComparison.Ordinal);
@@ -177,7 +182,7 @@ public sealed partial class McpTests
         // The button as the Live Visual Tree's details show it: its XAML, its content set there, and the styles of its theme.
         JsonElement button = await Call(client, "app_details", new() { ["control"] = "#Count" });
         Assert.Equal("Button", button.GetProperty("type").GetString());
-        Assert.StartsWith("MainWindow.axaml:8:", button.GetProperty("xaml").GetString(), StringComparison.Ordinal);
+        Assert.Equal(AppXamlPlace("Button x:Name=\"Count\""), button.GetProperty("xaml").GetString());
         JsonElement content = Assert.Single(button.GetProperty("properties").EnumerateArray(), p => p.GetProperty("name").GetString() == "Content");
         Assert.Equal(("\"Count\"", "Local"), (content.GetProperty("value").GetString(), content.GetProperty("source").GetString()));
         JsonElement[] styles = [.. button.GetProperty("styles").EnumerateArray()];
@@ -227,6 +232,14 @@ public sealed partial class McpTests
         Assert.NotEmpty(places);
         Assert.All(places, place => Assert.True(place.StartsWith("MainWindow.axaml:", StringComparison.Ordinal),
             $"A control's XAML place is {place}, not the folder's MainWindow.axaml and a line, as every other path a tool gives"));
+        // Each named control at its own element's line in the editor, though XamlIl's run one on below the window's lone '\r'.
+        string[] lines = File.ReadAllText(Path.Combine(appFolder, "MainWindow.axaml")).Split('\n');
+        (string Control, string Place)[] named = [.. frames.GetProperty("heaviest").EnumerateArray()
+            .Where(c => c.GetProperty("control").GetString()!.Contains('#', StringComparison.Ordinal) && c.TryGetProperty("xaml", out _))
+            .Select(c => (c.GetProperty("control").GetString()!, c.GetProperty("xaml").GetString()!))];
+        Assert.NotEmpty(named);
+        Assert.All(named, c => Assert.True(lines[int.Parse(c.Place.Split(':')[1], CultureInfo.InvariantCulture) - 1].Contains($"x:Name=\"{c.Control.Split('#')[1]}\"", StringComparison.Ordinal),
+            $"{c.Control}'s XAML place is {c.Place}, not its element's line"));
         // The Frames page's layout table, by control type with each type's controls, and the longest frame's own breakdown.
         JsonElement[] types = [.. frames.GetProperty("types").EnumerateArray()];
         Assert.Contains(types, t => t.GetProperty("type").GetString() == "TextBlock" && t.GetProperty("controlCount").GetInt32() >= 4
@@ -318,6 +331,15 @@ public sealed partial class McpTests
             WaitFor(() => !window.Runner.IsRunning, "the app stopped");
             window.Close();
         }
+    }
+
+    /// <summary>Where some text begins in the app's window XAML as a tool names a place: "MainWindow.axaml:line:column", from
+    /// one, as the editor counts lines (at each '\n' alone).</summary>
+    private string AppXamlPlace(string find)
+    {
+        string text = File.ReadAllText(Path.Combine(appFolder, "MainWindow.axaml"));
+        int at = text.IndexOf(find, StringComparison.Ordinal);
+        return $"MainWindow.axaml:{text.AsSpan(0, at).Count('\n') + 1}:{at - text.LastIndexOf('\n', at)}";
     }
 
     /// <summary>What a tool answered in words, or an error's words.</summary>

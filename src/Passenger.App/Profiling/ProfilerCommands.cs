@@ -1,5 +1,6 @@
 using Microsoft.Diagnostics.NETCore.Client;
 using Passenger.App.Docking;
+using Passenger.App.Editors;
 using Passenger.App.LiveTree;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
@@ -12,8 +13,8 @@ namespace Passenger.App.Profiling;
 
 /// <summary>What a window lends its profiler: its session and that session's builds and runs, the tool windows' frame and
 /// the window's actions, the Run console a profiled program writes to, the status bar, the store's folder, the system's
-/// file panel for a snapshot to open, going to a place in the code, and choosing a control of a process in the Live Visual
-/// Tree.</summary>
+/// file panel for a snapshot to open, going to a place in the code, choosing a control of a process in the Live Visual
+/// Tree, and the editors, whose text a control's XAML place is read in.</summary>
 public sealed record ProfilerParts(
     Func<ProjectSession> Session,
     Func<BuildRunController> Builds,
@@ -25,7 +26,8 @@ public sealed record ProfilerParts(
     Func<Task<string?>> PickSnapshot,
     Action<string, TextPosition> Navigate,
     Action<string, Lsp.LspPosition> NavigateToServer,
-    Func<int, long, bool> RevealControl);
+    Func<int, long, bool> RevealControl,
+    EditorArea Editors);
 
 /// <summary>The window's profiler, as Rider's: Profile builds and starts the chosen configuration under the sampling
 /// profiler (an Avalonia app with the inspector in it, which records its frames), or Attach Profiler profiles the program
@@ -443,12 +445,22 @@ public sealed class ProfilerCommands
         bool revealed = shownProcess is int process && parts.RevealControl(process, control.Id);
         if (control.File is { } file && File.Exists(file))
         {
-            parts.Navigate(PathNames.Canonical(file), new TextPosition(Math.Max(0, control.Line - 1), 0));
+            int line = AppPlaces.LineOf(control, path => CSharp.ServerPlaces.TextOf(parts.Editors, path));
+            parts.Navigate(PathNames.Canonical(file), new TextPosition(Math.Max(0, line - 1), 0));
         }
         else if (!revealed)
         {
             parts.Say($"{control.Label} was made in code, or by XAML compiled without source information");
         }
+    }
+
+    /// <summary>Shows a snapshot in the profiler window, its controls' rows naming their elements' lines in the editor's
+    /// count, each file read once for it.</summary>
+    private void Show(Snapshot snapshot, string name)
+    {
+        Func<string, TextSnapshot?> texts = CSharp.ServerPlaces.Texts(parts.Editors);
+        View.FramesPage.LineOf = control => AppPlaces.LineOf(control, texts);
+        View.Show(snapshot, name);
     }
 
     /// <summary>Ends the run (Get Snapshot) and shows what it found: the last run's snapshot, or why it has none. Asked
@@ -478,7 +490,7 @@ public sealed class ProfilerCommands
                 return new SnapshotRead(snapshot, read);
             }
             shownProcess = run.ProcessId;
-            View.Show(snapshot, name);
+            Show(snapshot, name);
             // Brought forward over the console or Debug window the run's program was driven from.
             parts.Dock.Show("profiler");
             await KeepSnapshotsAsync(trim: true);
@@ -541,7 +553,7 @@ public sealed class ProfilerCommands
         {
             Snapshot snapshot = await BackgroundWork.Run(() => Snapshot.Read(path));
             shownProcess = null;
-            View.Show(snapshot, Path.GetFileNameWithoutExtension(path));
+            Show(snapshot, Path.GetFileNameWithoutExtension(path));
             ShowKill();
             parts.Say($"{Path.GetFileName(path)}: {snapshot.Samples:N0} samples");
             return snapshot;

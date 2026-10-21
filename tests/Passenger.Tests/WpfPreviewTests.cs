@@ -75,11 +75,13 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         window.Close();
     }
 
+    /// <summary>Its root tag holds a lone '\r', which the previewer's XML reader counts as a line's end and the editor does
+    /// not, so the places its boxes come with run a line ahead of the editor's below it: each still lands on its element.</summary>
     [AvaloniaFact]
     public void A_user_control_previews_at_its_design_size_with_its_design_time_data_context()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
-        string card = app.Write("Card.xaml", Card);
+        string card = app.Write("Card.xaml", Card.Replace("d:DesignWidth=\"320\" d:DesignHeight", "d:DesignWidth=\"320\"\r d:DesignHeight", StringComparison.Ordinal));
         MainWindow window = app.Open(card);
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;

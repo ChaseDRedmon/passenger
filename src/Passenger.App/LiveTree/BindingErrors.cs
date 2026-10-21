@@ -90,11 +90,11 @@ public static partial class BindingErrors
     private static string Canonical(string file) => File.Exists(file) ? PathNames.Canonical(file) : file;
 
     /// <summary>The problem a failure is in Problems: at its misspelt member in <paramref name="text"/> (its file's text,
-    /// when there is one to read), else at its control's element.</summary>
+    /// when there is one to read), else at its control's element, in the editor's lines (<see cref="AppPlaces"/>).</summary>
     public static BindingProblem Problem(BindingFailure failure, TextSnapshot? text)
     {
         string? path = failure.Place is { } at ? Canonical(at.File) : null;
-        TextPosition position = failure.Place is { } place ? new TextPosition(Math.Max(0, place.Line - 1), Math.Max(0, place.Column - 1)) : default;
+        TextPosition position = failure.Place is { } place ? AppPlaces.PositionOf(place.File, place.Line, place.Column, text) : default;
         if (text is not null && MemberIn(text, failure) is { } member)
         {
             position = text.GetPosition(member.Start);
@@ -108,12 +108,13 @@ public static partial class BindingErrors
     /// binding a style's setter gives, the file changed since the app was built).</summary>
     public static TextRange? MemberIn(TextSnapshot text, BindingFailure failure)
     {
-        if (failure is not { Place: { } place, Member: { Length: > 0 } member } || place.Line < 1 || place.Line > text.LineCount)
+        // The control's place is its XAML compiler's, whose lines a lone '\r' ends too.
+        if (failure is not { Place: { } place, Member: { Length: > 0 } member } || place.Line < 1
+            || place.Line > (ServerPlaces.Compiled(place.File, text)?.LineCount ?? text.LineCount))
         {
             return null;
         }
-        LineSpan line = text.GetLine(place.Line - 1);
-        int start = line.Start + Math.Clamp(place.Column - 1, 0, line.Length);
+        int start = text.GetOffset(AppPlaces.PositionOf(place.File, place.Line, place.Column, text));
         string rest = text.GetText(start, Math.Min(text.Length - start, 64 * 1024));
         // The element's start tag: from its name to the '>' outside its attributes' quotes.
         int end = -1;
