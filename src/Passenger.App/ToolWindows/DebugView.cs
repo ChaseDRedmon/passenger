@@ -16,13 +16,58 @@ using Passenger.Text;
 
 namespace Passenger.App.ToolWindows;
 
+/// <summary>A program's tab in the Debug window: its name (its run configuration's, or the program attached to), its own
+/// console, and whether its session has ended, the tab then kept greyed until another starts in its place or it is closed.
+/// The debugger keeps the session, and what it knows of it while the tab is not shown, here.</summary>
+public sealed class DebugTab(string name, OutputView console) : Observable
+{
+    private bool isChosen;
+    private bool hasEnded;
+
+    public string Name { get; } = name;
+
+    /// <summary>What its program wrote, and the debugger's words on it.</summary>
+    public OutputView Console { get; } = console;
+
+    /// <summary>Its session, from its first moment; null until the debugger hands it over.</summary>
+    public DebugSession? Session { get; internal set; }
+
+    /// <summary>The session's built lines, from its start to its end.</summary>
+    internal BuiltLines? Lines { get; set; }
+
+    /// <summary>The session's Hot Reload, when it has one.</summary>
+    internal Debugging.HotReload? HotReload { get; set; }
+
+    /// <summary>Whether its program was launched with its output in this console, rather than attached to or in the terminal.</summary>
+    internal bool OwnsConsole { get; init; }
+
+    /// <summary>Whether it is the tab shown: its frames, values, console and toolbar are the window's.</summary>
+    public bool IsChosen
+    {
+        get => isChosen;
+        set => Set(ref isChosen, value);
+    }
+
+    public bool HasEnded
+    {
+        get => hasEnded;
+        set => Set(ref hasEnded, value);
+    }
+
+    /// <summary>Whether its session runs, is paused, or is still starting.</summary>
+    public bool IsLive => !HasEnded && Session is not { State: DebugState.Ended };
+}
+
 /// <summary>The Debug tool window, laid out as Rider's: a toolbar down the left (rerun, resume,
 /// pause, stop, detach, then View Breakpoints and Mute Breakpoints), the stepping actions (Smart Step Into after Step Into,
 /// as Rider's) across the top beside the Debugger and Console tabs, and under
 /// Debugger the frames of the chosen thread on the left with the variables of the chosen frame on the
-/// right, an expression to evaluate or watch above them.</summary>
+/// right, an expression to evaluate or watch above them. Each program debugged has a tab in the window's header (<see
+/// cref="Sessions"/>), whose frames, values, console and toolbar the window shows while it is chosen.</summary>
 public sealed class DebugView : DockPanel
 {
+    private readonly OutputView first;
+    private readonly List<OutputView> consoles = [];
     private readonly ComboBox threads;
     private readonly ListBox frames;
     private readonly ListBox variables;
@@ -39,9 +84,17 @@ public sealed class DebugView : DockPanel
     public DebugView()
     {
         VariablesTree tree = Tree;
-        Console = new OutputView();
+        first = NewConsole();
         // What is typed into the console is the program's input, as in Rider's Debug console.
-        consolePane = new DockPanel { IsVisible = false, Children = { Console } };
+        consolePane = new DockPanel { IsVisible = false, Children = { first } };
+        // The sessions' tabs are in the window's header, after its title, as the Terminal window's shells are.
+        HeaderTools = new ItemsControl
+        {
+            ItemsSource = Sessions,
+            VerticalAlignment = VerticalAlignment.Center,
+            ItemsPanel = new FuncTemplate<Panel?>(() => new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 }),
+            ItemTemplate = new FuncDataTemplate<DebugTab>((tab, _) => tab is null ? new TextBlock() : SessionTab(tab), supportsRecycling: false),
+        };
 
         threads = new ComboBox
         {
@@ -223,8 +276,88 @@ public sealed class DebugView : DockPanel
     /// <summary>The Variables view's list, whose rows are <see cref="Tree"/>'s.</summary>
     public ListBox VariablesList => variables;
 
-    /// <summary>The program's output, as Rider's Console tab shows it.</summary>
-    public OutputView Console { get; }
+    /// <summary>The chosen program's output, as Rider's Console tab shows it.</summary>
+    public OutputView Console => (OutputView)consolePane.Children[0];
+
+    /// <summary>Every session's console, the first made with the window.</summary>
+    public IReadOnlyList<OutputView> Consoles => consoles;
+
+    /// <summary>A link in a session's console was clicked.</summary>
+    public event EventHandler<LinkTarget>? ConsoleLinkClicked;
+
+    /// <summary>The programs debugged, a tab each, in the order they started.</summary>
+    public ObservableCollection<DebugTab> Sessions { get; } = [];
+
+    /// <summary>The window header's own tools: the sessions' tabs.</summary>
+    public Control HeaderTools { get; }
+
+    /// <summary>A session's tab was pressed.</summary>
+    public event EventHandler<DebugTab>? SessionChosen;
+
+    /// <summary>A session's tab was closed with its ×.</summary>
+    public event EventHandler<DebugTab>? SessionClosed;
+
+    /// <summary>A console for another session's program, set up as the first is: its links, the folders they are looked
+    /// for in, and its buffer.</summary>
+    public OutputView NewConsole()
+    {
+        OutputView console = new();
+        if (consoles.Count > 0)
+        {
+            console.Limit = first.Limit;
+            console.Links.Folders = first.Links.Folders;
+        }
+        console.LinkClicked += (_, target) => ConsoleLinkClicked?.Invoke(this, target);
+        consoles.Add(console);
+        return console;
+    }
+
+    /// <summary>Shows a session's console in the Console tab.</summary>
+    public void ShowConsole(OutputView console)
+    {
+        if (consolePane.Children[0] != console)
+        {
+            consolePane.Children.Clear();
+            consolePane.Children.Add(console);
+        }
+    }
+
+    /// <summary>Lets a session's console go, its tab closed or replaced; the first stays, for the next.</summary>
+    public void ForgetConsole(OutputView console)
+    {
+        if (console != first)
+        {
+            consoles.Remove(console);
+        }
+    }
+
+    /// <summary>The console a new session writes to when no other is live and so its tab replaces the rest: the first.</summary>
+    public OutputView FirstConsole => first;
+
+    private Control SessionTab(DebugTab tab)
+    {
+        TextBlock name = new() { Text = tab.Name, VerticalAlignment = VerticalAlignment.Center };
+        name.Classes.Set("muted", tab.HasEnded);
+        ToggleButton button = ToolTabs.Tab(name, tab.IsChosen, () => SessionClosed?.Invoke(this, tab), "Close Session");
+        tab.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(DebugTab.IsChosen))
+            {
+                button.IsChecked = tab.IsChosen;
+            }
+            else if (e.PropertyName == nameof(DebugTab.HasEnded))
+            {
+                name.Classes.Set("muted", tab.HasEnded);
+            }
+        };
+        // A press on the chosen tab leaves it chosen, where the toggle would let it go.
+        button.Click += (_, _) =>
+        {
+            SessionChosen?.Invoke(this, tab);
+            button.IsChecked = tab.IsChosen;
+        };
+        return button;
+    }
 
     public ObservableCollection<DapThread> Threads { get; } = [];
 
@@ -285,12 +418,24 @@ public sealed class DebugView : DockPanel
     /// <summary>Whether Mute Breakpoints shows pressed.</summary>
     public bool ShowsMuted => mute.IsChecked == true;
 
-    /// <summary>Clears what the last session left, when a new one starts.</summary>
+    /// <summary>Clears what the last folder's sessions left, as another opens: their tabs, and every console but the first,
+    /// which is shown empty.</summary>
     public void Clear()
     {
         ShowFrames([], null, [], null);
         Tree.Show([]);
-        Console.Clear();
+        ForgetSessions();
+        first.Input = null;
+        first.Clear();
+    }
+
+    /// <summary>Lets the last debugger's tabs go, as another folder's debugger takes the window: every console but the first,
+    /// which is shown.</summary>
+    public void ForgetSessions()
+    {
+        Sessions.Clear();
+        consoles.RemoveAll(c => c != first);
+        ShowConsole(first);
     }
 
     public void FocusEvaluate(string text)

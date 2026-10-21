@@ -187,7 +187,7 @@ public partial class MainWindow
         status.Text = "Restarting application to apply changes ...";
         Bottom.Debug.Console.Append("Hot Reload: Restarting application to apply changes ...\n");
         Stopwatch took = Stopwatch.StartNew();
-        string? refused = await buildRun.RestartDebugAsync();
+        string? refused = await buildRun.RestartDebugAsync(next.Debug.Chosen!.Name);
         LastHotReloadRestart = took.Elapsed;
         if (refused is not null)
         {

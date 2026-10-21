@@ -216,13 +216,16 @@ public partial class ManagedDebugger
         return _breakpointManager.RemoveBreakpoint(id);
     }
 
-    /// <summary>The process to attach to, taken hold of by configurationDone once the client's breakpoints are set.</summary>
-    public void Attach(int processId, bool justMyCode)
+    /// <summary>The process to attach to, taken hold of by configurationDone once the client's breakpoints are set; with
+    /// <paramref name="hotReload"/> (a program started held, DOTNET_MODIFIABLE_ASSEMBLIES=debug set) the user's modules that
+    /// load after the attach get Edit and Continue, as a launch's do.</summary>
+    public void Attach(int processId, bool justMyCode, bool hotReload = false)
     {
         EnsureNoProcessBeingDebugged();
         _logger?.Invoke($"Storing attach target: {processId}");
         _justMyCode = justMyCode;
         _stopAtEntry = false;
+        _hotReload = hotReload;
         _pendingAttachProcessId = processId;
         _launched = false;
     }

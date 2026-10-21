@@ -24,6 +24,10 @@ public sealed class DebugAdapter
     /// <summary>Whether the client said at initialize that it starts programs in its terminal.</summary>
     private bool runsInTerminal;
 
+    /// <summary>The client runs on another machine (this adapter inside a container): the processes it tells of are local
+    /// to the adapter but not to the client, which must never take their ids for its own machine's.</summary>
+    public bool Remote { get; init; }
+
     /// <summary>The longest the client may take to start a program in its terminal.</summary>
     private static readonly TimeSpan RunInTerminalLimit = TimeSpan.FromSeconds(30);
 
@@ -299,8 +303,8 @@ public sealed class DebugAdapter
         debugger.OnThreadExited += threadId => connection.SendEvent("thread", new ThreadEvent("exited", threadId));
         debugger.OnModuleLoaded += (id, name, path) => connection.SendEvent("module", new ModuleEvent("new", new DapModule(id, name, path)));
         debugger.OnModuleUnloaded += (id, name, path) => connection.SendEvent("module", new ModuleEvent("removed", new DapModule(id, name, path)));
-        debugger.OnProcessStarted += (processId, name) => connection.SendEvent("process", new ProcessEvent(name, processId, IsLocalProcess: true, StartMethod: "launch"));
-        debugger.OnAttached += processId => connection.SendEvent("process", new ProcessEvent($"process {processId}", processId, IsLocalProcess: true, StartMethod: "attach"));
+        debugger.OnProcessStarted += (processId, name) => connection.SendEvent("process", new ProcessEvent(name, processId, IsLocalProcess: !Remote, StartMethod: "launch"));
+        debugger.OnAttached += processId => connection.SendEvent("process", new ProcessEvent($"process {processId}", processId, IsLocalProcess: !Remote, StartMethod: "attach"));
         debugger.OnOutput += (output, isStdError) => connection.SendEvent("output", new OutputEvent(output, isStdError ? "stderr" : "stdout"));
         debugger.OnConsole += message => connection.SendEvent("output", new OutputEvent(message, "console"));
         debugger.SendRunInTerminalRequest += RunInTerminal;
@@ -393,7 +397,7 @@ public sealed class DebugAdapter
         {
             int processId = arguments.ProcessId ?? throw new InvalidOperationException("Missing process ID");
             bool justMyCode = arguments.JustMyCode ?? true;
-            await Locked(() => debugger.Attach(processId, justMyCode));
+            await Locked(() => debugger.Attach(processId, justMyCode, arguments.HotReload ?? false));
         }
         catch (Exception error)
         {

@@ -99,7 +99,7 @@ public partial class MainWindow
     /// <summary>Rider's tab menu, its items run on the tab it opened on.</summary>
     private void FillTabMenu(TabMenu opening)
     {
-        ActionContext context = new(opening.Document, opening.Group.Editor, null, null, session.Debug.IsDebugging ? session.Debug.Session!.State : null)
+        ActionContext context = new(opening.Document, opening.Group.Editor, null, null, session.Debug.IsDebugging ? session.Debug.Session?.State : null)
         {
             Tab = (opening.Group, opening.Document),
         };

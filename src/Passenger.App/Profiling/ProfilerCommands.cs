@@ -406,7 +406,8 @@ public sealed class ProfilerCommands
     private AttachTarget? Attachable()
     {
         ProjectSession current = Session;
-        if (current.Debug.IsDebugging && current.Debug.Session is { ProcessStarted.IsCompletedSuccessfully: true } debugging)
+        // The chosen session's, when its program is on this machine: a container's process id names none of this one's.
+        if (current.Debug.Session is { State: not Debugging.DebugState.Ended, IsLocal: true, ProcessStarted.IsCompletedSuccessfully: true } debugging)
         {
             int process = debugging.ProcessStarted.Result;
             LiveApp? app = current.LiveApp is { ProcessId: int inspected } live && inspected == process ? live : null;

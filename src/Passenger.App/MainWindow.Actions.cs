@@ -75,7 +75,7 @@ public partial class MainWindow
         Docking.ToolWindow? tool = focused is Visual visual
             ? Dock.Windows.FirstOrDefault(w => w.Content == visual || w.Content.IsVisualAncestorOf(visual))
             : null;
-        return new ActionContext(Editors.Active, Editors.CodeEditor, focused, tool, session.Debug.IsDebugging ? session.Debug.Session!.State : null);
+        return new ActionContext(Editors.Active, Editors.CodeEditor, focused, tool, session.Debug.IsDebugging ? session.Debug.Session?.State : null);
     }
 
     private static string? NeedsFile(ActionContext context) => context.File is null ? NoFile : null;
@@ -260,6 +260,8 @@ public partial class MainWindow
             }
         }, _ => session.Debug.Session is { } debugged && debugged == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
         Add(A.Stop, "Stop", "Run", _ => buildRun.Stop(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
+        // Every program debugged, where Stop ends the one chosen in the Debug window.
+        Add(A.StopAll, "Stop All", "Run", _ => buildRun.StopAll(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;

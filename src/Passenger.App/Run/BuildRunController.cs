@@ -599,20 +599,22 @@ public sealed class BuildRunController
     public Task<string?> DebugAsync(string? arguments = null) =>
         session.Configurations.Chosen is { } chosen ? DebugAsync(chosen, arguments) : Task.FromResult<string?>("Nothing to debug: no executable project");
 
-    /// <summary>The configuration Debug last launched, and the arguments it was given, which a restart for Hot Reload
-    /// launches again.</summary>
-    private (RunConfiguration Configuration, string? Arguments)? debugged;
+    /// <summary>Each configuration Debug launched, by its name, and the arguments it was given, which a restart for Hot
+    /// Reload launches again.</summary>
+    private readonly Dictionary<string, (RunConfiguration Configuration, string? Arguments)> debugged = [];
 
-    /// <summary>Hot Reload's restart for an edit it cannot apply: the program Debug last launched is stopped (on Windows its
-    /// files are locked while it runs), built again and launched with the same configuration and arguments, the
-    /// breakpoints the store's. Null once the new session is open, else why it could not.</summary>
-    public async Task<string?> RestartDebugAsync()
+    /// <summary>Hot Reload's restart for an edit it cannot apply: the program Debug launched for a configuration (the
+    /// debugger's chosen session's) is stopped (on Windows its files are locked while it runs), built again and launched with
+    /// the same configuration and arguments, the breakpoints the store's. Null once the new session is open, else why it
+    /// could not.</summary>
+    public async Task<string?> RestartDebugAsync(string name)
     {
-        if (debugged is not var (configuration, arguments))
+        if (!debugged.TryGetValue(name, out (RunConfiguration Configuration, string? Arguments) last))
         {
             return "Nothing was launched under the debugger to restart";
         }
-        await session.Debug.StopAsync();
+        (RunConfiguration configuration, string? arguments) = last;
+        await session.Debug.StopAsync(configuration.Name);
         return await DebugAsync(configuration, arguments);
     }
 
@@ -630,7 +632,7 @@ public sealed class BuildRunController
 
     private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments, Working work)
     {
-        debugged = (chosen, arguments);
+        debugged[chosen.Name] = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
         (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, work);
         if (plan is null)
@@ -651,9 +653,11 @@ public sealed class BuildRunController
         LaunchPlan launched = session.Inspected(plan);
         LiveApp? inspected = session.LiveApp;
         ShowBindings();
-        WatchBindings(inspected, parts.Views.Debug.Console);
-        string? refused = await debug.StartAsync(launched);
-        Task ended = refused is null ? DebugEnded(debug) : Task.CompletedTask;
+        Task<string?> starting = debug.StartAsync(launched);
+        // Its tab, chosen as the start began, has the console its failed bindings are written to.
+        WatchBindings(inspected, debug.Chosen?.Console);
+        string? refused = await starting;
+        Task ended = refused is null ? DebugEnded(debug.SessionNamed(launched.Name)) : Task.CompletedTask;
         EndWith(inspected, ended);
         if (refused is null)
         {
@@ -711,10 +715,10 @@ public sealed class BuildRunController
         return new BindingProblem(failure, problem);
     }
 
-    /// <summary>The end of the session being debugged; done already when there is none.</summary>
-    private static Task DebugEnded(DebugController debug)
+    /// <summary>The end of a session; done already when there is none.</summary>
+    private static Task DebugEnded(DebugSession? session)
     {
-        if (debug.Session is not { State: not DebugState.Ended } running)
+        if (session is not { State: not DebugState.Ended } running)
         {
             return Task.CompletedTask;
         }
@@ -729,13 +733,26 @@ public sealed class BuildRunController
         return ended.Task;
     }
 
-    /// <summary>Stop: any start under way (Run's, Debug's or Profile's, ended at whatever stage it is), the debugger's session,
-    /// the program Run started (in the Run window or the terminal), the one Profile started (its snapshot taken or not) and
-    /// the build.</summary>
+    /// <summary>Stop: any start under way (Run's, Debug's or Profile's, ended at whatever stage it is), the debugger's chosen
+    /// session (every one when none is chosen), the program Run started (in the Run window or the terminal), the one Profile
+    /// started (its snapshot taken or not) and the build.</summary>
     public void Stop()
     {
         parts.Work.Stop();
         _ = session.Debug.StopAsync();
+        StopRest();
+    }
+
+    /// <summary>Stop All: as Stop, every program debugged ended rather than the chosen one.</summary>
+    public void StopAll()
+    {
+        parts.Work.Stop();
+        _ = session.Debug.StopAllAsync();
+        StopRest();
+    }
+
+    private void StopRest()
+    {
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Profiled?.Run.Kill();

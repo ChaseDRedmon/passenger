@@ -7,10 +7,13 @@ using Passenger.Text;
 namespace Passenger.App.Debugging;
 
 /// <summary>What every breakpoint has, as Rider's Breakpoints window edits it: on or off, whether it stops, a condition, a
-/// hit count and a message to log. Its <see cref="Status"/> is what the running debugger last said of it, and goes back to
-/// unknown when the session ends.</summary>
+/// hit count and a message to log. Its <see cref="Status"/> is what the running debuggers last said of it, and goes back to
+/// unknown as their sessions end.</summary>
 public abstract class Breakpoint
 {
+    /// <summary>What each session's debugger last said of it, by the session.</summary>
+    private readonly Dictionary<object, (BreakpointStatus Status, string? Message)> said = [];
+
     public bool Enabled { get; internal set; } = true;
     public string? Condition { get; internal set; }
     public string? HitCondition { get; internal set; }
@@ -22,10 +25,35 @@ public abstract class Breakpoint
     /// <summary>A message written to the Debug window's console on each hit, its {expressions} evaluated there.</summary>
     public string? LogMessage { get; internal set; }
 
-    public BreakpointStatus Status { get; internal set; }
+    /// <summary>What the debuggers said of it: with several programs debugged at once, bound where any bound it, else unknown
+    /// while any has yet to bind it, else refused.</summary>
+    public BreakpointStatus Status { get; private set; }
 
     /// <summary>The debugger's word on a breakpoint that will not be hit ("no symbols loaded").</summary>
-    public string? Message { get; internal set; }
+    public string? Message { get; private set; }
+
+    /// <summary>Records what one session's debugger said of it.</summary>
+    internal void Tell(object session, BreakpointStatus status, string? message)
+    {
+        said[session] = (status, message);
+        Merge();
+    }
+
+    /// <summary>Forgets what a session's debugger said of it, as the session ends; true when it had said something.</summary>
+    internal bool Forget(object session)
+    {
+        if (!said.Remove(session))
+        {
+            return false;
+        }
+        Merge();
+        return true;
+    }
+
+    private void Merge() => (Status, Message) = said.Count == 0 ? (BreakpointStatus.Unknown, null)
+        : said.Values.Any(s => s.Status == BreakpointStatus.Bound) ? said.Values.First(s => s.Status == BreakpointStatus.Bound)
+        : said.Values.Any(s => s.Status == BreakpointStatus.Unknown) ? said.Values.First(s => s.Status == BreakpointStatus.Unknown)
+        : said.Values.First();
 
     /// <summary>How the Breakpoints window and the popup name it: "Program.cs:7", "Any exception".</summary>
     public abstract string Location { get; }
@@ -67,11 +95,14 @@ public sealed class ExceptionBreakpoint(string? type) : Breakpoint
 
 /// <summary>Rider's data breakpoint (Set Data Breakpoint on a member in Variables): a field, an auto-property or an array
 /// element of one object, watched for a write that changes it. It lasts as long as its session, as Rider's do, the object
-/// being that session's alone, so no folder keeps it.</summary>
-public sealed class DataBreakpoint(string dataId, string location) : Breakpoint
+/// being that session's alone, so no folder keeps it and no other session is sent it.</summary>
+public sealed class DataBreakpoint(string dataId, string location, object session) : Breakpoint
 {
     /// <summary>What the debugger named the data watched by.</summary>
     public string DataId { get; } = dataId;
+
+    /// <summary>The session whose program has the object.</summary>
+    public object Session { get; } = session;
 
     /// <summary>The member, and the object it is of with its type: "count on counter (Counter)", Rider's words.</summary>
     public override string Location { get; } = location;
@@ -363,25 +394,67 @@ public sealed class BreakpointStore
         BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>The data breakpoint on what the debugger names by a data id, set as Rider sets one, to stop at every write
-    /// that changes it; the one there is already when there is.</summary>
-    public DataBreakpoint AddData(string dataId, string location)
+    /// <summary>The data breakpoint on what a session's debugger names by a data id, set as Rider sets one, to stop at every
+    /// write that changes it; the one there is already when there is.</summary>
+    public DataBreakpoint AddData(string dataId, string location, object session)
     {
-        if (FindData(dataId) is { } existing)
+        if (FindData(dataId, session) is { } existing)
         {
             return existing;
         }
-        DataBreakpoint added = new(dataId, location);
+        DataBreakpoint added = new(dataId, location, session);
         data.Add(added);
         DataChanged?.Invoke(this, EventArgs.Empty);
         return added;
     }
 
-    /// <summary>The data breakpoint on what the debugger names by a data id, if one is set.</summary>
-    public DataBreakpoint? FindData(string dataId) => data.FirstOrDefault(d => d.DataId == dataId);
+    /// <summary>The data breakpoint on what a session's debugger names by a data id, if one is set.</summary>
+    public DataBreakpoint? FindData(string dataId, object session) => data.FirstOrDefault(d => d.DataId == dataId && d.Session == session);
 
-    /// <summary>Lets the data and property breakpoints go, as their session ends.</summary>
-    public void ClearData()
+    /// <summary>The sessions the breakpoints go to, from their start to their end.</summary>
+    private readonly HashSet<object> sessions = [];
+
+    /// <summary>A session starts: it is sent the breakpoints, and tells what its debugger made of each.</summary>
+    public void Join(object session) => sessions.Add(session);
+
+    /// <summary>A session ends: what its debugger said is forgotten, its data breakpoints go with its objects, and the
+    /// property breakpoints, on elements of a debugged app, once no session is left.</summary>
+    public void Leave(object session)
+    {
+        sessions.Remove(session);
+        foreach ((string path, List<LineBreakpoint> list) in byPath)
+        {
+            if (list.Aggregate(false, (any, b) => b.Forget(session) | any))
+            {
+                Changed?.Invoke(this, path);
+            }
+        }
+        if (exceptions.Aggregate(false, (any, e) => e.Forget(session) | any))
+        {
+            ExceptionsChanged?.Invoke(this, EventArgs.Empty);
+        }
+        if (BindingErrors.Forget(session))
+        {
+            BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
+        }
+        if (data.RemoveAll(d => d.Session == session) > 0)
+        {
+            DataChanged?.Invoke(this, EventArgs.Empty);
+        }
+        bool forgotten = properties.Aggregate(false, (any, p) => p.Forget(session) | any);
+        if (sessions.Count == 0 && properties.Count > 0)
+        {
+            properties.Clear();
+            forgotten = true;
+        }
+        if (forgotten)
+        {
+            PropertiesChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Lets every data and property breakpoint go, as another folder opens.</summary>
+    private void ClearData()
     {
         if (data.Count > 0)
         {
@@ -413,16 +486,24 @@ public sealed class BreakpointStore
     public PropertyBreakpoint? FindProperty(long element, string property) =>
         properties.FirstOrDefault(p => p.Element == element && p.Property == property);
 
-    /// <summary>Records what the debugger said of the property breakpoints; those it was not asked of (off, or muted) go
-    /// back to unknown.</summary>
-    public void ReportProperties(IReadOnlyList<(PropertyBreakpoint Breakpoint, BreakpointStatus Status, string? Message)> reports)
+    /// <summary>Records what a session's debugger said of the property breakpoints; those it was not asked of (off, or
+    /// muted) go back to unknown.</summary>
+    public void ReportProperties(object session, IReadOnlyList<(PropertyBreakpoint Breakpoint, BreakpointStatus Status, string? Message)> reports)
     {
         foreach (PropertyBreakpoint breakpoint in properties)
         {
-            (breakpoint.Status, breakpoint.Message) = reports.FirstOrDefault(r => ReferenceEquals(r.Breakpoint, breakpoint)) is { Breakpoint: not null } said
+            (BreakpointStatus status, string? message) = reports.FirstOrDefault(r => ReferenceEquals(r.Breakpoint, breakpoint)) is { Breakpoint: not null } said
                 ? (said.Status, said.Message)
                 : (BreakpointStatus.Unknown, null);
+            breakpoint.Tell(session, status, message);
         }
+        PropertiesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Records what a session's debugger said of one property breakpoint since it was sent (bound as its app loaded).</summary>
+    public void ReportProperty(object session, PropertyBreakpoint breakpoint, BreakpointStatus status, string? message)
+    {
+        breakpoint.Tell(session, status, message);
         PropertiesChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -571,36 +652,36 @@ public sealed class BreakpointStore
         }
     }
 
-    /// <summary>Records what the debugger said of a file's breakpoints, in the order they were sent.</summary>
-    public void Report(string path, IReadOnlyList<(BreakpointStatus Status, string? Message, int? Line)> reports, IReadOnlyList<LineBreakpoint> sent)
+    /// <summary>Records what a session's debugger said of a file's breakpoints, in the order they were sent.</summary>
+    public void Report(object session, string path, IReadOnlyList<(BreakpointStatus Status, string? Message, int? Line)> reports, IReadOnlyList<LineBreakpoint> sent)
     {
         for (int i = 0; i < Math.Min(reports.Count, sent.Count); i++)
         {
-            sent[i].Status = reports[i].Status;
-            sent[i].Message = reports[i].Message;
+            sent[i].Tell(session, reports[i].Status, reports[i].Message);
         }
         Changed?.Invoke(this, path);
     }
 
-    /// <summary>Records what the debugger said of XAML Binding Errors (unknown when it was not sent).</summary>
-    public void ReportBindingErrors(BreakpointStatus status, string? message)
+    /// <summary>Records what a session's debugger said of XAML Binding Errors (unknown when it was not sent).</summary>
+    public void ReportBindingErrors(object session, BreakpointStatus status, string? message)
     {
-        if (BindingErrors.Status == status && BindingErrors.Message == message)
+        (BreakpointStatus was, string? said) = (BindingErrors.Status, BindingErrors.Message);
+        BindingErrors.Tell(session, status, message);
+        if (BindingErrors.Status != was || BindingErrors.Message != said)
         {
-            return;
+            BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
         }
-        (BindingErrors.Status, BindingErrors.Message) = (status, message);
-        BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Records what the debugger said of the exception breakpoints sent, in the order they were sent; those not
-    /// sent (off, or muted) go back to unknown.</summary>
-    public void ReportExceptions(IReadOnlyList<(BreakpointStatus Status, string? Message)> reports, IReadOnlyList<ExceptionBreakpoint> sent)
+    /// <summary>Records what a session's debugger said of the exception breakpoints sent, in the order they were sent; those
+    /// not sent (off, or muted) go back to unknown.</summary>
+    public void ReportExceptions(object session, IReadOnlyList<(BreakpointStatus Status, string? Message)> reports, IReadOnlyList<ExceptionBreakpoint> sent)
     {
         foreach (ExceptionBreakpoint breakpoint in exceptions)
         {
             int at = IndexOf(sent, breakpoint);
-            (breakpoint.Status, breakpoint.Message) = at >= 0 && at < reports.Count ? reports[at] : (BreakpointStatus.Unknown, null);
+            (BreakpointStatus status, string? message) = at >= 0 && at < reports.Count ? reports[at] : (BreakpointStatus.Unknown, null);
+            breakpoint.Tell(session, status, message);
         }
         ExceptionsChanged?.Invoke(this, EventArgs.Empty);
 
@@ -617,11 +698,11 @@ public sealed class BreakpointStore
         }
     }
 
-    /// <summary>Records what the debugger said of the data breakpoints sent, in the order they were sent; those not sent (off,
-    /// or muted) go back to unknown.</summary>
-    public void ReportData(IReadOnlyList<(BreakpointStatus Status, string? Message)> reports, IReadOnlyList<DataBreakpoint> sent)
+    /// <summary>Records what a session's debugger said of its data breakpoints sent, in the order they were sent; those not
+    /// sent (off, or muted) go back to unknown.</summary>
+    public void ReportData(object session, IReadOnlyList<(BreakpointStatus Status, string? Message)> reports, IReadOnlyList<DataBreakpoint> sent)
     {
-        foreach (DataBreakpoint breakpoint in data)
+        foreach (DataBreakpoint breakpoint in data.Where(d => d.Session == session))
         {
             int at = -1;
             for (int i = 0; i < sent.Count; i++)
@@ -632,36 +713,10 @@ public sealed class BreakpointStore
                     break;
                 }
             }
-            (breakpoint.Status, breakpoint.Message) = at >= 0 && at < reports.Count ? reports[at] : (BreakpointStatus.Unknown, null);
+            (BreakpointStatus status, string? message) = at >= 0 && at < reports.Count ? reports[at] : (BreakpointStatus.Unknown, null);
+            breakpoint.Tell(session, status, message);
         }
         DataChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    /// <summary>Forgets what the last debugger said, when its session ends.</summary>
-    public void ResetStatus()
-    {
-        foreach ((string path, List<LineBreakpoint> list) in byPath)
-        {
-            if (list.Any(b => b.Status != BreakpointStatus.Unknown))
-            {
-                foreach (LineBreakpoint breakpoint in list)
-                {
-                    breakpoint.Status = BreakpointStatus.Unknown;
-                    breakpoint.Message = null;
-                }
-                Changed?.Invoke(this, path);
-            }
-        }
-        if (exceptions.Any(e => e.Status != BreakpointStatus.Unknown))
-        {
-            foreach (ExceptionBreakpoint breakpoint in exceptions)
-            {
-                breakpoint.Status = BreakpointStatus.Unknown;
-                breakpoint.Message = null;
-            }
-            ExceptionsChanged?.Invoke(this, EventArgs.Empty);
-        }
-        ReportBindingErrors(BreakpointStatus.Unknown, null);
     }
 
     /// <summary>Carries the breakpoints of a file, or of every file in a folder, to where it moved: the debugger hears

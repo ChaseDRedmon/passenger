@@ -81,8 +81,9 @@ public sealed class DebugSession
     /// <summary>Why a start failed that was stopped (Stop, Detach, the window's close) before it was done.</summary>
     public const string StoppedStarting = "the session was stopped as it started";
 
-    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns)
+    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns, bool elsewhere)
     {
+        Elsewhere = elsewhere;
         this.breakpoints = breakpoints;
         this.lines = lines;
         this.columns = columns ?? (_ => null);
@@ -98,6 +99,10 @@ public sealed class DebugSession
         if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
         {
             arguments.Add($"--engineLogging={engineLog}");
+        }
+        if (elsewhere)
+        {
+            arguments.Add("--remote");
         }
         ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
         start.RedirectStandardInput = true;
@@ -149,6 +154,7 @@ public sealed class DebugSession
             JsonElementCopy copy = new(body);
             UiThread.Post(() => OnEvent(name, copy));
         };
+        breakpoints.Join(this);
         breakpoints.Changed += OnBreakpointsChanged;
         breakpoints.ExceptionsChanged += OnExceptionsChanged;
         breakpoints.DataChanged += OnDataChanged;
@@ -202,6 +208,15 @@ public sealed class DebugSession
     /// <summary>The debugger attached to a program already running, rather than starting it: one Detach can let go of.</summary>
     public bool Attached { get; private init; }
 
+    /// <summary>The program runs on another machine (a container's): its process id is that machine's, so the session never
+    /// holds, signals or kills a process of this one by it, and its adapter says so of the processes it tells of.</summary>
+    public bool Elsewhere { get; }
+
+    /// <summary>Whether the program's process id (<see cref="ProcessStarted"/>) names a process of this machine.</summary>
+    public bool IsLocal => !Elsewhere && processLocal;
+
+    private bool processLocal = true;
+
     /// <summary>The session ended with Detach: the program runs on without the debugger.</summary>
     public bool Detached { get; private set; }
 
@@ -217,10 +232,11 @@ public sealed class DebugSession
     /// on what the user's code leaves unhandled). What the program writes, and the debugger's own words ("console"), go to
     /// <paramref name="output"/> on the connection's thread, in order. With <paramref name="runInTerminal"/> the program
     /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.
-    /// <paramref name="starting"/> is handed the session as it begins, so Stop can end it while it starts.</summary>
+    /// <paramref name="starting"/> is handed the session as it begins, so Stop can end it while it starts; with
+    /// <paramref name="elsewhere"/> the program is not on this machine (<see cref="Elsewhere"/>).</summary>
     public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false,
-        Action<DebugSession>? starting = null) =>
+        Action<DebugSession>? starting = null, bool elsewhere = false) =>
         StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
             Program = plan.Program,
@@ -231,22 +247,25 @@ public sealed class DebugSession
             JustMyCode = true,
             StopAtEntry = false,
             HotReload = hotReload,
-        }, breakpoints, lines, log, output, runInTerminal, columns, starting);
+        }, breakpoints, lines, log, output, runInTerminal, columns, starting, elsewhere);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (one Attach to Process chose, or a test host
-    /// VSTest started), with the store's breakpoints; <paramref name="starting"/> is handed the session as it begins.</summary>
+    /// VSTest started), with the store's breakpoints; <paramref name="starting"/> is handed the session as it begins. With
+    /// <paramref name="hotReload"/> the program was started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug,
+    /// so its code may change as a launch's may; with <paramref name="elsewhere"/> it is not on this machine.</summary>
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null, columns, starting);
+        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null, bool hotReload = false, bool elsewhere = false) =>
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true, HotReload = hotReload ? true : null },
+            breakpoints, lines, log, output, null, columns, starting, elsewhere);
 
     /// <summary>Opens the session: the adapter told what to start, the breakpoints sent, then configurationDone, whose answer
     /// waits for the program's runtime however long it takes. A session stopped meanwhile ends the start at once, failing it
     /// with <see cref="StoppedStarting"/>.</summary>
     private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting)
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting, bool elsewhere)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output, columns) { Program = program, Attached = request == "attach" };
+        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere) { Program = program, Attached = request == "attach" };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {
@@ -672,10 +691,10 @@ public sealed class DebugSession
         }
         if (breakpoints.Muted)
         {
-            breakpoints.Report(path, [.. breakpoints.In(path).Select(_ => (BreakpointStatus.Unknown, (string?)null, (int?)null))], breakpoints.In(path));
+            breakpoints.Report(this, path, [.. breakpoints.In(path).Select(_ => (BreakpointStatus.Unknown, (string?)null, (int?)null))], breakpoints.In(path));
             return;
         }
-        breakpoints.Report(path,
+        breakpoints.Report(this, path,
             [.. response.Breakpoints.Take(built.Count).Select(b => Status(path, b)), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
             [.. built.Take(response.Breakpoints.Count), .. unbuilt]);
     }
@@ -773,7 +792,7 @@ public sealed class DebugSession
         SetExceptionBreakpointsResponse response = await connection.RequestAsync<SetExceptionBreakpointsResponse>(
             "setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [], [.. sending.Select(s => s.Option)]));
         IReadOnlyList<DapBreakpoint> said = response.Breakpoints ?? [];
-        breakpoints.ReportExceptions([.. said.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], [.. sending.Select(s => s.Breakpoint)]);
+        breakpoints.ReportExceptions(this, [.. said.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], [.. sending.Select(s => s.Breakpoint)]);
     }
 
     private void OnExceptionsChanged(object? sender, EventArgs e)
@@ -785,8 +804,8 @@ public sealed class DebugSession
         }
     }
 
-    /// <summary>The data breakpoints that are on; none while muted.</summary>
-    private List<DataBreakpoint> DataSending() => breakpoints.Muted ? [] : [.. breakpoints.Data.Where(d => d.Enabled)];
+    /// <summary>The data breakpoints on this session's objects that are on; none while muted.</summary>
+    private List<DataBreakpoint> DataSending() => breakpoints.Muted ? [] : [.. breakpoints.Data.Where(d => d.Enabled && d.Session == this)];
 
     /// <summary>Sends the data breakpoints, and records what the debugger made of each.</summary>
     private async Task SendDataBreakpointsAsync()
@@ -802,7 +821,7 @@ public sealed class DebugSession
         catch (DapException refused)
         {
             // A refusal of the whole request leaves none of them watching, each saying why.
-            breakpoints.ReportData([.. sending.Select(_ => (BreakpointStatus.Invalid, (string?)refused.Reason))], sending);
+            breakpoints.ReportData(this, [.. sending.Select(_ => (BreakpointStatus.Invalid, (string?)refused.Reason))], sending);
             return;
         }
         dataById.Clear();
@@ -813,7 +832,7 @@ public sealed class DebugSession
                 dataById[id] = sending[i];
             }
         }
-        breakpoints.ReportData([.. response.Breakpoints.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], sending);
+        breakpoints.ReportData(this, [.. response.Breakpoints.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], sending);
     }
 
     private void OnDataChanged(object? sender, EventArgs e)
@@ -869,8 +888,8 @@ public sealed class DebugSession
         }
         catch (DapException refused)
         {
-            breakpoints.ReportProperties([.. said, .. sending.Select(p => (p, BreakpointStatus.Invalid, (string?)refused.Reason))]);
-            breakpoints.ReportBindingErrors(bindingErrors is null ? BreakpointStatus.Unknown : BreakpointStatus.Invalid, bindingErrors is null ? null : refused.Reason);
+            breakpoints.ReportProperties(this, [.. said, .. sending.Select(p => (p, BreakpointStatus.Invalid, (string?)refused.Reason))]);
+            breakpoints.ReportBindingErrors(this, bindingErrors is null ? BreakpointStatus.Unknown : BreakpointStatus.Invalid, bindingErrors is null ? null : refused.Reason);
             return;
         }
         propertyById.Clear();
@@ -884,7 +903,7 @@ public sealed class DebugSession
             }
             said.Add((sending[i], answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown, answer.Message));
         }
-        breakpoints.ReportProperties(said);
+        breakpoints.ReportProperties(this, said);
         if (bindingErrors is not null && response.Breakpoints.Count > sending.Count)
         {
             DapBreakpoint answer = response.Breakpoints[sending.Count];
@@ -893,7 +912,7 @@ public sealed class DebugSession
         }
         else
         {
-            breakpoints.ReportBindingErrors(BreakpointStatus.Unknown, null);
+            breakpoints.ReportBindingErrors(this, BreakpointStatus.Unknown, null);
         }
     }
 
@@ -908,7 +927,7 @@ public sealed class DebugSession
     /// <summary>What the debugger said of XAML Binding Errors: until an Avalonia or WPF app's inspector has loaded, it has nowhere
     /// to stop, which is no fault of the breakpoint.</summary>
     private void ReportBindingErrors(DapBreakpoint answer) =>
-        breakpoints.ReportBindingErrors(answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown,
+        breakpoints.ReportBindingErrors(this, answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown,
             answer.Verified || answer.Reason == "failed" ? answer.Message : NoInspectedApp);
 
     /// <summary>Why XAML Binding Errors has not bound in a program the debugger runs.</summary>
@@ -985,12 +1004,12 @@ public sealed class DebugSession
                 BreakpointEvent changed = body.Read<BreakpointEvent>();
                 if (changed.Breakpoint.Id is int id && byId.TryGetValue(id, out LineBreakpoint? breakpoint))
                 {
-                    breakpoints.Report(breakpoint.Path, [Status(breakpoint.Path, changed.Breakpoint)], [breakpoint]);
+                    breakpoints.Report(this, breakpoint.Path, [Status(breakpoint.Path, changed.Breakpoint)], [breakpoint]);
                 }
                 else if (changed.Breakpoint.Id is int functionId && propertyById.TryGetValue(functionId, out PropertyBreakpoint? property))
                 {
                     (BreakpointStatus status, string? message, _) = Status(changed.Breakpoint);
-                    breakpoints.ReportProperties([.. breakpoints.Properties.Where(p => p != property).Select(p => (p, p.Status, p.Message)), (property, status, message)]);
+                    breakpoints.ReportProperty(this, property, status, message);
                 }
                 else if (changed.Breakpoint.Id is int bound && bound == bindingErrorsId)
                 {
@@ -1001,7 +1020,9 @@ public sealed class DebugSession
                 ProcessEvent started = body.Read<ProcessEvent>();
                 if (started.SystemProcessId is int processId)
                 {
-                    if (started.StartMethod == "launch")
+                    processLocal = started.IsLocalProcess != false;
+                    // A program elsewhere has an id of its machine's: holding this machine's process by it could kill another.
+                    if (started.StartMethod == "launch" && IsLocal)
                     {
                         launched ??= Hold(processId);
                     }
@@ -1061,9 +1082,8 @@ public sealed class DebugSession
         breakpoints.DataChanged -= OnDataChanged;
         breakpoints.PropertiesChanged -= OnFunctionsChanged;
         breakpoints.BindingErrorsChanged -= OnFunctionsChanged;
-        breakpoints.ResetStatus();
-        // Each watched a member of one of this session's objects, as Rider's do: none outlives it.
-        breakpoints.ClearData();
+        // What its debugger said goes, and its data breakpoints, each on a member of one of its objects, as Rider's do.
+        breakpoints.Leave(this);
         SetState(DebugState.Ended);
         _ = connection.DisposeAsync();
     }

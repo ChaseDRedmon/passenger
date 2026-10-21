@@ -69,6 +69,10 @@ public sealed record AttachArguments
 {
     public int? ProcessId { get; init; }
     public bool? JustMyCode { get; init; }
+
+    /// <summary>Passenger's own: the program was started held with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so each of the user's
+    /// modules, loading after the attach, gets Edit and Continue as a launch's does (Hot Reload, applyChanges).</summary>
+    public bool? HotReload { get; init; }
 }
 
 public sealed record DapSource

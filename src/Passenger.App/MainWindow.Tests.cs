@@ -260,7 +260,7 @@ public partial class MainWindow
         };
         ShowToolWindow("debug");
         string? problem = await debug.StartAsync(plan);
-        if (debug.Session is not { } host)
+        if (debug.SessionNamed(plan.Name) is not { } host)
         {
             throw new InvalidOperationException(problem ?? "The debugger could not start the test host");
         }
@@ -271,9 +271,9 @@ public partial class MainWindow
         catch (TimeoutException)
         {
             // Given up on, as an attach is: left running, the session would say the tests run with nothing under it.
-            if (debug.Session == host)
+            if (debug.SessionNamed(plan.Name) == host)
             {
-                await debug.StopAsync();
+                await debug.StopAsync(plan.Name);
             }
             throw new InvalidOperationException("The debugger did not say which test host it started within 30 s");
         }
@@ -284,7 +284,7 @@ public partial class MainWindow
     {
         ShowToolWindow("debug");
         await debug.AttachAsync(processId, "Tests");
-        if (debug.Session is not { } host)
+        if (debug.SessionNamed("Tests") is not { } host)
         {
             return false;
         }
@@ -300,7 +300,7 @@ public partial class MainWindow
         {
         }
         // Given up on: left running, the session would say the tests run until Stop, with nothing under it.
-        await debug.StopAsync();
+        await debug.StopAsync("Tests");
         return false;
     }
 }

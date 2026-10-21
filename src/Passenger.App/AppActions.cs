@@ -101,6 +101,7 @@ public static class AppActions
     public const string RunProgram = "app.run";
     public const string Debug = "app.debug";
     public const string Stop = "app.stop";
+    public const string StopAll = "app.stopAll";
     public const string Rerun = "app.rerun";
     public const string EditConfigurations = "app.editConfigurations";
     public const string ShowBuild = "app.showBuild";

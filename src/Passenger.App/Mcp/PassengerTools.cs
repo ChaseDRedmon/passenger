@@ -590,13 +590,19 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(
         Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(Session.Runner.Shown(), lines)));
 
-    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]
-    public Task<string> Stop(CancellationToken cancel = default) => OnUi(cancel, async () =>
+    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does.")]
+    public Task<string> Stop(string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (session is not null)
+        {
+            ToolWindows.DebugTab tab = TabFor(session)!;
+            await Session.Debug.StopAsync(tab.Name);
+            return $"Stopped {tab.Name}";
+        }
         Session.Runner.Stop();
         Session.InTerminal?.Stop();
         Session.Profiled?.Run.Kill();
-        await Session.Debug.StopAsync();
+        await Session.Debug.StopAllAsync();
         return "Stopped";
     });
 
@@ -961,102 +967,110 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
         "The debugger's state and, while paused, the stop: its reason, the stopped thread's frames and the chosen frame's " +
         "variables; in a debugged Avalonia app also the binding values of the .axaml files open in the editor (open_file one " +
-        "to see them), read on its UI thread.")]
-    public Task<DebugSnapshot> GetDebugState(CancellationToken cancel = default) => OnUi(cancel, DebugSnapshotAsync);
+        "to see them), read on its UI thread. With several programs debugged at once it lists them (sessions), and every " +
+        "debug_ tool and stop take session, a program's name there; without it they act on the one paused, else the only one.")]
+    public Task<DebugSnapshot> GetDebugState(string? session = null, CancellationToken cancel = default) =>
+        OnUi(cancel, () => DebugSnapshotAsync(session is null ? Unnamed() : TabFor(session)?.Session));
 
     [McpServerTool(Name = "debug_continue", Title = "Resume", Destructive = false), Description(
         "Resumes the program and waits up to waitSeconds for it to stop again or end. A debugged test run that ends with it " +
         "answers its tally and failures too (tests), as tests_run does.")]
-    public Task<DebugSnapshot> DebugContinue(int waitSeconds = 30, CancellationToken cancel = default) => Resume(s => s.ContinueAsync(), waitSeconds, cancel);
+    public Task<DebugSnapshot> DebugContinue(int waitSeconds = 30, string? session = null, CancellationToken cancel = default) =>
+        Resume(s => s.ContinueAsync(), waitSeconds, session, cancel);
 
     [McpServerTool(Name = "debug_step", Title = "Step", Destructive = false), Description("Steps over, into or out of the current line, and waits for the step to stop.")]
-    public Task<DebugSnapshot> DebugStep([Description("over, into or out")] string kind = "over", int waitSeconds = 30, CancellationToken cancel = default) => Resume(kind switch
+    public Task<DebugSnapshot> DebugStep([Description("over, into or out")] string kind = "over", int waitSeconds = 30, string? session = null,
+        CancellationToken cancel = default) => Resume(kind switch
     {
         "over" => s => s.StepOverAsync(),
         "into" => s => s.StepIntoAsync(),
         "out" => s => s.StepOutAsync(),
         _ => throw new ArgumentException($"A step is over, into or out, not '{kind}'"),
-    }, waitSeconds, cancel);
+    }, waitSeconds, session, cancel);
 
     [McpServerTool(Name = "debug_pause", Title = "Pause", Destructive = false), Description("Pauses the running program wherever it is.")]
-    public Task<DebugSnapshot> DebugPause(int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    public Task<DebugSnapshot> DebugPause(int waitSeconds = 10, string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Debugged();
-        await session.PauseAsync();
-        await Until(() => session.State != DebugState.Running, TimeSpan.FromSeconds(waitSeconds), cancel);
-        return await DebugSnapshotAsync();
+        DebugSession debugged = await Debugged(session);
+        await debugged.PauseAsync();
+        await Until(() => debugged.State != DebugState.Running, TimeSpan.FromSeconds(waitSeconds), cancel);
+        return await DebugSnapshotAsync(debugged);
     });
 
     [McpServerTool(Name = "debug_run_to", Title = "Run to a line", Destructive = false), Description(
         "Runs on to a line, as Run to Cursor does, stopping sooner at a breakpoint, and waits up to waitSeconds for the stop.")]
-    public Task<DebugSnapshot> DebugRunTo(string path, int line, int waitSeconds = 30, CancellationToken cancel = default) =>
-        Resume(session => session.RunToCursorAsync(Resolve(path), line - 1), waitSeconds, cancel);
+    public Task<DebugSnapshot> DebugRunTo(string path, int line, int waitSeconds = 30, string? session = null, CancellationToken cancel = default) =>
+        Resume(debugged => debugged.RunToCursorAsync(Resolve(path), line - 1), waitSeconds, session, cancel);
 
     [McpServerTool(Name = "debug_set_next_statement", Title = "Set Next Statement", Destructive = false), Description(
         "Moves where the paused program goes on to another line of its method, as Set Next Statement: the lines between are " +
         "skipped, or done again when the line is earlier. Nothing runs; returns the new stop.")]
-    public Task<DebugSnapshot> DebugSetNextStatement(string path, int line, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    public Task<DebugSnapshot> DebugSetNextStatement(string path, int line, string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Paused();
-        if (await Session.Debug.SetNextStatementAsync(session, Resolve(path), line - 1) is { } problem)
+        DebugSession paused = await Paused(session, choose: true);
+        if (await Session.Debug.SetNextStatementAsync(paused, Resolve(path), line - 1) is { } problem)
         {
             throw new InvalidOperationException(problem);
         }
-        await Until(() => session.StopReason == "goto", TimeSpan.FromSeconds(10), cancel);
-        return await DebugSnapshotAsync();
+        await Until(() => paused.StopReason == "goto", TimeSpan.FromSeconds(10), cancel);
+        return await DebugSnapshotAsync(paused);
     });
 
     [McpServerTool(Name = "debug_input", Title = "Type into the program's console", Destructive = true), Description(
         "Sends a line to the debugged program's standard input, as the Debug window's console does, or types it into a " +
         "terminal configuration's tab, Enter for the newline.")]
-    public Task<string> DebugInput(string text, bool newline = true, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    public Task<string> DebugInput(string text, bool newline = true, string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Debugged();
-        if (session.Terminal is { } inTerminal)
+        DebugSession debugged = await Debugged(session);
+        if (debugged.Terminal is { } inTerminal)
         {
             inTerminal.Session.Write(newline ? text + "\r" : text);
             return $"Typed into {inTerminal.Name}'s tab of the Terminal window";
         }
-        await session.InputAsync(newline ? text + "\n" : text);
+        await debugged.InputAsync(newline ? text + "\n" : text);
         return "Sent";
     });
 
     [McpServerTool(Name = "debug_evaluate", Title = "Evaluate an expression", Destructive = true), Description(
         "Evaluates a C# expression, which may call the program's methods, in a frame of the stopped thread (0, the top, by " +
         "default), as the Debug window's evaluate box does. A result with members has a reference debug_variables opens.")]
-    public Task<VariableInfo> DebugEvaluate(string expression, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    public Task<VariableInfo> DebugEvaluate(string expression, int frame = 0, string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Paused();
-        DapStackFrame chosen = await FrameAt(session, frame);
-        EvaluateResponse value = await session.EvaluateAsync(expression, chosen.Id, "repl");
+        DebugSession paused = await Paused(session);
+        DapStackFrame chosen = await FrameAt(paused, frame);
+        EvaluateResponse value = await paused.EvaluateAsync(expression, chosen.Id, "repl");
         return new VariableInfo(expression, value.Result, value.Type, value.VariablesReference);
     });
 
     [McpServerTool(Name = "debug_set_value", Title = "Set a value", Destructive = true), Description(
         "Assigns a C# expression's value to a local, member or element (\"order.Quantity\", \"list[2]\") in a frame of the " +
         "stopped thread, as Set Value does; the program goes on with it. Returns the value as it now is.")]
-    public Task<VariableInfo> DebugSetValue(string expression, [Description("A C# expression: 42, \"text\", null, new List<int>()")] string value, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    public Task<VariableInfo> DebugSetValue(string expression, [Description("A C# expression: 42, \"text\", null, new List<int>()")] string value, int frame = 0,
+        string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Paused();
-        DapStackFrame chosen = await FrameAt(session, frame);
-        SetExpressionResponse set = await session.SetExpressionAsync(expression, value, chosen.Id);
+        DebugSession paused = await Paused(session, choose: true);
+        DapStackFrame chosen = await FrameAt(paused, frame);
+        SetExpressionResponse set = await paused.SetExpressionAsync(expression, value, chosen.Id);
         await Session.Debug.RefreshAsync();
         return new VariableInfo(expression, set.Value, set.Type, set.VariablesReference);
     });
 
     [McpServerTool(Name = "debug_variables", Title = "A value's members", ReadOnly = true), Description(
         "The members, elements or locals behind a reference from debug_state, debug_evaluate or an earlier call.")]
-    public Task<IReadOnlyList<VariableInfo>> DebugVariables(int reference, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    public Task<IReadOnlyList<VariableInfo>> DebugVariables(int reference, string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Paused();
-        return (IReadOnlyList<VariableInfo>)[.. (await session.VariablesAsync(reference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference))];
+        DebugSession paused = await Paused(session);
+        return (IReadOnlyList<VariableInfo>)[.. (await paused.VariablesAsync(reference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference))];
     });
 
     [McpServerTool(Name = "debug_output", Title = "The program's output", ReadOnly = true), Description(
         "The last lines the debugged program has written: the Debug window's console, or a terminal configuration's tab, " +
         "scrollback and screen.")]
-    public Task<string> DebugOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(
-        Session.Debug.Session?.Terminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(Session.Debug.Output(), lines)));
+    public Task<string> DebugOutput(int lines = 200, string? session = null, CancellationToken cancel = default) => OnUi(cancel, () =>
+    {
+        DebugSession? debugged = session is null ? Unnamed() : TabFor(session)?.Session;
+        return Task.FromResult(debugged?.Terminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(Session.Debug.Output(debugged), lines));
+    });
 
     // The IDE itself
 
@@ -1136,17 +1150,18 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
     }
 
-    /// <summary>Sets the paused program going as the window's keys do, the edits made while it was paused applied first.</summary>
-    private Task<DebugSnapshot> Resume(Func<DebugSession, Task> resume, int waitSeconds, CancellationToken cancel) => OnUi(cancel, async () =>
+    /// <summary>Sets the paused program going as the window's keys do, its tab chosen and the edits made while it was paused
+    /// applied first.</summary>
+    private Task<DebugSnapshot> Resume(Func<DebugSession, Task> resume, int waitSeconds, string? session, CancellationToken cancel) => OnUi(cancel, async () =>
     {
-        DebugSession paused = Paused();
+        DebugSession paused = await Paused(session, choose: true);
         // A debugged test run (tests_run's, or the Unit Tests window's Debug) whose host ends is answered with its tally.
         bool testing = Session.Tests.IsBusy;
         if (await Session.Debug.ApplyBeforeResumingAsync(paused))
         {
             await resume(paused);
         }
-        DebugSnapshot after = await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel);
+        DebugSnapshot after = await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel, paused);
         if (!testing || after.State != "not debugging")
         {
             return after;
@@ -1159,39 +1174,80 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     /// <summary>How long a resumed debugged test run whose host ended is waited for to tell its results.</summary>
     private static readonly TimeSpan TestsTallyLimit = TimeSpan.FromSeconds(60);
 
-    /// <summary>Waits for the program to stop or end after it was set going, then says where it is.</summary>
-    private async Task<DebugSnapshot> AfterResume(TimeSpan limit, CancellationToken cancel)
+    /// <summary>Waits for a program (the chosen one's by default) to stop or end after it was set going, then says where it is.</summary>
+    private async Task<DebugSnapshot> AfterResume(TimeSpan limit, CancellationToken cancel, DebugSession? session = null)
     {
         if (limit > TimeSpan.Zero)
         {
             AgentCall.Say($"The program runs: waiting up to {limit.TotalSeconds:0} s for it to stop or end");
         }
-        await Until(() => Session.Debug.Session is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
-        // A stop is read (its frames, the exception it is on) a moment after the state says paused.
-        await Until(() => Session.Debug.Session is not { State: DebugState.Paused } || Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
-        return await DebugSnapshotAsync();
+        DebugSession? going = session ?? Session.Debug.Session;
+        await Until(() => going is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
+        // A stop is read (its frames, the exception it is on) a moment after the state says paused, once its tab is chosen.
+        await Until(() => going is not { State: DebugState.Paused } || Session.Debug.Session == going && Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
+        return await DebugSnapshotAsync(going);
     }
 
-    /// <summary>Where the debugger is, from its own model: the session's state in its words, and while paused the stop
-    /// it read with the top frame's locals.</summary>
-    private async Task<DebugSnapshot> DebugSnapshotAsync()
+    /// <summary>The session a debugging tool acts on when it names none: the one paused, else the only one debugged; with
+    /// none debugged the chosen tab's (ended, or none). Several debugged and none or several paused, the call is refused,
+    /// naming them.</summary>
+    private DebugSession? Unnamed() => TabFor(null)?.Session;
+
+    /// <summary>The tab a tool's session names, by its program's name as debug_state lists them, else as <see cref="Unnamed"/>
+    /// picks one.</summary>
+    private ToolWindows.DebugTab? TabFor(string? session)
     {
         DebugController debugger = Session.Debug;
-        if (debugger.Session is not { } session || session.State == DebugState.Ended)
+        if (session is { Length: > 0 } named)
         {
-            return new DebugSnapshot("not debugging", null, null, [], [], debugger.Session?.ExitCode, debugger.Summary);
+            return debugger.Tabs.FirstOrDefault(t => t.Name == named) ?? debugger.Tabs.FirstOrDefault(t => t.Name.Equals(named, StringComparison.OrdinalIgnoreCase))
+                ?? throw new ArgumentException(debugger.Tabs.Count == 0 ? $"No program named {named} is debugged: none is" : $"No program named {named} is debugged; there are {Listed()}");
+        }
+        List<ToolWindows.DebugTab> live = [.. debugger.Tabs.Where(t => t.IsLive && t.Session is not null)];
+        List<ToolWindows.DebugTab> paused = [.. live.Where(t => t.Session!.State == DebugState.Paused)];
+        return paused is [var stopped] ? stopped
+            : live is [var only] ? only
+            : live.Count == 0 ? debugger.Chosen
+            : throw new InvalidOperationException($"{live.Count} programs are debugged ({Listed()}), {(paused.Count == 0 ? "none" : $"{paused.Count}")} paused: name the one meant with session");
+    }
+
+    /// <summary>The programs debugged and each one's state, as debug_state lists them.</summary>
+    private string Listed() => string.Join(", ", Sessions());
+
+    private IReadOnlyList<string> Sessions() =>
+        [.. Session.Debug.Tabs.Select(t => $"{t.Name}: {(t.IsLive && t.Session is { } live ? live.State.ToString().ToLowerInvariant() : "ended")}")];
+
+    /// <summary>Where the debugger is in a session's program (the chosen one's by default), from its own model: the session's
+    /// state in its words, and while paused the stop with the top frame's locals; with several programs debugged, which one
+    /// this is and every one's state.</summary>
+    private async Task<DebugSnapshot> DebugSnapshotAsync(DebugSession? session = null)
+    {
+        DebugController debugger = Session.Debug;
+        DebugSession? of = session ?? debugger.Session;
+        DebugSnapshot snapshot = await SnapshotOf(of);
+        return debugger.Tabs.Count > 1 ? snapshot with { Session = of is null ? null : debugger.TabOf(of)?.Name, Sessions = Sessions() } : snapshot;
+    }
+
+    private async Task<DebugSnapshot> SnapshotOf(DebugSession? session)
+    {
+        DebugController debugger = Session.Debug;
+        string? summary = session is null ? debugger.Summary : debugger.SummaryOf(session);
+        if (session is null || session.State == DebugState.Ended)
+        {
+            return new DebugSnapshot("not debugging", null, null, [], [], session?.ExitCode, summary);
         }
         if (session.State != DebugState.Paused || session.StoppedThread is null)
         {
-            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, debugger.Summary);
+            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, summary);
         }
+        bool shown = debugger.Session == session;
         // The controller's stop is always the one paused at now, since every change drops it; before it is read, the session's.
-        DebugStop? read = debugger.Stop is { } stop && stop.Thread == session.StoppedThread ? stop : null;
+        DebugStop? read = shown && debugger.Stop is { } stop && stop.Thread == session.StoppedThread ? stop : null;
         IReadOnlyList<DapStackFrame> frames = read?.Frames ?? await Stack(session);
         // The frame the stop shows: past the Live Visual Tree inspector's call a property or binding error breakpoint stops in.
         DapStackFrame? top = read?.Top ?? frames.FirstOrDefault(f => f.Source?.Path is not null) ?? (frames.Count > 0 ? frames[0] : null);
         List<VariableInfo> locals = [];
-        if (debugger.BindingStop is { } failed)
+        if (shown && debugger.BindingStop is { } failed)
         {
             locals.Add(new VariableInfo(BindingStop.Name, failed.Value, failed.Type, failed.Reference));
         }
@@ -1218,26 +1274,26 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return new DebugSnapshot(
             "paused",
             session.StopReason,
-            top?.Source?.Path is { } path && debugger.PlaceOf(top) is { } at ? $"{Relative(path)}:{at.Line + 1}:{at.Column + 1}" : null,
-            Frames(frames),
+            top?.Source?.Path is { } path && debugger.PlaceOf(top, session) is { } at ? $"{Relative(path)}:{at.Line + 1}:{at.Column + 1}" : null,
+            Frames(frames, session),
             locals,
             null,
-            debugger.Summary,
+            summary,
             exception)
         {
-            BindingValues = await BindingValuesShownAsync(),
+            BindingValues = shown ? await BindingValuesShownAsync() : null,
         };
     }
 
     /// <summary>A stop's frames as an agent reads them, each by its index (which debug_evaluate's frame takes): the folder's
     /// own code by its place, and a run of any other (a framework's, with or without source: an Avalonia click is some 25
     /// of them under the handler, and Passenger's inspector's) as one line of their indexes and modules, at most 20 lines.</summary>
-    private IReadOnlyList<string> Frames(IReadOnlyList<DapStackFrame> frames)
+    private IReadOnlyList<string> Frames(IReadOnlyList<DapStackFrame> frames, DebugSession session)
     {
         string? folder = Session.Folder;
         bool Own(DapStackFrame frame) => frame.Source?.Path is { } path && (folder is null || PathNames.IsUnder(path, folder));
         // The editor's line (from one) of the frame's code, in its file now: the debugger's is its build's compiler's.
-        int LineOf(DapStackFrame frame) => (Session.Debug.PlaceOf(frame)?.Line ?? frame.Line - 1) + 1;
+        int LineOf(DapStackFrame frame) => (Session.Debug.PlaceOf(frame, session)?.Line ?? frame.Line - 1) + 1;
         List<string> lines = [];
         for (int i = 0; i < frames.Count && lines.Count < 20; i++)
         {
@@ -1316,12 +1372,24 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             });
     }
 
-    private DebugSession Debugged() => Session.Debug.Session is { State: not DebugState.Ended } session
-        ? session
-        : throw new InvalidOperationException("Nothing is being debugged; debug_start starts it");
+    /// <summary>The program a tool acts on (<see cref="TabFor"/>), being debugged; with <paramref name="choose"/> its tab is
+    /// chosen in the Debug window, as a person picks the one their keys act on.</summary>
+    private async Task<DebugSession> Debugged(string? session, bool choose = false)
+    {
+        ToolWindows.DebugTab? tab = TabFor(session);
+        if (tab?.Session is not { State: not DebugState.Ended } debugged || !tab.IsLive)
+        {
+            throw new InvalidOperationException(session is null || tab is null ? "Nothing is being debugged; debug_start starts it" : $"{tab.Name} is no longer debugged; debug_state lists those that are");
+        }
+        if (choose)
+        {
+            await Session.Debug.ChooseAsync(tab);
+        }
+        return debugged;
+    }
 
-    private DebugSession Paused() => Debugged() is { State: DebugState.Paused } session
-        ? session
+    private async Task<DebugSession> Paused(string? session, bool choose = false) => await Debugged(session, choose) is { State: DebugState.Paused } paused
+        ? paused
         : throw new InvalidOperationException("The program is running; debug_pause stops it where it is");
 
     private void Choose(string? configuration)
@@ -1596,6 +1664,12 @@ public sealed record DebugSnapshot(
 
     /// <summary>A debugged test run that ended as the program went on: its tally and failures, as tests_run answers them.</summary>
     public TestRunInfo? Tests { get; init; }
+
+    /// <summary>With several programs debugged, the one this is.</summary>
+    public string? Session { get; init; }
+
+    /// <summary>With several programs debugged, each one's name and state.</summary>
+    public IReadOnlyList<string>? Sessions { get; init; }
 }
 
 public sealed record TestRunInfo(string Summary, IReadOnlyList<TestFailure> Failures, DebugSnapshot? Debugger = null);

@@ -54,9 +54,9 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Attaches the debugger to a .NET program, the Debug window open on its frames: null once the session is open,
-    /// else why it could not, as the status bar says. A session the debugger attached to before is let go of first, the
-    /// program running on, and one it started is stopped, as Debug stops it.</summary>
+    /// <summary>Attaches the debugger to a .NET program, the Debug window open on its frames, beside any other program
+    /// debugged: null once the session is open, else why it could not, as the status bar says. The program's last session,
+    /// still attached (Reattach), is let go of first, the program running on.</summary>
     public async Task<string?> AttachAsync(DotnetProcess process)
     {
         UiThread.Check();
@@ -66,16 +66,12 @@ public partial class MainWindow
         }
         using Working held = attaching;
         using IDisposable background = BackgroundWork.Scope();
-        if (session.Debug.Session is { Attached: true, State: not Debugging.DebugState.Ended })
-        {
-            await session.Debug.DetachAsync();
-        }
         attachedTo.RemoveAll(p => Same(p, process));
         attachedTo.Add(process);
         ShowToolWindow("debug");
         Bottom.Debug.ShowTab(console: false);
         string? refused = await session.Debug.AttachAsync(process.Id, process.Program);
-        attachSession = session.Debug.Session;
+        attachSession = session.Debug.SessionNamed(process.Program);
         return refused;
     }
 

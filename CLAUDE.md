@@ -730,7 +730,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   again, 10 s in all, a file so seen trusted until it is written again; the window's commands still refuse at once. `app_details` is the
   Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` and
   `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
-  `LiveTreeController.Watching`; `debug_state` carries `bindingValues`; `hot_reload` is Apply Hot Reload Changes
+  `LiveTreeController.Watching`; `debug_state` carries `bindingValues`, and with several programs debugged lists them
+  (`sessions`): the debug tools and `stop` take `session`, a Debug tab's name, else act on the one paused, else the only
+  one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All);
+  `hot_reload` is Apply Hot Reload Changes
   (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word); the headless `--mcp` IDE
   starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `McpTests.Actions`
   holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
@@ -835,7 +838,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   that comes during an evaluation on another thread is put off as a breakpoint's is (`PutOffDuringEvaluation`).
 - `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
-  `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
+  `Muted` is Mute Breakpoints, which sends none while on. Several programs are debugged at once (#341): the controller
+  holds a `DebugTab` per session (the Debug window's header tabs, `DebugView.Sessions`, each with its own console, built
+  lines and Hot Reload), and `DebugController.Session` is the chosen tab's, which the window shows and every action and
+  `Stop` act on; a stop in any program chooses its tab, and the chosen one's end chooses another still debugged (one
+  paused first). Debug or Attach of a program already debugged (a tab's name: its configuration's, or the program's)
+  stops it, or lets an attached one go, and takes its tab; with no other program debugged the new tab takes every
+  ended tab's place and the first console, so one session is as it always was. Stop All (`AppActions.StopAll`) ends
+  every one, and Stop does when the chosen has ended; the status bar says how many are debugged and which paused
+  (`DebugController.Told`). Every breakpoint goes to each session, the store keeping what each one's debugger said
+  (`Breakpoint.Tell`: bound where any bound it) until its session ends (`BreakpointStore.Leave`); a data breakpoint goes
+  to the session whose object it watches alone. A session `Elsewhere` (a container's program) never holds, signals or
+  kills a process of this machine by its program's id (`DebugSession.IsLocal`, which Attach Profiler asks too), its
+  adapter started with `--remote` so its `process` events say `isLocalProcess: false`. The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
@@ -918,7 +933,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   A Debug launch sets `DOTNET_MODIFIABLE_ASSEMBLIES=debug`. `Debugging/HotReload.cs` and `MainWindow.HotReload.cs` are
   Apply Hot Reload Changes (Alt+F10, toolbar and Debug/Run windows' flame, edits made while paused applied on the next
   resume or step), Problems' Hot Reload tab for rude edits, and the restart (Settings' Hot Reload page: always restart
-  for a change it can't apply, on by default, else dotnet watch's question); attached sessions get none. Roslyn
+  for a change it can't apply, on by default, else dotnet watch's question); an attach gets it only when its caller
+  started the program held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug (`AttachAsync`'s `hotReload`,
+  Passenger's `AttachArguments.HotReload`), and never the restart. Roslyn
   applies a changed signature as a delete plus an add and recompiles only members whose code changed, so `StaleCallers`
   blocks an update that leaves a loaded module's unchanged code calling the deleted body (ENC0033 at the new
   declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s (`PASSENGER_WATCH_LATER_MS`) past its first, the last

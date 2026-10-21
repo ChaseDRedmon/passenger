@@ -21,10 +21,12 @@ public partial class MainWindow
 
     private void AddLinks()
     {
-        foreach (OutputView console in (OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
+        foreach (OutputView console in (OutputView[])[Bottom.Run, Bottom.Build])
         {
             console.LinkClicked += (_, target) => OpenLink(target);
         }
+        // Every debugged program's console, each session's own, as it is made.
+        Bottom.Debug.ConsoleLinkClicked += (_, target) => OpenLink(target);
         Bottom.Tests.LinkClicked += (_, target) => OpenLink(target);
         // The project folder the Run window's program and the Debug window's came from is looked in first.
         Bottom.Run.Links.Folders = () => LinkFolders(buildRun.RunProject);

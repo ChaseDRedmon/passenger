@@ -86,7 +86,7 @@ public partial class MainWindow
         assist.Templates = CSharp.TemplateSet.Of(next);
         assist.XamlFormat = next.XamlFormat;
         terminal!.View.FontSize = next.TerminalFontSize;
-        foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
+        foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, .. Bottom.Debug.Consoles])
         {
             console.Limit = next.ConsoleBufferKb * 1024;
         }
