@@ -479,7 +479,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
   through `Programs` then Docker Desktop's, OrbStack's and Rancher Desktop's folders, every command through
   ChildProcesses (`Command` to stream, `RunAsync`, `RunForAsync` to read for a while, `JsonAsync`/`JsonLinesAsync` for
-  `--format json`), its `StateAsync` (no CLI, not running, Windows containers, no Compose v2; the context's endpoint for
+  `--format json`; one given a folder has PWD set to it, which Compose reads for `$PWD` over its working folder), its `StateAsync` (no CLI, not running, Windows containers, no Compose v2; the context's endpoint for
   `DOCKER_HOST`) and `Follow` (`docker events --format json` while anyone follows). `ContainerSnapshot` reads what the
   engine holds at once (Compose projects by `com.docker.compose.project`, stopped ones too, then containers, images,
   volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
@@ -503,7 +503,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   engine says of the open files while `StateAsync` says it can, each check off the UI thread as background work holding
   the file's `Checking()`, one at a time, dropped when the text moved on before it landed: BuildKit's own checks as a
   Dockerfile opens and is saved (`DockerfileCheck`: `docker buildx build --call=check,format=json -` on its text, on the
-  context's own builder, no context sent; a rule's warning linked to its page, a build error but for a parse error,
+  context's own builder, no context sent, its `syntax` parser directive in either form BuildKit reads (`# syntax=`,
+  `// syntax=`) blanked to spaces and BUILDKIT_SYNTAX out of the CLI's environment (`DockerfileCheck.BuiltIn`), so the
+  engine's own frontend checks it and no frontend image a file names is pulled or run, a text BuildKit would read as a
+  JSON directive not checked at all; a rule's warning linked to its page, a build error but for a parse error,
   which the server marks, or a registry out of reach), while Settings' Check Dockerfiles with BuildKit (its Docker page,
   `AppSettings.BuildKitChecks`) is on, since BuildKit reads each base image's metadata from its registry; and Compose's
   model of a compose file as typed, which needs no network (`ComposeCheck`,

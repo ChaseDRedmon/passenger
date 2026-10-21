@@ -378,12 +378,11 @@ internal abstract class EngineCheck : IDisposable
     }
 }
 
-/// <summary>BuildKit's own build checks on a Dockerfile (its rules, as <c>docker build --check</c> runs them), through the
-/// person's engine: <c>docker buildx build --call=check,format=json -</c> on the file's text, as it opens and as it is
-/// saved, with no build and no context sent, on the context's own builder (the engine's BuildKit, never a builder
-/// container started for it). Each rule a line breaks is a warning there, its name the link to its page; a build error
-/// is said too, but not a parse error (the Dockerfile server marks those) nor a registry out of reach (BuildKit reads each
-/// base image's metadata, so offline it can check nothing).</summary>
+/// <summary>BuildKit's build checks on a Dockerfile, through the person's engine: <c>docker buildx build --call=check -</c>
+/// on its text (its syntax directive blanked, <see cref="BuiltIn"/>) as it opens and is saved, no build, no context, on the
+/// context's own builder and frontend (never a builder container or a frontend image started for it). Each rule a line
+/// breaks is a warning, linked to its page; a build error is said too, but not a parse error (the server marks those) nor
+/// a registry out of reach (BuildKit reads each base image's metadata, so offline it checks nothing).</summary>
 internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document, WebDocument web) : EngineCheck(owner, document, web)
 {
     /// <summary>How long a check may take: reading a base image's metadata from its registry the first time included.</summary>
@@ -402,13 +401,19 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
         {
             return Outcome.None;
         }
+        if (BuiltIn(text) is not { } checkedText)
+        {
+            return Outcome.None;
+        }
         List<string> words = ["buildx", "build", "--progress=quiet", "--call=check,format=json"];
         if (state.Context is { Length: > 0 } context)
         {
             words.AddRange(["--builder", context]);
         }
         words.Add("-");
-        ChildResult result = await engine.RunAsync(words, Limit, cancel, Path.GetDirectoryName(path), text, answers: [1]);
+        System.Diagnostics.ProcessStartInfo start = engine.Command(words, Path.GetDirectoryName(path));
+        start.Environment.Remove("BUILDKIT_SYNTAX");
+        ChildResult result = await ChildProcesses.RunAsync(start, checkedText, Limit, cancel, answers: [1]);
         if (!result.Output.TrimStart().StartsWith('{'))
         {
             // An older buildx (before --call), or a builder that would not start: nothing to show, said in the log.
@@ -435,6 +440,72 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
             found.Add(At(snapshot, path, error, ProblemSeverity.Error, $"BuildKit: {message}"));
         }
         return new Outcome(found, []);
+    }
+
+    /// <summary>The text BuildKit is given: its <c>syntax</c> parser directive (<c># syntax=</c>, or the <c>// syntax=</c>
+    /// BuildKit reads too) blanked, each of its characters a space so lines and columns stay, so the engine's own Dockerfile
+    /// frontend checks it and no frontend image the file names is pulled and run; its <c>check</c> and <c>escape</c>
+    /// directives kept. Null for a text BuildKit would read whole as a JSON directive, which no Dockerfile is.</summary>
+    internal static string? BuiltIn(string text)
+    {
+        // BuildKit passes over a byte-order mark and a first line that is a shebang before it looks for directives.
+        int start = text.StartsWith('﻿') ? 1 : 0;
+        if (text.AsSpan(start).StartsWith("#!", StringComparison.Ordinal))
+        {
+            int shebang = text.IndexOf('\n', start);
+            start = shebang < 0 ? text.Length : shebang + 1;
+        }
+        if (text.AsSpan(start).TrimStart(" \t\r\n").StartsWith("{", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        char[]? blanked = null;
+        // Directives are the lines from the top that are each one; what either of BuildKit's two forms finds is among them.
+        for (int line = start; line < text.Length;)
+        {
+            int end = text.IndexOf('\n', line);
+            int stop = end < 0 ? text.Length : end;
+            ReadOnlySpan<char> content = text.AsSpan(line, stop - line).TrimEnd('\r');
+            if (Directive(content) is not { } name)
+            {
+                break;
+            }
+            if (name.Equals("syntax", StringComparison.OrdinalIgnoreCase))
+            {
+                blanked ??= text.ToCharArray();
+                Array.Fill(blanked, ' ', line, content.Length);
+            }
+            line = stop + 1;
+        }
+        return blanked is null ? text : new string(blanked);
+    }
+
+    /// <summary>The name of the parser directive a line is (<c># name=value</c>, or <c>// name=value</c>), else null; read
+    /// more loosely than BuildKit's own pattern, so whatever it takes for one is one here.</summary>
+    private static string? Directive(ReadOnlySpan<char> line)
+    {
+        ReadOnlySpan<char> spaces = " \t\f\v";
+        line = line.TrimStart(spaces);
+        if (line.StartsWith("//", StringComparison.Ordinal))
+        {
+            line = line[2..];
+        }
+        else if (line.StartsWith("#", StringComparison.Ordinal))
+        {
+            line = line[1..];
+        }
+        else
+        {
+            return null;
+        }
+        line = line.TrimStart(spaces);
+        int name = 0;
+        while (name < line.Length && (char.IsAsciiLetter(line[name]) || (name > 0 && char.IsAsciiDigit(line[name]))))
+        {
+            name++;
+        }
+        ReadOnlySpan<char> rest = line[name..].TrimStart(spaces);
+        return name > 0 && rest.StartsWith("=", StringComparison.Ordinal) && rest.Length > 1 ? line[..name].ToString() : null;
     }
 
     /// <summary>A finding at the lines its location's first range names (from 1), else the file's first line.</summary>

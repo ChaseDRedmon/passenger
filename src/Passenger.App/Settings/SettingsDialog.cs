@@ -387,9 +387,10 @@ public sealed partial class SettingsDialog : Window
             + "Docker Hub for, naming the image. Off, it asks Docker Hub nothing and offers no tags.");
         Add(DockerPage, "Check Dockerfiles with BuildKit", Check(Working.BuildKitChecks, v => Change(s => s with { BuildKitChecks = v })),
             "buildkit buildx build check checks lint rules warnings dockerfile containerfile base image images metadata registry registries network engine",
-            "As a Dockerfile opens and is saved, the container engine's BuildKit checks it by its build rules (docker build --check), "
-            + "which reads each base image's metadata from its registry. Off, no check runs and no registry is asked; a compose "
-            + "file's values and errors, which Compose works out on this computer, stay.");
+            "As a Dockerfile opens and is saved, the container engine's BuildKit checks it by its build rules with the engine's own "
+            + "Dockerfile frontend, never one a # syntax= line names, which is neither pulled nor run. BuildKit reads each base "
+            + "image's metadata from its registry. Off, no check runs and no registry is asked; a compose file's values and errors, "
+            + "which Compose works out on this computer, stay.");
 
         Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
         (string shell, _) = Passenger.Terminal.TerminalSession.DefaultShell();

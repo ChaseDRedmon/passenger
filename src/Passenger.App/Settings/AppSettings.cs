@@ -233,7 +233,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public bool DockerHubTags { get; init; } = true;
 
     /// <summary>"Check Dockerfiles with BuildKit": as a Dockerfile opens and is saved, the engine's BuildKit runs its build
-    /// checks on it, reading each base image's metadata from its registry. Off, none runs (a compose file's hints and
+    /// checks on it with its own Dockerfile frontend (never a <c># syntax=</c> line's), reading each base image's metadata
+    /// from its registry. Off, none runs (a compose file's hints and
     /// errors, which Compose works out on this computer, stay). On unless <c>PASSENGER_BUILDKIT_CHECKS</c> is off, as the
     /// tests' run has it (<see cref="Containers.BuildKitChecks"/>).</summary>
     public bool BuildKitChecks { get; init; } = Containers.BuildKitChecks.ByDefault;

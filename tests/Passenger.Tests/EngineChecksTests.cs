@@ -26,11 +26,15 @@ public sealed class EngineChecksTests
 {
     private const string Dockerfile = "FROM busybox:1.37 as build\nRUN echo built > /built\n\nFROM busybox:1.37\nCOPY --from=build /built /built\nCMD [\"cat\", \"/built\"]\n";
 
+    /// <summary>A frontend image no registry has: were it pulled, the check would fail, saying only that its host is unknown.</summary>
+    private const string Frontend = "passenger.invalid/unknown-frontend:1";
+
     [AvaloniaFact]
-    public void A_dockerfile_shows_buildkits_checks_beside_its_servers_and_in_problems_and_a_fix_saved_clears_them()
+    public void A_dockerfile_shows_buildkits_checks_beside_its_servers_and_in_problems_never_running_the_frontend_it_names_and_a_fix_saved_clears_them()
     {
         SkipWithoutBuildx();
-        string folder = Folder(("Dockerfile", Dockerfile));
+        // Its syntax directive names a frontend image, which BuildKit would pull and run to check it: the engine's own checks it.
+        string folder = Folder(("Dockerfile", $"# syntax={Frontend}\n# check=error=false\n{Dockerfile}"));
         MainWindow window = Open(folder, "Dockerfile");
         try
         {
@@ -47,7 +51,8 @@ public sealed class EngineChecksTests
             Assert.Equal([SettingsDialog.DockerPage], dialog.Pages);
             Assert.Equal([BuildKitSetting], dialog.Shown);
             Assert.Contains(dialog.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible
-                && t.Text?.Contains("reads each base image's metadata from its registry", StringComparison.Ordinal) == true);
+                && t.Text?.Contains("reads each base image's metadata from its registry", StringComparison.Ordinal) == true
+                && t.Text.Contains("never one a # syntax= line names, which is neither pulled nor run", StringComparison.Ordinal));
             CheckBox on = ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == BuildKitSetting).Parent!).GetVisualDescendants().OfType<CheckBox>().First();
             Point at = on.TranslatePoint(new Point(on.Bounds.Width / 2, on.Bounds.Height / 2), dialog)!.Value;
             dialog.MouseDown(at, MouseButton.Left);
@@ -68,9 +73,10 @@ public sealed class EngineChecksTests
             // Problems' Containers tab lists it under its file, linked to the rule's page.
             ProblemsView problems = window.BottomPanel.Problems;
             Problem listed = Assert.Single(problems.ContainerProblems);
-            Assert.Equal((PathOf(folder, "Dockerfile"), 0, casing.Message), (listed.Path, listed.Position.Line, listed.Message));
+            Assert.Equal((PathOf(folder, "Dockerfile"), 2, casing.Message), (listed.Path, listed.Position.Line, listed.Message));
             problems.Shown = ProblemsTab.Containers;
-            Assert.Equal([(0, "Dockerfile", "1 problem"), (1, casing.Message, "Dockerfile:1:1")], problems.Rows.Select(r => (r.Depth, r.Label, r.Detail)));
+            Assert.Equal([(0, "Dockerfile", "1 problem"), (1, casing.Message, "Dockerfile:3:1")], problems.Rows.Select(r => (r.Depth, r.Label, r.Detail)));
+            Assert.Empty(Docker.Ask(["image", "ls", "-q", Frontend]).Trim());
 
             // Fixed and saved, the check runs again and finds nothing.
             int casingAt = text.ToString().IndexOf(" as ", StringComparison.Ordinal);
@@ -102,9 +108,9 @@ public sealed class EngineChecksTests
         {
             OpenDocument document = window.EditorArea.Active!;
             // A secret's value (a password's, as a word of its variable's or key's name says) is masked, the same dots whatever its
-            // length; MONKEY has no word KEY, and PWD is the working folder Compose was started in, a path.
-            string pwd = Environment.GetEnvironmentVariable("PWD") ?? string.Empty;
-            string folderHint = $"$PWD|= {(pwd.Length == 0 ? "\"\"" : pwd.Length > 48 ? pwd[..47] + "…" : pwd)}";
+            // length; MONKEY has no word KEY, and PWD is the compose file's folder, which Compose runs in, never where the IDE was started.
+            string pwd = PathNames.Canonical(folder);
+            string folderHint = $"$PWD|= {(pwd.Length > 48 ? pwd[..47] + "…" : pwd)}";
             string[] expected = ["${TAG:-1.36}|= 1.36", "${PORT:-8080}|= 9090", "$NAME|= world", "$MONKEY|= banana", folderHint, "postgres:16|compose.override.yaml: postgres:17",
                 "${DB_PASSWORD:-hunter2}|= ••••••", "${DB_PASSWORD:-hunter2}|compose.override.yaml: ••••••"];
             Ui.WaitFor(() => Hints(document, expected).SequenceEqual(expected), $"Compose's values after the text, not [{string.Join(", ", Hints(document, expected))}]");
