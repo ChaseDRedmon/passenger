@@ -13,17 +13,19 @@ namespace Passenger.App.Endpoints;
 public sealed class InteractiveTestDialog : Window
 {
     private readonly EndpointRequest request;
-    private readonly Func<IReadOnlyDictionary<string, string>> variables;
+    private readonly EndpointsView endpoints;
     private readonly TextBlock problem = new() { TextWrapping = TextWrapping.Wrap, MaxWidth = 520 };
     private static readonly string[] TabNames = ["Params", "Headers", "Body", "Expected"];
     private readonly ToggleButton[] tabs;
     private readonly Control[] pages;
-    private CancellationTokenSource? sending;
 
-    public InteractiveTestDialog(EndpointRequest request, Func<IReadOnlyDictionary<string, string>> variables, string? environment)
+    /// <summary>The request opened, sent through the Endpoints window as its Test is (one at a time, asking first what
+    /// it takes from the person's computer), in the variables of the environment chosen there.</summary>
+    public InteractiveTestDialog(EndpointRequest request, EndpointsView endpoints)
     {
         this.request = request;
-        this.variables = variables;
+        this.endpoints = endpoints;
+        string? environment = endpoints.Environment;
         Title = $"Interactive Test: {request.Title}";
         Width = 1040;
         Height = 640;
@@ -113,7 +115,8 @@ public sealed class InteractiveTestDialog : Window
         Button close = new() { Content = "Close", IsCancel = true };
         Send.Click += (_, _) => _ = SendAsync();
         close.Click += (_, _) => Close();
-        Closed += (_, _) => sending?.Cancel();
+        // A send under way is the window's test, which ends with the dialog.
+        Closed += (_, _) => endpoints.Stop();
         Content = DialogFooter.Page(panes, DialogFooter.Bar(DialogFooter.Of(Send, close), problem));
         Paint(problem, "Passenger.Error");
     }
@@ -133,8 +136,8 @@ public sealed class InteractiveTestDialog : Window
     /// <summary>Why the request as it stands cannot go, empty when it can.</summary>
     public string Problem => problem.Text ?? string.Empty;
 
-    /// <summary>Sends the request as the dialog has it on a new client, stopping one still under way, and shows the answer
-    /// held to the criteria.</summary>
+    /// <summary>Sends the request as the dialog has it on a new client and shows the answer held to the criteria; while
+    /// one is under way, says so.</summary>
     public async Task SendAsync()
     {
         UiThread.Check();
@@ -157,37 +160,19 @@ public sealed class InteractiveTestDialog : Window
             criteria.Add(Expectation.Parse(line)!);
         }
         string method = Method.SelectedItem as string ?? "GET";
-        (EndpointCall? call, string? refused) = EndpointClient.Prepare(request, method, Url.Text ?? string.Empty, headers, (Body.Text ?? string.Empty).Replace("\r\n", "\n"), variables());
-        if (call is null)
-        {
-            problem.Text = refused!;
-            return;
-        }
+        EndpointDraft draft = new(method, Url.Text ?? string.Empty, headers, (Body.Text ?? string.Empty).Replace("\r\n", "\n"));
         SendOptions options = new()
         {
             Timeout = TimeSpan.FromSeconds((double)(Timeout.Value ?? 30)),
             FollowRedirects = FollowRedirects.IsChecked == true,
             AcceptAnyCertificate = AcceptAnyCertificate.IsChecked == true,
         };
-        sending?.Cancel();
-        using CancellationTokenSource mine = new();
-        sending = mine;
-        Response.Sending($"Sending {call.Method} {call.Url}…");
-        try
+        if (endpoints.Busy is { } under)
         {
-            EndpointResponse response = await BackgroundWork.Run(() => EndpointClient.SendAsync(call, options, mine.Token), mine.Token);
-            Response.Show(response, [.. (criteria.Count > 0 ? criteria : [Expectation.Answered]).Select(c => c.Check(response))]);
+            problem.Text = ActionWork.Busy(under);
+            return;
         }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            if (sending == mine)
-            {
-                sending = null;
-            }
-        }
+        await endpoints.SendAsync(request, draft, options, criteria.Count > 0 ? criteria : [Expectation.Answered], Response, this);
     }
 
     /// <summary>Shows a tab's page: 0 Params, 1 Headers, 2 Body, 3 Expected.</summary>

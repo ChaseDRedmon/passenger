@@ -115,10 +115,17 @@ public static partial class HttpVariables
     /// over and over (each twice, ten deep) cannot hold the UI thread up as it is sent.</summary>
     public const int MostFilledIn = 1024 * 1024;
 
-    /// <summary>One request's filling in: the names no value was found for, and how much is left to fill in.</summary>
+    /// <summary>One request's filling in: the names no value was found for, the person's environment variables it read
+    /// (those not set among them), and how much is left to fill in.</summary>
     public sealed class Filling
     {
         public HashSet<string> Unresolved { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>The environment variables read, through the file's variables and the env files' values alike.</summary>
+        public SortedSet<string> Environment { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Those of <see cref="Environment"/> that are not set, each filled in empty.</summary>
+        public HashSet<string> Unset { get; } = new(StringComparer.Ordinal);
 
         public int Left { get; set; } = MostFilledIn;
 
@@ -137,7 +144,7 @@ public static partial class HttpVariables
                 return match.Value;
             }
             string name = match.Groups[1].Value.Trim();
-            string? filled = Dynamic(name);
+            string? filled = Dynamic(name, filling);
             if (filled is null && depth < 10 && variables.TryGetValue(name, out string? value))
             {
                 filled = Resolve(value, variables, filling, depth + 1);
@@ -152,11 +159,18 @@ public static partial class HttpVariables
             return filling.Overflowed ? match.Value : filled;
         });
 
-    private static string? Dynamic(string name)
+    private static string? Dynamic(string name, Filling filling)
     {
         if (name.StartsWith("$processEnv ", StringComparison.Ordinal) || name.StartsWith("$env.", StringComparison.Ordinal))
         {
-            return Environment.GetEnvironmentVariable(name.StartsWith("$env.", StringComparison.Ordinal) ? name[5..] : name[12..].Trim()) ?? string.Empty;
+            string variable = (name.StartsWith("$env.", StringComparison.Ordinal) ? name[5..] : name[12..]).Trim();
+            filling.Environment.Add(variable);
+            if (Environment.GetEnvironmentVariable(variable) is { } set)
+            {
+                return set;
+            }
+            filling.Unset.Add(variable);
+            return string.Empty;
         }
         return name switch
         {

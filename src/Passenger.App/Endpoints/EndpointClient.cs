@@ -1,12 +1,37 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Passenger.Core;
 
 namespace Passenger.App.Endpoints;
 
-/// <summary>A request ready to send: every variable resolved, the body's <c>&lt; file</c> read.</summary>
-public sealed record EndpointCall(string Method, string Url, IReadOnlyList<KeyValuePair<string, string>> Headers, string Body);
+/// <summary>What a request takes from the person's computer beyond the open folder, which the folder must allow before
+/// it goes: an environment variable (<see cref="Missing"/> when it is not set, so it goes empty) or a file outside the
+/// folder.</summary>
+public sealed record EndpointRead(bool IsFile, string Name, bool Missing = false)
+{
+    /// <summary>The read allowed for a host, as the folder's state keeps it: "localhost:5000 env API_TOKEN".</summary>
+    public string Key(string host) => $"{host} {(IsFile ? "file" : "env")} {Name}";
+
+    /// <summary>What the question says of it.</summary>
+    public override string ToString() => IsFile ? $"the file {Name}"
+        : Missing ? $"the environment variable {Name}, which is not set, so it goes empty" : $"the environment variable {Name}";
+}
+
+/// <summary>A request ready to send: every variable resolved, and the file its body is (<c>&lt; file</c>), read only as it
+/// is sent; what it reads from the person's computer to get there; and the host it goes to.</summary>
+public sealed record EndpointCall(string Method, string Url, IReadOnlyList<KeyValuePair<string, string>> Headers, string Body)
+{
+    /// <summary>The file whose text is the body, read as it is sent, or null when <see cref="Body"/> is it.</summary>
+    public string? BodyFile { get; init; }
+
+    public IReadOnlyList<EndpointRead> Reads { get; init; } = [];
+
+    /// <summary>Where it goes: the URL's host and port, as the question names it and the folder's state keeps it.</summary>
+    public string Host => new Uri(Url).Authority;
+}
 
 /// <summary>How a test sends: how long it waits, whether it follows a redirect, and whether it takes a certificate the
 /// system does not trust (a development server's own).</summary>
@@ -29,6 +54,10 @@ public sealed record EndpointResponse
 
     /// <summary>Whether the body is only the first <see cref="EndpointClient.MostRead"/> bytes of a longer answer.</summary>
     public bool Cut { get; init; }
+
+    /// <summary>What the person should know of how it came (a redirect followed without the request's headers, or not
+    /// followed), one line each.</summary>
+    public IReadOnlyList<string> Notes { get; init; } = [];
 
     public TimeSpan Elapsed { get; init; }
     public string? Error { get; init; }
@@ -76,6 +105,12 @@ public static class EndpointClient
     /// highly compressed answer neither fills memory nor holds the test.</summary>
     public const int MostRead = 16 * 1024 * 1024;
 
+    /// <summary>The most of a body's file sent, in characters, so a device or a disk image named as one is refused.</summary>
+    public const int MostSent = 16 * 1024 * 1024;
+
+    /// <summary>The most redirects followed, as a browser stops after twenty.</summary>
+    public const int MostRedirects = 20;
+
     /// <summary>The headers .NET keeps on a request's content rather than on the request.</summary>
     private static readonly HashSet<string> ContentHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -83,9 +118,11 @@ public static class EndpointClient
         "Content-MD5", "Content-Range", "Content-Type", "Expires", "Last-Modified",
     };
 
-    /// <summary>A request of a file made ready in an environment's variables, or why it cannot be sent.</summary>
+    /// <summary>A request of a file made ready in an environment's variables, or why it cannot be sent; what it reads of
+    /// the person's environment, and a body's file outside <paramref name="root"/>, are its <see cref="EndpointCall.Reads"/>.
+    /// Reads env files' values already given and no file, so it can run anywhere.</summary>
     public static (EndpointCall? Call, string? Problem) Prepare(EndpointRequest request, string method, string url,
-        IEnumerable<KeyValuePair<string, string>> headers, string body, IReadOnlyDictionary<string, string> variables)
+        IEnumerable<KeyValuePair<string, string>> headers, string body, IReadOnlyDictionary<string, string> variables, string? root)
     {
         HttpVariables.Filling filling = new();
         string resolvedUrl = HttpVariables.Resolve(url, variables, filling).Trim();
@@ -101,18 +138,18 @@ public static class EndpointClient
         {
             return (null, $"No value for {string.Join(", ", unresolved.Select(u => "{{" + u + "}}"))}: set it in the file (@{unresolved.First()} = …) or in {HttpVariables.PublicFile}");
         }
-        // A body that is "< ./file.json" alone is that file's text, as Rider sends it.
+        List<EndpointRead> reads = [.. filling.Environment.Select(name => new EndpointRead(IsFile: false, name, filling.Unset.Contains(name)))];
+        // A body that is "< ./file.json" alone is that file's text, as Rider sends it: one outside the folder (through a
+        // link too) is the person's to allow.
+        string? bodyFile = null;
         if (resolvedBody.Trim() is ['<', ' ', .. string included] && !included.Contains('\n'))
         {
-            string file = Path.GetFullPath(included.Trim(), Path.GetDirectoryName(request.File)!);
-            try
+            bodyFile = PathNames.Canonical(Path.GetFullPath(included.Trim(), Path.GetDirectoryName(request.File)!));
+            if (root is null || !PathNames.IsUnder(bodyFile, PathNames.Canonical(root)))
             {
-                resolvedBody = File.ReadAllText(file);
+                reads.Add(new EndpointRead(IsFile: true, bodyFile));
             }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                return (null, $"The body's file {file} could not be read: {error.Message}");
-            }
+            resolvedBody = string.Empty;
         }
         if (!resolvedUrl.Contains("://", StringComparison.Ordinal))
         {
@@ -122,12 +159,27 @@ public static class EndpointClient
         {
             return (null, $"\"{resolvedUrl}\" is no http or https URL");
         }
-        return (new EndpointCall(method.Trim().ToUpperInvariant(), uri.AbsoluteUri, resolvedHeaders, resolvedBody), null);
+        return (new EndpointCall(method.Trim().ToUpperInvariant(), uri.AbsoluteUri, resolvedHeaders, resolvedBody) { BodyFile = bodyFile, Reads = reads }, null);
     }
 
+    /// <summary>Sends the call, its body's file read first. A redirect is followed (when the options say so) with the
+    /// request's headers only to the same host: to another, it goes without them, and not at all when it would carry
+    /// the body there; each such turn is one of the answer's <see cref="EndpointResponse.Notes"/>.</summary>
     public static async Task<EndpointResponse> SendAsync(EndpointCall call, SendOptions options, CancellationToken cancel)
     {
         Stopwatch clock = Stopwatch.StartNew();
+        string body = call.Body;
+        if (call.BodyFile is { } file)
+        {
+            try
+            {
+                body = ReadText(file);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return new EndpointResponse { Error = $"The body's file {file} could not be read: {error.Message}", Elapsed = clock.Elapsed };
+            }
+        }
         // The timeout holds the whole exchange, the body's reading included, which HttpClient's own leaves out once the
         // headers are in.
         using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
@@ -136,9 +188,10 @@ public static class EndpointClient
         {
             using SocketsHttpHandler handler = new()
             {
-                AllowAutoRedirect = options.FollowRedirects,
+                // Followed here, since .NET's own takes every header but Authorization to whatever host it is sent to.
+                AllowAutoRedirect = false,
                 UseCookies = false,
-                AutomaticDecompression = System.Net.DecompressionMethods.All,
+                AutomaticDecompression = DecompressionMethods.All,
                 ConnectTimeout = options.Timeout,
             };
             if (options.AcceptAnyCertificate)
@@ -146,35 +199,69 @@ public static class EndpointClient
                 handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
             }
             using HttpClient client = new(handler, disposeHandler: false) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
-            using HttpRequestMessage message = new(new HttpMethod(call.Method), call.Url);
-            if (call.Body.Length > 0 || call.Headers.Any(h => ContentHeaders.Contains(h.Key)))
+            Uri first = new(call.Url);
+            Uri at = first;
+            string method = call.Method;
+            bool withHeaders = true;
+            List<string> notes = [];
+            HttpResponseMessage response;
+            for (int redirects = 0; ; redirects++)
             {
-                message.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(call.Body));
-            }
-            foreach ((string name, string value) in call.Headers)
-            {
-                bool added = ContentHeaders.Contains(name) && message.Content is not null
-                    ? message.Content.Headers.TryAddWithoutValidation(name, value)
-                    : message.Headers.TryAddWithoutValidation(name, value);
-                if (!added)
+                (HttpRequestMessage? message, string? refused) = Message(method, at, withHeaders ? call.Headers : [], body);
+                if (message is null)
                 {
-                    return new EndpointResponse { Error = $"The header {name} could not be sent as \"{value}\"", Elapsed = clock.Elapsed };
+                    return new EndpointResponse { Error = refused, Elapsed = clock.Elapsed };
                 }
+                using (message)
+                {
+                    response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false);
+                }
+                if (!options.FollowRedirects || Redirect(response, at) is not { } next)
+                {
+                    break;
+                }
+                int status = (int)response.StatusCode;
+                // As .NET's own: a 303, and a 301 or 302 after a POST, goes on as a GET with no body; the rest keep both.
+                bool asGet = status == 303 ? method != "HEAD" : status is 301 or 302 && method == "POST";
+                bool sameHost = string.Equals(next.Host, first.Host, StringComparison.OrdinalIgnoreCase);
+                string? stop = redirects == MostRedirects ? $"Not followed to {next}: {MostRedirects} redirects were followed already"
+                    : at.Scheme == Uri.UriSchemeHttps && next.Scheme != Uri.UriSchemeHttps ? $"Not followed to {next}: it leaves HTTPS"
+                    : !sameHost && !asGet && body.Length > 0 ? $"Not followed to {next.Host}: a {status} would send the request's body there"
+                    : null;
+                if (stop is not null)
+                {
+                    notes.Add(stop);
+                    break;
+                }
+                if (!sameHost && withHeaders && call.Headers.Count > 0)
+                {
+                    notes.Add($"Redirected to {next.Host}, another host, without the request's headers");
+                    withHeaders = false;
+                }
+                if (asGet)
+                {
+                    method = "GET";
+                    body = string.Empty;
+                }
+                response.Dispose();
+                at = next;
             }
-            using HttpResponseMessage response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false);
-            (byte[] bytes, bool cut) = await ReadAtMostAsync(response.Content, limit.Token).ConfigureAwait(false);
-            TimeSpan elapsed = clock.Elapsed;
-            return new EndpointResponse
+            using (response)
             {
-                Status = (int)response.StatusCode,
-                Reason = response.ReasonPhrase ?? string.Empty,
-                Version = $"HTTP/{response.Version}",
-                Headers = [.. Flatten(response.Headers), .. Flatten(response.Content.Headers)],
-                Body = Decode(bytes, response.Content.Headers.ContentType),
-                Size = bytes.LongLength,
-                Cut = cut,
-                Elapsed = elapsed,
-            };
+                (byte[] bytes, bool cut) = await ReadAtMostAsync(response.Content, limit.Token).ConfigureAwait(false);
+                return new EndpointResponse
+                {
+                    Status = (int)response.StatusCode,
+                    Reason = response.ReasonPhrase ?? string.Empty,
+                    Version = $"HTTP/{response.Version}",
+                    Headers = [.. Flatten(response.Headers), .. Flatten(response.Content.Headers)],
+                    Body = Decode(bytes, response.Content.Headers.ContentType),
+                    Size = bytes.LongLength,
+                    Cut = cut,
+                    Notes = notes,
+                    Elapsed = clock.Elapsed,
+                };
+            }
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
@@ -188,6 +275,54 @@ public static class EndpointClient
         {
             return new EndpointResponse { Error = error.Message, Elapsed = clock.Elapsed };
         }
+    }
+
+    /// <summary>One request of the exchange, or why its headers cannot be sent.</summary>
+    private static (HttpRequestMessage? Message, string? Refused) Message(string method, Uri url, IReadOnlyList<KeyValuePair<string, string>> headers, string body)
+    {
+        HttpRequestMessage message = new(new HttpMethod(method), url);
+        if (body.Length > 0 || headers.Any(h => ContentHeaders.Contains(h.Key)))
+        {
+            message.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
+        }
+        foreach ((string name, string value) in headers)
+        {
+            bool added = ContentHeaders.Contains(name) && message.Content is not null
+                ? message.Content.Headers.TryAddWithoutValidation(name, value)
+                : message.Headers.TryAddWithoutValidation(name, value);
+            if (!added)
+            {
+                message.Dispose();
+                return (null, $"The header {name} could not be sent as \"{value}\"");
+            }
+        }
+        return (message, null);
+    }
+
+    /// <summary>Where a redirect answer sends the request next, or null for an answer that is none.</summary>
+    private static Uri? Redirect(HttpResponseMessage response, Uri from) =>
+        (int)response.StatusCode is 300 or 301 or 302 or 303 or 307 or 308 && response.Headers.Location is { } location
+            && (location.IsAbsoluteUri ? location : new Uri(from, location)) is { Scheme: "http" or "https" } next
+            ? next
+            : null;
+
+    /// <summary>A body's file as text, refused past <see cref="MostSent"/> characters.</summary>
+    private static string ReadText(string file)
+    {
+        using StreamReader reader = new(file, Encoding.UTF8, detectEncodingFromByteOrderMarks: true,
+            new FileStreamOptions { Access = FileAccess.Read, Share = FileShare.ReadWrite | FileShare.Delete });
+        StringBuilder text = new();
+        char[] chunk = new char[64 * 1024];
+        int count;
+        while ((count = reader.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            text.Append(chunk, 0, count);
+            if (text.Length > MostSent)
+            {
+                throw new IOException($"it is over {MostSent / 1024 / 1024} MB");
+            }
+        }
+        return text.ToString();
     }
 
     private static async Task<(byte[] Bytes, bool Cut)> ReadAtMostAsync(HttpContent content, CancellationToken cancel)

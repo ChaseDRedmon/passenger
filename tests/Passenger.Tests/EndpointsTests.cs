@@ -258,6 +258,226 @@ public sealed class EndpointsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_request_that_reads_the_persons_environment_asks_first_naming_the_host_and_each_variable_and_sends_nothing_unless_allowed()
+    {
+        MainWindow window = Open(SecretsFolder());
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
+        EndpointRequest whoami = window.Endpoints.Requests.Single(r => r.Name == "Who am I");
+        string set = System.Environment.GetEnvironmentVariable("PASSENGER_SETTINGS")!;
+
+        // The env file's token hides a $processEnv the .http file never shows; the question names it, and one not set.
+        Click(window, RowButton(window, whoami, "endpointTest"));
+        EndpointQuestionDialog question = DialogButtonsTests.Check(window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked"));
+        Assert.Contains($"127.0.0.1:{api.Port}", question.Title);
+        Assert.Equal([new EndpointRead(false, "PASSENGER_ENDPOINTS_UNSET", Missing: true), new EndpointRead(false, "PASSENGER_SETTINGS")], question.Reads);
+        Assert.Contains(question.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.Contains("PASSENGER_ENDPOINTS_UNSET, which is not set", StringComparison.Ordinal) == true);
+        Click(question, question.DontAllowButton);
+        Assert.Null(window.Endpoints.Question);
+        Assert.Empty(api.Received);
+        Assert.StartsWith("Not sent", window.Endpoints.Response.Summary, StringComparison.Ordinal);
+        Assert.Null(window.Endpoints.Outcome(whoami));
+
+        // Not allowed is never kept: the next Test asks again, and once allowed, the variables go.
+        Click(window, RowButton(window, whoami, "endpointTest"));
+        question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A Don't allow was kept, where the next send should ask again");
+        Click(question, question.AllowButton);
+        StandInApi.Request received = Assert.Single(api.Received);
+        Assert.Equal(set, received.Header("X-Token"));
+        Assert.Equal(string.Empty, received.Header("X-Missing"));
+
+        // Asked once: the folder allows it while it is open.
+        Click(window, RowButton(window, whoami, "endpointTest"));
+        Assert.Null(window.Endpoints.Question);
+        Assert.Equal(2, api.Received.Count);
+
+        // A request that reads none of the person's computer never asks.
+        Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
+        Assert.Null(window.Endpoints.Question);
+        Assert.Equal(3, api.Received.Count);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Always_for_this_folder_is_kept_with_the_folder_so_the_next_window_sends_unasked_until_the_request_reads_more()
+    {
+        string folder = SecretsFolder();
+        string settings = TestFolders.Create("endpoints-settings-");
+        MainWindow window = Open(folder, settings);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
+        EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked");
+        question.Always.IsChecked = true;
+        Click(question, question.AllowButton);
+        Assert.Single(api.Received);
+        window.Close();
+        Ui.Settle();
+        string kept = File.ReadAllText(Assert.Single(Directory.GetFiles(Path.Combine(settings, "workspaces"), "endpoints.json", SearchOption.AllDirectories)));
+        Assert.Contains($"127.0.0.1:{api.Port} env PASSENGER_SETTINGS", kept);
+
+        MainWindow again = Open(folder, settings);
+        again.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => again.Endpoints.Requests.Count == 4, "the requests in the next window");
+        Click(again, RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
+        Assert.True(again.Endpoints.Question is null, "Always for this folder was not kept: the next window asked again");
+        Assert.Equal(2, api.Received.Count);
+
+        // A variable the folder never allowed asks again, naming it.
+        // The env files are read as a request is sent.
+        File.WriteAllText(Path.Combine(folder, "http-client.env.json"),
+            $$$"""{ "dev": { "base": "{{{api.Root}}}", "token": "{{$processEnv PASSENGER_SETTINGS}}{{$env.PASSENGER_ENDPOINTS_OTHER}}" } }""");
+        Click(again, RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
+        question = again.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A variable the folder never allowed was sent unasked");
+        Assert.Contains(question.Reads, r => r.Name == "PASSENGER_ENDPOINTS_OTHER");
+        Click(question, question.DontAllowButton);
+        Assert.Equal(2, api.Received.Count);
+        again.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_body_from_a_file_outside_the_folder_asks_first_and_one_inside_does_not()
+    {
+        string folder = Folder();
+        string outside = Path.Combine(TestFolders.Create("endpoints-outside-"), "secret.json");
+        File.WriteAllText(outside, """{ "secret": true }""");
+        File.WriteAllText(Path.Combine(folder, "body.json"), """{ "name": "Inside" }""");
+        bool links = !OperatingSystem.IsWindows();
+        if (links)
+        {
+            File.CreateSymbolicLink(Path.Combine(folder, "linked.json"), outside);
+        }
+        File.WriteAllText(Path.Combine(folder, "bodies.http"), $"""
+            ### Inside
+            POST {"{{base}}"}/items
+            Content-Type: application/json
+
+            < ./body.json
+
+            ### Outside
+            POST {"{{base}}"}/items
+            Content-Type: application/json
+
+            < {outside}
+
+            ### Linked
+            POST {"{{base}}"}/items
+            Content-Type: application/json
+
+            < ./linked.json
+            """);
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 6, "the requests");
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Inside"), "endpointTest"));
+        Assert.Null(window.Endpoints.Question);
+        Assert.Equal("""{ "name": "Inside" }""", Assert.Single(api.Received).Body);
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Outside"), "endpointTest"));
+        EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A body from outside the folder was sent unasked");
+        Assert.Equal([new EndpointRead(true, Passenger.Core.PathNames.Canonical(outside))], question.Reads);
+        Click(question, question.DontAllowButton);
+        Assert.Single(api.Received);
+
+        if (links)
+        {
+            // A link inside the folder to a file outside it is that file.
+            Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Linked"), "endpointTest"));
+            question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A link to a file outside the folder was sent unasked");
+            Assert.Equal([new EndpointRead(true, Passenger.Core.PathNames.Canonical(outside))], question.Reads);
+            Click(question, question.AllowButton);
+            Assert.Equal("""{ "secret": true }""", api.Received[^1].Body);
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_test_is_the_windows_work_until_its_answer_and_Stop_ends_it()
+    {
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Slow\nGET {{base}}/slow\n");
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
+        Button slow = RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Slow"), "endpointTest");
+        Button other = RowButton(window, window.Endpoints.Requests[0], "endpointTest");
+        WorkingRing ring = window.FindControl<WorkingRing>("StatusWorking")!;
+
+        Press(window, slow);
+        Ui.PumpUntil(() => window.Status?.StartsWith($"Sending GET {api.Root}/slow", StringComparison.Ordinal) == true, "the status bar to say the test's stage");
+        Assert.True(ring.IsVisible, "The status bar should turn its ring while a test waits for its answer");
+        Press(window, other);
+        Ui.PumpUntil(() => window.Status?.StartsWith("Already under way: ", StringComparison.Ordinal) == true, "a second test to be refused while one is under way");
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => window.Endpoints.Busy is null, "Stop to end the test");
+        Assert.Equal("Stopped before an answer came", window.Endpoints.Response.Summary);
+        Assert.False(ring.IsVisible, "The status bar's ring should stop once the test is stopped");
+        Assert.Null(window.Endpoints.Outcome(window.Endpoints.Requests.Single(r => r.Name == "Slow")));
+        Assert.Equal(["GET /slow"], api.Received.Select(r => r.Line));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_redirect_to_another_host_goes_without_the_requests_headers_and_says_so()
+    {
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Moved\nGET {{base}}/moved\nX-Trace: {{trace}}\n\n### Elsewhere\nGET {{base}}/elsewhere\nX-Trace: {{trace}}\n");
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the requests");
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Moved"), "endpointTest"));
+        Assert.Equal(["GET /moved", "GET /items"], api.Received.Select(r => r.Line));
+        Assert.Equal("t-42", api.Received[^1].Header("X-Trace"));
+        Assert.Empty(window.Endpoints.Response.Response!.Notes);
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Elsewhere"), "endpointTest"));
+        Assert.Equal(["GET /moved", "GET /items", "GET /elsewhere", "GET /items"], api.Received.Select(r => r.Line));
+        Assert.StartsWith("localhost:", api.Received[^1].Header("Host"), StringComparison.Ordinal);
+        Assert.Null(api.Received[^1].Header("X-Trace"));
+        Assert.Equal(200, window.Endpoints.Response.Response!.Status);
+        Assert.Equal(["Redirected to localhost, another host, without the request's headers"], window.Endpoints.Response.Response.Notes);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_requests_last_outcome_stays_with_it_as_lines_move()
+    {
+        string folder = Folder();
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
+        Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
+        Click(window, RowButton(window, window.Endpoints.Requests[2], "endpointTest"));
+        int line = window.Endpoints.Requests[0].Line;
+
+        File.WriteAllText(Path.Combine(folder, "api.http"), "# Read first.\n\n" + File.ReadAllText(Path.Combine(folder, "api.http")));
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 3 && window.Endpoints.Requests[0].Line == line + 2, "the requests two lines down");
+        Assert.True(window.Endpoints.Outcome(window.Endpoints.Requests[0]), "A named request's outcome was lost as its lines moved");
+        Assert.False(window.Endpoints.Outcome(window.Endpoints.Requests[2]), "An unnamed request's outcome was lost as its lines moved");
+        Assert.Null(window.Endpoints.Outcome(window.Endpoints.Requests[1]));
+        window.Close();
+    }
+
+    /// <summary>The folder with a request whose env file's token is the person's PASSENGER_SETTINGS, which the .http file
+    /// never names, and a variable the run never sets.</summary>
+    private string SecretsFolder()
+    {
+        string folder = Folder();
+        File.WriteAllText(Path.Combine(folder, "secrets.http"), """
+            ### Who am I
+            GET {{base}}/items
+            X-Token: {{token}}
+            X-Missing: {{$env.PASSENGER_ENDPOINTS_UNSET}}
+            """);
+        File.WriteAllText(Path.Combine(folder, "http-client.env.json"),
+            $$$"""{ "dev": { "base": "{{{api.Root}}}", "token": "{{$processEnv PASSENGER_SETTINGS}}" } }""");
+        return folder;
+    }
+
     private string Folder()
     {
         string folder = TestFolders.Create("endpoints");
@@ -290,13 +510,25 @@ public sealed class EndpointsTests : IDisposable
         return folder;
     }
 
-    private static MainWindow Open(string folder)
+    private static MainWindow Open(string folder, string? settings = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = settings is null ? new() { Width = 1200, Height = 800 } : new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
+        if (settings is not null)
+        {
+            window.KeepLayout();
+        }
         window.OpenFolder(folder);
         Ui.Settle();
         return window;
+    }
+
+    /// <summary>A click that leaves the window to go on, for one whose work holds the IDE busy until it is stopped.</summary>
+    private static void Press(Window window, Control control)
+    {
+        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
     }
 
     private static Button RowButton(MainWindow window, EndpointRequest request, string name)
@@ -318,8 +550,9 @@ public sealed class EndpointsTests : IDisposable
     }
 
     /// <summary>A small JSON API on a loopback port: GET /items lists one item, POST and PUT /items answer 201 with the
-    /// body sent, anything else 404. It keeps every request with the connection it came on, and counts connections made
-    /// and still open, so a test sees whether a client was kept.</summary>
+    /// body sent, GET /moved redirects to /items and GET /elsewhere to it under the name localhost, GET /slow answers
+    /// only as the test ends, anything else 404. It keeps every request with the connection it came on, and counts
+    /// connections made and still open, so a test sees whether a client was kept.</summary>
     private sealed class StandInApi : IDisposable
     {
         public sealed record Request(int Connection, string Line, IReadOnlyDictionary<string, string> Headers, string Body)
@@ -329,15 +562,20 @@ public sealed class EndpointsTests : IDisposable
 
         private readonly TcpListener listener = new(IPAddress.Loopback, 0);
         private readonly List<Request> received = [];
+        private readonly TaskCompletionSource held = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int connections;
         private int open;
 
         public StandInApi()
         {
             listener.Start();
-            Root = $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}";
+            Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            Root = $"http://127.0.0.1:{Port}";
             _ = Task.Run(AcceptAsync);
         }
+
+        /// <summary>Its port, which GET /elsewhere sends the client to under another host's name, localhost.</summary>
+        public int Port { get; }
 
         public string Root { get; }
 
@@ -356,7 +594,11 @@ public sealed class EndpointsTests : IDisposable
             }
         }
 
-        public void Dispose() => listener.Stop();
+        public void Dispose()
+        {
+            held.TrySetResult();
+            listener.Stop();
+        }
 
         private async Task AcceptAsync()
         {
@@ -391,15 +633,27 @@ public sealed class EndpointsTests : IDisposable
                         {
                             received.Add(request);
                         }
+                        if (request.Line == "GET /slow")
+                        {
+                            // Held until the test is done with it, as a server that never answers.
+                            await held.Task.WaitAsync(TimeSpan.FromMinutes(2));
+                        }
                         (int status, string reason, string body) = Answer(request);
                         byte[] content = Encoding.UTF8.GetBytes(body);
-                        string head = $"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {content.Length}\r\n\r\n";
+                        string? location = request.Line switch
+                        {
+                            "GET /moved" => "/items",
+                            "GET /elsewhere" => $"http://localhost:{Port}/items",
+                            _ => null,
+                        };
+                        string head = $"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {content.Length}\r\n"
+                            + (location is null ? string.Empty : $"Location: {location}\r\n") + "\r\n";
                         await stream.WriteAsync(Encoding.ASCII.GetBytes(head));
                         await stream.WriteAsync(content);
                     }
                 }
             }
-            catch (IOException)
+            catch (Exception error) when (error is IOException or TimeoutException)
             {
             }
             finally
@@ -411,6 +665,8 @@ public sealed class EndpointsTests : IDisposable
         private static (int, string, string) Answer(Request request) => request.Line switch
         {
             "GET /items" => (200, "OK", """{"items":[{"id":1,"name":"Ada"}]}"""),
+            "GET /moved" or "GET /elsewhere" => (302, "Found", string.Empty),
+            "GET /slow" => (200, "OK", "{}"),
             "GET /huge" => (200, "OK", string.Concat(Enumerable.Repeat(new string('a', 99) + "\n", (EndpointClient.MostRead / 100) + 10_000))),
             "POST /items" or "PUT /items" => (201, "Created", request.Body),
             _ => (404, "Not Found", """{"error":"not found"}"""),

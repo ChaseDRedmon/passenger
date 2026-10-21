@@ -78,8 +78,9 @@ public static class AppActions
     public const string ShowLiveTree = "app.showLiveTree";
     public const string SelectElement = "app.liveTree.selectElement";
 
-    // Rider's Endpoints window over the folder's .http files: no key of Rider's.
+    // Rider's Endpoints window over the folder's .http files, and its Test of the request chosen there: no key of Rider's.
     public const string ShowEndpoints = "app.showEndpoints";
+    public const string TestEndpoint = "app.endpoints.test";
 
     // Avalonia's renderer debug overlays in an app Run, Debug or Profile launched (Avalonia's own names): no key of Rider's.
     public const string OverlayFps = "app.avalonia.overlay.Fps";

@@ -97,6 +97,12 @@ public sealed class ResponseView : DockPanel
             : $"{response.Status} {response.Reason}   {Milliseconds(response.Elapsed)}   {Size(response.Size)}{(response.Cut ? ", the rest unread" : string.Empty)}";
         Paint(summary, passed ? "Passenger.Test.Passed" : "Passenger.Test.Failed");
         criteria.Children.Clear();
+        foreach (string note in response.Notes)
+        {
+            TextBlock said = new() { Text = note, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 4) };
+            Paint(said, "Passenger.TextMuted");
+            criteria.Children.Add(said);
+        }
         foreach (ExpectationResult result in results)
         {
             PathIcon mark = new() { Width = 12, Height = 12, Margin = new Thickness(0, 0, 6, 0) };

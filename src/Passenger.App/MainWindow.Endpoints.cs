@@ -18,13 +18,21 @@ public partial class MainWindow
 
     private void AddEndpoints()
     {
-        endpoints = new EndpointsView();
-        endpoints.GoToRequested += (_, request) => NavigateTo(request.File, new TextPosition(request.Line, 0));
-        endpoints.InteractiveRequested += (_, request) => OpenInteractiveTest(request);
-        Dock.Add(new Docking.ToolWindow("endpoints", "Endpoints", "Icon.Endpoints", endpoints, Docking.ToolAnchor.RightTop)
+        EndpointsView view = new(new EndpointsParts(work, () => session.EndpointGrants, text => status.Text = text));
+        endpoints = view;
+        view.GoToRequested += (_, request) => NavigateTo(request.File, new TextPosition(request.Line, 0));
+        view.InteractiveRequested += (_, request) => OpenInteractiveTest(request);
+        Dock.Add(new Docking.ToolWindow("endpoints", "Endpoints", "Icon.Endpoints", view, Docking.ToolAnchor.RightTop)
         {
             Action = AppActions.ShowEndpoints,
             Menus = [new MenuPlace("Tools", 0, 3)],
+            Chosen = () => view.Chosen,
+        });
+        // The row's Test button, Enter and its menu test it as this does; an agent or Find Action tests the row chosen.
+        actions!.Add(new IdeAction(AppActions.TestEndpoint, "Test Request", "Endpoints", context => _ = view.TestAsync(view.Chosen!))
+        {
+            WhyNot = _ => view.Chosen is null ? "No request is chosen in the Endpoints window" : null,
+            Words = ["HTTP Client", "Send Request"],
         });
     }
 
@@ -46,7 +54,7 @@ public partial class MainWindow
     /// <summary>Opens a request in the Interactive Test dialog, its variables those of the environment chosen as it sends.</summary>
     public InteractiveTestDialog OpenInteractiveTest(EndpointRequest request)
     {
-        InteractiveTestDialog dialog = new(request, () => endpoints!.VariablesFor(request), endpoints!.Environment);
+        InteractiveTestDialog dialog = new(request, endpoints!);
         InteractiveTest = dialog;
         _ = dialog.ShowDialog(this);
         return dialog;

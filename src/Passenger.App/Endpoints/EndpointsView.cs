@@ -9,6 +9,22 @@ using Passenger.Editor;
 
 namespace Passenger.App.Endpoints;
 
+/// <summary>What the Endpoints window works with: the window's actions' work (a test is one), the open folder's answers
+/// to what its requests may take from the person's computer, and the status bar.</summary>
+public sealed record EndpointsParts(ActionWork Work, Func<EndpointGrants> Grants, Action<string> Say);
+
+/// <summary>A request as it is to be sent: as written, or as changed in the Interactive Test dialog.</summary>
+public sealed record EndpointDraft(string Method, string Url, IReadOnlyList<KeyValuePair<string, string>> Headers, string Body);
+
+/// <summary>What became of a send: answered, refused for what the request is (a variable with no value), or never sent
+/// (not allowed, stopped, or another under way).</summary>
+public enum EndpointSent
+{
+    Answered,
+    Refused,
+    Withheld,
+}
+
 /// <summary>The Endpoints window: every request of the open folder's .http and .rest files, under its file, with its
 /// method; Test sends one as written and Interactive Test opens it in a dialog to change before sending. The answer of
 /// the last test shows under the list. The environment chosen gives the requests' <c>{{variables}}</c> their values.</summary>
@@ -20,7 +36,8 @@ public sealed class EndpointsView : DockPanel
     private readonly ListBox list;
     private readonly TextBlock placeholder;
     private readonly ComboBox environments;
-    private readonly Dictionary<(string File, int Line), bool> outcomes = [];
+    private readonly EndpointsParts parts;
+    private readonly Dictionary<(string File, string Request), bool> outcomes = [];
     private IReadOnlyList<HttpFile> files = [];
     private string? root;
     private int reads;
@@ -28,8 +45,9 @@ public sealed class EndpointsView : DockPanel
     private bool stale;
     private CancellationTokenSource? sending;
 
-    public EndpointsView()
+    public EndpointsView(EndpointsParts parts)
     {
+        this.parts = parts;
         Response = new ResponseView("Test a request to see its response here");
         list = new ListBox
         {
@@ -107,17 +125,10 @@ public sealed class EndpointsView : DockPanel
     private const string NoEnvironment = "No environment";
 
     /// <summary>Whether a request's last test passed, failed (false) or has not run (null).</summary>
-    public bool? Outcome(EndpointRequest request) => outcomes.TryGetValue((request.File, request.Line), out bool passed) ? passed : null;
+    public bool? Outcome(EndpointRequest request) => outcomes.TryGetValue(OutcomeKey(request), out bool passed) ? passed : null;
 
     /// <summary>Chooses an environment by name, as the person would.</summary>
     public void ChooseEnvironment(string name) => environments.SelectedItem = name;
-
-    /// <summary>The variables a request sees in the environment chosen.</summary>
-    public IReadOnlyDictionary<string, string> VariablesFor(EndpointRequest request)
-    {
-        HttpFile file = files.FirstOrDefault(f => f.Path == request.File) ?? new HttpFile(request.File, new Dictionary<string, string>(), []);
-        return HttpVariables.For(file, Environment, root);
-    }
 
     /// <summary>Reads the folder's .http and .rest files again off the UI thread, or as the window is next shown while it
     /// is hidden, so a folder opened with it closed is walked once, by its file index alone; another folder's list goes
@@ -205,42 +216,91 @@ public sealed class EndpointsView : DockPanel
     }
 
     /// <summary>Test: the request sent as written, on a client of its own, its answer held to its criteria (an answer
-    /// below 400 when it has none). A test started while another is under way stops that one.</summary>
+    /// below 400 when it has none).</summary>
     public async Task TestAsync(EndpointRequest request)
     {
         UiThread.Check();
         list.SelectedItem = request;
-        (EndpointCall? call, string? problem) = EndpointClient.Prepare(request, request.Method, request.Url, request.Headers, request.Body, VariablesFor(request));
-        if (call is null)
-        {
-            Response.Refused(problem!);
-            Record(request, false);
-            return;
-        }
         IReadOnlyList<Expectation> criteria = request.Expectations.Count > 0 ? request.Expectations : [Expectation.Answered];
-        (EndpointResponse? response, IReadOnlyList<ExpectationResult> results) = await SendAsync(call, criteria, new SendOptions());
-        if (response is not null)
+        EndpointDraft draft = new(request.Method, request.Url, request.Headers, request.Body);
+        switch (await SendAsync(request, draft, new SendOptions(), criteria, Response, TopLevel.GetTopLevel(this) as Window))
         {
-            Response.Show(response, results);
-            Record(request, Response.Passed);
+            case EndpointSent.Answered:
+                Record(request, Response.Passed);
+                break;
+            case EndpointSent.Refused:
+                Record(request, false);
+                break;
         }
     }
 
-    /// <summary>Sends a call and checks its answer, stopping the one under way; null when another took its place.</summary>
-    private async Task<(EndpointResponse?, IReadOnlyList<ExpectationResult>)> SendAsync(EndpointCall call, IReadOnlyList<Expectation> criteria, SendOptions options)
+    /// <summary>Sends a request as Test does, from this window or the Interactive Test dialog: as the window's one test
+    /// under way (the status bar says its stage and Stop ends it), its env files read off the UI thread, and the person
+    /// asked first when it takes something from their computer to a host the folder has not allowed; its body's file is
+    /// read only once it may go. What became of it shows in <paramref name="shown"/>.</summary>
+    internal async Task<EndpointSent> SendAsync(EndpointRequest request, EndpointDraft draft, SendOptions options,
+        IReadOnlyList<Expectation> criteria, ResponseView shown, Window? owner)
     {
-        sending?.Cancel();
-        using CancellationTokenSource mine = new();
+        UiThread.Check();
+        if (parts.Work.Begin(AppActions.TestEndpoint, $"Testing {draft.Method} {request.Title}…") is not { } testing)
+        {
+            parts.Say(ActionWork.Busy(parts.Work.Of(AppActions.TestEndpoint)!));
+            return EndpointSent.Withheld;
+        }
+        using Working held = testing;
+        using CancellationTokenSource mine = CancellationTokenSource.CreateLinkedTokenSource(testing.Stopping);
         sending = mine;
-        Response.Sending($"Sending {call.Method} {call.Url}…");
         try
         {
+            HttpFile file = FileOf(request);
+            string? environment = Environment;
+            string? folder = root;
+            (EndpointCall? call, string? problem) = await BackgroundWork.Run(() => EndpointClient.Prepare(request, draft.Method, draft.Url,
+                draft.Headers, draft.Body, HttpVariables.For(file, environment, folder), folder));
+            mine.Token.ThrowIfCancellationRequested();
+            if (call is null)
+            {
+                shown.Refused(problem!);
+                return EndpointSent.Refused;
+            }
+            EndpointGrants grants = parts.Grants();
+            if (grants.Unallowed(call).Count > 0)
+            {
+                if (owner is null)
+                {
+                    shown.Refused($"Not sent: nothing could ask whether {call.Host} may have what it reads");
+                    return EndpointSent.Withheld;
+                }
+                testing.Say($"Waiting for your answer: may {request.Title} send what it reads to {call.Host}?");
+                EndpointQuestionDialog question = new(request.Title, call.Host, call.Reads);
+                Question = question;
+                bool allowed;
+                try
+                {
+                    allowed = await question.ShowDialog<bool>(owner);
+                }
+                finally
+                {
+                    Question = null;
+                }
+                mine.Token.ThrowIfCancellationRequested();
+                if (!allowed)
+                {
+                    shown.Refused($"Not sent: what it reads was not allowed to go to {call.Host}");
+                    return EndpointSent.Withheld;
+                }
+                grants.Allow(call, question.Always.IsChecked == true);
+            }
+            testing.Say($"Sending {call.Method} {call.Url}…");
+            shown.Sending($"Sending {call.Method} {call.Url}…");
             EndpointResponse response = await BackgroundWork.Run(() => EndpointClient.SendAsync(call, options, mine.Token), mine.Token);
-            return (response, [.. criteria.Select(c => c.Check(response))]);
+            shown.Show(response, [.. criteria.Select(c => c.Check(response))]);
+            return EndpointSent.Answered;
         }
         catch (OperationCanceledException)
         {
-            return (null, []);
+            shown.Refused("Stopped before an answer came");
+            return EndpointSent.Withheld;
         }
         finally
         {
@@ -251,12 +311,29 @@ public sealed class EndpointsView : DockPanel
         }
     }
 
+    /// <summary>The test under way, or null.</summary>
+    public Working? Busy => parts.Work.Of(AppActions.TestEndpoint);
+
+    /// <summary>The question a test asks now, for the tests.</summary>
+    public EndpointQuestionDialog? Question { get; private set; }
+
+    /// <summary>The request chosen in the list, which Test Request tests.</summary>
+    public EndpointRequest? Chosen => list.SelectedItem as EndpointRequest;
+
     /// <summary>Stops a test under way, as the folder closes.</summary>
     public void Stop() => sending?.Cancel();
 
+    private HttpFile FileOf(EndpointRequest request) =>
+        files.FirstOrDefault(f => f.Path == request.File) ?? new HttpFile(request.File, new Dictionary<string, string>(), []);
+
+    /// <summary>A request's last outcome is kept by its name, else its method and URL as written, so it stays with it as
+    /// lines move.</summary>
+    private static (string File, string Request) OutcomeKey(EndpointRequest request) =>
+        (request.File, request.Name.Length > 0 ? "# @name " + request.Name : $"{request.Method} {request.Url}");
+
     private void Record(EndpointRequest request, bool passed)
     {
-        outcomes[(request.File, request.Line)] = passed;
+        outcomes[OutcomeKey(request)] = passed;
         Refresh();
     }
 
