@@ -142,8 +142,9 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
     }
 
     /// <summary>A bracket and its pair (<see cref="BracePairs"/>), read from <see cref="Current"/> once the first parse has
-    /// landed, so a frame never waits for one.</summary>
-    public BracePair? PairAt(TextSnapshot snapshot, int offset) =>
+    /// landed, so a frame never waits for one. Near or <paramref name="far"/>, the pair is read from the bracket's own node,
+    /// never from the lines between them.</summary>
+    public BracePair? PairAt(TextSnapshot snapshot, int offset, bool far = false) =>
         tree is not null && ReferenceEquals(snapshot, document.Snapshot) ? BracePairs.At(Current.Root, offset) : null;
 
     public void Dispose()

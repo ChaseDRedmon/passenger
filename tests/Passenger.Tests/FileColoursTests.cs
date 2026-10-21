@@ -499,6 +499,79 @@ public sealed class FileColoursTests : IDisposable
         window.Close();
     }
 
+    /// <summary>The caret moved onto a bracket finds its pair among the lines near it, as every move asks: onto the brace that
+    /// opens a JSON file of 30,000 items, or after the one that closes it, a move reads no more than the 2,000 lines beside
+    /// it and allocates on the UI thread what a move onto one in 100 items does, where it read every line to its pair. That
+    /// pair is too far to light up; an item's braces still light up together, and Move Caret to Matching Brace, asked once,
+    /// still goes from the first brace to the last and back.</summary>
+    [AvaloniaFact]
+    public void Moving_the_caret_onto_a_bracket_reads_only_the_lines_near_it_and_Matching_Brace_goes_as_far_as_its_pair()
+    {
+        MainWindow window = Window();
+        string large = Items(30_000);
+        (long longBytes, long longLines) = BracketMoves(window, "Long.json", large, paired: false);
+        (long shortBytes, long shortLines) = BracketMoves(window, "Short.json", Items(100), paired: true);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"A move onto the outer brace and back read {longLines:N0} lines and allocated {longBytes:N0} bytes in 30,000 items, {shortLines:N0} lines and {shortBytes:N0} bytes in 100.");
+        Assert.True(longLines <= 2 * 2_000,
+            $"A move onto the brace around 30,000 items and after its pair read {longLines:N0} lines on the UI thread looking for the pairs, more than the 2,000 near each");
+        Assert.True(longBytes <= shortBytes + (16 * 1024),
+            $"A move onto the brace around 30,000 items allocated {longBytes / 1024.0:F1} KB on the UI thread, against {shortBytes / 1024.0:F1} KB in 100");
+
+        CodeEditor editor = Open(window, "Long.json", large);
+        int item = large.IndexOf("{ \"id\": 15000,", StringComparison.Ordinal);
+        Assert.Equal((item, large.IndexOf('}', item)), PairAt(editor, item));
+        int end = large.LastIndexOf('}');
+        editor.Selections = SelectionSet.Single(0);
+        editor.Focus();
+        Ui.Run(window, EditorActions.MatchBrace);
+        Assert.Equal(end, editor.Selections.Primary.Caret);
+        Ui.Run(window, EditorActions.MatchBrace);
+        Assert.Equal(0, editor.Selections.Primary.Caret);
+        window.Close();
+    }
+
+    /// <summary>What moving the caret onto the brace a JSON file opens with, and to just after the one it closes with, cost
+    /// on the UI thread, each from a word beside it: the bytes allocated (the least of a few moves) and the lines the pair
+    /// searches read (the most), each move lighting up the pair or, too far apart, none.</summary>
+    private (long Bytes, long Lines) BracketMoves(MainWindow window, string file, string text, bool paired)
+    {
+        CodeEditor editor = Open(window, file, text);
+        TextMateHighlighter colours = (TextMateHighlighter)window.EditorArea.Active!.Highlighter!;
+        int end = text.LastIndexOf('}');
+        long least = long.MaxValue;
+        long most = 0;
+        for (int i = 0; i < 5; i++)
+        {
+            editor.Selections = SelectionSet.Single(text.IndexOf("items", StringComparison.Ordinal));
+            Ui.Settle();
+            long lines = colours.LinesPaired;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            editor.Selections = SelectionSet.Single(0);
+            BracePair? first = editor.MatchedBraces;
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            Ui.Settle();
+            editor.Selections = SelectionSet.Single(end + 1);
+            BracePair? last = editor.MatchedBraces;
+            most = Math.Max(most, colours.LinesPaired - lines);
+            Assert.True(first?.Matching.Start == (paired ? end : null), $"The brace at the start of {file} paired with {first?.Matching.Start}");
+            Assert.True(last?.Matching.Start == (paired ? 0 : null), $"The brace at the end of {file} paired with {last?.Matching.Start}");
+            Ui.Settle();
+        }
+        return (least, most);
+    }
+
+    /// <summary>A JSON file of items, one to a line, in an array under the brace the file opens with.</summary>
+    private static string Items(int count)
+    {
+        StringBuilder json = new("{\n  \"items\": [\n");
+        for (int i = 0; i < count; i++)
+        {
+            json.Append(System.Globalization.CultureInfo.InvariantCulture, $"    {{ \"id\": {i}, \"name\": \"Item {i}\" }}{(i < count - 1 ? "," : "")}\n");
+        }
+        return json.Append("  ]\n}\n").ToString();
+    }
+
     /// <summary>What moving the caret onto the root element's start tag's name, and onto its end tag's, and the pair it
     /// lights up allocate on the UI thread, each from a blank line beside it: the least of a few moves, each finding its pair.</summary>
     private (long Start, long End) TagMoves(MainWindow window, string file, string text)

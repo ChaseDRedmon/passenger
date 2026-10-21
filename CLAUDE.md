@@ -136,13 +136,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   goes with the text before it; the hints at an offset are a caret place of their own, as IntelliJ's inlays are.
   `CodeEditor.Usages.cs` is what the caret lights up: the host's usage highlights (an edit takes them away unless
   kept, as Highlight Usages in File's are) and the bracket pair from a highlighter that is an `IBraceMatcher`
-  (`CSharpHighlighter`, from its syntax, never the server); a grammar's tag pair (`TextMateHighlighter.Pairs`) is read
-  where it stands within 2,000 lines of the caret, as every caret move asks, Move Caret to Matching Brace's
-  (`TagPairAt`'s `far`) within 50,000. Soft wrap (`CodeEditor.Wrapping.cs`) makes every line one or
-  more rows: `Rows` maps lines to rows and back, so whatever turns an offset into a place, a click into an offset or a
-  line into a height goes through a row's `RowSpan`, never a `LineSpan` alone; an edit wraps again only the lines it
-  touched, in the document's `ChangedFirst`, ahead of every `Changed` handler, so a host that asks for rows as it
-  carries its folds through the edit never has the whole file wrapped again.
+  (`CSharpHighlighter`, from the bracket's own node, never the server); a grammar's bracket or tag pair
+  (`TextMateHighlighter.Pairs`) is read where it stands within 2,000 lines of the caret, as every caret move asks, Move
+  Caret to Matching Brace's (`PairAt`'s and `TagPairAt`'s `far`) within 50,000. Soft wrap (`CodeEditor.Wrapping.cs`)
+  makes every line one or more rows: `Rows` maps lines to rows and back, so whatever turns an offset into a place, a
+  click into an offset or a line into a height goes through a row's `RowSpan`, never a `LineSpan` alone; an edit wraps
+  again only the lines it touched, in the document's `ChangedFirst`, ahead of every `Changed` handler, so a host that
+  asks for rows as it carries its folds through the edit never has the whole file wrapped again.
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each

@@ -111,7 +111,7 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     public IHighlighter Syntax => syntax;
 
     /// <summary>The syntax's pair: brackets are the parser's to tell, never the server's.</summary>
-    public BracePair? PairAt(TextSnapshot snapshot, int offset) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset);
+    public BracePair? PairAt(TextSnapshot snapshot, int offset, bool far = false) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset, far);
 
     /// <summary>The syntax's tag pair, a Razor file's markup's.</summary>
     public BracePair? TagPairAt(TextSnapshot snapshot, int caret, bool far = false) => (syntax as IBraceMatcher)?.TagPairAt(snapshot, caret, far);

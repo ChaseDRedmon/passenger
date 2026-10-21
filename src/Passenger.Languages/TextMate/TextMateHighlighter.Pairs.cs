@@ -8,12 +8,13 @@ namespace Passenger.Languages.TextMate;
 /// tag's name with its start or end tag's.</summary>
 public sealed partial class TextMateHighlighter
 {
-    /// <summary>How far a search for a pair goes, in lines from where it began, before it gives up.</summary>
+    /// <summary>How far Move Caret to Matching Brace's search for a pair goes, in lines from where it began, before it gives up.</summary>
     private const int FarthestLines = 50_000;
 
-    /// <summary>How far the pair of the tag the caret is in is looked for, in lines from where the search began, as every
-    /// caret move asks for it: about a millisecond's reading, where a whole file's tags would be a lag at each key.</summary>
-    private const int NearTagLines = 2_000;
+    /// <summary>How far the pair of the bracket the caret touches, or of the tag it is in, is looked for, in lines from where
+    /// the search began, as every caret move asks for it: about a millisecond's reading, where a whole file's would be a lag
+    /// at each key.</summary>
+    private const int NearLines = 2_000;
 
     private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -30,7 +31,11 @@ public sealed partial class TextMateHighlighter
     /// its name and its end copies it once.</summary>
     private (TextSnapshot? Text, int Line, int Start, int Length) copied;
 
-    public BracePair? PairAt(TextSnapshot text, int offset)
+    /// <summary>How many lines the searches for a bracket's or a tag's pair have read: what a caret move costs, for a test to
+    /// count rather than time.</summary>
+    public long LinesPaired { get; private set; }
+
+    public BracePair? PairAt(TextSnapshot text, int offset, bool far = false)
     {
         if (!Settled(text) || offset < 0 || offset >= text.Length)
         {
@@ -47,7 +52,8 @@ public sealed partial class TextMateHighlighter
         int step = opener ? 1 : -1;
         int depth = 0;
         int line = text.GetLineFromOffset(offset);
-        for (int at = line; at >= 0 && at < table!.Count && Math.Abs(at - line) < FarthestLines; at += step)
+        int reach = far ? FarthestLines : NearLines;
+        for (int at = line; at >= 0 && at < table!.Count && Math.Abs(at - line) < reach; at += step)
         {
             ReadOnlySpan<char> chars = LineChars(text, at, out int lineStart);
             SyntaxSpan[] spans = table[at].Spans;
@@ -110,7 +116,7 @@ public sealed partial class TextMateHighlighter
             return null;
         }
         TextRange touched = new(lineStart + start, end - start);
-        int reach = far ? FarthestLines : NearTagLines;
+        int reach = far ? FarthestLines : NearLines;
         TextRange? matching = closing ? StartTagOf(text, bracket, line, name, reach) : EndTagOf(text, lineStart + end, line, name, reach);
         return matching is { } found ? new BracePair(touched, found) : null;
     }
@@ -297,6 +303,7 @@ public sealed partial class TextMateHighlighter
     {
         if (!ReferenceEquals(copied.Text, text) || copied.Line != line)
         {
+            LinesPaired++;
             LineSpan span = text.GetLine(line);
             if (lineChars.Length < span.Length)
             {

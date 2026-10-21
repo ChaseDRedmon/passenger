@@ -114,8 +114,10 @@ public interface IHighlighter
 public interface IBraceMatcher
 {
     /// <summary>The bracket covering the character at <paramref name="offset"/> and the one it pairs with; null when that
-    /// is no bracket of the code, one with no pair, or <paramref name="text"/> is not the text this matcher reads.</summary>
-    BracePair? PairAt(TextSnapshot text, int offset);
+    /// is no bracket of the code, one with no pair, or <paramref name="text"/> is not the text this matcher reads. A pair
+    /// counted for across lines is looked for near the bracket, as every caret move asks for it, unless
+    /// <paramref name="far"/> (Move Caret to Matching Brace, asked once).</summary>
+    BracePair? PairAt(TextSnapshot text, int offset, bool far = false);
 
     /// <summary>The name of the XML or HTML tag a caret is in or at the end of, and the name of the tag it pairs with (a
     /// start tag's end tag, an end tag's start tag), as IntelliJ highlights them; null outside a tag's name, for a tag
