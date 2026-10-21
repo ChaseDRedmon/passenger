@@ -39,11 +39,13 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>A character of a web language's name beyond an identifier's: CSS's and HTML's '-' (background-color,
-    /// --accent, data-id), JavaScript's '$', and in JSON the quotes a property's name is written in.</summary>
+    /// --accent, data-id), JavaScript's '$', a Dockerfile's flags' '-' (--from), YAML's keys' and names' '-' and '.'
+    /// (x-common, my-api), and in JSON the quotes a property's name is written in.</summary>
     private static bool IsWebWordChar(WebDocument web, char c) => web.Kind switch
     {
-        WebServerKind.Css or WebServerKind.Html => c == '-',
+        WebServerKind.Css or WebServerKind.Html or WebServerKind.Dockerfile => c == '-',
         WebServerKind.TypeScript => c == '$',
+        WebServerKind.Yaml => c is '-' or '.',
         _ => c is '"' or '-' or '.' or '@' or '/',
     };
 

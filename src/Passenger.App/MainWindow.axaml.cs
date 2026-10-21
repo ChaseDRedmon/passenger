@@ -101,7 +101,7 @@ public partial class MainWindow : Window
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
         Structure.Follow(() => Editors.Active is { } shown
-            ? (shown.Path, session.CSharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
+            ? (shown.Path, session.CSharp?.For(shown)?.Lsp ?? session.Web?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
             : null);
         Structure.GoToRequested += (_, row) => NavigateTo(row.Path, row.Position);
         Editors.ActiveChanged += (_, _) => Structure.Invalidate();
@@ -187,7 +187,10 @@ public partial class MainWindow : Window
                 session.Debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
-        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml, MSBuild = () => session.MSBuild, Web = () => session.Web };
+        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp)
+        {
+            Xaml = () => session.Xaml, MSBuild = () => session.MSBuild, Web = () => session.Web, Projects = () => session.Workspace?.Projects ?? [],
+        };
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => status.Text = message;
         assist.Browse += (_, page) => Browse(page);

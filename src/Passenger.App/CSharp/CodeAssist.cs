@@ -1440,6 +1440,10 @@ public sealed partial class CodeAssist
             await XamlGoTo(xaml, offset);
             return;
         }
+        if (WebCurrent is { Lsp: not null } compose && editors.Active is { } shown && IsComposeFile(compose, shown) && await ComposeGoTo(compose, offset))
+        {
+            return;
+        }
         if (WebCurrent is { Lsp: not null } web && !web.Provides("definitionProvider"))
         {
             await WebGoTo(web, offset);

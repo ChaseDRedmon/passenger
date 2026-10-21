@@ -1143,6 +1143,16 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
     public static Language ForPath(string path)
     {
         string name = System.IO.Path.GetFileName(path);
+        // By name before extension, as the Dockerfile server is chosen: Dockerfile.dev, Containerfile.prod, .env.local.
+        if (Web.WebLanguages.IsDockerfile(name))
+        {
+            return new Language("Dockerfile", "#");
+        }
+        if (name.Equals(".env", StringComparison.OrdinalIgnoreCase) || name.StartsWith(".env.", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".env", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Language("Dotenv", "#");
+        }
         return System.IO.Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".cs" or ".csx" => new Language("C#", "//", 4, "/*", "*/"),
@@ -1158,11 +1168,9 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
             ".js" or ".mjs" or ".cjs" or ".jsx" => new Language("JavaScript", "//", 4, "/*", "*/"),
             ".ts" or ".mts" or ".cts" or ".tsx" => new Language("TypeScript", "//", 4, "/*", "*/"),
             ".sh" or ".bash" or ".zsh" => new Language("Shell", "#"),
-            ".dockerfile" => new Language("Dockerfile", "#"),
+            ".dockerignore" => new Language("Ignore", "#"),
             ".scss" or ".less" or ".rs" or ".go" or ".java" or ".kt" or ".swift" or ".c" or ".h" or ".cpp" => new Language("Code", "//", 4, "/*", "*/"),
             ".py" or ".toml" or ".ps1" or ".rb" => new Language("Script", "#"),
-            _ when name.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("Containerfile", StringComparison.OrdinalIgnoreCase) => new Language("Dockerfile", "#"),
             _ when name.Equals("justfile", StringComparison.OrdinalIgnoreCase) => new Language("Script", "#"),
             _ => PlainText,
         };

@@ -12,7 +12,7 @@ What `just publish` carries for macOS, Windows and Linux: the app, the debugger 
 project host under `host/` (MSBuild's evaluation in a process of its own, run on the installed .NET with the installed
 SDK's MSBuild, of which it carries nothing), Roslyn's language server under `roslyn/` and Passenger's own extension to
 it under `roslyn-extension/` (compiled against the server's assemblies and carrying none), the JavaScript, TypeScript,
-HTML, CSS and JSON language servers' npm packages under `web/` (listed below), on Windows what Velopack's installer
+HTML, CSS, JSON, Dockerfile and YAML language servers' npm packages under `web/` (listed below), on Windows what Velopack's installer
 adds to it (`just package-win`), and in the Linux archive Passenger's own launcher, install script, desktop entry and
 file types beside it (`just package-linux`). The Linux build carries the Linux natives of SkiaSharp, HarfBuzzSharp and
 dbgshim for its processor (x64 or Arm64), each named below. Packages restored with these whose files no build carries
@@ -120,8 +120,8 @@ governs only Roslyn's own telemetry, which goes nowhere without C# Dev Kit).
 
 ### Inside `web/`
 
-The language servers of JavaScript, TypeScript, HTML, CSS and JSON files, npm packages of plain JavaScript that run on
-the machine's Node.js, one copy for every system. `src/Passenger.Lsp/WebServers/package.json` pins the three servers and
+The language servers of JavaScript, TypeScript, HTML, CSS, JSON, Dockerfiles and YAML, npm packages of plain JavaScript
+that run on the machine's Node.js, one copy for every system. `src/Passenger.Lsp/WebServers/package.json` pins the servers and
 `package-lock.json` every package they bring, each with its tarball's sha512, which the build checks as it unpacks them
 (`tools/Passenger.NodePackages`, run by `src/Passenger.Lsp/WebServers.targets`); nothing is downloaded as the app runs.
 They are carried as their tarballs hold them, less the HTML server's own TypeScript's tsserver, tsc and translated
@@ -146,7 +146,16 @@ carry of their own. `tools/check-notices.py` fails naming any package the lock f
 | `boolbase` | css-select's | ISC | no copyright line; its author: Felix Boehm |
 | `dom-serializer` | domutils' | MIT | Copyright (c) 2014 The cheeriojs contributors |
 | `he` | node-html-parser's | MIT | Copyright Mathias Bynens |
-| `picomatch` | the Markdown service's globs | MIT | Copyright (c) 2017-present, Jon Schlinkert. |
+| `picomatch` | the Markdown service's and the YAML server's globs | MIT | Copyright (c) 2017-present, Jon Schlinkert. |
+| `dockerfile-language-server-nodejs` | the Dockerfile language server | MIT | Copyright (c) 2017 Remy Suen |
+| `dockerfile-language-service`, `dockerfile-utils` | the Dockerfile server's language service and checks | MIT | Copyright (c) 2018 Remy Suen (dockerfile-utils: 2017) |
+| `dockerfile-ast` | the Dockerfile server's parser | MIT | Copyright (c) 2017-2021 Remy Suen |
+| `yaml-language-server` | the YAML language server, a compose file's checks and completion by the Compose specification's schema | MIT | Copyright (c) 2017 Red Hat Inc. and others. |
+| `yaml` | the YAML server's parser | ISC | Copyright Eemeli Aro <eemeli@gmail.com> |
+| `prettier` | the YAML server's formatter | MIT | Copyright © James Long and contributors |
+| `ajv`, `ajv-draft-04`, `ajv-i18n`, `fast-deep-equal`, `json-schema-traverse` | the YAML server's JSON schema checks | MIT | Copyright (c) 2015-2021 Evgeny Poberezkin |
+| `fast-uri` | ajv's URIs | BSD-3-Clause | Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae |
+| `require-from-string` | ajv's | MIT | Copyright (c) Vsevolod Strukchinsky <floatdrop@gmail.com> (github.com/floatdrop) |
 
 ## Building and testing only
 
@@ -756,4 +765,17 @@ Store's NOTICE:
 ```
 JSON Schema Store
 Copyright 2015-Current Mads Kristensen and Contributors
+```
+
+## The Compose specification's schema
+
+`src/Passenger.Lsp/WebServers/schemas/compose-spec.json` is the Compose specification's JSON schema
+(https://github.com/compose-spec/compose-spec, `schema/compose-spec.json` at commit 914ec15d), unchanged, carried under
+`web/schemas/`: the YAML language server checks and completes compose files (`compose.yaml`, `docker-compose.yml` and
+their variants) by it, under the Apache License 2.0 given under TextMate grammars above, with the Compose
+Specification's NOTICE:
+
+```
+The Compose Specification
+Copyright 2020 The Compose Specification Authors
 ```

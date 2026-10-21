@@ -75,7 +75,7 @@ public sealed partial class PassengerTools
             return new ServerServed(document, document.Language.Name, lsp);
         }
         throw new InvalidOperationException($"Passenger has no code help for {LanguageOf(document)} files such as {name}: the code tools answer C#, Razor, "
-            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less, JSON and MSBuild files");
+            + "XAML, JavaScript, TypeScript, HTML, CSS, SCSS, Less, JSON, YAML, Dockerfiles and MSBuild files");
     }
 
     /// <summary>Where Go to Declaration goes from a name in an MSBuild file: where a property was set (the one in force
@@ -142,6 +142,8 @@ public sealed partial class PassengerTools
             "scss" => "SCSS",
             "less" => "Less",
             "json" or "jsonc" => "JSON",
+            "dockerfile" => "Dockerfile",
+            "yaml" => "YAML",
             _ => document.Language.Name,
         };
 
@@ -152,6 +154,25 @@ public sealed partial class PassengerTools
         return place is { } found ? await PlacesOf([found], cancel)
             : said == CodeAssist.NoDeclaration ? []
             : throw new InvalidOperationException(said);
+    }
+
+    /// <summary>Passenger's own Go to Declaration in a compose file, as the window's goes; null where it finds nothing,
+    /// for the YAML server's own (an alias's anchor) to be asked. An image's registry page is said, not gone to.</summary>
+    private async Task<IReadOnlyList<Place>?> ComposeDefinition(Served served, int offset, CancellationToken cancel)
+    {
+        if (served is not ServerServed { Web.Kind: WebServerKind.Yaml } compose || !ComposeDeclarations.IsCompose(compose.Document.Path))
+        {
+            return null;
+        }
+        ComposeAnswer answer = await CodeAssist.ComposeDeclarationAsync(compose.Lsp, compose.Document, offset,
+            ServerPlaces.Texts(Editors), Session.Workspace?.Projects ?? []);
+        if (answer.Page is { } page)
+        {
+            throw new InvalidOperationException($"{answer.Said} is declared on its registry, not in the folder: its page is {page}");
+        }
+        return answer.Places.Count > 0 ? await PlacesOf([.. answer.Places.Select(p => (p.Path, p.Position))], cancel)
+            : answer.Said == ComposeDeclarations.NoDeclaration ? null
+            : throw new InvalidOperationException(answer.Said);
     }
 
     /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a

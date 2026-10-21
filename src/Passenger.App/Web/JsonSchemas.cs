@@ -2,10 +2,10 @@ using System.Collections.Concurrent;
 
 namespace Passenger.App.Web;
 
-/// <summary>The JSON schemas the JSON server checks and completes files by. The well-known files of a .NET and Node.js
-/// project (package.json, tsconfig.json, jsconfig.json, appsettings.json, launchSettings.json, global.json) take
-/// SchemaStore's, carried under <c>web/schemas/</c> with those they refer to and never downloaded, as Rider's bundled
-/// ones are. A schema a file names itself (its <c>$schema</c>) is downloaded as Rider's Remote JSON Schemas setting
+/// <summary>The JSON schemas the JSON and YAML servers check and complete files by. The well-known files of a .NET and
+/// Node.js project (package.json, tsconfig.json, jsconfig.json, appsettings.json, launchSettings.json, global.json) take
+/// SchemaStore's, and compose files the Compose specification's, carried under <c>web/schemas/</c> with those they refer
+/// to and never downloaded, as Rider's bundled ones are. A schema a file names itself (its <c>$schema</c>) is downloaded as Rider's Remote JSON Schemas setting
 /// allows, over HTTP or HTTPS, kept for the process; <c>PASSENGER_SCHEMAS</c> names another place to ask for them (the
 /// tests' run names a dead address, so no test reaches the web). Called on any thread.</summary>
 public sealed class JsonSchemas(Func<bool> download)
@@ -40,6 +40,17 @@ public sealed class JsonSchemas(Func<bool> download)
 
     /// <summary>Where the carried schemas are, beside the app.</summary>
     public static string Folder => Path.Combine(AppContext.BaseDirectory, "web", "schemas");
+
+    /// <summary>The Compose specification's schema, carried, as the YAML server reads it from disk.</summary>
+    public static string ComposeUri => new Uri(Path.Combine(Folder, "compose-spec.json")).AbsoluteUri;
+
+    /// <summary>The names Docker Compose looks for (compose.yaml first) and the overrides and variants named after them,
+    /// as the YAML server matches them anywhere in the folder.</summary>
+    public static readonly string[] ComposeFiles =
+    [
+        "compose.yaml", "compose.yml", "compose.*.yaml", "compose.*.yml",
+        "docker-compose.yaml", "docker-compose.yml", "docker-compose.*.yaml", "docker-compose.*.yml",
+    ];
 
     /// <summary>The associations as the JSON server's <c>json/schemaAssociations</c> takes them.</summary>
     public static object Notification => Associations.Select(a => new { fileMatch = a.FileMatch, uri = a.Uri }).ToArray();

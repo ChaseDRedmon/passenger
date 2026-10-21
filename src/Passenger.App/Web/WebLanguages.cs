@@ -22,9 +22,16 @@ public enum WebServerKind
 
     /// <summary>VS Code's JSON server, with SchemaStore's schemas for the well-known files (<see cref="JsonSchemas"/>).</summary>
     Json,
+
+    /// <summary>dockerfile-language-server-nodejs: Dockerfiles and Containerfiles, by their names (<see cref="WebLanguages.IsDockerfile"/>).</summary>
+    Dockerfile,
+
+    /// <summary>Red Hat's yaml-language-server: every YAML file, a compose file checked and completed by the Compose
+    /// specification's schema (<see cref="JsonSchemas.ComposeUri"/>).</summary>
+    Yaml,
 }
 
-/// <summary>JavaScript, TypeScript, HTML, CSS and JSON for the open folder: each kind's language server (the npm packages
+/// <summary>JavaScript, TypeScript, HTML, CSS, JSON, Dockerfiles and YAML for the open folder: each kind's language server (the npm packages
 /// carried under <c>web/</c>, run on the machine's Node.js through ChildProcesses) started as the first file that needs
 /// it opens, every open file of its languages kept in step with it (a <see cref="WebDocument"/> each), and ended with the
 /// folder. Without a Node.js to run them (none found, or one too old), each file says why in its banner and the status bar,
@@ -100,6 +107,11 @@ public sealed class WebLanguages : IAsyncDisposable
     public static (WebServerKind Kind, string LanguageId)? LanguageOf(string path)
     {
         string name = Path.GetFileName(path);
+        // By name before extension: Dockerfile.dev is a Dockerfile, whatever follows its dot.
+        if (IsDockerfile(name))
+        {
+            return (WebServerKind.Dockerfile, "dockerfile");
+        }
         return Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".ts" or ".mts" or ".cts" => (WebServerKind.TypeScript, "typescript"),
@@ -112,9 +124,17 @@ public sealed class WebLanguages : IAsyncDisposable
             ".less" => (WebServerKind.Css, "less"),
             ".jsonc" => (WebServerKind.Json, "jsonc"),
             ".json" => (WebServerKind.Json, AllowsComments(name) ? "jsonc" : "json"),
+            ".yml" or ".yaml" => (WebServerKind.Yaml, "yaml"),
             _ => null,
         };
     }
+
+    /// <summary>Whether a file's name makes it a Dockerfile, as Docker's and Podman's builds name them: Dockerfile or
+    /// Containerfile, either with a suffix after a dot (Dockerfile.dev), or any name ending in .dockerfile.</summary>
+    public static bool IsDockerfile(string name) =>
+        name.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Containerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Containerfile.", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The JSON files whose readers take comments (TypeScript's configuration, ASP.NET Core's settings and launch
     /// profiles, the SDK's global.json, ESLint's), which the JSON server then does not mark as errors.</summary>
@@ -130,6 +150,8 @@ public sealed class WebLanguages : IAsyncDisposable
         WebServerKind.TypeScript => "TypeScript",
         WebServerKind.Html => "HTML",
         WebServerKind.Css => "CSS",
+        WebServerKind.Dockerfile => "Dockerfile",
+        WebServerKind.Yaml => "YAML",
         _ => "JSON",
     };
 
@@ -426,7 +448,7 @@ public sealed class WebLanguages : IAsyncDisposable
             {
                 return null;
             }
-            string package = Path.Combine(Modules, server.Kind == WebServerKind.TypeScript ? "typescript-language-server" : "vscode-langservers-extracted", "package.json");
+            string package = Path.Combine(Modules, Package(server.Kind), "package.json");
             if (node.Problem is { } none)
             {
                 Unavailable(server, none, node.Path is null || !File.Exists(node.Path) ? "no Node.js" : "Node.js could not run");
@@ -515,7 +537,18 @@ public sealed class WebLanguages : IAsyncDisposable
         "css" => "CSS",
         "scss" => "SCSS",
         "less" => "Less",
+        "dockerfile" => "A Dockerfile",
+        "yaml" => "YAML",
         _ => "JSON",
+    };
+
+    /// <summary>The npm package a server is, whose package.json says which Node.js it needs.</summary>
+    private static string Package(WebServerKind kind) => kind switch
+    {
+        WebServerKind.TypeScript => "typescript-language-server",
+        WebServerKind.Dockerfile => "dockerfile-language-server-nodejs",
+        WebServerKind.Yaml => "yaml-language-server",
+        _ => "vscode-langservers-extracted",
     };
 
     /// <summary>The script of a server's package that runs it.</summary>
@@ -524,6 +557,9 @@ public sealed class WebLanguages : IAsyncDisposable
         WebServerKind.TypeScript => Path.Combine(Modules, "typescript-language-server", "lib", "cli.mjs"),
         WebServerKind.Html => Path.Combine(Modules, "vscode-langservers-extracted", "lib", "html-language-server", "node", "htmlServerMain.js"),
         WebServerKind.Css => Path.Combine(Modules, "vscode-langservers-extracted", "lib", "css-language-server", "node", "cssServerMain.js"),
+        WebServerKind.Dockerfile => Path.Combine(Modules, "dockerfile-language-server-nodejs", "lib", "server.js"),
+        // Its module rather than its bin script, which has no extension for Node.js to read as a module by.
+        WebServerKind.Yaml => Path.Combine(Modules, "yaml-language-server", "out", "src", "server.js"),
         _ => Path.Combine(Modules, "vscode-langservers-extracted", "lib", "json-language-server", "node", "jsonServerMain.js"),
     };
 
@@ -543,27 +579,48 @@ public sealed class WebLanguages : IAsyncDisposable
             },
             WebServerKind.Html => new { provideFormatter = true, embeddedLanguages = new { css = true, javascript = true } },
             WebServerKind.Css => new { provideFormatter = true },
+            // Both read their settings from workspace/configuration alone.
+            WebServerKind.Dockerfile or WebServerKind.Yaml => null,
             _ => new { provideFormatter = true, handledSchemaProtocols = new[] { "file" } },
         };
         return new ServerStart(process, folder, LogFolder, ClientCapabilities.Web, options)
         {
             Configuration = section => Section(kind, section),
-            Content = kind == WebServerKind.Json ? Schemas.ContentAsync : null,
+            Content = kind is WebServerKind.Json or WebServerKind.Yaml ? Schemas.ContentAsync : null,
         };
     }
 
     /// <summary>What a server's <c>workspace/configuration</c> is answered: the CSS server's validation on for each of its
-    /// languages, the HTML server's for its styles and scripts, the rest left to its defaults.</summary>
+    /// languages, the HTML server's for its styles and scripts, the YAML server's settings (<see cref="YamlSettings"/>),
+    /// the rest left to its defaults (the Dockerfile server's checks and layout among them).</summary>
     private static object? Section(WebServerKind kind, string? section) => (kind, section) switch
     {
         (WebServerKind.Css, "css" or "scss" or "less") => new { validate = true },
         (WebServerKind.Html, "html") => new { validate = new { scripts = true, styles = true }, format = new { enable = true } },
         (WebServerKind.Html, "css") => new { validate = true },
+        (WebServerKind.Yaml, "yaml") => YamlSettings,
         _ => null,
     };
 
+    /// <summary>The YAML server's settings: checks, completion, hover and formatting on; the Compose specification's schema,
+    /// carried and read from disk, for compose files; Compose's merge tags known; and nothing fetched by the server itself,
+    /// neither SchemaStore's catalogue nor Kubernetes' schemas (a schema a file names over HTTP is asked of
+    /// <see cref="JsonSchemas"/>, as the JSON server's are, once <c>yaml/registerContentRequest</c> has told it to).</summary>
+    private static readonly object YamlSettings = new
+    {
+        validate = true,
+        completion = true,
+        hover = true,
+        format = new { enable = true },
+        schemaStore = new { enable = false },
+        kubernetesCRDStore = new { enable = false },
+        customTags = new[] { "!reset scalar", "!reset sequence", "!reset mapping", "!override sequence", "!override mapping" },
+        schemas = new Dictionary<string, string[]> { [JsonSchemas.ComposeUri] = JsonSchemas.ComposeFiles },
+    };
+
     /// <summary>The settings a server reads from <c>workspace/didChangeConfiguration</c> rather than asks for, sent once it
-    /// has started: the JSON server's validation and formatting, and which schema each well-known file takes.</summary>
+    /// has started: the JSON server's validation and formatting, and which schema each well-known file takes; and the YAML
+    /// server's word that Passenger answers for schemas over HTTP.</summary>
     private static async Task Configure(WebServerKind kind, LanguageServer server)
     {
         switch (kind)
@@ -587,6 +644,14 @@ public sealed class WebLanguages : IAsyncDisposable
                 {
                     settings = new { css = new { validate = true }, scss = new { validate = true }, less = new { validate = true } },
                 });
+                break;
+            case WebServerKind.Yaml:
+                // It asks for its settings as it starts (YamlSettings); this has it ask Passenger for a schema named over
+                // HTTP rather than download it, before any file opens. Its one parameter goes unread.
+                await server.NotifyAsync("yaml/registerContentRequest", new { });
+                break;
+            case WebServerKind.Dockerfile:
+                await server.NotifyAsync("workspace/didChangeConfiguration", new { settings = new { } });
                 break;
             default:
                 await server.NotifyAsync("workspace/didChangeConfiguration", new { settings = new { } });

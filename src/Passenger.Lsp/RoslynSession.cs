@@ -469,9 +469,19 @@ public sealed class LspDocument : IDisposable
         Server.RequestAsync<ProjectContextList>("textDocument/_vs_getProjectContexts",
             new GetProjectContextsParams(new TextDocumentItem(Uri, LanguageId, Text.Version, string.Empty)), cancel);
 
-    /// <summary>The document's outline: its types, and their members under them.</summary>
-    public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default) =>
-        await Server.RequestAsync<List<DocumentSymbol>>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel) ?? [];
+    /// <summary>The document's outline: its types, and their members under them. A server that answers with a flat list
+    /// (the Dockerfile server's instructions, as <see cref="SymbolInformation"/>) gives each as a symbol with no children.</summary>
+    public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default)
+    {
+        JsonElement found = await Server.RequestAsync<JsonElement>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel).ConfigureAwait(false);
+        if (found.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        return [.. found.EnumerateArray().Select(symbol => symbol.TryGetProperty("location", out _)
+            ? symbol.Deserialize<SymbolInformation>(Json.Options) is { } flat ? new DocumentSymbol(flat.Name, null, flat.Kind, flat.Location.Range, flat.Location.Range) : null
+            : symbol.Deserialize<DocumentSymbol>(Json.Options)).OfType<DocumentSymbol>()];
+    }
 
     public async Task<IReadOnlyList<LspTextEdit>> FormatAsync(IndentOptions indent, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<LspTextEdit>>("textDocument/formatting",

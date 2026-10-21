@@ -254,6 +254,7 @@ public partial class MainWindow
                 if (session == next)
                 {
                     status.ShowLanguage(LanguageLabel());
+                    Structure.FollowServer();
                 }
             };
             web.Stopped += (_, message) =>
