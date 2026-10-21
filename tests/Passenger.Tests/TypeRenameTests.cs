@@ -37,6 +37,14 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         Write(project, "Order.cs", Order);
         Write(project, "Till.cs", Till);
         Write(project, "Shapes.cs", Shapes);
+        // Files a test renames are the project's from the start, as a person's are: one written a moment before a rename
+        // is one the server may not have read again, which the rename refuses (WorkspaceEdits.StaleAsync).
+        Write(project, "Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
+        Write(project, "Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
+        Write(project, "Form1.resx", "<root />\n");
+        Write(project, "Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");
+        Write(project, "Basket.Lines.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Lines;\n}\n");
+        Write(project, "BasketExtras.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Extras;\n}\n");
         TestGit.Init(project);
         return project;
     }));
@@ -145,9 +153,6 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     [AvaloniaFact]
     public void A_form_renamed_with_its_class_in_the_solution_view_takes_the_files_nested_under_it_along()
     {
-        Write("Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
-        Write("Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
-        Write("Form1.resx", "<root />\n");
         MainWindow window = Open("Till.cs");
         Choose(window, Path.Combine(folder, "Form1.cs"));
         Ui.Press(window, "F2");
@@ -166,9 +171,6 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     [AvaloniaFact]
     public void Every_part_of_a_partial_class_in_a_file_named_after_it_is_renamed_with_it_and_a_part_named_otherwise_is_not()
     {
-        Write("Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");
-        Write("Basket.Lines.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Lines;\n}\n");
-        Write("BasketExtras.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Extras;\n}\n");
         MainWindow window = Open("Basket.Lines.cs");
 
         IReadOnlyList<string> offered = RenameAt(window, "class Bask", "Cart");
@@ -338,8 +340,6 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     }
 
     private string Git(params string[] arguments) => TestGit.Run(folder, arguments);
-
-    private void Write(string relative, string text) => Write(folder, relative, text);
 
     private static void Write(string folder, string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
 }
