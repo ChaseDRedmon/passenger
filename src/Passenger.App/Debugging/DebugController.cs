@@ -290,14 +290,39 @@ public sealed class DebugController : IDisposable
                 return refused;
             }
             Message?.Invoke(this, "Applying Hot Reload changes…");
-            HotReloadOutcome outcome = await reload.ApplyAsync();
+            // The other services of its container run take the changes with it: an edit is applied wherever its code runs.
+            DebugTab applied = chosen!;
+            List<DebugTab> together = applied.Group is { } group
+                ? [.. view.Sessions.Where(t => t != applied && t.Group == group && t is { IsLive: true, HotReload.WhyNot: null, Session: not null })]
+                : [];
+            HotReloadOutcome own = await reload.ApplyAsync();
+            HotReloadOutcome outcome = own;
+            if (together.Count > 0)
+            {
+                List<(string, HotReloadOutcome)> each = [(applied.Name, own)];
+                foreach (DebugTab other in together)
+                {
+                    HotReloadOutcome its = await other.HotReload!.ApplyAsync();
+                    if (its.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply && other.Session is { } taking)
+                    {
+                        List<string> changed = [.. its.Files.Select(PathNames.Canonical)];
+                        foreach (string path in changed)
+                        {
+                            other.Lines?.Reset(path);
+                        }
+                        await taking.SendBreakpointsAgainAsync(changed);
+                    }
+                    each.Add((other.Name, its));
+                }
+                outcome = Together(each);
+            }
             if (session != Session || disposed)
             {
                 return outcome;
             }
-            if (outcome.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply)
+            if (own.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply)
             {
-                List<string> files = [.. outcome.Files.Select(PathNames.Canonical)];
+                List<string> files = [.. own.Files.Select(PathNames.Canonical)];
                 // The stop shown keeps its place in the text, then the files' lines are the program's.
                 (string Path, int Line)? shownAt = executionPoint is { } point && files.Contains(point.Path) ? (point.Path, Current(point.Path, point.Line)) : null;
                 foreach (string path in files)
@@ -309,7 +334,7 @@ public sealed class DebugController : IDisposable
                     executionPoint = (now.Path, Built(now.Path, now.Line));
                 }
                 await session.SendBreakpointsAgainAsync(files);
-                if (outcome.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread)
+                if (own.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread)
                 {
                     try
                     {
@@ -368,20 +393,21 @@ public sealed class DebugController : IDisposable
     /// Settings' Hot Reload while debugging is on); with
     /// <paramref name="elsewhere"/> it runs on another machine, and with <paramref name="place"/> the adapter runs where it
     /// is (in its container). Null once the session is open, else why it could not.</summary>
-    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null)
+    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null, string? group = null)
     {
         bool hotReloadOn = hotReload && HotReloadOn();
         return OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReloadOn, elsewhere, place), name,
-            launched: false, hotReloadOn: hotReloadOn);
+            launched: false, hotReloadOn: hotReloadOn, place: place, group: group);
     }
 
     /// <summary>Starts a session in a tab of its own, its output in the tab's Console; a program it launched reads what is
     /// typed there, as in Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the
-    /// terminal's). The tab is chosen, and its session <see cref="Session"/> from its first moment, as Rider's Stop is there
-    /// as soon as a session begins: its start waits for the program's runtime as long as that takes. A start that failed
-    /// leaves its tab ended, with no session.</summary>
+    /// terminal's; one whose place follows its output from outside, a container run's service, has that). The tab is chosen,
+    /// and its session <see cref="Session"/> from its first moment, as Rider's Stop is there as soon as a session begins:
+    /// its start waits for the program's runtime as long as that takes. A start that failed leaves its tab ended, with no
+    /// session. Tabs of one <paramref name="group"/> (a container run's services) take Hot Reload's changes together.</summary>
     private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Action<DebugSession>, Task<DebugSession>> open, string name, bool launched,
-        bool inTerminal = false, bool hotReloadOn = false)
+        bool inTerminal = false, bool hotReloadOn = false, AdapterPlace? place = null, string? group = null)
     {
         UiThread.Check();
         // A program debugged again takes its last session's place, which is let go first.
@@ -390,6 +416,7 @@ public sealed class DebugController : IDisposable
             await EndAsync(again);
         }
         DebugTab tab = Place(name);
+        tab.Group = group;
         BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
         tab.Lines = built;
         await ChooseAsync(tab);
@@ -399,6 +426,10 @@ public sealed class DebugController : IDisposable
         if (inTerminal)
         {
             shown.Append($"{name} runs in the Terminal window, which it reads from and writes to\n");
+        }
+        else if (!launched && place?.Output is { } follow)
+        {
+            Follow(follow, shown, tab);
         }
         else if (!launched)
         {
@@ -477,6 +508,169 @@ public sealed class DebugController : IDisposable
         }
     }
 
+    /// <summary>A program's output followed from outside into its console (a container's log, which an attach gets none of
+    /// through the protocol), from before the debugger lets it go until its session's end has let its last words land.</summary>
+    private static void Follow(Func<System.Diagnostics.ProcessStartInfo> follow, OutputView console, DebugTab tab)
+    {
+        System.Diagnostics.Process process;
+        try
+        {
+            System.Diagnostics.ProcessStartInfo start = follow();
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            process = ChildProcesses.Start(start);
+        }
+        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            console.Append($"Its output could not be followed: {failed.Message}\n");
+            return;
+        }
+        tab.Following = process;
+        ConsoleSink sink = console.Sink;
+        // For the program's life, as its output is: no screenshot waits on it.
+        _ = Task.Run(() => Pump(process.StandardOutput, ConsoleStream.Output));
+        _ = Task.Run(() => Pump(process.StandardError, ConsoleStream.Error));
+
+        async Task Pump(StreamReader reader, ConsoleStream stream)
+        {
+            char[] buffer = new char[4096];
+            try
+            {
+                int read;
+                while ((read = await reader.ReadAsync(buffer)) > 0)
+                {
+                    sink.Write(new string(buffer, 0, read), stream);
+                }
+            }
+            catch (Exception ended) when (ended is IOException or ObjectDisposedException)
+            {
+                // Ended with its session.
+            }
+        }
+    }
+
+    /// <summary>Ends a tab's following of its program's output a moment after its session ended, its last words in.</summary>
+    private static void StopFollowing(DebugTab tab)
+    {
+        if (tab.Following is not { } process)
+        {
+            return;
+        }
+        tab.Following = null;
+        _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => ChildProcesses.Kill(process), TaskScheduler.Default);
+    }
+
+    /// <summary>A program run with Hot Reload through the debugger rather than dotnet watch (a container run's service, whose
+    /// image has no SDK): attached quietly, no breakpoint sent and no stop shown, so Apply Hot Reload Changes and a save
+    /// apply the edits to it; ended with its run.</summary>
+    public sealed record RunningReload(string Name, DebugSession Session, HotReload Reload);
+
+    private readonly List<RunningReload> running = [];
+
+    /// <summary>The programs run with Hot Reload through the debugger, while they run.</summary>
+    public IReadOnlyList<RunningReload> Running => running;
+
+    /// <summary>Attaches quietly for Hot Reload alone to a program run, which a container run's Run with Hot Reload held at its
+    /// start with DOTNET_MODIFIABLE_ASSEMBLIES=debug: the attach lets it go. Null once attached, else why not.</summary>
+    public async Task<string?> AttachForHotReloadAsync(int processId, string name, AdapterPlace place)
+    {
+        UiThread.Check();
+        BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
+        try
+        {
+            DebugSession session = await DebugSession.AttachAsync(processId, Breakpoints, built, _ => { }, _ => { }, hotReload: true, place: place, quiet: true);
+            RunningReload reload = new(name, session, new HotReload(session, Server, editors));
+            running.Add(reload);
+            session.StateChanged += (_, _) =>
+            {
+                if (session.State == DebugState.Ended && running.Remove(reload))
+                {
+                    reload.Reload.End();
+                    StateChanged?.Invoke(this, EventArgs.Empty);
+                }
+                else if (session.State == DebugState.Paused)
+                {
+                    // Never shown: a Debugger.Break in its code goes on as a run would.
+                    Send(session.ContinueAsync());
+                }
+            };
+            StateChanged?.Invoke(this, EventArgs.Empty);
+            return null;
+        }
+        catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
+        {
+            return $"Could not attach to {name} for Hot Reload: {(error is DapException dap ? dap.Reason : error.Message)}";
+        }
+    }
+
+    /// <summary>Apply Hot Reload Changes to the programs run with it through the debugger, each in turn, said together.</summary>
+    public async Task<HotReloadOutcome> ApplyRunningAsync()
+    {
+        UiThread.Check();
+        using IDisposable held = BackgroundWork.Scope();
+        if (running.Count == 0)
+        {
+            return new HotReloadOutcome(HotReloadResult.Failed, NothingDebugged);
+        }
+        Message?.Invoke(this, "Applying Hot Reload changes…");
+        List<(string, HotReloadOutcome)> each = [];
+        foreach (RunningReload reload in running.ToList())
+        {
+            each.Add((reload.Name, await reload.Reload.ApplyAsync()));
+        }
+        HotReloadOutcome outcome = Together(each);
+        LastApplied = outcome;
+        Message?.Invoke(this, outcome.Said);
+        Applied?.Invoke(this, outcome);
+        StateChanged?.Invoke(this, EventArgs.Empty);
+        return outcome;
+    }
+
+    /// <summary>Apply to the programs run with Hot Reload as the action runs it: those whose edits need it restarted, as
+    /// Settings says (<see cref="RestartRunningFor"/>).</summary>
+    public async Task ApplyRunningAndRestartAsync()
+    {
+        if (await ApplyRunningAsync() is { Result: HotReloadResult.RestartNeeded } outcome && !await RestartRunningFor(outcome))
+        {
+            foreach (RunningReload reload in running.Where(r => outcome.Restart.Contains(r.Name)))
+            {
+                reload.Reload.Changed = false;
+            }
+        }
+    }
+
+    /// <summary>Restarts the programs run with Hot Reload whose edits it could not apply (a container run's services, built
+    /// again and restarted); true once they are. The window's.</summary>
+    public Func<HotReloadOutcome, Task<bool>> RestartRunningFor { get; set; } = _ => Task.FromResult(false);
+
+    /// <summary>What several programs' Apply Changes came to, as one: the gravest result, each one's words that say more than
+    /// that nothing changed, and the programs that need a restart.</summary>
+    private static HotReloadOutcome Together(IReadOnlyList<(string Name, HotReloadOutcome Outcome)> each)
+    {
+        if (each is [(_, var only)] && only.Result != HotReloadResult.RestartNeeded)
+        {
+            return only;
+        }
+        HotReloadResult result = each.Select(e => e.Outcome.Result).OrderBy(r => r switch
+        {
+            HotReloadResult.Errors => 0,
+            HotReloadResult.RestartNeeded => 1,
+            HotReloadResult.Failed => 2,
+            HotReloadResult.Applied => 3,
+            _ => 4,
+        }).First();
+        List<string> said = [.. each.Where(e => e.Outcome.Result != HotReloadResult.NothingToApply).Select(e => $"{e.Name}: {e.Outcome.Said}")];
+        return new HotReloadOutcome(result, said.Count == 0 ? "No managed code changes to apply." : string.Join("; ", said))
+        {
+            Problems = [.. each.SelectMany(e => e.Outcome.Problems).Distinct()],
+            Files = [.. each.SelectMany(e => e.Outcome.Files).Distinct(StringComparer.Ordinal)],
+            Modules = [.. each.SelectMany(e => e.Outcome.Modules).Distinct(StringComparer.Ordinal)],
+            Methods = each.Sum(e => e.Outcome.Methods),
+            Took = each.Aggregate(TimeSpan.Zero, (sum, e) => sum + e.Outcome.Took),
+            Restart = [.. each.Where(e => e.Outcome.Result == HotReloadResult.RestartNeeded).Select(e => e.Name)],
+        };
+    }
+
     /// <summary>The tab a new session takes: with no other program debugged, the place of every tab there is (each has
     /// ended), its console the window's first; else the ended tab of its own program, in its place; else a new one at the
     /// end. A tab taken lets its console go, but the console the new one keeps.</summary>
@@ -489,6 +683,7 @@ public sealed class DebugController : IDisposable
         int at = taken.Count > 0 ? tabs.IndexOf(taken[0]) : tabs.Count;
         foreach (DebugTab gone in taken)
         {
+            StopFollowing(gone);
             view.Sessions.Remove(gone);
             if (gone.Console != console)
             {
@@ -612,7 +807,9 @@ public sealed class DebugController : IDisposable
     public Task StopAsync(string name)
     {
         UiThread.Check();
-        return view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive) is { } tab ? StopAsync(tab) : Task.CompletedTask;
+        return view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive) is { } tab ? StopAsync(tab)
+            : running.FirstOrDefault(r => r.Name == name) is { } run ? run.Session.StopAsync()
+            : Task.CompletedTask;
     }
 
     /// <summary>Stop on one tab: the program the debugger started ends, at once while the debugger still waits for its
@@ -667,7 +864,7 @@ public sealed class DebugController : IDisposable
     public Task CloseAsync()
     {
         UiThread.Check();
-        return Task.WhenAll([.. view.Sessions.Select(t => t.Session?.CloseAsync() ?? Task.CompletedTask)]);
+        return Task.WhenAll([.. view.Sessions.Select(t => t.Session?.CloseAsync() ?? Task.CompletedTask), .. running.Select(r => r.Session.CloseAsync())]);
     }
 
     /// <summary>Its folder left with the window open: each program the debugger started is stopped, as Stop stops it, and
@@ -675,7 +872,7 @@ public sealed class DebugController : IDisposable
     public Task LeaveAsync()
     {
         UiThread.Check();
-        return Task.WhenAll([.. view.Sessions.Where(t => t.IsLive).Select(EndAsync)]);
+        return Task.WhenAll([.. view.Sessions.Where(t => t.IsLive).Select(EndAsync), .. running.Select(r => r.Session.StopAsync())]);
     }
 
     /// <summary>The debugger's actions, on the active editor's caret and the session of the debugger <paramref name="current"/>
@@ -927,6 +1124,10 @@ public sealed class DebugController : IDisposable
                     reload.Edited(document.Path, change.Before);
                 }
             }
+            foreach (RunningReload run in code ? running : [])
+            {
+                run.Reload.Edited(document.Path, change.Before);
+            }
             Breakpoints.Follow(document.Path, change);
             FollowStop(document, change);
             if (Breakpoints.In(document.Path).Any(b => b.Attribute is not null))
@@ -959,7 +1160,9 @@ public sealed class DebugController : IDisposable
 
     private void OnSaved(object? sender, EventArgs e)
     {
-        if (applyOnSave || HotReload is not { Changed: true } || !HotReloadOnSave() || WhyNotApply() is not null)
+        // A program run with Hot Reload takes a save's edits, as one under dotnet watch does.
+        bool run = HotReload is null && !IsDebugging && running.Any(r => r.Reload.Changed);
+        if (applyOnSave || !run && (HotReload is not { Changed: true } || !HotReloadOnSave() || WhyNotApply() is not null))
         {
             return;
         }
@@ -967,7 +1170,7 @@ public sealed class DebugController : IDisposable
         Dispatcher.UIThread.Post(() =>
         {
             applyOnSave = false;
-            _ = ApplyAndRestartAsync();
+            _ = run ? ApplyRunningAndRestartAsync() : ApplyAndRestartAsync();
         });
     }
 
@@ -1051,6 +1254,7 @@ public sealed class DebugController : IDisposable
             tab.Console.Sink.End(ConsoleStream.Output);
             tab.Console.Sink.End(ConsoleStream.Error);
             tab.Console.Sink.End(ConsoleStream.System);
+            StopFollowing(tab);
             tab.HasEnded = true;
             tab.HotReload?.End();
             tab.Lines = null;

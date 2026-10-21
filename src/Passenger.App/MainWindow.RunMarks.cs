@@ -13,7 +13,7 @@ public sealed record RunTarget(int Line, RunConfiguration Configuration, string?
 
 /// <summary>The gutter's run icons beside what the folder's container configurations run: each service of a compose
 /// file a Compose configuration reads, and the final FROM of a Dockerfile a Dockerfile configuration builds, only in files
-/// a configuration uses. A click opens the menu that runs it (and Debug, greyed until containers are debugged). They are
+/// a configuration uses. A click opens the menu that runs or debugs it. They are
 /// read from the file's text as typed, once typing pauses, and again as the configurations change.</summary>
 public partial class MainWindow
 {
@@ -136,7 +136,7 @@ public partial class MainWindow
     }
 
     /// <summary>The run icon's menu: Run of each configuration that runs the line (one service of a Compose
-    /// configuration, or a Dockerfile's), and Debug, greyed with why while containers are not debugged.</summary>
+    /// configuration, or a Dockerfile's), and Debug of it.</summary>
     private void ShowRunMarkMenu(CodeEditor editor, OpenDocument document, int line)
     {
         RunTarget[] here = [.. RunTargets(document).Where(t => t.Line == line)];
@@ -151,9 +151,8 @@ public partial class MainWindow
             string from = here.Length > 1 && target.Service is not null ? $" ({target.Configuration.Name})" : string.Empty;
             MenuItem run = new() { Header = $"Run '{what}'{from}" };
             run.Click += (_, _) => RunTarget(target);
-            MenuItem debug = new() { Header = $"Debug '{what}'{from}", IsEnabled = false };
-            ToolTip.SetTip(debug, LaunchPlan.InContainers(target.Configuration.Name));
-            ToolTip.SetShowOnDisabled(debug, true);
+            MenuItem debug = new() { Header = $"Debug '{what}'{from}" };
+            debug.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Debug);
             menu.Items.Add(run);
             menu.Items.Add(debug);
         }
@@ -165,11 +164,17 @@ public partial class MainWindow
     /// <summary>The run icon's menu last opened, for a test to choose from.</summary>
     public MenuFlyout? RunMarkMenu { get; private set; }
 
-    /// <summary>Runs what a run icon stands beside: a Compose configuration's one service (with what it depends on), or a
-    /// Dockerfile configuration; what stopped it, if anything, is in the status bar.</summary>
-    public Task<string?> RunTarget(RunTarget target) => buildRun.RunContainersAsync(target.Service is { } service
-        ? target.Configuration.Copied() with { Name = $"{target.Configuration.Name}: {service}", Services = [service], LaunchService = service }
-        : target.Configuration);
+    /// <summary>Runs (or debugs) what a run icon stands beside: a Compose configuration's one service (with what it depends on,
+    /// the service alone debugged), or a Dockerfile configuration; what stopped it, if anything, is in the status bar.</summary>
+    public Task<string?> RunTarget(RunTarget target, Containers.ContainerStart how = Containers.ContainerStart.Run) => buildRun.RunContainersAsync(target.Service is { } service
+        ? target.Configuration.Copied() with
+        {
+            Name = $"{target.Configuration.Name}: {service}",
+            Services = [service],
+            LaunchService = service,
+            ServiceActions = new Dictionary<string, ServiceStart>(target.Configuration.ServiceActions) { [service] = ServiceStart.Debug },
+        }
+        : target.Configuration, how);
 
     [GeneratedRegex(@"^(?<key>[A-Za-z0-9_.-]+)\s*:")]
     private static partial Regex TopKey();

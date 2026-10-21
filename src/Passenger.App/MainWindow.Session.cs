@@ -56,6 +56,7 @@ public partial class MainWindow
         OpenBrowserOnceListening, () => StateFolder, work)
     {
         Reveal = project => containersView?.Reveal(project),
+        Tools = () => ToolsSource,
     };
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what

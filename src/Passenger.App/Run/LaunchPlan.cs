@@ -79,7 +79,7 @@ public sealed partial record LaunchPlan
         }
         if (configuration.IsContainer)
         {
-            // Run brings containers up itself (Containers.ContainerRun); Debug and Profile in a container come later.
+            // Run and Debug bring containers up themselves (BuildRunController.Containers.cs); Profile in a container comes later.
             throw new LaunchException(InContainers(configuration.Name));
         }
         ProjectModel project = projects.FirstOrDefault(p => PathNames.Same(p.Path, configuration.Project))
@@ -147,9 +147,9 @@ public sealed partial record LaunchPlan
         };
     }
 
-    /// <summary>Why a container configuration is not debugged or profiled: only Run starts containers yet.</summary>
+    /// <summary>Why a container configuration is not profiled: Run and Debug start containers, Profile not yet.</summary>
     public static string InContainers(string name) =>
-        $"{name} runs in containers, which Passenger runs but does not debug or profile yet: Run starts it";
+        $"{name} runs in containers, which Passenger runs and debugs but does not profile yet: Run or Debug starts it";
 
     /// <summary>The state folder a Passenger launched from this one is given, as IntelliJ's DevKit runs the IDE it develops
     /// on a sandbox: sandbox/ in this one's, so the two never share settings, recent solutions, a folder's editors and

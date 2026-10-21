@@ -15,6 +15,11 @@ namespace Passenger.App.Debugging;
 /// end, the CLI killed) closes the adapter's standard input there, which lets the program go as a client's going does.</summary>
 public sealed record AdapterPlace(Func<IReadOnlyList<string>, ProcessStartInfo> Command, string SymbolCache, ContainerPaths Paths, string Where)
 {
+    /// <summary>What follows the program's output from outside, shown in its session's console as a launch's is (a container
+    /// run's service: <c>docker logs --follow</c> of its container from its start), where an attach gets none through the
+    /// protocol; null for a program attached to as it already ran, whose output goes where it always went.</summary>
+    public Func<ProcessStartInfo>? Output { get; init; }
+
     /// <summary>A path of this machine as the program's names it.</summary>
     public string ToProgram(string path) => Paths.ToContainer(path) ?? path;
 

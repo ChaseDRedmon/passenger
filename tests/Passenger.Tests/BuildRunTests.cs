@@ -815,9 +815,9 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
         Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
 
-        // Run starts it in a container (ContainerRunsTests); Debug says it does not debug one yet.
+        // Run and Debug start it in a container (ContainerRunsTests, ContainerDebuggingTests); Profile says it does not profile one yet.
         Assert.True(window.SelectConfiguration("Hello: Docker"));
-        Assert.Equal(LaunchPlan.InContainers("Hello: Docker"), Ui.Await(window.DebugAsync(), "the debugger's refusal"));
+        Assert.Equal(LaunchPlan.InContainers("Hello: Docker"), Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
         window.Close();
     }
 

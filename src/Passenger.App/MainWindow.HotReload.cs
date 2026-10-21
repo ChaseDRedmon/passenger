@@ -33,12 +33,17 @@ public partial class MainWindow
             {
                 _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAndRestartAsync);
             }
+            else if (session.Debug.Running.Count > 0 && !session.Debug.IsDebugging)
+            {
+                // A container run's services take the edits through the debugger attached to each.
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyRunningAndRestartAsync);
+            }
             else
             {
                 _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", SaveForWatchAsync);
             }
         }, _ => session.Debug.HotReload is not null || session.Debug.IsDebugging ? session.Debug.WhyNotApply()
-            : buildRun.WatchesHotReload ? null
+            : session.Debug.Running.Count > 0 || buildRun.WatchesHotReload ? null
             : buildRun.IsRunning ? "This program runs without Hot Reload: Run it with Hot Reload on (Settings, Hot Reload), or Debug it"
             : "Nothing runs: Debug the program, or Run it with Hot Reload on (Settings, Hot Reload)", ("Run", 0, 9));
     }
@@ -108,20 +113,26 @@ public partial class MainWindow
     }
 
     /// <summary>Whether Apply Hot Reload Changes goes to dotnet watch: what Run runs with Hot Reload, nothing being debugged.</summary>
-    internal bool HotReloadWatched => session.Debug.HotReload is null && !session.Debug.IsDebugging && buildRun.WatchesHotReload;
+    internal bool HotReloadWatched => session.Debug.HotReload is null && !session.Debug.IsDebugging && session.Debug.Running.Count == 0 && buildRun.WatchesHotReload;
+
+    /// <summary>Whether Apply Hot Reload Changes goes to the services of a container run with Hot Reload, through the
+    /// debugger attached quietly to each, nothing being debugged.</summary>
+    internal bool HotReloadRunning => session.Debug.HotReload is null && !session.Debug.IsDebugging && session.Debug.Running.Count > 0;
 
     /// <summary>Why Apply Hot Reload Changes cannot run, as the action says it, or null.</summary>
     internal string? WhyNoHotReload() => actions!.WhyNot(AppActions.ApplyHotReloadChanges, actions.Context());
 
     /// <summary>The restart for edits Hot Reload could not apply, as an agent asks it: never the question, which is the person's.</summary>
-    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome) => RestartForEditAsync(session, outcome, ask: false);
+    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome) => HotReloadRunning
+        ? buildRun.RestartContainerServicesAsync(outcome, outcome.Restart)
+        : RestartForEditAsync(session, outcome, ask: false);
 
     /// <summary>Apply Hot Reload Changes on the toolbar, and in the Debug and Run windows, while a program runs with Hot
     /// Reload: debugged with it, or run under dotnet watch.</summary>
     private void ShowHotReloadButtons()
     {
         bool debugged = session.Debug.HotReload is not null;
-        bool watched = buildRun.WatchesHotReload;
+        bool watched = buildRun.WatchesHotReload || session.Debug.Running.Count > 0;
         HotReloadButton.IsVisible = debugged || watched;
         HotReloadButton.IsEnabled = !debugged || session.Debug.WhyNotApply() is null;
         Bottom.Debug.ShowHotReload(debugged, debugged && session.Debug.WhyNotApply() is null);
@@ -148,6 +159,10 @@ public partial class MainWindow
             }
         };
         debugger.RestartFor = outcome => session == next ? RestartForEditAsync(next, outcome) : Task.FromResult(false);
+        // A container run's services, under Run with Hot Reload: built again and restarted, as dotnet watch restarts its program.
+        debugger.RestartRunningFor = outcome => session == next && settings.RestartOnRudeEdit
+            ? buildRun.RestartContainerServicesAsync(outcome, outcome.Restart)
+            : Task.FromResult(false);
     }
 
     /// <summary>Restarts the program Debug launched so the edits Hot Reload could not apply run: stopped, built and launched
@@ -155,6 +170,11 @@ public partial class MainWindow
     /// True once the new session is open.</summary>
     private async Task<bool> RestartForEditAsync(ProjectSession next, HotReloadOutcome outcome, bool ask = true)
     {
+        // A container run's services are built again and restarted, each attached to again as it starts held.
+        if (next.Debug.Chosen is { Group: not null } service && next.Debug.Session is { Attached: true })
+        {
+            return (!ask || settings.RestartOnRudeEdit) && await buildRun.RestartContainerServicesAsync(outcome, outcome.Restart.Count > 0 ? outcome.Restart : [service.Name]);
+        }
         if (next.Debug.Session is not { Attached: false } debugged)
         {
             return false;

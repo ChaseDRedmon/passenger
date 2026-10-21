@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Passenger.App.Containers;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
@@ -31,6 +32,9 @@ public sealed record BuildRunParts(
 {
     /// <summary>Shows a Compose project in the Containers window, chosen there, as a container run comes up.</summary>
     public Action<string>? Reveal { get; init; }
+
+    /// <summary>Where the window's container tools come from, which Debug of a container configuration puts in each service.</summary>
+    public Func<Containers.ContainerToolsSource>? Tools { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of
@@ -429,7 +433,8 @@ public sealed partial class BuildRunController
         {
             using (work)
             {
-                return await RunContainersAsync(chosen, work);
+                // With Hot Reload through the debugger in each service: dotnet watch would need the SDK in its image.
+                return await RunContainersAsync(chosen, work, hotReload ?? parts.Settings().HotReload ? ContainerStart.HotReload : ContainerStart.Run);
             }
         }
         using IDisposable held = BackgroundWork.Scope();
@@ -643,6 +648,11 @@ public sealed partial class BuildRunController
 
     private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments, Working work)
     {
+        if (chosen.IsContainer)
+        {
+            // A session per service, each attached in its container as Compose brings the run up.
+            return await RunContainersAsync(chosen, work, ContainerStart.Debug);
+        }
         debugged[chosen.Name] = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
         (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, work);

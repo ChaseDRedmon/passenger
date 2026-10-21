@@ -37,12 +37,18 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"Hot Reload cannot apply changes: {why}");
         }
-        DebugSession before = debugger.Session!;
-        AgentCall.Say("Applying the edits to the program being debugged");
-        HotReloadOutcome outcome = await debugger.ApplyChangesAsync().WaitAsync(cancel);
+        bool running = window.HotReloadRunning;
+        DebugSession? before = debugger.Session;
+        AgentCall.Say(running ? "Applying the edits to the container run's services" : "Applying the edits to the program being debugged");
+        HotReloadOutcome outcome = await (running ? debugger.ApplyRunningAsync() : debugger.ApplyChangesAsync()).WaitAsync(cancel);
         bool needed = outcome.Result == HotReloadResult.RestartNeeded;
         bool restarted = false;
-        if (needed && (restart ?? window.Settings.RestartOnRudeEdit))
+        if (needed && running)
+        {
+            AgentCall.Say($"Restarting {string.Join(", ", outcome.Restart)} for edits they cannot take running");
+            restarted = (restart ?? window.Settings.RestartOnRudeEdit) && await window.RestartForAgentAsync(outcome);
+        }
+        else if (needed && (restart ?? window.Settings.RestartOnRudeEdit))
         {
             AgentCall.Say("Restarting the program for edits it cannot take running");
             AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);

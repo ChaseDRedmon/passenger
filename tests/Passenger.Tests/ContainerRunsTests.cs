@@ -251,9 +251,9 @@ public sealed class ContainerRunsTests
         Assert.Equal(ServiceStart.Run, profile.ServiceActions["cache"]);
         // A plain compose configuration of the same files is not listed beside the project's own.
         Assert.DoesNotContain(window.Configurations, c => c.Name.StartsWith("Compose:", StringComparison.Ordinal));
-        // Debugging in a container comes later, and Debug says so rather than starting a program here.
+        // Profiling in a container comes later, and Profile says so rather than starting a program here.
         Assert.True(window.SelectConfiguration("docker-compose: Web only"));
-        Assert.Equal(LaunchPlan.InContainers("docker-compose: Web only"), Ui.Await(window.DebugAsync(), "the debugger's refusal"));
+        Assert.Equal(LaunchPlan.InContainers("docker-compose: Web only"), Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
         window.Close();
         Assert.NotNull(project);
     }
@@ -315,7 +315,7 @@ public sealed class ContainerRunsTests
         int final = Array.FindLastIndex(dockerfile.Text.Snapshot.ToString().Split('\n'), l => l.StartsWith("FROM ", StringComparison.Ordinal));
         Ui.WaitFor(() => dockerfile.RunMarks.Select(m => m.Line).SequenceEqual([final]), "the Dockerfile's run icon on its final FROM");
 
-        // A click on cache's icon offers Run, and Debug greyed with why; Run starts cache alone.
+        // A click on cache's icon offers Run and Debug; Run starts cache alone.
         window.OpenFile(Path.Combine(folder, "compose.yaml"));
         Ui.Settle();
         int cache = Array.IndexOf(lines, "  cache:");
@@ -327,7 +327,7 @@ public sealed class ContainerRunsTests
         Ui.Settle();
         Avalonia.Controls.MenuItem[] items = [.. Assert.IsType<Avalonia.Controls.MenuFlyout>(window.RunMarkMenu).Items.OfType<Avalonia.Controls.MenuItem>()];
         Assert.Equal(["Run 'cache'", "Debug 'cache'"], items.Select(i => (string?)i.Header));
-        Assert.False(items[1].IsEnabled, "Debug of a container was offered before containers are debugged");
+        Assert.True(items[1].IsEnabled, "Debug of a service was not offered");
         try
         {
             items[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
@@ -498,7 +498,7 @@ public sealed class ContainerRunsTests
 
     /// <summary>A folder with a solution of two ASP.NET Core projects, each with a Dockerfile of .NET's own stages, and a
     /// compose.yaml running them beside a busybox "cache" they do not need; its Compose project named for the test.</summary>
-    private static (string Folder, string Project) Shop(string name)
+    internal static (string Folder, string Project) Shop(string name)
     {
         string folder = TestFolders.Create($"ctr-{name}-");
         string project = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}{name}";
@@ -546,14 +546,14 @@ public sealed class ContainerRunsTests
         return (PathNames.Canonical(folder), project);
     }
 
-    private static void Write(string folder, string relative, string text)
+    internal static void Write(string folder, string relative, string text)
     {
         string path = Path.Combine(folder, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
     }
 
-    private static MainWindow Open(string folder)
+    internal static MainWindow Open(string folder)
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
@@ -563,18 +563,18 @@ public sealed class ContainerRunsTests
     }
 
     /// <summary>Each service's container's state, by service.</summary>
-    private static Dictionary<string, string> States(string project) =>
+    internal static Dictionary<string, string> States(string project) =>
         Docker.Run("compose", "-p", project, "ps", "--all", "--format", "{{.Service}} {{.State}}")
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(l => l.Split(' ')).ToDictionary(p => p[0], p => p[1], StringComparer.Ordinal);
 
-    private static string Container(string project, string service) =>
+    internal static string Container(string project, string service) =>
         Docker.Run("ps", "-q", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label=com.docker.compose.service={service}");
 
     private static string Started(string project, string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", Container(project, service));
 
     /// <summary>The host's port a service's 8080 is published on.</summary>
-    private static int Published(string project, string service)
+    internal static int Published(string project, string service)
     {
         string said = Docker.Run("compose", "-p", project, "port", service, "8080").Split('\n')[0].Trim();
         return int.Parse(said[(said.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
@@ -588,7 +588,7 @@ public sealed class ContainerRunsTests
         return answer!;
     }
 
-    private static string? Answer(int port)
+    internal static string? Answer(int port)
     {
         try
         {
@@ -607,7 +607,7 @@ public sealed class ContainerRunsTests
         Assert.True(refused is null, $"{refused}{Ui.BuildErrors(window)}\n{Run(window)}");
     }
 
-    private static string Run(MainWindow window)
+    internal static string Run(MainWindow window)
     {
         window.BottomPanel.Run.Flush();
         return window.BottomPanel.Run.Document.Snapshot.ToString();

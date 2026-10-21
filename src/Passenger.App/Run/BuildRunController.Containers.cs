@@ -1,4 +1,5 @@
 using Passenger.App.Containers;
+using Passenger.App.Debugging;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Editor;
@@ -8,15 +9,18 @@ namespace Passenger.App.Run;
 /// <summary>Run of a container configuration: Compose's model of its files read, Passenger's override written, its .NET
 /// services built on the host (fast mode), its services brought up and waited for, their merged log followed in the Run
 /// console, the browser opened once the launched service's published port answers, and the Containers window shown its
-/// project; Stop takes it down, and Rerun builds again and restarts only the services whose build changed.</summary>
+/// project; Stop takes it down, and Rerun builds again and restarts only the services whose build changed. Debug brings it
+/// up the same way with the services it debugs held at their start, and attaches a session to each in its container (the
+/// adapter there over docker exec), its tab's console its container's log; Run with Hot Reload attaches to each quietly.</summary>
 public sealed partial class BuildRunController
 {
     /// <summary>The container run under way, if any (its services up, its log followed).</summary>
     public ContainerRun? Containers => session.ContainerRun is { IsStopped: false } run ? run : null;
 
-    /// <summary>Runs a container configuration not chosen in the toolbar (a gutter icon's: one compose service, a
-    /// Dockerfile's image), as Run runs the chosen one; a container run under way is taken down first. Null once it runs.</summary>
-    public async Task<string?> RunContainersAsync(RunConfiguration configuration)
+    /// <summary>Runs (or debugs) a container configuration not chosen in the toolbar (a gutter icon's: one compose service, a
+    /// Dockerfile's image), as Run (or Debug) runs the chosen one; a container run under way is taken down first. Null once it
+    /// runs.</summary>
+    public async Task<string?> RunContainersAsync(RunConfiguration configuration, ContainerStart how = ContainerStart.Run)
     {
         UiThread.Check();
         if (!configuration.IsContainer)
@@ -27,17 +31,18 @@ public sealed partial class BuildRunController
         {
             return Said("Already running");
         }
-        if (parts.Work.Begin(AppActions.RunProgram, $"Working out how to run {configuration.Name}…") is not { } work)
+        string action = how == ContainerStart.Debug ? AppActions.Debug : AppActions.RunProgram;
+        if (parts.Work.Begin(action, $"Working out how to {(how == ContainerStart.Debug ? "debug" : "run")} {configuration.Name}…") is not { } work)
         {
-            return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
+            return Said(ActionWork.Busy(parts.Work.Of(action)!));
         }
         using (work)
         {
-            return await RunContainersAsync(configuration, work);
+            return await RunContainersAsync(configuration, work, how);
         }
     }
 
-    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work)
+    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, ContainerStart how = ContainerStart.Run)
     {
         using IDisposable held = BackgroundWork.Scope();
         parts.Editors.SaveAll();
@@ -85,6 +90,11 @@ public sealed partial class BuildRunController
         {
             return Said(refused is LaunchException ? refused.Message : $"{chosen.Name} cannot run: {refused.Message}");
         }
+        IReadOnlyList<DotnetService> debugged = how == ContainerStart.Run ? [] : plan.Debugged(marked: how == ContainerStart.Debug);
+        if (how == ContainerStart.Debug && debugged.Count == 0)
+        {
+            return Said($"Nothing to debug: {chosen.Name} starts no .NET service");
+        }
         if (plan.Builds.Count > 0)
         {
             work.Say($"Building {string.Join(", ", plan.Builds.Select(Path.GetFileNameWithoutExtension))}…");
@@ -108,7 +118,7 @@ public sealed partial class BuildRunController
         }
         try
         {
-            await plan.WriteOverride(work.Stopping);
+            await plan.WriteOverride([.. debugged.Select(d => d.Service)], work.Stopping);
         }
         catch (OperationCanceledException)
         {
@@ -121,13 +131,18 @@ public sealed partial class BuildRunController
         work.Say($"Bringing {chosen.Name}'s services up…");
         ran = chosen.Name;
         RunProject = plan.Folder;
+        DebugProject = plan.Folder;
         RunPlan = null;
         session.InTerminal = null;
         parts.Views.Run.Links.Forget();
         parts.Views.Run.SetRunning(true);
-        parts.Dock.Show("run");
+        parts.Dock.Show(how == ContainerStart.Debug ? "debug" : "run");
+        if (how == ContainerStart.Debug)
+        {
+            parts.Views.Debug.ShowTab(console: true);
+        }
         parts.Say($"Bringing {chosen.Name} up…");
-        ContainerRun run = new(plan, engine, parts.Views.Run.Sink);
+        ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Held = debugged };
         run.ProblemFound += (_, problem) =>
         {
             if (!session.IsEnded && !session.Problems.Contains(problem))
@@ -140,10 +155,12 @@ public sealed partial class BuildRunController
         session.Containers.StartedProject(plan.Compose);
         session.ContainerRun = run;
         RunningChanged?.Invoke(this, EventArgs.Empty);
+        List<string> notes = [];
         string? failed;
         try
         {
-            failed = await run.PublishAsync(work.Stopping) ?? await run.UpAsync(work.Stopping);
+            failed = await run.PublishAsync(work.Stopping)
+                ?? await run.UpAsync(work.Stopping, debugged.Count == 0 ? null : (up, stop) => AttachAllAsync(run, debugged, up, notes, work, stop));
         }
         catch (OperationCanceledException)
         {
@@ -171,8 +188,15 @@ public sealed partial class BuildRunController
             await session.StopContainersAsync();
             return following;
         }
-        parts.Say($"Running {chosen.Name}: {Count(plan.Dotnet.Count(d => d.Starts), ".NET service")} from Passenger's build"
-            + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Count(plan.Backing.Count, "other service")}; Stop takes them down");
+        string what = how switch
+        {
+            ContainerStart.Debug => $"Debugging {chosen.Name}: {Named(debugged)} under the debugger",
+            ContainerStart.HotReload => $"Running {chosen.Name} with Hot Reload: a save applies its changes to {Named(debugged)}",
+            _ => $"Running {chosen.Name}",
+        };
+        parts.Say($"{what}; {Count(plan.Dotnet.Count(d => d.Starts), ".NET service")} from Passenger's build"
+            + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Count(plan.Backing.Count, "other service")}; Stop takes them down"
+            + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty));
         parts.Reveal?.Invoke(plan.ProjectName);
         if (plan.BrowserUrl is not null && await run.BrowserUrlAsync(CancellationToken.None) is { } url)
         {
@@ -182,6 +206,120 @@ public sealed partial class BuildRunController
         return null;
 
         static string Count(int count, string what) => $"{count} {what}{(count == 1 ? string.Empty : "s")}";
+
+        static string Named(IReadOnlyList<DotnetService> services) => string.Join(" and ", services.Select(s => s.Service));
+    }
+
+    /// <summary>Attaches to each service held at its start, all at once, while Compose brings the run up: null once each is
+    /// attached (one whose runtime has its debugger off runs on undebugged, said in <paramref name="notes"/>), else why not.</summary>
+    private async Task<string?> AttachAllAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Task up, List<string> notes, Working work, CancellationToken stop)
+    {
+        work.Say(run.How == ContainerStart.Debug ? $"Attaching the debugger to {string.Join(", ", services.Select(s => s.Service))}…" : "Attaching for Hot Reload…");
+        string?[] said = await Task.WhenAll(services.Select(s => AttachAsync(run, s, up, notes, stop)));
+        return said.FirstOrDefault(s => s is not null);
+    }
+
+    /// <summary>One service held at its start: its container, once Compose has started it; Passenger's tools copied into it
+    /// (for its image's system, found here or downloaded); its program, by its assembly, as the tools list it there; and a
+    /// session attached to it, which lets it go: one with its tab in the Debug window, its console the container's log, or,
+    /// under Run with Hot Reload, a quiet one. Null once attached, else why not.</summary>
+    private async Task<string?> AttachAsync(ContainerRun run, DotnetService service, Task up, List<string> notes, CancellationToken stop)
+    {
+        UiThread.Check();
+        ContainerEngine engine = run.Engine;
+        ContainerPlan plan = run.Plan;
+        ContainerToolsSource source = parts.Tools?.Invoke() ?? ContainerToolsSource.Default(Updates.ReleaseFeed.Default);
+        (string Container, DotnetProcess Program, string Tools, string Started, string? Emulated)? found;
+        try
+        {
+            found = await BackgroundWork.Run(async () =>
+            {
+                string? container = await ContainerOfAsync(engine, plan, service.Service, up, stop);
+                if (container is null)
+                {
+                    return ((string, DotnetProcess, string, string, string?)?)null;
+                }
+                ContainerSystem system = await ContainerTools.SystemOfContainerAsync(engine, container, stop);
+                string architecture = await ContainerTools.EngineArchitectureAsync(engine, stop);
+                string? emulated = system.Architecture == architecture ? null
+                    : $"its image is for {system.Architecture}, which this {architecture} engine runs under emulation, where the debugger may not attach";
+                string rid = system.Rid ?? throw new ContainerToolsException($"{service.Service}'s image is for {system.Architecture}, for which Passenger has no debugger");
+                string tools = await ContainerTools.InContainerAsync(engine, container, stop)
+                    ?? await ContainerTools.CopyIntoAsync(engine, container, await ContainerTools.FolderAsync(source, rid, null, stop), stop);
+                DotnetProcess program = await HeldProgramAsync(engine, container, tools, service, stop);
+                ChildResult started = await engine.RunAsync(["inspect", "-f", "{{.State.StartedAt}}", container], cancel: stop);
+                return (container, program, tools, started.Output.Trim(), emulated);
+            }, stop);
+        }
+        catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or TimeoutException or System.Text.Json.JsonException)
+        {
+            return $"Could not debug {service.Service}: {failed.Message}";
+        }
+        if (found is not { } there)
+        {
+            // Compose ended without starting it: what it said is in the Run window, and the run's failure says why.
+            return null;
+        }
+        if (there.Program.WhyNot is { } why)
+        {
+            notes.Add($"{service.Service} runs without the debugger: {why}");
+            return null;
+        }
+        AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(there.Container, there.Tools, arguments)), ContainerTools.SymbolCache,
+            plan.Mode == ContainerMode.Images ? service.Paths : ContainerPaths.None, there.Container)
+        {
+            Output = () => engine.Command(["logs", "--follow", "--since", there.Started, there.Container]),
+        };
+        foreach (string note in ((string?[])[there.Program.Note, there.Emulated]).OfType<string>())
+        {
+            notes.Add($"{service.Service}: {note}");
+        }
+        run.Debugged.Add(service.Service);
+        string? refused = run.How == ContainerStart.HotReload
+            ? await session.Debug.AttachForHotReloadAsync(there.Program.Id, service.Service, place)
+            : await session.Debug.AttachAsync(there.Program.Id, service.Service, hotReload: there.Program.HotReload, place: place, group: plan.Name);
+        return refused is null ? null : there.Emulated is { } emulation ? $"{refused} ({emulation})" : refused;
+    }
+
+    /// <summary>A service's container once Compose has started it (null when Compose ended without it).</summary>
+    private static async Task<string?> ContainerOfAsync(ContainerEngine engine, ContainerPlan plan, string service, Task up, CancellationToken stop)
+    {
+        while (true)
+        {
+            bool ended = up.IsCompleted;
+            ChildResult found = await engine.RunAsync([.. plan.Compose, "ps", "-q", service], cancel: stop);
+            if (found.Succeeded && found.Output.Trim().Split('\n')[0].Trim() is { Length: > 0 } container)
+            {
+                return container;
+            }
+            if (ended)
+            {
+                return null;
+            }
+            await Task.WhenAny(up, Task.Delay(TimeSpan.FromMilliseconds(300), stop));
+            stop.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>The service's program in its container as the tools list it once its runtime has loaded: held at its start
+    /// for the debugger (or, its debugger turned off, saying why), by its assembly; given up on after a minute.</summary>
+    private static async Task<DotnetProcess> HeldProgramAsync(ContainerEngine engine, string container, string tools, DotnetService service, CancellationToken stop)
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+        string assembly = $"{service.Assembly}.dll";
+        while (true)
+        {
+            IReadOnlyList<DotnetProcess> there = await ContainerTools.ProcessesAsync(engine, container, tools, stop);
+            if ((there.FirstOrDefault(p => p.CommandLine.Contains(assembly, StringComparison.OrdinalIgnoreCase)) ?? (there is [{ } only] ? only : null)) is { } program)
+            {
+                return program;
+            }
+            if (DateTime.UtcNow > until)
+            {
+                throw new ContainerToolsException($"no .NET program running {assembly} started in its container {container} within a minute");
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), stop);
+        }
     }
 
     /// <summary>What the CLI is told in the Run console: no colours, no hints.</summary>
@@ -200,8 +338,9 @@ public sealed partial class BuildRunController
         : $"{ran} stopped: its containers were taken down";
 
     /// <summary>Rerun of a container run: its .NET services built again on the host, and only those whose build changed
-    /// restarted (their containers kept, reading the new build through the same mount; no image is built). Null once done,
-    /// else why not; a run in images mode, or one already down, is run again whole.</summary>
+    /// restarted (their containers kept, reading the new build through the same mount; no image is built), a service held
+    /// for Hot Reload attached to again. Null once done, else why not; a run in images mode, or one already down, is run
+    /// again whole.</summary>
     public async Task<string?> RerunContainersAsync()
     {
         if (session.ContainerRun is not { IsStopped: false } run || run.Plan.Mode == ContainerMode.Images || !session.Runner.IsRunning)
@@ -223,20 +362,73 @@ public sealed partial class BuildRunController
             }
             IReadOnlyList<DotnetService> changed = run.Changed();
             work.Say(changed.Count == 0 ? "No service's build changed" : $"Restarting {string.Join(", ", changed.Select(c => c.Service))}…");
-            string? failed;
-            try
-            {
-                failed = await run.RestartAsync(changed, work.Stopping);
-            }
-            catch (OperationCanceledException)
-            {
-                failed = $"{run.Plan.Name}'s restart was stopped";
-            }
+            string? failed = await RestartServicesAsync(run, changed, work);
             // Passenger pins the ports it can; with an older Compose the engine may have chosen another at the restart.
             string moved = failed is null && changed.Count > 0 && run.Address is { } before && await run.BrowserUrlAsync(CancellationToken.None) is { } now && now != before
                 ? $"; it now answers at {run.Address = now}" : string.Empty;
             return Said(failed ?? (changed.Count == 0 ? $"{run.Plan.Name}: no service's build changed, nothing restarted"
                 : $"{run.Plan.Name}: restarted {string.Join(", ", changed.Select(c => c.Service))} with the new build{moved}"));
+        }
+    }
+
+    /// <summary>Restarts services of the container run (their sessions ended first, so no debugger loses its program under
+    /// it), and attaches again to those held for the debugger, which the restart holds again. Null once done, else why not.</summary>
+    private async Task<string?> RestartServicesAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Working work)
+    {
+        List<DotnetService> attached = [.. run.Held.Where(h => services.Any(s => s.Service == h.Service))];
+        await Task.WhenAll(attached.Select(a => session.Debug.StopAsync(a.Service)));
+        try
+        {
+            if (await run.RestartAsync(services, work.Stopping) is { } failed)
+            {
+                return failed;
+            }
+            if (attached.Count == 0)
+            {
+                return null;
+            }
+            return await AttachAllAsync(run, attached, Task.CompletedTask, [], work, work.Stopping);
+        }
+        catch (OperationCanceledException)
+        {
+            return $"{run.Plan.Name}'s restart was stopped";
+        }
+    }
+
+    /// <summary>Hot Reload's restart for edits it could not apply to services of the container run: built again on the host
+    /// (fast mode; as deployed, its image built again), restarted held, and attached to again, as dotnet watch restarts a
+    /// program: those whose project holds an edit that needs it, when any does (Roslyn names an edit to another project
+    /// rude to each service's session). True once they are.</summary>
+    public async Task<bool> RestartContainerServicesAsync(Debugging.HotReloadOutcome outcome, IReadOnlyList<string> names)
+    {
+        if (session.ContainerRun is not { IsStopped: false } run || run.Held.Where(h => names.Contains(h.Service)).ToList() is not { Count: > 0 } named)
+        {
+            return false;
+        }
+        List<string> rude = [.. outcome.Problems.Where(p => p.Severity == ProblemSeverity.Error && p.Path is not null).Select(p => p.Path!)];
+        List<DotnetService> services = [.. named.Where(s => rude.Any(path => PathNames.IsUnder(path, Path.GetDirectoryName(s.Project)!)))];
+        if (services.Count == 0)
+        {
+            services = named;
+        }
+        names = [.. services.Select(s => s.Service)];
+        string action = run.How == ContainerStart.Debug ? AppActions.Debug : AppActions.RunProgram;
+        if (parts.Work.Begin(action, $"Restarting {string.Join(", ", names)} to apply changes…") is not { } work)
+        {
+            return false;
+        }
+        using (work)
+        {
+            using IDisposable held = BackgroundWork.Scope();
+            parts.Editors.SaveAll();
+            List<string> projects = [.. services.Select(s => s.Project).Distinct(StringComparer.Ordinal)];
+            if (run.Plan.Mode == ContainerMode.Fast && !(await BuildProjectsAsync(projects)).Succeeded)
+            {
+                return false;
+            }
+            string? failed = await RestartServicesAsync(run, services, work);
+            parts.Say(failed ?? $"{run.Plan.Name}: restarted {string.Join(", ", names)} to apply changes");
+            return failed is null;
         }
     }
 

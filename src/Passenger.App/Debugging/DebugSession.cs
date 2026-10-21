@@ -90,7 +90,7 @@ public sealed class DebugSession
     public const string StoppedStarting = "the session was stopped as it started";
 
     private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns, bool elsewhere,
-        AdapterPlace? place)
+        AdapterPlace? place, bool quiet = false)
     {
         Elsewhere = elsewhere || place is not null;
         this.place = place;
@@ -173,6 +173,11 @@ public sealed class DebugSession
             JsonElementCopy copy = new(body);
             UiThread.Post(() => OnEvent(name, copy));
         };
+        Quiet = quiet;
+        if (quiet)
+        {
+            return;
+        }
         breakpoints.Join(this);
         breakpoints.Changed += OnBreakpointsChanged;
         breakpoints.ExceptionsChanged += OnExceptionsChanged;
@@ -180,6 +185,10 @@ public sealed class DebugSession
         breakpoints.PropertiesChanged += OnFunctionsChanged;
         breakpoints.BindingErrorsChanged += OnFunctionsChanged;
     }
+
+    /// <summary>Attached for Hot Reload alone (a container run's service under Run with Hot Reload): no breakpoint is sent,
+    /// no exception stops it, and the breakpoints never hear of it.</summary>
+    public bool Quiet { get; }
 
     public event EventHandler? StateChanged;
 
@@ -280,19 +289,21 @@ public sealed class DebugSession
     /// so its code may change as a launch's may; with <paramref name="elsewhere"/> it is not on this machine, and with
     /// <paramref name="place"/> the adapter runs where it is (a container's, its process id that container's).</summary>
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null) =>
+        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null,
+        bool quiet = false) =>
         StartAsync(place is null ? $"process {processId}" : $"process {processId} in {place.Where}", "attach",
             new AttachArguments { ProcessId = processId, JustMyCode = true, HotReload = hotReload ? true : null },
-            breakpoints, lines, log, output, null, columns, starting, elsewhere, place);
+            breakpoints, lines, log, output, null, columns, starting, elsewhere, place, quiet);
 
-    /// <summary>Opens the session: the adapter told what to start, the breakpoints sent, then configurationDone, whose answer
-    /// waits for the program's runtime however long it takes. A session stopped meanwhile ends the start at once, failing it
-    /// with <see cref="StoppedStarting"/>.</summary>
+    /// <summary>Opens the session: the adapter told what to start, the breakpoints sent (a quiet session's none, and no
+    /// exception to stop at), then configurationDone, whose answer waits for the program's runtime however long it takes. A
+    /// session stopped meanwhile ends the start at once, failing it with <see cref="StoppedStarting"/>.</summary>
     private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting, bool elsewhere, AdapterPlace? place)
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting, bool elsewhere, AdapterPlace? place,
+        bool quiet = false)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere, place) { Program = program, Attached = request == "attach" };
+        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere, place, quiet) { Program = program, Attached = request == "attach" };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {
@@ -324,7 +335,15 @@ public sealed class DebugSession
             await session.connection.RequestAsync(request, arguments);
             await Task.WhenAny(session.initialized.Task, session.ending.Task).WaitAsync(TimeSpan.FromSeconds(30));
             session.GoingOn();
-            await session.SendChangedAsync();
+            if (quiet)
+            {
+                // Exception breakpoints given, none of them: an unhandled exception ends the program as it would run.
+                await session.connection.RequestAsync<SetExceptionBreakpointsResponse>("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [], []));
+            }
+            else
+            {
+                await session.SendChangedAsync();
+            }
             // Never asked of an adapter already told to go: it would start the program as it went.
             session.GoingOn();
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
@@ -334,7 +353,10 @@ public sealed class DebugSession
                 session.SetState(DebugState.Running);
             }
             // What changed while the debugger waited for the program's runtime, when nothing could be sent, goes now.
-            session.Sending(session.SendChangedAsync());
+            if (!quiet)
+            {
+                session.Sending(session.SendChangedAsync());
+            }
             return session;
         }
         catch
@@ -1116,7 +1138,10 @@ public sealed class DebugSession
         breakpoints.PropertiesChanged -= OnFunctionsChanged;
         breakpoints.BindingErrorsChanged -= OnFunctionsChanged;
         // What its debugger said goes, and its data breakpoints, each on a member of one of its objects, as Rider's do.
-        breakpoints.Leave(this);
+        if (!Quiet)
+        {
+            breakpoints.Leave(this);
+        }
         SetState(DebugState.Ended);
         _ = connection.DisposeAsync();
     }

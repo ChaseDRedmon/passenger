@@ -41,6 +41,13 @@ public sealed class DebugTab(string name, OutputView console) : Observable
     /// <summary>Whether its program was launched with its output in this console, rather than attached to or in the terminal.</summary>
     internal bool OwnsConsole { get; init; }
 
+    /// <summary>The programs it is debugged with (a container run's services, by its configuration's name): Hot Reload's
+    /// changes go to each of them together.</summary>
+    public string? Group { get; internal set; }
+
+    /// <summary>What follows its program's output from outside into its console (a container's log), while it does.</summary>
+    internal System.Diagnostics.Process? Following { get; set; }
+
     /// <summary>Whether it is the tab shown: its frames, values, console and toolbar are the window's.</summary>
     public bool IsChosen
     {

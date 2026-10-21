@@ -213,7 +213,8 @@ public sealed class ProjectSession : IAsyncDisposable
             return Task.CompletedTask;
         }
         Runner.Stop();
-        Task stopped = run.StopAsync();
+        // The services debugged end first: a container taken from under its debugger would end the adapter as a failure.
+        Task stopped = run.StopAsync(run.IsStopped ? null : Task.WhenAll([.. run.Debugged.Select(Debug.StopAsync)]));
         if (!run.Plan.KeepBacking || run.Plan.Backing.Count == 0)
         {
             Containers.EndedProject(run.Plan.Compose);

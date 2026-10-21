@@ -46,6 +46,9 @@ public sealed record HotReloadOutcome(HotReloadResult Result, string Said)
     public int Methods { get; init; }
 
     public TimeSpan Took { get; init; }
+
+    /// <summary>Of several programs' apply (a container run's services), those whose edits need them restarted, by name.</summary>
+    public IReadOnlyList<string> Restart { get; init; } = [];
 }
 
 /// <summary>Hot Reload of one debugging session (Edit and Continue): Roslyn's own Edit and Continue service, in the language
