@@ -194,7 +194,7 @@ public sealed partial class BuildRunController
             ContainerStart.HotReload => $"Running {chosen.Name} with Hot Reload: a save applies its changes to {Named(debugged)}",
             _ => $"Running {chosen.Name}",
         };
-        parts.Say($"{what}; {Count(plan.Dotnet.Count(d => d.Starts), ".NET service")} from Passenger's build"
+        parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Count(plan.Dotnet.Count(d => d.Starts), ".NET service")} from Passenger's build"
             + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Count(plan.Backing.Count, "other service")}; Stop takes them down"
             + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty));
         parts.Reveal?.Invoke(plan.ProjectName);
