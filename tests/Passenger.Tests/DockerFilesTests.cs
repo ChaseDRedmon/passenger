@@ -141,11 +141,13 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             Ui.Press(window, "ESCAPE");
 
             editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, Shop.ComposeFile.Replace("    ports: !reset []", "    bogus: 1\n    ports: !reset []", StringComparison.Ordinal))]);
-            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error && m.Message.Contains("bogus", StringComparison.Ordinal)),
+            // The server's, which a running engine's Compose would say of the line too (its own marker then left off).
+            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error && m.Message.Contains("Property bogus is not allowed", StringComparison.Ordinal)),
                 "the error under the key a service does not have");
-            Marker error = document.Markers.First(m => m.Kind == MarkerKind.Error && m.Message.Contains("bogus", StringComparison.Ordinal));
+            Marker error = document.Markers.First(m => m.Kind == MarkerKind.Error && m.Message.Contains("Property bogus is not allowed", StringComparison.Ordinal));
             Assert.Equal("bogus", editor.Document.Snapshot.GetText(error.Range.Start, error.Range.Length));
-            Assert.Contains("Property bogus is not allowed", error.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(document.Markers, m => m.Message.StartsWith("Compose:", StringComparison.Ordinal)
+                && editor.Document.Snapshot.GetLineFromOffset(m.Range.Start) == editor.Document.Snapshot.GetLineFromOffset(error.Range.Start));
             // Compose's own tags are no errors: !reset's line is unmarked.
             int reset = editor.Document.Snapshot.ToString().IndexOf("!reset", StringComparison.Ordinal);
             Assert.DoesNotContain(document.Markers, m => m.Kind is MarkerKind.Error or MarkerKind.Warning

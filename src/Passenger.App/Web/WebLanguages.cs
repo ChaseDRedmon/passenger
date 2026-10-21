@@ -64,8 +64,9 @@ public sealed class WebLanguages : IAsyncDisposable
 
     /// <summary>A folder's servers, run on the Node.js Settings names (null for the PATH's), with ESLint and Prettier as
     /// <paramref name="settings"/> configure them; remote JSON schemas are downloaded, and Docker Hub asked for image
-    /// tags, while Settings allows it.</summary>
-    public WebLanguages(string folder, Func<AppSettings> settings)
+    /// tags, while Settings allows it. The container <paramref name="engine"/> (the person's when none is given) checks
+    /// the Dockerfiles and compose files.</summary>
+    public WebLanguages(string folder, Func<AppSettings> settings, Func<Containers.ContainerEngine>? engine = null)
     {
         this.folder = folder;
         this.settings = settings;
@@ -76,6 +77,7 @@ public sealed class WebLanguages : IAsyncDisposable
         Schemas = new JsonSchemas(() => settings().DownloadJsonSchemas);
         Eslint = new EslintService(folder, settings, FindNodeAsync);
         Prettier = new PrettierService(folder, settings, FindNodeAsync);
+        Checks = new Containers.EngineChecks(engine ?? (() => Containers.ContainerEngine.Shared));
         Eslint.Message += (_, message) => Message?.Invoke(this, message);
     }
 
@@ -99,6 +101,9 @@ public sealed class WebLanguages : IAsyncDisposable
 
     /// <summary>Prettier, for the files it formats.</summary>
     public PrettierService Prettier { get; }
+
+    /// <summary>The container engine's checks of the Dockerfiles and compose files, beside their servers' own.</summary>
+    public Containers.EngineChecks Checks { get; }
 
     /// <summary>The folder the servers work on.</summary>
     public string Folder => folder;
@@ -185,6 +190,7 @@ public sealed class WebLanguages : IAsyncDisposable
         }
         // Else the start under way connects it with the rest of its kind.
         Eslint.Attach(document, features);
+        Checks.Attach(document, features);
         Announce(document);
     }
 
@@ -194,6 +200,7 @@ public sealed class WebLanguages : IAsyncDisposable
         if (documents.Remove(document, out WebDocument? features))
         {
             Eslint.Detach(document);
+            Checks.Detach(document);
             features.Dispose();
             document.Notice = null;
             document.NoticeAction = null;
@@ -292,6 +299,7 @@ public sealed class WebLanguages : IAsyncDisposable
             Recheck();
         }
         Eslint.FilesChanged(paths);
+        Checks.FilesChanged(paths);
     }
 
     /// <summary>Settings changed: ESLint configured otherwise starts again on the files it covers then, and every banner
@@ -804,6 +812,7 @@ public sealed class WebLanguages : IAsyncDisposable
         ending.Cancel();
         Task linter = Eslint.DisposeAsync().AsTask();
         Task formatter = Prettier.DisposeAsync().AsTask();
+        Checks.Dispose();
         foreach (WebDocument features in documents.Values)
         {
             features.Dispose();

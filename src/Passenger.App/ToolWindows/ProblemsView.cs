@@ -25,7 +25,8 @@ public enum ProblemsTab
     /// <summary>The edits the last Hot Reload could not apply, or warned of, each at its line.</summary>
     HotReload,
 
-    /// <summary>The container engine's problems: no CLI, not running, Windows containers, no Compose v2.</summary>
+    /// <summary>The container engine's problems (no CLI, not running, Windows containers, no Compose v2), then what it
+    /// finds in the open Dockerfiles and compose files, by file.</summary>
     Containers,
 }
 
@@ -72,6 +73,7 @@ public sealed class ProblemsView : DockPanel
     private IReadOnlyList<Problem>? hotReload;
     private string hotReloadSaid = string.Empty;
     private IReadOnlyList<Problem> containers = [];
+    private IReadOnlyList<Problem> containerFiles = [];
     private string? fileName;
 
     public ProblemsView()
@@ -279,8 +281,16 @@ public sealed class ProblemsView : DockPanel
         Refresh();
     }
 
-    /// <summary>The container engine's problems.</summary>
-    public IReadOnlyList<Problem> ContainerProblems => containers;
+    /// <summary>What the engine finds in the open Dockerfiles and compose files (BuildKit's checks, Compose's errors), by
+    /// file in Containers after the engine's own.</summary>
+    public void ShowContainerFiles(IReadOnlyList<Problem> problems)
+    {
+        containerFiles = [.. Ordered(problems)];
+        Refresh();
+    }
+
+    /// <summary>The container engine's problems, then those it finds in the open files.</summary>
+    public IReadOnlyList<Problem> ContainerProblems => [.. containers, .. containerFiles];
 
     /// <summary>The projects' load problems, in Toolset, Environment.</summary>
     public void ShowToolset(IReadOnlyList<Problem> problems)
@@ -322,8 +332,8 @@ public sealed class ProblemsView : DockPanel
         tabs[ProblemsTab.Bindings].Content = Titled(TitleOf(ProblemsTab.Bindings), bindings.Count);
         tabs[ProblemsTab.HotReload].Content = Titled(TitleOf(ProblemsTab.HotReload), hotReload?.Count ?? 0);
         tabs[ProblemsTab.HotReload].IsVisible = hotReload is not null;
-        tabs[ProblemsTab.Containers].Content = Titled(TitleOf(ProblemsTab.Containers), containers.Count);
-        tabs[ProblemsTab.Containers].IsVisible = containers.Count > 0 || Shown == ProblemsTab.Containers;
+        tabs[ProblemsTab.Containers].Content = Titled(TitleOf(ProblemsTab.Containers), containers.Count + containerFiles.Count);
+        tabs[ProblemsTab.Containers].IsVisible = containers.Count + containerFiles.Count > 0 || Shown == ProblemsTab.Containers;
         foreach ((ProblemsTab tab, ToggleButton button) in tabs)
         {
             button.IsChecked = tab == Shown;
@@ -381,6 +391,14 @@ public sealed class ProblemsView : DockPanel
                 foreach (Problem problem in containers)
                 {
                     rows.Add(new ProblemRow(0, problem.Message, null, problem));
+                }
+                foreach (IGrouping<string, Problem> path in containerFiles.GroupBy(p => p.Path ?? string.Empty).OrderBy(g => g.Key, StringComparer.Ordinal))
+                {
+                    rows.Add(new ProblemRow(0, System.IO.Path.GetFileName(path.Key), Count(path.Count()), null));
+                    foreach (Problem problem in path)
+                    {
+                        rows.Add(new ProblemRow(1, problem.Message, problem.Where, problem));
+                    }
                 }
                 empty.Text = "The container engine has no problems";
                 break;

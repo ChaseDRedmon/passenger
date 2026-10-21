@@ -114,6 +114,10 @@ public enum InlayHintKind
 
     /// <summary>A type, which ends the name it types: text typed at it goes before it, and so does the caret.</summary>
     Type,
+
+    /// <summary>What the text before it comes to (a compose file's <c>${VAR}</c> as Compose resolves it), which ends that
+    /// text as a type does; shown whatever Settings say of the other two.</summary>
+    Value,
 }
 
 /// <summary>A test's mark in the gutter, as Rider's run icons beside a test method or class: how it last ran.</summary>

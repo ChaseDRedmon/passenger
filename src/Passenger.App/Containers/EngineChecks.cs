@@ -1,0 +1,430 @@
+using System.Text.Json;
+using Passenger.App.Run;
+using Passenger.App.Web;
+using Passenger.App.Workspace;
+using Passenger.Core;
+using Passenger.Editor;
+using Passenger.Text;
+
+namespace Passenger.App.Containers;
+
+/// <summary>What the person's container engine says of the folder's open Dockerfiles and compose files, through its own
+/// CLI: BuildKit's build checks on a Dockerfile (<see cref="DockerfileCheck"/>), and on a compose file Compose's own model
+/// of it (<see cref="ComposeCheck"/>): its errors, what each <c>${VAR}</c> comes to and the values an override file
+/// changes, as inlay hints. Each file's problems are markers beside its language server's and rows of Problems'
+/// Containers tab (<see cref="Problems"/>); with no engine running, or none that can check, nothing is shown or said for a
+/// file, the engine's state being said once by the status bar. Kept by <see cref="WebLanguages"/>, as ESLint is, with the
+/// files' servers. A UI-thread object.</summary>
+public sealed class EngineChecks : IDisposable
+{
+    private readonly Func<ContainerEngine> engine;
+    private readonly Dictionary<OpenDocument, EngineCheck> checks = [];
+    private ContainerEngine? followed;
+    private bool disposed;
+
+    public EngineChecks(Func<ContainerEngine> engine) => this.engine = engine;
+
+    /// <summary>A file's problems changed (<see cref="Problems"/>), on the UI thread.</summary>
+    public event EventHandler? Changed;
+
+    /// <summary>Every open file's problems as the engine last found them, each once: a compose file's may be its override's.</summary>
+    public IReadOnlyList<Problem> Problems => [.. checks.Values.SelectMany(c => c.Problems).Distinct()];
+
+    internal ContainerEngine Engine => engine();
+
+    /// <summary>Checks an open file the engine has something to say of (a Dockerfile, a compose file), now and as it changes.</summary>
+    public void Attach(OpenDocument document, WebDocument web)
+    {
+        UiThread.Check();
+        if (disposed || checks.ContainsKey(document))
+        {
+            return;
+        }
+        EngineCheck? check = WebLanguages.IsDockerfile(Path.GetFileName(document.Path)) ? new DockerfileCheck(this, document, web)
+            : ComposeDeclarations.IsCompose(document.Path) ? new ComposeCheck(this, document, web) : null;
+        if (check is null)
+        {
+            return;
+        }
+        checks[document] = check;
+        Follow();
+        check.Run();
+    }
+
+    public void Detach(OpenDocument document)
+    {
+        UiThread.Check();
+        if (checks.Remove(document, out EngineCheck? check))
+        {
+            bool had = check.Problems.Count > 0;
+            check.Dispose();
+            if (had)
+            {
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>Files another program changed: an open compose file is checked again once they settle when a compose file
+    /// or the .env beside it changed, since Compose reads them with it.</summary>
+    public void FilesChanged(IReadOnlyCollection<string> paths)
+    {
+        UiThread.Check();
+        foreach (ComposeCheck compose in checks.Values.OfType<ComposeCheck>())
+        {
+            if (paths.Any(p => Path.GetDirectoryName(p) is { } folder && PathNames.Same(folder, compose.Folder)
+                && (ComposeDeclarations.IsCompose(p) || Path.GetFileName(p) == ".env")))
+            {
+                compose.Later();
+            }
+        }
+    }
+
+    /// <summary>A compose file saved: the other compose files open beside it, which Compose reads with it, are checked again.</summary>
+    internal void Saved(EngineCheck saved)
+    {
+        if (saved is not ComposeCheck compose)
+        {
+            return;
+        }
+        foreach (ComposeCheck beside in checks.Values.OfType<ComposeCheck>().Where(c => c != compose && PathNames.Same(c.Folder, compose.Folder)))
+        {
+            beside.Run();
+        }
+    }
+
+    internal void Told() => Changed?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Follows the engine's state, so a start or stop of it checks every file again (or takes their problems away).</summary>
+    private void Follow()
+    {
+        ContainerEngine now = engine();
+        if (followed == now)
+        {
+            return;
+        }
+        if (followed is not null)
+        {
+            followed.StateChanged -= OnState;
+        }
+        followed = now;
+        now.StateChanged += OnState;
+    }
+
+    private void OnState(object? sender, EngineState state) => UiThread.Post(() =>
+    {
+        if (disposed)
+        {
+            return;
+        }
+        foreach (EngineCheck check in checks.Values)
+        {
+            check.Run();
+        }
+    });
+
+    public void Dispose()
+    {
+        UiThread.Check();
+        disposed = true;
+        if (followed is not null)
+        {
+            followed.StateChanged -= OnState;
+            followed = null;
+        }
+        foreach (EngineCheck check in checks.Values)
+        {
+            check.Dispose();
+        }
+        checks.Clear();
+    }
+}
+
+/// <summary>A problem the engine found: in the file checked, where <see cref="Range"/> says in its text as checked, or in a
+/// file read with it (an override), at <see cref="Position"/> only.</summary>
+internal sealed record Finding(ProblemSeverity Severity, string Message, string Path, TextPosition Position, TextRange? Range)
+{
+    public Uri? Link { get; init; }
+
+    public string? LinkText { get; init; }
+
+    public Problem Problem => new(Severity, Message, null, Path, Position, null) { Link = Link, LinkText = LinkText };
+}
+
+/// <summary>What a check found: problems, and hints for the file checked, in its text as checked.</summary>
+internal sealed record Outcome(IReadOnlyList<Finding> Findings, IReadOnlyList<InlayHint> Hints)
+{
+    public static readonly Outcome None = new([], []);
+}
+
+/// <summary>One open file's check by the engine: run as it opens, as it is saved and (<see cref="Later"/>) once typing
+/// pauses, one at a time, off the UI thread as background work (a screenshot waits for it) holding the file's
+/// <see cref="OpenDocument.Checking"/> (an agent's diagnostics wait for it); what it found is kept for the text it read,
+/// its markers and hints carried with the text typed after, and dropped (to be checked again) when the text moved on
+/// before it landed.</summary>
+internal abstract class EngineCheck : IDisposable
+{
+    /// <summary>How long typing must pause before a file is checked again.</summary>
+    private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(500);
+
+    private readonly EngineChecks owner;
+    private readonly WebDocument web;
+    private readonly Debounce later;
+    private CancellationTokenSource? running;
+    private bool disposed;
+
+    protected EngineCheck(EngineChecks owner, OpenDocument document, WebDocument web)
+    {
+        this.owner = owner;
+        this.web = web;
+        Document = document;
+        later = new Debounce(Settle, () =>
+        {
+            Run();
+            return Task.CompletedTask;
+        }, document.Checking);
+        document.Text.Changed += OnChanged;
+        document.Saved += OnSaved;
+    }
+
+    protected OpenDocument Document { get; }
+
+    /// <summary>The file's folder, where the engine's command runs.</summary>
+    public string Folder => Path.GetDirectoryName(Document.Path)!;
+
+    public IReadOnlyList<Problem> Problems { get; private set; } = [];
+
+    /// <summary>Whether the file is checked again once typing pauses, rather than only as it opens and is saved.</summary>
+    protected abstract bool AsTyped { get; }
+
+    /// <summary>Whether the check gives the file's hints, which it then owns.</summary>
+    protected abstract bool Hints { get; }
+
+    /// <summary>The check itself, off the UI thread, of the file's text as it stood.</summary>
+    protected abstract Task<Outcome> CheckAsync(ContainerEngine engine, string path, TextSnapshot text, string written, CancellationToken cancel);
+
+    /// <summary>Checks the text as it stands now, in place of a check under way.</summary>
+    public void Run()
+    {
+        if (disposed)
+        {
+            return;
+        }
+        later.Stop();
+        running?.Cancel();
+        CancellationTokenSource cancel = new();
+        running = cancel;
+        _ = RunAsync(Document.Text.Snapshot, Document.Text.Version, cancel, Document.Checking());
+    }
+
+    /// <summary>Checks the text again once typing (or another program's writes) pauses.</summary>
+    public void Later()
+    {
+        if (!disposed)
+        {
+            later.Restart();
+        }
+    }
+
+    private async Task RunAsync(TextSnapshot text, int version, CancellationTokenSource cancel, IDisposable checking)
+    {
+        try
+        {
+            ContainerEngine engine = owner.Engine;
+            string path = Document.Path;
+            string written = text.ToString();
+            Outcome found = await BackgroundWork.Run(() => CheckAsync(engine, path, text, written, cancel.Token), cancel.Token);
+            if (cancel.IsCancellationRequested || disposed)
+            {
+                return;
+            }
+            if (Document.Text.Version != version)
+            {
+                // Typed over while it ran: what it found belongs to text no longer there.
+                Later();
+                return;
+            }
+            Show(found);
+        }
+        catch (OperationCanceledException)
+        {
+            // Another check took its place, or the file was let go.
+        }
+        catch (Exception failed) when (failed is TimeoutException or IOException or JsonException or FileNotFoundException
+            or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            IdeErrors.Write($"The container engine could not check {Document.Path}: {failed.Message}");
+            if (!disposed && running == cancel)
+            {
+                Show(Outcome.None);
+            }
+        }
+        finally
+        {
+            checking.Dispose();
+            if (running == cancel)
+            {
+                running = null;
+            }
+            cancel.Dispose();
+        }
+    }
+
+    private void Show(Outcome found)
+    {
+        web.ShowEngine([.. found.Findings.Where(f => f.Range is not null).Select(f =>
+            new Marker(f.Range!.Value, f.Severity == ProblemSeverity.Error ? MarkerKind.Error : MarkerKind.Warning, f.Message) { Link = f.Link, LinkText = f.LinkText })]);
+        if (Hints)
+        {
+            Document.InlayHints = found.Hints;
+        }
+        IReadOnlyList<Problem> problems = [.. found.Findings.Select(f => f.Problem)];
+        if (!problems.SequenceEqual(Problems))
+        {
+            Problems = problems;
+            owner.Told();
+        }
+    }
+
+    private void OnChanged(object? sender, DocumentChangedEventArgs e)
+    {
+        if (Hints && Document.InlayHints.Count > 0)
+        {
+            // A value ends the text before it: what is typed at it goes before it.
+            Document.InlayHints = [.. Document.InlayHints.Select(h => h with { Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: true) })];
+        }
+        if (AsTyped)
+        {
+            Later();
+        }
+        else if (running is not null)
+        {
+            // A check under way reads text no longer there; it is done again once typing pauses.
+            Later();
+        }
+    }
+
+    private void OnSaved(object? sender, EventArgs e)
+    {
+        Run();
+        owner.Saved(this);
+    }
+
+    public void Dispose()
+    {
+        if (disposed)
+        {
+            return;
+        }
+        disposed = true;
+        later.Stop();
+        running?.Cancel();
+        Document.Text.Changed -= OnChanged;
+        Document.Saved -= OnSaved;
+        web.ShowEngine([]);
+        if (Hints)
+        {
+            Document.InlayHints = [];
+        }
+        Problems = [];
+    }
+
+    /// <summary>A stretch of a line as a marker spans it: from its first character that is no space to its end.</summary>
+    protected static TextRange Lines(TextSnapshot text, int first, int last)
+    {
+        first = Math.Clamp(first, 0, text.LineCount - 1);
+        last = Math.Clamp(last, first, text.LineCount - 1);
+        LineSpan start = text.GetLine(first);
+        LineSpan end = text.GetLine(last);
+        string opening = text.GetLineText(first);
+        int indent = opening.Length - opening.TrimStart().Length;
+        string closing = text.GetLineText(last);
+        int to = end.Start + closing.TrimEnd().Length;
+        int from = Math.Min(start.Start + indent, to);
+        return new TextRange(from, to - from);
+    }
+}
+
+/// <summary>BuildKit's own build checks on a Dockerfile (its rules, as <c>docker build --check</c> runs them), through the
+/// person's engine: <c>docker buildx build --call=check,format=json -</c> on the file's text, as it opens and as it is
+/// saved, with no build and no context sent, on the context's own builder (the engine's BuildKit, never a builder
+/// container started for it). Each rule a line breaks is a warning there, its name the link to its page; a build error
+/// is said too, but not a parse error (the Dockerfile server marks those) nor a registry out of reach (BuildKit reads each
+/// base image's metadata, so offline it can check nothing).</summary>
+internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document, WebDocument web) : EngineCheck(owner, document, web)
+{
+    /// <summary>How long a check may take: reading a base image's metadata from its registry the first time included.</summary>
+    private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
+
+    protected override bool AsTyped => false;
+
+    protected override bool Hints => false;
+
+    protected override async Task<Outcome> CheckAsync(ContainerEngine engine, string path, TextSnapshot snapshot, string text, CancellationToken cancel)
+    {
+        EngineState state = await engine.StateAsync(cancel: cancel);
+        if (state.Status is not (EngineStatus.Ready or EngineStatus.NoCompose) || state.BuildxVersion is null)
+        {
+            return Outcome.None;
+        }
+        List<string> words = ["buildx", "build", "--progress=quiet", "--call=check,format=json"];
+        if (state.Context is { Length: > 0 } context)
+        {
+            words.AddRange(["--builder", context]);
+        }
+        words.Add("-");
+        ChildResult result = await engine.RunAsync(words, Limit, cancel, Path.GetDirectoryName(path), text, answers: [1]);
+        if (!result.Output.TrimStart().StartsWith('{'))
+        {
+            // An older buildx (before --call), or a builder that would not start: nothing to show, said in the log.
+            IdeErrors.Write($"BuildKit's checks could not run on {path}: {ContainerEngine.Said(result)}");
+            return Outcome.None;
+        }
+        using JsonDocument read = JsonDocument.Parse(result.Output);
+        JsonElement root = read.RootElement;
+        List<Finding> found = [];
+        if (root.TryGetProperty("warnings", out JsonElement warnings) && warnings.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement warning in warnings.EnumerateArray())
+            {
+                string? rule = ContainerEngine.Text(warning, "ruleName");
+                string said = ContainerEngine.Text(warning, "detail") ?? ContainerEngine.Text(warning, "description") ?? rule ?? "BuildKit's check failed";
+                Uri? page = ContainerEngine.Text(warning, "url") is { } url && Uri.TryCreate(url, UriKind.Absolute, out Uri? link) && link.Scheme == Uri.UriSchemeHttps ? link : null;
+                found.Add(At(snapshot, path, warning, ProblemSeverity.Warning, rule is null ? $"BuildKit: {said}" : $"BuildKit: {said} ({rule})")
+                    with { Link = page, LinkText = page is null ? null : rule });
+            }
+        }
+        if (root.TryGetProperty("buildError", out JsonElement error) && error.ValueKind == JsonValueKind.Object
+            && ContainerEngine.Text(error, "message") is { } message && Shown(message))
+        {
+            found.Add(At(snapshot, path, error, ProblemSeverity.Error, $"BuildKit: {message}"));
+        }
+        return new Outcome(found, []);
+    }
+
+    /// <summary>A finding at the lines its location's first range names (from 1), else the file's first line.</summary>
+    private static Finding At(TextSnapshot text, string path, JsonElement found, ProblemSeverity severity, string message)
+    {
+        int first = 1;
+        int last = 1;
+        if (found.TryGetProperty("location", out JsonElement location) && location.TryGetProperty("ranges", out JsonElement ranges)
+            && ranges.ValueKind == JsonValueKind.Array && ranges.GetArrayLength() > 0)
+        {
+            JsonElement range = ranges[0];
+            first = LineOf(range, "start") ?? 1;
+            last = LineOf(range, "end") ?? first;
+        }
+        TextRange marked = Lines(text, first - 1, last - 1);
+        return new Finding(severity, message, path, text.GetPosition(marked.Start), marked);
+
+        static int? LineOf(JsonElement range, string end) =>
+            range.TryGetProperty(end, out JsonElement place) && place.TryGetProperty("line", out JsonElement line) && line.TryGetInt32(out int n) && n > 0 ? n : null;
+    }
+
+    /// <summary>Whether a build error is the check's to say: not the Dockerfile's syntax, which its server marks as typed,
+    /// nor a registry the engine could not reach.</summary>
+    private static bool Shown(string message) =>
+        !message.Contains("dockerfile parse error", StringComparison.OrdinalIgnoreCase)
+        && !((string[])["dial tcp", "no such host", "i/o timeout", "connection refused", "network is unreachable", "TLS handshake timeout",
+            "context deadline exceeded", "server misbehaving", "connection reset"]).Any(n => message.Contains(n, StringComparison.OrdinalIgnoreCase));
+}

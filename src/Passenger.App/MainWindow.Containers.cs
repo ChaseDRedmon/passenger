@@ -136,9 +136,21 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>A session's test runner asks the window's engine before a run of tests that use Testcontainers.</summary>
+    /// <summary>A session's test runner asks the window's engine before a run of tests that use Testcontainers, and what
+    /// the engine finds in its open Dockerfiles and compose files is listed in Problems' Containers tab.</summary>
     private void BindContainers(ProjectSession next)
     {
+        Bottom.Problems.ShowContainerFiles([]);
+        if (next.Web is { } web)
+        {
+            web.Checks.Changed += (_, _) =>
+            {
+                if (session == next)
+                {
+                    Bottom.Problems.ShowContainerFiles(web.Checks.Problems);
+                }
+            };
+        }
         next.Tests.ContainerEngine = async cancel =>
         {
             EngineState state = await Engine.StateAsync(again: true, cancel);

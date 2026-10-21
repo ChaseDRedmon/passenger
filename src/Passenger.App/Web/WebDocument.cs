@@ -34,9 +34,11 @@ public sealed class WebDocument : IServerDocument, IDisposable
 
     private static readonly TimeSpan PushLimit = TimeSpan.FromSeconds(5);
 
-    /// <summary>The file's markers from its own server, and from ESLint, which the editor shows together.</summary>
+    /// <summary>The file's markers from its own server, from ESLint, and from the container engine's checks (BuildKit's of
+    /// a Dockerfile, Compose's of a compose file), which the editor shows together.</summary>
     private IReadOnlyList<Marker> own = [];
     private IReadOnlyList<Marker> lint = [];
+    private IReadOnlyList<Marker> engine = [];
 
     internal WebDocument(OpenDocument document, WebServerKind kind, string languageId)
     {
@@ -80,7 +82,29 @@ public sealed class WebDocument : IServerDocument, IDisposable
     public void ShowLint(IReadOnlyList<Marker> markers)
     {
         lint = markers;
-        document.Markers = [.. own, .. lint];
+        document.Markers = Shown();
+    }
+
+    /// <summary>The container engine's checks of the file, shown with the server's own (<see cref="Containers.EngineChecks"/>).</summary>
+    public void ShowEngine(IReadOnlyList<Marker> markers)
+    {
+        engine = markers;
+        document.Markers = Shown();
+    }
+
+    /// <summary>Every source's markers, but an engine's on a line the server already marks as gravely: Compose checks a
+    /// compose file by the schema the YAML server does, and the Dockerfile server knows some of BuildKit's rules, so the
+    /// line is marked once (Problems' Containers tab lists the engine's whole).</summary>
+    private IReadOnlyList<Marker> Shown()
+    {
+        if (engine.Count == 0)
+        {
+            return [.. own, .. lint];
+        }
+        TextSnapshot text = document.Text.Snapshot;
+        int Line(Marker m) => text.GetLineFromOffset(Math.Min(m.Range.Start, text.Length));
+        HashSet<(int, MarkerKind)> marked = [.. own.Select(m => (Line(m), m.Kind))];
+        return [.. own, .. lint, .. engine.Where(m => !marked.Contains((Line(m), m.Kind)))];
     }
 
     internal void Connect(LanguageSession started)
@@ -166,11 +190,12 @@ public sealed class WebDocument : IServerDocument, IDisposable
             }
             placed = null;
         }
-        if (own.Count + lint.Count > 0)
+        if (own.Count + lint.Count + engine.Count > 0)
         {
             own = [.. own.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
             lint = [.. lint.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
-            document.Markers = [.. own, .. lint];
+            engine = [.. engine.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+            document.Markers = Shown();
         }
         AwaitPush();
         Pull(Settle);
@@ -263,7 +288,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
         placed = diagnostics;
         // The server's own codes stay with the diagnostics, which its quick fixes are asked for by.
         own = [.. found.Select((d, i) => DiagnosticMarks.Marker(Named(d), ranges[i])).OfType<Marker>()];
-        document.Markers = [.. own, .. lint];
+        document.Markers = Shown();
     }
 
     /// <summary>A diagnostic with the code Rider shows before its message: TypeScript's as TS2322 (from its own server, or

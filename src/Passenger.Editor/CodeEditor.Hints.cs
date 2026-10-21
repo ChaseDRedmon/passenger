@@ -60,7 +60,7 @@ public sealed partial class CodeEditor
     public void SetInlayHints(IReadOnlyList<InlayHint> hints)
     {
         IReadOnlyList<InlayHint> before = InlayHints;
-        InlayHints = [.. hints.OrderBy(h => h.Offset).ThenBy(h => h.Kind == InlayHintKind.Type ? 0 : 1)];
+        InlayHints = [.. hints.OrderBy(h => h.Offset).ThenBy(h => Trails(h) ? 0 : 1)];
         FollowHints(before, InlayHints);
         InvalidateVisual();
         FollowInputMethod();
@@ -71,7 +71,15 @@ public sealed partial class CodeEditor
     /// composition rather than a hint.</summary>
     private readonly record struct Gap(int Column, double Width, TextLine Label, bool PadLeft, bool Trailing, InlayHint Hint = default, bool Composing = false);
 
-    private bool Shows(InlayHint hint) => hint.Kind == InlayHintKind.Type ? showTypeHints : showParameterHints;
+    private bool Shows(InlayHint hint) => hint.Kind switch
+    {
+        InlayHintKind.Type => showTypeHints,
+        InlayHintKind.Parameter => showParameterHints,
+        _ => true,
+    };
+
+    /// <summary>Whether a hint ends the text before it (a type, a value) rather than beginning the text after it.</summary>
+    private static bool Trails(InlayHint hint) => hint.Kind != InlayHintKind.Parameter;
 
     /// <summary>The hints on a row, in column order, and the composition where the primary caret stands among them.</summary>
     private Gap[] GapsOn(RowSpan span)
@@ -143,7 +151,7 @@ public sealed partial class CodeEditor
             }
             TextLine label = labels.Get((hint.Label, -6), () => Format(hint.Label, [], hintRun ??= HintRun()));
             double width = label.WidthIncludingTrailingWhitespace + pad + (hint.PadLeft ? pad : 0) + (hint.PadRight ? pad : 0);
-            gaps.Add(new Gap(hint.Offset - span.Start, width, label, hint.PadLeft, hint.Kind == InlayHintKind.Type, hint));
+            gaps.Add(new Gap(hint.Offset - span.Start, width, label, hint.PadLeft, Trails(hint), hint));
         }
         return [.. gaps];
     }
@@ -159,7 +167,7 @@ public sealed partial class CodeEditor
             if (Shows(hints[i]))
             {
                 any = true;
-                trailing |= hints[i].Kind == InlayHintKind.Type;
+                trailing |= Trails(hints[i]);
             }
         }
         return (any, trailing);

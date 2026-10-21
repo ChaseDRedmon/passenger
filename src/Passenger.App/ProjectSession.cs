@@ -123,7 +123,7 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Configurations.Configure(session.Projects);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
-        session.Web = new Web.WebLanguages(folder, setup.Settings) { DockerHub = setup.DockerHub };
+        session.Web = new Web.WebLanguages(folder, setup.Settings, setup.Engine) { DockerHub = setup.DockerHub };
         return session;
     }
 

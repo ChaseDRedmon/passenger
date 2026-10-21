@@ -367,7 +367,7 @@ public sealed class ContainersTests
     }
 
     /// <summary>A docker that answers as a CLI does whose engine is not running: its client's version, then an error.</summary>
-    private static string StandInCli(string folder)
+    internal static string StandInCli(string folder)
     {
         const string Client = """{"Client":{"Version":"29.0.0","Context":"stand-in"},"Server":null}""";
         const string Error = "Cannot connect to the Docker daemon at unix:///nowhere/docker.sock. Is the docker daemon running?";

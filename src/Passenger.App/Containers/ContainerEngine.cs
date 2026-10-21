@@ -125,9 +125,11 @@ public sealed class ContainerEngine
         return start;
     }
 
-    /// <summary>Runs a command to its end, its output and errors read whole.</summary>
-    public Task<ChildResult> RunAsync(IEnumerable<string> arguments, TimeSpan? limit = null, CancellationToken cancel = default, string? folder = null, string? input = null) =>
-        ChildProcesses.RunAsync(Command(arguments, folder), input, limit ?? AskLimit, cancel);
+    /// <summary>Runs a command to its end, its output and errors read whole; an exit code among <paramref name="answers"/>
+    /// is its answer (a check that found something), not a failure to log.</summary>
+    public Task<ChildResult> RunAsync(IEnumerable<string> arguments, TimeSpan? limit = null, CancellationToken cancel = default, string? folder = null, string? input = null,
+        IReadOnlyCollection<int>? answers = null) =>
+        ChildProcesses.RunAsync(Command(arguments, folder), input, limit ?? AskLimit, cancel, answers);
 
     /// <summary>A command's output once it ends, or once <paramref name="time"/> has passed, when it is ended and what it
     /// wrote so far is its answer, with exit code 0 (a log followed for a while).</summary>
