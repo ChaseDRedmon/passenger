@@ -362,7 +362,9 @@ public sealed class ContainerRunsTests
             string site = Container(project, "site");
             Assert.Equal("first", Docker.Run("exec", site, "cat", "/www/index.html"));
             // Compose's watch syncs a change into the running container, with no rebuild and no restart.
-            Ui.WaitFor(() => Run(window).Contains("Watch", StringComparison.OrdinalIgnoreCase), "Compose's watch to start in the Run window", TimeSpan.FromMinutes(1));
+            Ui.WaitFor(() => Run(window).Contains("Watch enabled", StringComparison.Ordinal) || Run(window).Contains("Compose's watch of site ended", StringComparison.Ordinal),
+                "Compose's watch to start in the Run window", TimeSpan.FromMinutes(1));
+            Assert.True(Run(window).Contains("Watch enabled", StringComparison.Ordinal), $"Compose's watch did not start: {Run(window)}");
             File.WriteAllText(Path.Combine(folder, "site", "index.html"), "second\n");
             Assert.True(Waiting.Until(() => Docker.Run("exec", site, "cat", "/www/index.html") == "second", TimeSpan.FromMinutes(1)),
                 $"Compose's watch did not sync the change: {Run(window)}");
@@ -406,8 +408,21 @@ public sealed class ContainerRunsTests
     public void A_service_that_serves_HTTPS_has_the_development_certificate_and_the_projects_user_secrets_mounted()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        ChildResult check = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "--check"], TestFolders.Create("devcerts-")))).GetAwaiter().GetResult();
+        string certificates = TestFolders.Create("devcerts-");
+        ChildResult check = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "--check"], certificates))).GetAwaiter().GetResult();
         Assert.SkipWhen(!check.Succeeded, "No ASP.NET Core development certificate here to export, and making one would change this machine's certificate store");
+        // An export the store holds up (a locked keychain asking for its password) is this machine's, not the IDE's, to answer.
+        bool exported;
+        try
+        {
+            exported = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "-ep", Path.Combine(certificates, "check.pfx"), "-p", "check"], certificates),
+                limit: TimeSpan.FromSeconds(30))).GetAwaiter().GetResult().Succeeded;
+        }
+        catch (TimeoutException)
+        {
+            exported = false;
+        }
+        Assert.SkipWhen(!exported, "The development certificate could not be exported here within 30 s (its store asks something of the person)");
         (string folder, string project) = Shop("https");
         Write(folder, "Web/Web.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
             + "    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>passenger-test-https</UserSecretsId>\n  </PropertyGroup>\n</Project>\n");

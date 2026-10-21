@@ -173,7 +173,7 @@ public static class ContainerPlans
             await WriteOverride(cancel);
         }
 
-        DotnetService? launched = dotnet.FirstOrDefault(d => d.Service == configuration.LaunchService) ?? dotnet.FirstOrDefault(d => d.Starts);
+        DotnetService? launched = dotnet.FirstOrDefault(d => d.Service == configuration.LaunchService) ?? dotnet.FirstOrDefault(d => d.Starts && (start.Count == 0 || start.Contains(d.Service)));
         string? launchService = configuration.LaunchService.Length > 0 ? configuration.LaunchService : launched?.Service;
         int? launchPort = launchService is null ? null : model[launchService]?.Ports.FirstOrDefault(p => p.Protocol == "tcp")?.Target;
         // Every image built from a folder here maps its paths back, a .NET service's or not.
@@ -616,6 +616,10 @@ public static class DevelopmentCertificate
 
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
+    /// <summary>How long the export may take: one waiting on the system's certificate store (a locked keychain asking for
+    /// its password) leaves the service without HTTPS's certificate rather than the run waiting for good.</summary>
+    public static readonly TimeSpan ExportLimit = TimeSpan.FromSeconds(60);
+
     public static async Task<Exported?> ExportAsync(string state, CancellationToken cancel)
     {
         string folder = Path.Combine(state, "https");
@@ -630,7 +634,7 @@ public static class DevelopmentCertificate
                 return new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim());
             }
             string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-            ChildResult exported = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "-ep", file, "-p", password], folder), cancel: cancel);
+            ChildResult exported = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
             if (!exported.Succeeded || !File.Exists(file))
             {
                 IdeErrors.Write($"Containers: the development certificate could not be exported: {exported.Error.Trim()} {exported.Output.Trim()}".Trim());
@@ -643,7 +647,7 @@ public static class DevelopmentCertificate
             }
             return new Exported(folder, file, password);
         }
-        catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or TimeoutException)
         {
             IdeErrors.Write($"Containers: the development certificate could not be exported: {failed.Message}");
             return null;
@@ -716,8 +720,19 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             start.RedirectStandardError = true;
             Process started = ChildProcesses.Start(start);
             watching = started;
-            _ = Pump(started.StandardOutput, ConsoleStream.Output);
-            _ = Pump(started.StandardError, ConsoleStream.Output);
+            Task pumped = Task.WhenAll(Pump(started.StandardOutput, ConsoleStream.Output), Pump(started.StandardError, ConsoleStream.Output));
+            _ = Ended();
+
+            // A watch that ends while the run lasts says so, rather than leaving its files unsynced unsaid.
+            async Task Ended()
+            {
+                await pumped;
+                await started.WaitForExitAsync();
+                if (watching == started && !IsStopped)
+                {
+                    console.Write($"Compose's watch of {string.Join(", ", Plan.Watched)} ended with exit code {started.ExitCode}\n", ConsoleStream.Error);
+                }
+            }
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {

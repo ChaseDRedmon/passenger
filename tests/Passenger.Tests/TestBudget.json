@@ -11,7 +11,7 @@
     "UnitTestsTests": 240,
     "McpTests": 540,
     "ContainersTests": 150,
-    "ContainerRunsTests": 180,
+    "ContainerRunsTests": 300,
     "ContainerDebuggingTests": 360,
     "SelfDebuggingTests": 180,
     "IdeErrorsTests": 150,
