@@ -349,6 +349,17 @@ public sealed class ProfilerCommands
             return NothingRunning;
         }
         parts.Dock.Show("profiler");
+        if (target.Watched is { } app)
+        {
+            int? started = await BackgroundWork.Run(() => DotnetProcesses.Under(target.ProcessId).FirstOrDefault(p => p.Program.Equals(app, StringComparison.OrdinalIgnoreCase))?.Id);
+            if (started is not int process)
+            {
+                string why = $"{target.Name} runs under dotnet watch, which has yet to start {app}: Attach Profiler once it runs";
+                View.Stopped(why);
+                return why;
+            }
+            target = target with { ProcessId = process };
+        }
         ProfilingSession running;
         try
         {
@@ -388,9 +399,9 @@ public sealed class ProfilerCommands
     }
 
     /// <summary>The program Attach Profiler profiles: the one being debugged, else the one Profile started that goes on
-    /// after its snapshot, else the one Run runs (an Avalonia app by the process its inspector said it is, which under Hot
-    /// Reload is not dotnet watch's); its name as the window says it, and as its snapshot's file is named.</summary>
-    private (int ProcessId, string Name, string File)? Attachable()
+    /// after its snapshot, else the one Run runs, in the Run console or the terminal (an Avalonia app by the process its
+    /// inspector said it is; under Hot Reload, the app dotnet watch started, found as the attach begins).</summary>
+    private AttachTarget? Attachable()
     {
         ProjectSession current = Session;
         if (current.Debug.IsDebugging && current.Debug.Session is { ProcessStarted.IsCompletedSuccessfully: true } debugging)
@@ -398,19 +409,28 @@ public sealed class ProfilerCommands
             int process = debugging.ProcessStarted.Result;
             LiveApp? app = current.LiveApp is { ProcessId: int inspected } live && inspected == process ? live : null;
             string program = app?.Plan?.Built ?? debugging.Program;
-            return (process, app?.Name ?? Path.GetFileNameWithoutExtension(program), FileName(Path.GetFileNameWithoutExtension(program)));
+            return new(process, app?.Name ?? Path.GetFileNameWithoutExtension(program), FileName(Path.GetFileNameWithoutExtension(program)));
         }
         if (current.Profiled is { } profiled)
         {
-            return (profiled.Run.ProcessId, profiled.Name, profiled.File);
+            return new(profiled.Run.ProcessId, profiled.Name, profiled.File);
         }
-        if (current.Runner.IsRunning && (current.RunApp?.ProcessId ?? current.Runner.ProcessId) is int running)
+        BuildRunController builds = parts.Builds();
+        int? ran = current.InTerminal is { IsRunning: true } terminal ? terminal.ProcessId : current.Runner.IsRunning ? current.Runner.ProcessId : null;
+        if ((current.RunApp?.ProcessId ?? ran) is int running && builds.IsRunning)
         {
-            string name = current.RunApp?.Name ?? current.Configurations.Chosen?.Name ?? "the program";
-            return (running, name, FileName(current.RunApp?.Plan?.Built is { } built ? Path.GetFileNameWithoutExtension(built) : name));
+            LaunchPlan? plan = builds.RunPlan;
+            string name = current.RunApp?.Name ?? plan?.Name ?? "the program";
+            string program = current.RunApp?.Plan?.Built is { } built ? Path.GetFileNameWithoutExtension(built) : plan?.ProgramName ?? name;
+            // Under Hot Reload the process Run started is dotnet watch's own, and the app one it started in turn.
+            return new(running, name, FileName(program), builds.WatchesHotReload ? program : null);
         }
         return null;
     }
+
+    /// <summary>A program Attach Profiler can profile: its process, its name as the window says it and as its snapshot's
+    /// file is named, and, when the process is dotnet watch's, the app's program to find among the ones it started.</summary>
+    private sealed record AttachTarget(int ProcessId, string Name, string File, string? Watched = null);
 
     /// <summary>A name made fit for a file's: what a file system refuses, and a colon, as dashes.</summary>
     private static string FileName(string name) =>

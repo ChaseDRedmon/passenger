@@ -453,7 +453,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   program has it, and Run while Profile's does. The folder's end lets go of every run (`LetGoAsync`: its port and listener), the leave waits for
   the program's end to land, and the window's next session clears the profiler window's run (`ProfilerCommands.Rebind`).
   `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port (Run > Attach
-  Profiler to Running Program: the debugged one, else Profile's going on, else Run's); an `Attached` one is never killed.
+  Profiler to Running Program: the debugged one, else Profile's going on, else Run's, in the Run console or the
+  terminal, under Hot Reload the app dotnet watch started, found by `DotnetProcesses.Under` as the attach begins); an
+  `Attached` one is never killed.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
@@ -726,7 +728,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   drives `--mcp FOLDER` (or `--mcp-attach` with `PASSENGER_START=headless` and a state of its own, as `TestRun` sets).
 - Attach to Process: `MainWindow.Attach.cs` (`Debugging/AttachToProcessDialog`, Reattach, the recently attached);
   `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
-  on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows). An attached session is
+  on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows), and `Under` those a process
+  started, through each one's parent (on Windows only a parent that began first). An attached session is
   let go by Detach, by leaving its folder and by the window's close, never ended by them. On macOS the debugger needs no entitlement and no
   get-task-allow on its target: the adapter runs under the machine's dotnet and talks to the runtime through its
   pipes, so the package carries no com.apple.security.cs.debugger.

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.Core;
 using Passenger.Profiler;
 
 namespace Passenger.Tests;
@@ -476,6 +477,81 @@ public sealed class ProfilerTests : IDisposable
             Ui.Run(window, AppActions.Stop);
             Ui.WaitFor(() => !window.Runner.IsRunning && window.Profiling is null, "what ran to stop");
             window.Close();
+        }
+    }
+
+    /// <summary>Attach Profiler profiles the program the person runs wherever Run started it: one in a tab of the terminal,
+    /// and under Hot Reload the app dotnet watch started, never dotnet watch's own process, whose threads it took for the
+    /// app's.</summary>
+    [AvaloniaFact]
+    public void Attach_Profiler_profiles_the_program_run_in_the_terminal_and_the_app_dotnet_watch_runs()
+    {
+        string pids = TestFolders.Create("pids-");
+        string project = Project("Spun", $"File.WriteAllText(Path.Combine(@\"{pids}\", $\"{{Environment.ProcessId}}.pid\"), \"\");\n" + """
+            System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+            while (clock.Elapsed < TimeSpan.FromMinutes(5))
+            {
+                Work.Spin();
+            }
+            static class Work
+            {
+                [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                public static double Spin()
+                {
+                    double total = 0;
+                    for (int i = 1; i < 100000; i++) { total += Math.Sqrt(i); }
+                    return total;
+                }
+            }
+            """);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<int> Programs() => [.. Directory.GetFiles(pids, "*.pid").Select(p => int.Parse(Path.GetFileNameWithoutExtension(p), System.Globalization.CultureInfo.InvariantCulture))];
+        string generated = window.Configuration!.Name;
+        try
+        {
+            window.SetConfigurations([new Passenger.App.Run.RunConfiguration
+            {
+                Name = "In the terminal", Project = PathNames.Canonical(Path.Combine(project, "Spun.csproj")), Console = Passenger.App.Run.ConsoleKind.Terminal,
+            }], "In the terminal");
+            Ui.Launched(window, window.RunAsync(), "the run in the terminal", TimeSpan.FromMinutes(3));
+            Ui.PumpUntil(() => Programs().Count == 1, "the program to start in the terminal", TimeSpan.FromMinutes(2));
+            int inTerminal = Programs()[0];
+            Assert.Null(window.Actions.WhyNot(AppActions.AttachProfiler, window.Actions.Context()));
+            Ui.Launched(window, window.AttachProfilerAsync(), "the profiler to attach to the program in the terminal");
+            Assert.Equal(inTerminal, window.Profiling?.ProcessId);
+            Ui.Hold(TimeSpan.FromSeconds(1), "the attached profiler to sample the spinning program");
+            Passenger.App.Profiling.SnapshotRead terminal = Ui.Await(window.SnapshotAsync(), "the terminal program's snapshot", TimeSpan.FromMinutes(2));
+            Assert.True(terminal.Snapshot?.HotSpots.Any(h => h.Name.StartsWith("Work.Spin", StringComparison.Ordinal)) == true, terminal.Message);
+            Ui.Run(window, AppActions.Stop);
+            Assert.True(Processes.Gone(inTerminal), $"Stop left the program in the terminal running: {Processes.Describe(inTerminal)}");
+            Ui.WaitFor(() => !window.IsRunning, "the terminal's program to end");
+
+            window.ApplySettings(window.Settings with { HotReload = true });
+            Assert.True(window.SelectConfiguration(generated));
+            Ui.Launched(window, window.RunAsync(), "the run under dotnet watch", TimeSpan.FromMinutes(3));
+            Ui.PumpUntil(() => Programs().Count == 2, "dotnet watch to start the app", TimeSpan.FromMinutes(3));
+            int app = Programs().Single(p => p != inTerminal);
+            Ui.Launched(window, window.AttachProfilerAsync(), "the profiler to attach to the app dotnet watch runs");
+            int profiled = window.Profiling?.ProcessId ?? 0;
+            Assert.True(profiled == app, $"Attach Profiler profiled {Processes.Describe(profiled)}, not the app dotnet watch runs, {Processes.Describe(app)}");
+            Ui.Hold(TimeSpan.FromSeconds(1), "the attached profiler to sample the spinning app");
+            Passenger.App.Profiling.SnapshotRead watched = Ui.Await(window.SnapshotAsync(), "the app's snapshot", TimeSpan.FromMinutes(2));
+            Assert.True(watched.Snapshot?.HotSpots.Any(h => h.Name.StartsWith("Work.Spin", StringComparison.Ordinal)) == true, watched.Message);
+        }
+        finally
+        {
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.IsRunning, "what ran to stop");
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
+            foreach (int program in Programs())
+            {
+                Processes.Kill(program);
+            }
+            TestFolders.Delete(pids);
         }
     }
 

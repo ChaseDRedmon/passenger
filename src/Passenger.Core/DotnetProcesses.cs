@@ -64,6 +64,64 @@ public static partial class DotnetProcesses
     /// <summary>The program with this process id, when it is one a debugger can attach to.</summary>
     public static DotnetProcess? Find(int id) => List().FirstOrDefault(p => p.Id == id);
 
+    /// <summary>The .NET programs a debugger can attach to that a process started, or that those started in turn (the app
+    /// dotnet watch runs, under the CLI's own processes), the nearest first. Read off the UI thread, as the list is.</summary>
+    public static IReadOnlyList<DotnetProcess> Under(int ancestor)
+    {
+        List<(DotnetProcess Process, int Depth)> found = [];
+        foreach ((int id, long? started) in Candidates())
+        {
+            if (id != ancestor && id != Environment.ProcessId && Depth(id, ancestor) is int depth && Read(id, started) is { } process)
+            {
+                found.Add((process, depth));
+            }
+        }
+        return [.. found.DistinctBy(f => f.Process.Id).OrderBy(f => f.Depth).Select(f => f.Process)];
+    }
+
+    /// <summary>How many parents up from a process its ancestor is, or null when it is none of its nearest few.</summary>
+    private static int? Depth(int id, int ancestor)
+    {
+        int at = id;
+        for (int depth = 1; depth <= 8; depth++)
+        {
+            if (ParentOf(at) is not int parent || parent <= 0 || parent == at)
+            {
+                return null;
+            }
+            if (parent == ancestor)
+            {
+                return depth;
+            }
+            at = parent;
+        }
+        return null;
+    }
+
+    /// <summary>The process that started a process, or null when it has gone or the system will not say.</summary>
+    private static int? ParentOf(int id)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return ParentWindows(id);
+            }
+            if (OperatingSystem.IsMacOS())
+            {
+                return ParentMac(id);
+            }
+            string stat = File.ReadAllText($"/proc/{id}/stat");
+            // The fields after the name, which may hold spaces and parentheses itself: the parent is the 4th field.
+            return int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], CultureInfo.InvariantCulture);
+        }
+        catch (Exception gone) when (gone is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or FormatException
+            or IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Each process the runtime's pipes name, with the start its transport's pipes were made for (none on Windows,
     /// whose pipes go with their process).</summary>
     private static IEnumerable<(int Id, long? Started)> Candidates()
@@ -112,8 +170,15 @@ public static partial class DotnetProcesses
     // macOS: proc_pidinfo's BSD side, proc_pidpath and sysctl's KERN_PROCARGS2, each given for a process of the same user.
     private const int ProcPidTbsdInfo = 3;
     private const int BsdInfoSize = 136;
+    private const int BsdParentOffset = 16;
     private const int BsdUidOffset = 20;
     private const int BsdStartOffset = 120;
+
+    private static unsafe int? ParentMac(int id)
+    {
+        byte* info = stackalloc byte[BsdInfoSize];
+        return ProcPidInfo(id, ProcPidTbsdInfo, 0, info, BsdInfoSize) == BsdInfoSize ? (int)*(uint*)(info + BsdParentOffset) : null;
+    }
 
     private static unsafe DotnetProcess? ReadMac(int id, long? started)
     {
@@ -248,7 +313,33 @@ public static partial class DotnetProcesses
 
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint TokenQuery = 0x0008;
+    private const int ProcessBasicInformation = 0;
     private const int ProcessCommandLineInformation = 60;
+
+    /// <summary>A process's parent from its PROCESS_BASIC_INFORMATION, six pointer-sized fields with the parent's id last.</summary>
+    private static unsafe int? ParentWindows(int id)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+        using SafeProcessHandle process = OpenProcess(ProcessQueryLimitedInformation, false, (uint)id);
+        if (process.IsInvalid)
+        {
+            return null;
+        }
+        nint* information = stackalloc nint[6];
+        uint returned = 0;
+        if (NtQueryInformationProcess(process, ProcessBasicInformation, (byte*)information, (uint)(6 * sizeof(nint)), &returned) != 0)
+        {
+            return null;
+        }
+        int parent = (int)information[5];
+        // Windows keeps a gone parent's id, which a later process may have been given: one that began after this is not its parent.
+        using SafeProcessHandle above = OpenProcess(ProcessQueryLimitedInformation, false, (uint)parent);
+        return !above.IsInvalid && GetProcessTimes(above, out long began, out _, out _, out _) && GetProcessTimes(process, out long start, out _, out _, out _)
+            && began <= start ? parent : null;
+    }
 
     private static DotnetProcess? ReadWindows(int id)
     {
@@ -333,6 +424,10 @@ public static partial class DotnetProcesses
     [LibraryImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static unsafe partial bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, char* name, uint* size);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetProcessTimes")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetProcessTimes(SafeProcessHandle process, out long creation, out long exit, out long kernel, out long user);
 
     [LibraryImport("ntdll.dll", EntryPoint = "NtQueryInformationProcess")]
     private static unsafe partial int NtQueryInformationProcess(SafeProcessHandle process, int kind, byte* information, uint length, uint* returned);

@@ -125,6 +125,10 @@ public sealed class BuildRunController
 
     public string? DebugProject { get; private set; }
 
+    /// <summary>The plan Run last started: what its program is named, which Attach Profiler looks for among what dotnet
+    /// watch started.</summary>
+    public LaunchPlan? RunPlan { get; private set; }
+
     /// <summary>Builds as Build does, and says how it ended once it has: built, failed, stopped, refused or unable to start.
     /// Canceled, the build is stopped as the Build window's Stop stops it.</summary>
     public Task<BuildOutcome> BuildAsync(BuildCause cause, CancellationToken cancel)
@@ -428,6 +432,7 @@ public sealed class BuildRunController
             work.Say($"Starting {chosen.Name}…");
             ran = chosen.Name;
             RunProject = Path.GetDirectoryName(plan.Project);
+            RunPlan = plan;
             string running = watched ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
             // An Avalonia or WPF app is launched with the inspector in it, which tells of its failed bindings while it runs.
             LaunchPlan launched = session.InspectedRun(plan, watched);
