@@ -293,6 +293,11 @@ public static class ContainerTools
         }
         return [.. words, container, executable, "dap", .. adapterArguments];
     }
+
+    /// <summary>A mode of the tools in a container, over docker exec's standard input and output: the profiler's
+    /// <c>trace</c>, <c>heap</c> and <c>sources</c>.</summary>
+    public static IReadOnlyList<string> ToolsCommand(string container, string executable, IReadOnlyList<string> words) =>
+        ["exec", "-i", .. Unheld, container, executable, .. words];
 }
 
 /// <summary>Passenger's container tools could not be had or used: no copy and no download, a checksum that did not match, a

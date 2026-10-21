@@ -192,13 +192,17 @@ public sealed class ProfilerView : DockPanel
         };
 
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
-        stop = new Button { Content = "Get Snapshot", Classes = { "primary" }, IsVisible = false };
+        stop = new Button { Name = "ProfilerGetSnapshot", Content = "Get Snapshot", Classes = { "primary" }, IsVisible = false };
         stop.Click += (_, _) => StopRequested?.Invoke(this, EventArgs.Empty);
         kill = new Button { Content = "Kill", IsVisible = false };
         kill.Click += (_, _) => KillRequested?.Invoke(this, EventArgs.Empty);
         pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Frames"), PageButton("Allocations"), PageButton("GC"),
             PageButton("Memory"), PageButton("Snapshots")];
-        pages[(int)ProfilerPage.Frames].Name = "ProfilerFrames";
+        // Named for a screenshot's --click-name: ProfilerHotSpots, ProfilerMemory and the rest.
+        foreach (ProfilerPage page in Enum.GetValues<ProfilerPage>())
+        {
+            pages[(int)page].Name = $"Profiler{page}";
+        }
         StackPanel left = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (ToggleButton page in pages)
         {
@@ -208,7 +212,7 @@ public sealed class ProfilerView : DockPanel
         ((PathIcon)open.Content).Bind(PathIcon.DataProperty, open.GetResourceObservable("Icon.FolderOpen"));
         ToolTip.SetTip(open, "Open Snapshot");
         open.Click += (_, _) => OpenSnapshotRequested?.Invoke(this, EventArgs.Empty);
-        heap = new Button { Content = "Get Memory Snapshot", IsVisible = false };
+        heap = new Button { Name = "ProfilerGetMemorySnapshot", Content = "Get Memory Snapshot", IsVisible = false };
         heap.Click += (_, _) => MemoryRequested?.Invoke(this, EventArgs.Empty);
         StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { heap, stop, kill, open } };
         DockPanel bar = new();
@@ -468,7 +472,7 @@ public sealed class ProfilerView : DockPanel
         spots.ItemsSource = snapshot.HotSpots;
         flame.SampleMs = snapshot.SampleMs;
         flame.Root = snapshot.All;
-        frames.Show(snapshot.UiFrames, whole.StartMs);
+        frames.Show(snapshot.UiFrames, whole.StartMs, snapshot.Place is { } elsewhere ? FramesView.InContainer(elsewhere.Where) : null);
         ShowPageLater(current);
         types.ItemsSource = snapshot.Allocations;
         types.SelectedIndex = snapshot.Allocations.Count > 0 ? 0 : -1;

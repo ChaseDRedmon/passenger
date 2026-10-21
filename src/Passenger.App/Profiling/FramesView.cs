@@ -92,7 +92,7 @@ public sealed class FramesView : DockPanel
         table.DoubleTapped += (_, _) => Open();
         table.KeyDown += OnKey;
         shown = new DockPanel { Children = { band, heading, table } };
-        placeholder = Muted("No Avalonia frames in this run. Passenger records an Avalonia app's frames, layout and rendering when it profiles one it launched (Profile) or one Run or Debug started (Attach Profiler).");
+        placeholder = Muted(NoFrames);
         placeholder.HorizontalAlignment = HorizontalAlignment.Center;
         placeholder.VerticalAlignment = VerticalAlignment.Center;
         placeholder.TextWrapping = TextWrapping.Wrap;
@@ -101,6 +101,14 @@ public sealed class FramesView : DockPanel
         Children.Add(new Panel { Children = { shown, placeholder } });
         Show([], 0);
     }
+
+    /// <summary>What the page says of a run with no frames.</summary>
+    private const string NoFrames = "No Avalonia frames in this run. Passenger records an Avalonia app's frames, layout and rendering when it profiles one it launched (Profile) or one Run or Debug started (Attach Profiler).";
+
+    /// <summary>Why a run in a container has no frames: Passenger puts its inspector, which records them, in no container.</summary>
+    public static string InContainer(string where) =>
+        $"No Avalonia frames in this run: it ran in container {where}, where Passenger puts no inspector to record an Avalonia app's frames, layout and rendering. "
+        + "Profile the app on this machine (Profile, or Attach Profiler to what Run or Debug started there) for them.";
 
     /// <summary>A control's row opened (double-click, Enter): its XAML, or its place in the Live Visual Tree.</summary>
     public event EventHandler<UiControl>? ControlOpened;
@@ -125,15 +133,19 @@ public sealed class FramesView : DockPanel
     /// <summary>The line over the table: the frames', or the chosen frame's, times.</summary>
     public string Summary => summary.Text ?? string.Empty;
 
+    /// <summary>What the page says in place of frames, while it shows none.</summary>
+    public string? Placeholder => placeholder.IsVisible ? placeholder.Text : null;
+
     /// <summary>Shows some frames, all of them chosen; <paramref name="start"/> is where the run began, which their times are
-    /// said from.</summary>
-    public void Show(IReadOnlyList<UiFrame> shownFrames, double start)
+    /// said from. With none, the page says why: <paramref name="why"/>, else how a run gets them.</summary>
+    public void Show(IReadOnlyList<UiFrame> shownFrames, double start, string? why = null)
     {
         frames = shownFrames;
         origin = start;
         chart.Frames = shownFrames;
         shown.IsVisible = shownFrames.Count > 0;
         placeholder.IsVisible = shownFrames.Count == 0;
+        placeholder.Text = why ?? NoFrames;
         Fill();
     }
 

@@ -634,11 +634,29 @@ window or takes the focus; it shows everything but the system's own window chrom
   run (`ProfilerCommands.Rebind`). `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port
   (Run > Attach Profiler to Running Program: the debugged one, else Profile's going on, else Run's, in the Run console
   or the terminal, under Hot Reload the app dotnet watch started, found by `DotnetProcesses.Under` as the attach
-  begins); an `Attached` one is never killed.
+  begins); an `Attached` one is never killed. A program in a container is profiled there (#345): `AttachAsync` given a
+  `ProfilePlace` (the tools' command over `docker exec -i`, the container's name, a PDB document's path made this
+  machine's) runs the tools' `trace` there (`InContainer.TraceAsync`: the same `ProfilingSession.Providers` at the
+  program's own diagnostic port, the .nettrace on their standard output, a `recording` line on their errors once it
+  begins, their input's end stopping the session with its rundown; `resume` lets a program held at its start by
+  DOTNET_DefaultDiagnosticPortSuspend=1 go once recording), the bytes written to the trace here as they come and read by
+  `Snapshot` as ever, which keeps the `Place`. Attach Profiler takes the debugged container session first
+  (`DebugSession.Place`, by its id there and the debugger's path map), else, from the action with nothing of the
+  folder's running, one chosen among the running containers' programs in Attach to Process's dialog
+  (`AttachPurpose.Profiler`, `MainWindow.ChooseProfiledAsync`; resumed), the tools put in by `ProfiledInContainerAsync`
+  as the debugger's are, under a `Working`; MCP's `profile` takes `container` with `attach`. Hot spots' sources
+  (`MethodSources.FindAsync`) are read by the tools' `sources` in the container, where the modules are, each document
+  made this machine's by the place's map (as it is for a build of this machine's). A container's run has no inspector,
+  so the Frames page (`FramesView.InContainer`) and MCP's `frames` of an app with Avalonia's modules say why it is empty.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
-  `App/Profiling/MemoryView` is the Memory page. ClrMD 4 finds statics itself and reads .NET 11;
+  `App/Profiling/MemoryView` is the Memory page. A container's snapshots are taken there (`ContainerHeap`: the tools'
+  `heap`, started with the first snapshot and kept for the run, `InContainer.HeapAsync` running `HeapHistory` itself
+  with the container's own DAC, a line `snapshot` a snapshot), each sent whole (`HeapWire`: a kind, its version, its
+  length, then the graph's arrays and the earlier snapshots' identities, deflated, 7-bit numbers, addresses as their
+  steps) and read back into the same `MemorySnapshot`, so the Memory page and comparisons know no difference; a frame of
+  another version is refused. ClrMD 4 finds statics itself and reads .NET 11;
   `HeapGraph` loads the program's own runtime folder's DAC and gives ClrMD a locator that finds nothing (no symbol
   server, no cache in the person's app data). ClrMD's Azure packages stay carried: its `FileLocator` getter loads
   Azure.Core when the DAC reads memory a dump lacks, and pruning them hung snapshots on Linux and left types unnamed on
@@ -850,7 +868,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `find_in_files`/`replace_in_files` are the window's own search in its scopes and masks once `FileIndex.IsWalking` is
   false; the `local_history` tools wait for `LocalHistory.IsRecording`, their revert `RevertLocalHistoryAsync`;
   `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `build_output` the Build
-  console, and `profile` takes `attach`. The tools reach the
+  console, and `profile` takes `attach` (and `container`, a container's program). The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
   agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
@@ -1021,9 +1039,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   and loop are `AdapterProgram`). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
   container: `dap` (`AdapterProgram` and `DebugAdapter.cs` compiled in, the one engine), `processes` (the container's
   .NET programs as JSON, `DotnetProcesses.List` plus those mapping libcoreclr.so with no debugger pipe, each with
-  whether it was started for Hot Reload, built optimized, and why it cannot be attached to) and `version`; #345 adds
-  `trace` and `heap` beside them. Self-contained and InvariantGlobalization, never carried by the app (the release's
-  `Passenger-container-tools-<rid>.tar.gz`, or `just container-tools`); a musl publish keeps its own libdbgshim.so
+  whether it was started for Hot Reload, built optimized, and why it cannot be attached to), the profiler's `trace
+  --pid PID [--resume]`, `heap --pid PID` and `sources` (`Passenger.Profiler`'s `InContainer`, ClrMD and its Azure
+  packages carried; `ContainerTools.ToolsCommand`) and `version`. Self-contained and InvariantGlobalization, never
+  carried by the app (the release's `Passenger-container-tools-<rid>.tar.gz`, or `just container-tools`); a musl
+  publish keeps its own libdbgshim.so
   (`KeepMuslDbgShim`: the glibc package's matches a musl system too, and won). The engine's `SourcePaths.Match` takes a
   PDB document that exists where the adapter runs while the breakpoint's file does not (the IDE's, outside the
   container) by what they share from the end, and compares a Windows path (C:\…, \\server\…) ignoring case on any
@@ -1423,7 +1443,11 @@ app built here in Debug, as it is, with its PDB naming the container's paths and
 copied into images of `mcr.microsoft.com/dotnet/runtime:10.0` and its `-alpine`, labelled with the run's label and
 removed with the fixture), on glibc and musl, through a path map (`AttachThrough`, as a container run configuration
 will), and with tools downloaded from `UpdatesTests.StandIn`; the fixture publishes the tools for the engine's processor
-into `artifacts/container-tools` (seconds when up to date, a minute or two the first time). `WpfPreviewTests` (Windows only)
+into `artifacts/container-tools` (seconds when up to date, a minute or two the first time); `ContainerPrograms` builds,
+images and publishes for both. `ContainerProfilingTests` (Alone, skipped the same way) profile `Spins` (a program that
+spins in `Hot.Spin` and keeps `Keepsake`s, saying how many, made once a run, `Spins.Shared`) in containers they start:
+chosen in Attach Profiler's dialog, debugged there first, and memory snapshots compared; `McpTests.ContainerProfile.cs`
+has an agent profile it with `attach` and `container`. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.

@@ -2,6 +2,7 @@ using Passenger.App.Containers;
 using Passenger.App.Debugging;
 using Passenger.Core;
 using Passenger.Editor;
+using Passenger.Profiler;
 using A = Passenger.App.AppActions;
 
 namespace Passenger.App;
@@ -140,24 +141,38 @@ public partial class MainWindow
         return refused;
     }
 
-    /// <summary>What attaching in a container takes: the tools in it (copied in for a system of its, found here or
-    /// downloaded, when they are not there), the program by its id there, and the adapter's place, docker exec.</summary>
+    /// <summary>What attaching in a container takes: the tools in it and the program by its id there
+    /// (<see cref="ToolsAndProgramAsync"/>), and the adapter's place, docker exec.</summary>
     private async Task<(DotnetProcess Target, AdapterPlace Place)> InContainerAsync(DotnetProcess process, string container, Working held)
     {
         ContainerEngine engine = Engine;
+        (DotnetProcess target, string executable) = await ToolsAndProgramAsync(process, container, UiThread.Marshal<string>(held.Say), held.Stopping);
+        AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(container, executable, arguments)), ContainerTools.SymbolCache,
+            ContainerPaths.None, container);
+        return (target, place);
+    }
+
+    /// <summary>Passenger's tools in a container (copied in for a system of its, found here or downloaded, when they are not
+    /// there) and the program there by its id: the one of its command line, or, one named by its id alone (a debugged
+    /// session's), as it is.</summary>
+    private Task<(DotnetProcess Target, string Tools)> ToolsAndProgramAsync(DotnetProcess process, string container, Action<string> say, CancellationToken stop)
+    {
+        ContainerEngine engine = Engine;
         ContainerToolsSource source = ToolsSource;
-        CancellationToken stop = held.Stopping;
-        Action<string> say = UiThread.Marshal<string>(held.Say);
-        (DotnetProcess target, string executable) = await BackgroundWork.Run(async () =>
+        return BackgroundWork.Run(async () =>
         {
             string? tools = await ContainerTools.InContainerAsync(engine, container, stop);
             if (tools is null)
             {
                 ContainerSystem system = await ContainerTools.SystemOfContainerAsync(engine, container, stop);
-                string rid = system.Rid ?? throw new ContainerToolsException($"Container {container} runs on {system.Architecture}, for which Passenger has no debugger");
+                string rid = system.Rid ?? throw new ContainerToolsException($"Container {container} runs on {system.Architecture}, for which Passenger has no tools");
                 string folder = await ContainerTools.FolderAsync(source, rid, say, stop);
-                say($"Copying Passenger's debugging tools into {container}");
+                say($"Copying Passenger's container tools into {container}");
                 tools = await ContainerTools.CopyIntoAsync(engine, container, folder, stop);
+            }
+            if (process.Id != 0 && process.CommandLine.Length == 0)
+            {
+                return (process, tools);
             }
             IReadOnlyList<DotnetProcess> there = await ContainerTools.ProcessesAsync(engine, container, tools, stop);
             DotnetProcess found = process.Id != 0 && there.FirstOrDefault(p => p.Id == process.Id && p.CommandLine == process.CommandLine) is { } same ? same
@@ -165,9 +180,48 @@ public partial class MainWindow
                 ?? throw new ContainerToolsException($"{process.Program} no longer runs in {container}");
             return (found with { Note = found.Note ?? process.Note }, tools);
         }, stop);
-        AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(container, executable, arguments)), ContainerTools.SymbolCache,
-            ContainerPaths.None, container);
-        return (target, place);
+    }
+
+    /// <summary>A program in a container made ready for the profiler (Attach Profiler's): the tools put in it, the program
+    /// found by its id there, and the place it is recorded at, docker exec, the paths its PDBs name made this machine's
+    /// through <paramref name="paths"/> (as they are where it was built here).</summary>
+    private async Task<(DotnetProcess Target, ProfilePlace Place)> ProfiledInContainerAsync(DotnetProcess process, ContainerPaths paths, Action<string> say,
+        CancellationToken stop)
+    {
+        string container = process.Container ?? throw new ArgumentException($"{process.Program} runs on this machine, in no container", nameof(process));
+        ContainerEngine engine = Engine;
+        (DotnetProcess target, string executable) = await ToolsAndProgramAsync(process, container, say, stop);
+        return (target, new ProfilePlace(words => engine.Command(ContainerTools.ToolsCommand(container, executable, words)), container,
+            path => paths.ToHost(path) ?? path));
+    }
+
+    /// <summary>Attach Profiler's choice among the .NET programs of the engine's running containers, in Attach to Process's
+    /// dialog (null when cancelled): what it offers when nothing of the folder's runs.</summary>
+    private async Task<DotnetProcess?> ChooseProfiledAsync()
+    {
+        ContainerEngine engine = Engine;
+        AttachToProcessDialog dialog = new(() => BackgroundWork.Run(async () =>
+        {
+            try
+            {
+                return await ContainerProcesses.ListAsync(engine, CancellationToken.None);
+            }
+            catch (Exception unread) when (unread is ContainerCommandException or ContainerToolsException or IOException or TimeoutException
+                or System.Text.Json.JsonException or FileNotFoundException)
+            {
+                IdeLog.Write(IdeLog.Debugger, $"Attach Profiler could not list the containers' programs: {unread.Message}");
+                return (IReadOnlyList<DotnetProcess>)[];
+            }
+        }), _ => false, purpose: AttachPurpose.Profiler);
+        AttachToProcessDialog = dialog;
+        dialog.Closed += (_, _) =>
+        {
+            if (AttachToProcessDialog == dialog)
+            {
+                AttachToProcessDialog = null;
+            }
+        };
+        return await dialog.ShowDialog<DotnetProcess?>(this);
     }
 
     /// <summary>Rider's Reattach to Process: the program last attached to, by its process while it runs, else the one

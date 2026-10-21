@@ -234,6 +234,10 @@ public sealed class DebugSession
     /// <summary>Whether the program's process id (<see cref="ProcessStarted"/>) names a process of this machine.</summary>
     public bool IsLocal => !Elsewhere && processLocal;
 
+    /// <summary>Where the adapter runs when not beside the app (the program's container, which Attach Profiler records it
+    /// in too), or null.</summary>
+    public AdapterPlace? Place => place;
+
     private bool processLocal = true;
 
     /// <summary>The session ended with Detach: the program runs on without the debugger.</summary>

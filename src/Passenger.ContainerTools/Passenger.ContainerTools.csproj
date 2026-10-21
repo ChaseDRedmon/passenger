@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Passenger's container tools: what runs inside a Linux container for the IDE outside it, over docker exec's standard
        input and output. One executable with modes: dap (the IDE's own debug adapter, the same engine, compiled in from
-       Passenger.DebugAdapter), processes (the container's .NET programs as JSON). Published self-contained for linux-x64,
-       linux-arm64, linux-musl-x64 and linux-musl-arm64 (just container-tools, the release's
+       Passenger.DebugAdapter), processes (the container's .NET programs as JSON), and the profiler's trace, heap and
+       sources (Passenger.Profiler's InContainer, ClrMD reading a heap with the container's own DAC). Published
+       self-contained for linux-x64, linux-arm64, linux-musl-x64 and linux-musl-arm64 (just container-tools, the release's
        Passenger-container-tools-<rid>.tar.gz), so it needs nothing of the image but the C library. The IDE never carries
        it: a dev build finds artifacts/container-tools/<rid>/, a release downloads its own version's. -->
   <PropertyGroup>
@@ -40,5 +41,6 @@
     <Compile Include="../Passenger.DebugAdapter/DebugAdapter.cs" Link="DebugAdapter/DebugAdapter.cs" />
     <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />
     <ProjectReference Include="../Passenger.Debugger/Passenger.Debugger.csproj" />
+    <ProjectReference Include="../Passenger.Profiler/Passenger.Profiler.csproj" />
   </ItemGroup>
 </Project>

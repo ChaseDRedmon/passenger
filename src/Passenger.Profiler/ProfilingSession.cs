@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
+using System.Globalization;
 using System.Net.Sockets;
 using Microsoft.Diagnostics.NETCore.Client;
 using Passenger.Core;
@@ -20,16 +21,21 @@ public sealed record ProfileTarget(string Program, IReadOnlyList<string> Argumen
 /// program already running (one being debugged) is attached to at its own diagnostic port, as dotnet-trace's --process-id
 /// does, and goes on as it was after. Its EventPipe stream (the sampler, the runtime's method loads to name the frames, and
 /// an Avalonia app's frames from Passenger's inspector in it) is written to a .nettrace file until <see cref="StopAsync"/>
-/// or the program's end, then read into a <see cref="Snapshot"/>.</summary>
+/// or the program's end, then read into a <see cref="Snapshot"/>. A program elsewhere (a container's, <see cref="Place"/>)
+/// is recorded there by Passenger's tools, the same session streamed out over their standard output into the same file,
+/// and its memory snapshots are taken there too (<see cref="ContainerHeap"/>).</summary>
 public sealed class ProfilingSession : IAsyncDisposable
 {
     /// <summary>The runtime's events dotnet-trace's cpu-sampling profile asks for: what names the frames (loader, JIT,
     /// rundown) and the GC.</summary>
     private const long RuntimeKeywords = 0x14C14FCCBD;
 
+    /// <summary>The program's process, or, for one elsewhere, the tools recording it there (their docker exec).</summary>
     private readonly Process process;
     private readonly DiagnosticsClientConnector? connector;
-    private readonly EventPipeSession session;
+
+    /// <summary>The session, null for a program elsewhere, whose session is the tools' there.</summary>
+    private readonly EventPipeSession? session;
     private readonly Task copying;
     private readonly Task reading;
     private readonly string? port;
@@ -38,8 +44,10 @@ public sealed class ProfilingSession : IAsyncDisposable
     private int letGo;
     private int disposed;
     private HeapHistory? heapHistory;
+    private ContainerHeap? containerHeap;
 
-    private ProfilingSession(Process process, DiagnosticsClientConnector? connector, EventPipeSession session, Task copying, Task reading, string trace, string? port)
+    private ProfilingSession(Process process, DiagnosticsClientConnector? connector, EventPipeSession? session, Task copying, Task reading, string trace, string? port,
+        int? processId = null, ProfilePlace? place = null)
     {
         this.process = process;
         this.connector = connector;
@@ -48,14 +56,19 @@ public sealed class ProfilingSession : IAsyncDisposable
         this.reading = reading;
         this.port = port;
         TracePath = trace;
-        ProcessId = process.Id;
+        ProcessId = processId ?? process.Id;
+        Place = place;
     }
 
-    /// <summary>The program's process, known after the run is put away too.</summary>
+    /// <summary>The program's process, known after the run is put away too: the place's own for one elsewhere.</summary>
     public int ProcessId { get; }
 
+    /// <summary>Where the program runs when not on this machine (its container), or null.</summary>
+    public ProfilePlace? Place { get; }
+
     /// <summary>Whether the program has ended, as far as the run can tell: one put away (<see cref="DisposeAsync"/>) is
-    /// heard of no more.</summary>
+    /// heard of no more. For a program elsewhere, whether its recording there has ended: with the program, its container,
+    /// or the run.</summary>
     public bool HasExited => Volatile.Read(ref disposed) != 0 || process.HasExited;
 
     /// <summary>Whether the program was running before the profiler came, and is not the profiler's to end or to type to.</summary>
@@ -70,9 +83,10 @@ public sealed class ProfilingSession : IAsyncDisposable
     /// person types goes here. None for a program attached to, whose input is another's.</summary>
     public StreamWriter? Input => Attached ? null : process.StandardInput;
 
-    /// <summary>What a run asks EventPipe for: the sampler, the runtime's events (verbose for the GC's allocation ticks, a
-    /// type and a stack every 100 KB or so allocated), and the frames of an Avalonia app with Passenger's inspector in it.</summary>
-    private static EventPipeProvider[] Providers =>
+    /// <summary>What a run asks EventPipe for, here and in a container alike (<see cref="InContainer.TraceAsync"/>): the
+    /// sampler, the runtime's events (verbose for the GC's allocation ticks, a type and a stack every 100 KB or so
+    /// allocated), and the frames of an Avalonia app with Passenger's inspector in it.</summary>
+    internal static EventPipeProvider[] Providers =>
     [
         new EventPipeProvider(Snapshot.SampleProvider, EventLevel.Informational),
         new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Verbose, RuntimeKeywords),
@@ -273,6 +287,110 @@ public sealed class ProfilingSession : IAsyncDisposable
         return new ProfilingSession(process, null, session, Copy(session, trace), Task.CompletedTask, trace, null);
     }
 
+    /// <summary>Profiles a .NET program running elsewhere (in a container) from now, as <see cref="AttachAsync(int, string,
+    /// string, CancellationToken)"/> does one here: Passenger's tools there (<c>trace</c>) start the same session at the
+    /// program's own diagnostic port and stream it out, which is written to the trace here as it comes; Get Snapshot closes
+    /// their input, which stops the session with its rundown. With <paramref name="resume"/> a program held at its start
+    /// (DOTNET_DefaultDiagnosticPortSuspend=1) is let go once recording, so the run begins at its first instruction. The
+    /// program is left as it was. One the tools cannot reach is a <see cref="ProfilingException"/> saying why.</summary>
+    public static async Task<ProfilingSession> AttachAsync(int processId, string name, string folder, ProfilePlace place, bool resume = false,
+        CancellationToken cancellation = default)
+    {
+        string trace;
+        try
+        {
+            trace = NewTrace(folder, name);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new ProfilingException($"Could not profile {name}: no snapshot can be written in {folder}: {error.Message}", error);
+        }
+        List<string> words = ["trace", "--pid", processId.ToString(CultureInfo.InvariantCulture)];
+        if (resume)
+        {
+            words.Add("--resume");
+        }
+        ProcessStartInfo start = place.Tools(words);
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        Process tools;
+        try
+        {
+            tools = ChildProcesses.Start(start);
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException)
+        {
+            throw new ProfilingException($"Could not start Passenger's tools in {place.Where} to profile {name}: {error.Message}", error);
+        }
+        TaskCompletionSource recording = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        List<string> said = [];
+        Task reading = Task.Run(async () =>
+        {
+            try
+            {
+                while (await tools.StandardError.ReadLineAsync().ConfigureAwait(false) is { } line)
+                {
+                    if (line.Trim() == InContainer.Recording)
+                    {
+                        recording.TrySetResult();
+                        continue;
+                    }
+                    lock (said)
+                    {
+                        said.Add(line.Trim());
+                    }
+                }
+            }
+            catch (Exception gone) when (gone is IOException or ObjectDisposedException)
+            {
+            }
+        }, CancellationToken.None);
+        FileStream file = new(trace, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        Task copying = Task.Run(async () =>
+        {
+            await using (file)
+            {
+                try
+                {
+                    await tools.StandardOutput.BaseStream.CopyToAsync(file).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is IOException or ObjectDisposedException)
+                {
+                    // The tools were ended mid-write: what was written is the run.
+                }
+            }
+        }, CancellationToken.None);
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        limit.CancelAfter(TimeSpan.FromSeconds(30));
+        Task waited = await Task.WhenAny(recording.Task, tools.WaitForExitAsync(CancellationToken.None), Task.Delay(Timeout.Infinite, limit.Token)).ConfigureAwait(false);
+        if (waited == recording.Task)
+        {
+            return new ProfilingSession(tools, null, null, copying, reading, trace, null, processId, place);
+        }
+        bool ended = tools.HasExited;
+        ChildProcesses.Kill(tools);
+        await Task.WhenAny(Task.WhenAll(reading, copying), Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+        tools.Dispose();
+        try
+        {
+            // Nothing was recorded: no snapshot to list.
+            File.Delete(trace);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
+        cancellation.ThrowIfCancellationRequested();
+        string? why;
+        lock (said)
+        {
+            why = said.LastOrDefault(l => l.Length > 0);
+        }
+        throw new ProfilingException(ended
+            ? why ?? $"Passenger's tools in {place.Where} could not profile {name}"
+            : $"Passenger's tools in {place.Where} did not begin recording {name} in 30 s");
+    }
+
     /// <summary>The session's stream written to the trace as it comes, until the session or the program ends.</summary>
     private static Task Copy(EventPipeSession session, string trace)
     {
@@ -347,26 +465,55 @@ public sealed class ProfilingSession : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref stopped, 1) == 0 && !process.HasExited)
         {
-            // A program gone mid-request would leave the port's endpoint waiting for its runtime for good.
-            using CancellationTokenSource limit = new(TimeSpan.FromSeconds(10));
-            try
+            if (session is null)
             {
-                await session.StopAsync(limit.Token);
+                // The tools there stop their session as their input ends, its rundown flushed, and end.
+                CloseToolsInput();
             }
-            catch (Exception error) when (error is ServerNotAvailableException or IOException or TimeoutException or OperationCanceledException)
+            else
             {
-                // The program ended as the run did; its stream is closed anyway.
+                // A program gone mid-request would leave the port's endpoint waiting for its runtime for good.
+                using CancellationTokenSource limit = new(TimeSpan.FromSeconds(10));
+                try
+                {
+                    await session.StopAsync(limit.Token);
+                }
+                catch (Exception error) when (error is ServerNotAvailableException or IOException or TimeoutException or OperationCanceledException)
+                {
+                    // The program ended as the run did; its stream is closed anyway.
+                }
             }
         }
         try
         {
-            await copying.WaitAsync(TimeSpan.FromSeconds(30));
+            await copying.WaitAsync(TimeSpan.FromSeconds(Place is null ? 30 : 90));
         }
         finally
         {
             await LetGoAsync();
         }
-        return await Task.Run(() => Snapshot.Read(TracePath));
+        return await Task.Run(Read);
+    }
+
+    /// <summary>The run's trace read, knowing where it ran.</summary>
+    private Snapshot Read()
+    {
+        Snapshot snapshot = Snapshot.Read(TracePath);
+        snapshot.Place = Place;
+        return snapshot;
+    }
+
+    /// <summary>Ends what the tools elsewhere read, which they take for the end of the run.</summary>
+    private void CloseToolsInput()
+    {
+        ChildProcesses.Ending(process);
+        try
+        {
+            process.StandardInput.Close();
+        }
+        catch (Exception gone) when (gone is IOException or InvalidOperationException)
+        {
+        }
     }
 
     /// <summary>Waits for the program to end by itself, then reads the run.</summary>
@@ -375,7 +522,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         await process.WaitForExitAsync(cancellation);
         Interlocked.Exchange(ref stopped, 1);
         await copying.WaitAsync(TimeSpan.FromSeconds(30), cancellation);
-        return await Task.Run(() => Snapshot.Read(TracePath), cancellation);
+        return await Task.Run(Read, cancellation);
     }
 
     /// <summary>What the program's heap holds now, as dotMemory's Get Snapshot, comparable object by object with the
@@ -385,6 +532,11 @@ public sealed class ProfilingSession : IAsyncDisposable
         if (process.HasExited)
         {
             throw new InvalidOperationException("The program has ended; a memory snapshot needs it running");
+        }
+        if (Place is { } place)
+        {
+            containerHeap ??= new ContainerHeap(place, ProcessId);
+            return containerHeap.TakeAsync(cancellation);
         }
         heapHistory ??= new HeapHistory(process.Id);
         return heapHistory.TakeAsync(cancellation);
@@ -420,7 +572,24 @@ public sealed class ProfilingSession : IAsyncDisposable
         {
             await heapHistory.DisposeAsync();
         }
-        session.Dispose();
+        if (containerHeap is not null)
+        {
+            await containerHeap.DisposeAsync();
+        }
+        session?.Dispose();
+        if (session is null && !process.HasExited)
+        {
+            // The tools elsewhere stop as their input ends; a CLI that does not go is ended, which closes it there too.
+            CloseToolsInput();
+            try
+            {
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (TimeoutException)
+            {
+                ChildProcesses.Kill(process);
+            }
+        }
         if (connector is not null)
         {
             await connector.DisposeAsync();

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Formats.Tar;
 using System.Globalization;
 using System.IO.Compression;
@@ -405,11 +404,11 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             {
                 return;
             }
-            Processor = Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64";
+            Processor = ContainerPrograms.Processor();
             Rid = $"linux-{Processor}";
             foreach (string rid in (string[])[Rid, $"linux-musl-{Processor}"])
             {
-                Publish(rid);
+                ContainerPrograms.Publish(rid);
             }
             string host = Build("host", null);
             string mapped = Build("mapped", "/src/Turns/");
@@ -453,71 +452,18 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             return packed.ToArray();
         }
 
-        /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does.</summary>
-        private static void Publish(string rid)
-        {
-            string output = Path.Combine(Debugging.Helpers.Debuggees.Root, "artifacts", "container-tools", rid);
-            ChildResult published = Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"), "-c", "Release", "-r", rid,
-                "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root);
-            Assert.True(published.Succeeded, $"Passenger's container tools for {rid} did not publish: {published.Output}{published.Error}");
-        }
-
         /// <summary>The program's project in a folder of its own, built in Debug with its paths mapped to <paramref name="mapped"/>
         /// (the PDB naming them so) or not; its output folder.</summary>
         private string Build(string variant, string? mapped)
         {
-            string folder = Path.Combine(root, variant, "Turns");
-            Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(folder, "Turns.csproj"), Project);
-            File.WriteAllText(Path.Combine(folder, "Program.cs"), Program);
             string output = Path.Combine(root, "out", variant);
-            List<string> words = ["build", Path.Combine(folder, "Turns.csproj"), "-c", "Debug", "-o", output, "-nologo", "-v:q"];
-            if (mapped is not null)
-            {
-                words.Add($"-p:PathMap={Folder(variant)}{Path.DirectorySeparatorChar}={mapped}");
-            }
-            ChildResult built = Dotnet(words, folder);
-            Assert.True(built.Succeeded, $"The {variant} build of the program did not build: {built.Output}{built.Error}");
+            ContainerPrograms.Build(Path.Combine(root, variant, "Turns"), Project, Program, output, mapped);
             return output;
         }
 
         /// <summary>An image of the build on a runtime image, with its sources at /src/Turns when given; its tag.</summary>
-        private string Image(string variant, string from, string build, string? sources)
-        {
-            string context = Path.Combine(root, "image-" + variant);
-            Directory.CreateDirectory(context);
-            CopyFolder(build, Path.Combine(context, "app"));
-            StringBuilder dockerfile = new($"FROM {from}\nCOPY app/ /app/\n");
-            if (sources is not null)
-            {
-                Directory.CreateDirectory(Path.Combine(context, "src"));
-                File.Copy(Path.Combine(sources, "Program.cs"), Path.Combine(context, "src", "Program.cs"));
-                dockerfile.Append("COPY src/ /src/Turns/\n");
-            }
-            dockerfile.Append("ENTRYPOINT [\"dotnet\", \"/app/Turns.dll\"]\n");
-            File.WriteAllText(Path.Combine(context, "Dockerfile"), dockerfile.ToString());
-            string tag = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}-turns:{variant}";
-            Docker.Run("build", "-q", "--label", Docker.RunLabel, "-t", tag, context);
-            return tag;
-        }
-
-        private static void CopyFolder(string from, string to)
-        {
-            Directory.CreateDirectory(to);
-            foreach (string file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
-            {
-                string into = Path.Combine(to, Path.GetRelativePath(from, file));
-                Directory.CreateDirectory(Path.GetDirectoryName(into)!);
-                File.Copy(file, into, overwrite: true);
-            }
-        }
-
-        private static ChildResult Dotnet(IReadOnlyList<string> words, string folder)
-        {
-            ProcessStartInfo start = ChildProcesses.DotnetCommand(words);
-            start.WorkingDirectory = folder;
-            return Task.Run(() => ChildProcesses.RunAsync(start, null, TimeSpan.FromMinutes(10).Scaled(), CancellationToken.None)).GetAwaiter().GetResult();
-        }
+        private string Image(string variant, string from, string build, string? sources) =>
+            ContainerPrograms.Image(Path.Combine(root, "image-" + variant), variant, from, build, "Turns", sources, sources is null ? null : "/src/Turns/");
 
         public void Dispose()
         {

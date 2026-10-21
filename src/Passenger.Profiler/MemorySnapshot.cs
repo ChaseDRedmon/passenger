@@ -71,6 +71,9 @@ public sealed class MemorySnapshot
     /// <summary>The run it was taken in: only snapshots of one run can be compared.</summary>
     internal object Run { get; }
 
+    /// <summary>How each earlier snapshot of the run, by its number, has its objects in this one.</summary>
+    internal IReadOnlyDictionary<int, Identity> Earlier => earlier;
+
     /// <summary>Every object of a type, as an object set.</summary>
     public ObjectSet ObjectsOf(HeapType type)
     {

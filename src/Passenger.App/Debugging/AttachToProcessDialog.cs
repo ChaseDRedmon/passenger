@@ -14,13 +14,22 @@ namespace Passenger.App.Debugging;
 /// <summary>A row of Attach to Process: a .NET program, or the heading over a group of them.</summary>
 public sealed record AttachRow(DotnetProcess? Process, string? Heading = null);
 
+/// <summary>What the program chosen in Attach to Process's dialog is for: the debugger (Attach to Process), or the
+/// profiler (Attach Profiler's choice among the containers' programs).</summary>
+public enum AttachPurpose
+{
+    Debugger,
+    Profiler,
+}
+
 /// <summary>Rider's Attach to Process: the .NET programs running on this machine that the debugger can attach to, each by
 /// Rider's columns (executable, process id, user, command line), those attached to before in this window first under
 /// Recently attached, then those in the engine's running containers under each container (what to know first after the
 /// command line; one no debugger can attach to says why, and Attach stays off for it). The search box narrows them by any
 /// of those as it is typed, the arrow keys choose among the rows
 /// left, and Enter, a double-click or Attach with .NET Debugger closes it with the program chosen (null when cancelled).
-/// Refresh lists them again, for a program started since it opened.</summary>
+/// Refresh lists them again, for a program started since it opened. For the profiler it is titled and its button named
+/// Attach Profiler (<see cref="AttachPurpose"/>).</summary>
 public sealed class AttachToProcessDialog : Window
 {
     private const string Columns = "220,90,110,*";
@@ -32,11 +41,13 @@ public sealed class AttachToProcessDialog : Window
     private readonly Button attach;
     private IReadOnlyList<DotnetProcess>? listed;
 
-    public AttachToProcessDialog(Func<Task<IReadOnlyList<DotnetProcess>>> list, Func<DotnetProcess, bool> recent, string search = "")
+    public AttachToProcessDialog(Func<Task<IReadOnlyList<DotnetProcess>>> list, Func<DotnetProcess, bool> recent, string search = "",
+        AttachPurpose purpose = AttachPurpose.Debugger)
     {
         this.list = list;
         this.recent = recent;
-        Title = "Attach to Process";
+        Purpose = purpose;
+        Title = purpose == AttachPurpose.Profiler ? "Attach Profiler" : "Attach to Process";
         Width = 900;
         Height = 520;
         MinWidth = 560;
@@ -92,7 +103,7 @@ public sealed class AttachToProcessDialog : Window
             Child = new DockPanel { Children = { headerFrame, new Panel { Children = { rows, empty } } } },
         };
 
-        attach = new Button { Content = "Attach with .NET Debugger", Classes = { "primary" }, IsEnabled = false };
+        attach = new Button { Content = purpose == AttachPurpose.Profiler ? "Attach Profiler" : "Attach with .NET Debugger", Classes = { "primary" }, IsEnabled = false };
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         attach.Click += (_, _) => Attach();
         cancel.Click += (_, _) => Close(null);
@@ -107,6 +118,9 @@ public sealed class AttachToProcessDialog : Window
 
     /// <summary>The search box, which narrows the rows as it is typed.</summary>
     public TextBox Search { get; }
+
+    /// <summary>What the program chosen is attached to.</summary>
+    public AttachPurpose Purpose { get; }
 
     /// <summary>The programs listed now, in their order, what the search leaves.</summary>
     public IReadOnlyList<DotnetProcess> Shown => [.. Rows.Select(r => r.Process).OfType<DotnetProcess>()];
@@ -187,7 +201,9 @@ public sealed class AttachToProcessDialog : Window
         rows.SelectedItem = shown.FirstOrDefault(r => r.Process is { } p && kept is not null && p.Id == kept.Id && p.Container == kept.Container && p.CommandLine == kept.CommandLine)
             ?? shown.FirstOrDefault(r => r.Process is { WhyNot: null });
         attach.IsEnabled = Chosen is { WhyNot: null };
-        empty.Text = listed.Count == 0 ? "No .NET processes to attach to" : $"No .NET process matches '{typed}'";
+        empty.Text = listed.Count > 0 ? $"No .NET process matches '{typed}'"
+            : Purpose == AttachPurpose.Profiler ? "Nothing of the folder's runs, and no .NET program runs in a container, to profile"
+            : "No .NET processes to attach to";
         empty.IsVisible = found.Count == 0;
         if (rows.SelectedItem is { } selected)
         {

@@ -9,7 +9,8 @@ namespace Passenger.App.Debugging;
 /// <see cref="ContainerPaths"/>: a breakpoint's file, Set Next Statement's, Hot Reload's line updates, a launched program
 /// and its folder named as the container names them, and a frame's source and an active statement's document back; a
 /// path the map does not cover, or <see cref="ContainerPaths.None"/>, crosses as it is, as a program built on this machine
-/// needs), and what to call the place (a container's name). A session with one is <see cref="DebugSession.Elsewhere"/>:
+/// needs), and what to call the place (the container's name, which docker exec reaches it by: Attach Profiler runs the
+/// profiler's tools there too). A session with one is <see cref="DebugSession.Elsewhere"/>:
 /// its program's process id is the container's, never held or killed here. Ending the command (Stop, Detach, the IDE's
 /// end, the CLI killed) closes the adapter's standard input there, which lets the program go as a client's going does.</summary>
 public sealed record AdapterPlace(Func<IReadOnlyList<string>, ProcessStartInfo> Command, string SymbolCache, ContainerPaths Paths, string Where)

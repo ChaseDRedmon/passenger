@@ -274,7 +274,8 @@ public sealed partial class PassengerTools
         "hot path, and for an Avalonia app its frames: their UI thread's time at the median and longest, measure, arrange, " +
         "render and compositor time in all, the layout table by control type with the heaviest controls and their XAML lines, " +
         "and the longest frame's breakdown (or a count of 0 and why). With attach, Attach Profiler instead: the program being " +
-        "debugged, else Run's, from now for seconds (else until it ends), left running.")]
+        "debugged, else Run's, or with container the .NET program running in that container (debug_processes lists them), " +
+        "from now for seconds (else until it ends), left running.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -282,18 +283,26 @@ public sealed partial class PassengerTools
         [Description("How many hot spots")] int top = 25,
         [Description("With seconds: a memory snapshot too, the heap's types by size")] bool memory = false,
         [Description("Profile the program running (debugged, else Run's) from now, rather than launch one")] bool attach = false,
+        string? container = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (attach && (configuration is not null || arguments is not null))
         {
             throw new ArgumentException("An attached profiler profiles the program already running: name no configuration or arguments");
         }
+        if (container is not null && !attach)
+        {
+            throw new ArgumentException("A container's program is profiled as it runs: give attach with container");
+        }
         if (!attach)
         {
             Choose(configuration);
         }
-        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build);
-        if (await (attach ? window.AttachProfilerAsync() : window.ProfileAsync(arguments)).WaitAsync(cancel) is { } problem)
+        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler);
+        Task<string?> started = !attach ? window.ProfileAsync(arguments)
+            : container is null ? window.AttachProfilerAsync()
+            : window.AttachProfilerAsync(await ProfiledIn(container));
+        if (await started.WaitAsync(cancel) is { } problem)
         {
             throw new InvalidOperationException(WithBuildErrors(problem));
         }
@@ -327,19 +336,24 @@ public sealed partial class PassengerTools
                 path.Add(Frame(at.Name, at.Total, at.Self));
             }
         }
-        // The folder's own methods by their place, from their PDBs, for an agent to go straight to.
-        using Passenger.Profiler.MethodSources sources = new();
+        // The folder's own methods by their place, from their PDBs (read in its container for a program there), for an agent
+        // to go straight to.
+        IReadOnlyList<Passenger.Profiler.HotSpot> spots = [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200))];
+        IReadOnlyDictionary<Passenger.Profiler.MethodCode, (string File, int Line)> sources =
+            await Passenger.Profiler.MethodSources.FindAsync(snapshot, spots.Select(h => h.Code).OfType<Passenger.Profiler.MethodCode>(), cancel);
         Func<string, TextSnapshot?> texts = CSharp.ServerPlaces.Texts(Editors);
         return new ProfileInfo(
             Math.Round(snapshot.Duration.TotalMilliseconds),
             snapshot.Samples,
             snapshot.Threads.Count,
-            [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => Frame(h.Name, h.Total, h.Self) with { Source = Source(h) })],
+            [.. spots.Select(h => Frame(h.Name, h.Total, h.Self) with { Source = Source(h) })],
             path,
             snapshot.TracePath,
             heap)
         {
-            Frames = UiFramesOf(snapshot.UiFrames, Math.Clamp(top, 1, 200), inspected),
+            Frames = snapshot.Place is { } elsewhere && snapshot.HotSpots.Any(h => h.Module.StartsWith("Avalonia", StringComparison.Ordinal))
+                ? new UiFramesInfo(0, 0, 0, 0, 0, []) { Why = Profiling.FramesView.InContainer(elsewhere.Where) }
+                : UiFramesOf(snapshot.UiFrames, Math.Clamp(top, 1, 200), inspected),
         };
 
         ProfileFrame Frame(string method, int total, int self) =>
@@ -347,7 +361,7 @@ public sealed partial class PassengerTools
 
         string? Source(Passenger.Profiler.HotSpot spot)
         {
-            if (spot.Code is not { } code || sources.Find(code) is not { } at || Session.Folder is not { } folder)
+            if (spot.Code is not { } code || !sources.TryGetValue(code, out (string File, int Line) at) || Session.Folder is not { } folder)
             {
                 return null;
             }
@@ -358,6 +372,22 @@ public sealed partial class PassengerTools
                 : null;
         }
     });
+
+    /// <summary>The .NET program running in a container for the profiler, as Attach to Process lists it: the one there, or
+    /// a refusal naming them.</summary>
+    private async Task<DotnetProcess> ProfiledIn(string container)
+    {
+        IReadOnlyList<DotnetProcess> there = [.. (await window.AttachableAsync()).Where(p => p.Container == container)];
+        List<DotnetProcess> reachable = [.. there.Where(p => p.WhyNot is null)];
+        return reachable switch
+        {
+            [{ } only] => only,
+            [] when there.Count > 0 => throw new InvalidOperationException($"No program in {container} can be profiled: {there[0].WhyNot}"),
+            [] => throw new InvalidOperationException($"No .NET program runs in a container named {container}; debug_processes lists those there are"),
+            _ => throw new InvalidOperationException($"{reachable.Count} .NET programs run in {container} ({string.Join(", ", reachable.Select(p => p.Program))}): "
+                + "attach the debugger to the one to profile (debug_attach), then profile with attach alone"),
+        };
+    }
 
     /// <summary>An Avalonia app's frames as the profile tool says them, the heaviest controls first; for an app the
     /// inspector was given that recorded none, none and why; null for any other program.</summary>

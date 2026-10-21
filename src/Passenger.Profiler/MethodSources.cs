@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using Passenger.Core;
 
 namespace Passenger.Profiler;
 
@@ -48,6 +50,60 @@ public sealed class MethodSources : IDisposable
         {
             return null;
         }
+    }
+
+    /// <summary>Where some of a snapshot's methods are written, those found: from their modules' PDBs here, or, for a run
+    /// of a program in a container (<see cref="Snapshot.Place"/>), there by Passenger's tools (<c>sources</c>), which read
+    /// the modules the trace names where they are, each document then made this machine's by the place's map. Off the
+    /// caller's thread; a container gone, or tools that fail, find none.</summary>
+    public static async Task<IReadOnlyDictionary<MethodCode, (string File, int Line)>> FindAsync(Snapshot snapshot, IEnumerable<MethodCode> codes,
+        CancellationToken cancel = default)
+    {
+        MethodCode[] asked = [.. codes.Distinct()];
+        Dictionary<MethodCode, (string File, int Line)> found = [];
+        if (asked.Length == 0)
+        {
+            return found;
+        }
+        if (snapshot.Place is not { } place)
+        {
+            return await Task.Run(() =>
+            {
+                using MethodSources sources = new();
+                foreach (MethodCode code in asked)
+                {
+                    if (sources.Find(code) is { } at)
+                    {
+                        found[code] = at;
+                    }
+                }
+                return found;
+            }, cancel).ConfigureAwait(false);
+        }
+        string input = string.Concat(asked.Select(c => $"{c.Token.ToString(CultureInfo.InvariantCulture)}\t{c.ModuleFile}\n"));
+        ChildResult answered;
+        try
+        {
+            answered = await ChildProcesses.RunAsync(place.Tools(["sources"]), input, TimeSpan.FromSeconds(30), cancel).ConfigureAwait(false);
+        }
+        catch (Exception failed) when (failed is TimeoutException or System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return found;
+        }
+        if (!answered.Succeeded)
+        {
+            return found;
+        }
+        string[] lines = answered.Output.Split('\n');
+        for (int i = 0; i < asked.Length && i < lines.Length; i++)
+        {
+            string[] parts = lines[i].TrimEnd('\r').Split('\t');
+            if (parts.Length == 2 && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int line))
+            {
+                found[asked[i]] = (place.ToHost(parts[0]), line);
+            }
+        }
+        return found;
     }
 
     public void Dispose()

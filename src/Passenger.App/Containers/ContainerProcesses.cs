@@ -12,7 +12,7 @@ namespace Passenger.App.Containers;
 public static class ContainerProcesses
 {
     /// <summary>What the dialog says under a container that has no tools in it yet: that attaching copies them in.</summary>
-    public const string CopiesTools = "attaching copies Passenger's debugging tools into it (" + ContainerTools.Copied + ")";
+    public const string CopiesTools = "attaching copies Passenger's container tools into it (" + ContainerTools.Copied + ")";
 
     /// <summary>Programs in a container's processes that are no .NET program of the person's.</summary>
     private static readonly HashSet<string> NotDotnet = new(StringComparer.Ordinal)

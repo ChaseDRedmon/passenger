@@ -13,6 +13,7 @@
     "ContainersTests": 150,
     "ContainerRunsTests": 300,
     "ContainerDebuggingTests": 360,
+    "ContainerProfilingTests": 240,
     "SelfDebuggingTests": 180,
     "IdeErrorsTests": 150,
     "VcsTests": 150,

@@ -1,4 +1,5 @@
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.App.Containers;
 using Passenger.App.Docking;
 using Passenger.App.Editors;
 using Passenger.App.LiveTree;
@@ -14,7 +15,9 @@ namespace Passenger.App.Profiling;
 /// <summary>What a window lends its profiler: its session and that session's builds and runs, the tool windows' frame and
 /// the window's actions, the Run console a profiled program writes to, the status bar, the store's folder, the system's
 /// file panel for a snapshot to open, going to a place in the code, choosing a control of a process in the Live Visual
-/// Tree, and the editors, whose text a control's XAML place is read in.</summary>
+/// Tree, the editors, whose text a control's XAML place is read in, the choice of a .NET program in a running container
+/// (Attach to Process's dialog), and such a program made ready to profile: Passenger's tools put in its container, its id
+/// there, and the place it is recorded at.</summary>
 public sealed record ProfilerParts(
     Func<ProjectSession> Session,
     Func<BuildRunController> Builds,
@@ -27,17 +30,23 @@ public sealed record ProfilerParts(
     Action<string, TextPosition> Navigate,
     Action<string, Lsp.LspPosition> NavigateToServer,
     Func<int, long, bool> RevealControl,
-    EditorArea Editors);
+    EditorArea Editors,
+    Func<Task<DotnetProcess?>> ChooseInContainer,
+    Func<DotnetProcess, ContainerPaths, Action<string>, CancellationToken, Task<(DotnetProcess Target, ProfilePlace Place)>> InContainer);
 
 /// <summary>The window's profiler, as Rider's: Profile builds and starts the chosen configuration under the sampling
 /// profiler (an Avalonia app with the inspector in it, which records its frames), or Attach Profiler profiles the program
-/// Run or Debug started from now on; the Performance Profiler window follows the run, Get Snapshot (or the program's end)
-/// shows where its time went and a memory snapshot what its heap holds, snapshots written before open again, and a method
-/// or a control named there opens in the code. The run is the session's (<see cref="ProjectSession.Profiling"/>), ended
-/// with its folder. A UI-thread object of the window.</summary>
+/// Run or Debug started from now on, in a container too (else one chosen among the running containers' .NET programs),
+/// there by Passenger's container tools; the Performance Profiler window follows the run, Get Snapshot (or the program's
+/// end) shows where its time went and a memory snapshot what its heap holds, snapshots written before open again, and a
+/// method or a control named there opens in the code. The run is the session's (<see cref="ProjectSession.Profiling"/>),
+/// ended with its folder. A UI-thread object of the window.</summary>
 public sealed class ProfilerCommands
 {
     private const string NothingRunning = "Nothing is running to profile: Run or Debug a configuration first, or Profile one";
+
+    /// <summary>What Attach Profiler says when its choice among the containers' programs was closed with none chosen.</summary>
+    private const string NoneChosen = "Attach Profiler chose no program: Run or Debug a configuration first, or start a .NET program in a container";
 
     private readonly ProfilerParts parts;
     private string profilingName = string.Empty;
@@ -63,9 +72,10 @@ public sealed class ProfilerCommands
             WhyNot = _ => WhyNotProfile(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
             Menus = [new MenuPlace("Run", 0, 2)],
         });
+        // Nothing of the folder's running, it offers the programs of the engine's running containers to choose from.
         parts.Actions.Add(new IdeAction(AppActions.AttachProfiler, "Attach Profiler to Running Program", "Run", context => _ = AttachReportingAsync())
         {
-            WhyNot = _ => Busy(Session) ?? (Attachable() is null ? NothingRunning : null),
+            WhyNot = _ => Busy(Session),
             Menus = [new MenuPlace("Run", 3, 0)],
         });
         View.StopRequested += (_, _) => _ = SnapshotAsync();
@@ -334,19 +344,40 @@ public sealed class ProfilerCommands
 
     /// <summary>Kill is there while the program Profile started runs, unless the window follows another's run.</summary>
     private void ShowKill() =>
-        View.ShowKill(starting is not null || Session.Profiled is { } program && (Session.Profiling is not { } recording || recording.ProcessId == program.Run.ProcessId));
+        View.ShowKill(starting is not null || Session.Profiled is { } program
+            && (Session.Profiling is not { } recording || recording.Place is null && recording.ProcessId == program.Run.ProcessId));
 
     /// <summary>Attach Profiler: profiles the program Debug, Run or Profile started, from now until Get Snapshot or its
     /// end, as dotTrace attaches to a running process; an Avalonia app's inspector records its frames for as long. The
-    /// program goes on as it was, after too. Null once it is profiled, else why not, which the profiler window says too.</summary>
-    public async Task<string?> AttachAsync()
+    /// program goes on as it was, after too. A program in a container (the one debugged there, <paramref name="inContainer"/>,
+    /// or, with <paramref name="choose"/> and nothing of the folder's running, one chosen among the running containers'
+    /// .NET programs) is recorded there by Passenger's tools, a program held at its start let go once recording. Null once
+    /// it is profiled, else why not, which the profiler window says too.</summary>
+    public async Task<string?> AttachAsync(DotnetProcess? inContainer = null, bool choose = false)
     {
         ProjectSession profiled = Session;
         if (Busy(profiled) is { } busy)
         {
             return busy;
         }
-        if (Attachable() is not { } target)
+        AttachTarget? target = inContainer is not null ? InContainer(inContainer, ContainerPaths.None, resume: true) : Attachable();
+        if (target is null && choose)
+        {
+            if (await parts.ChooseInContainer() is not { } chosen)
+            {
+                return NoneChosen;
+            }
+            if (profiled != Session || profiled.IsEnded)
+            {
+                return "The solution was closed";
+            }
+            if (Busy(profiled) is { } since)
+            {
+                return since;
+            }
+            target = InContainer(chosen, ContainerPaths.None, resume: true);
+        }
+        if (target is null)
         {
             return NothingRunning;
         }
@@ -367,7 +398,9 @@ public sealed class ProfilerCommands
         {
             using (BackgroundWork.Scope())
             {
-                running = await ProfilingSession.AttachAsync(target.ProcessId, target.File, SnapshotFolder);
+                running = target.Elsewhere is { } program
+                    ? await AttachElsewhereAsync(target, program)
+                    : await ProfilingSession.AttachAsync(target.ProcessId, target.File, SnapshotFolder);
             }
         }
         catch (ProfilingException failed)
@@ -383,7 +416,7 @@ public sealed class ProfilerCommands
         profiled.Profiling = running;
         profilingName = target.Name;
         // Profile's own program, profiled again, is still Kill's to end.
-        View.Running(target.Name, () => running.Elapsed, killable: profiled.Profiled?.Run.ProcessId == target.ProcessId);
+        View.Running(target.Name, () => running.Elapsed, killable: target.Elsewhere is null && profiled.Profiled?.Run.ProcessId == target.ProcessId);
         parts.Say($"Profiling {target.Name} from now: Get Snapshot when it has done what is to be measured");
         _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
         {
@@ -400,12 +433,53 @@ public sealed class ProfilerCommands
         return null;
     }
 
-    /// <summary>The program Attach Profiler profiles: the one being debugged, else the one Profile started that goes on
-    /// after its snapshot, else the one Run runs, in the Run console or the terminal (an Avalonia app by the process its
-    /// inspector said it is; under Hot Reload, the app dotnet watch started, found as the attach begins).</summary>
+    /// <summary>A program in a container to profile there: by its name in its container, its file's name its program's, its
+    /// PDBs' paths made this machine's through <paramref name="paths"/>.</summary>
+    private static AttachTarget InContainer(DotnetProcess program, ContainerPaths paths, bool resume) =>
+        new(program.Id, $"{program.Program} in {program.Container}", FileName(program.Program)) { Elsewhere = program, Paths = paths, Resume = resume };
+
+    /// <summary>Attach Profiler in a container: Passenger's tools put in it as the window's (the work said in the status bar,
+    /// Stop ending it), then the program recorded there.</summary>
+    private async Task<ProfilingSession> AttachElsewhereAsync(AttachTarget target, DotnetProcess program)
+    {
+        if (parts.Actions.Work.Begin(AppActions.AttachProfiler, $"Attaching the profiler to {target.Name}…") is not { } work)
+        {
+            throw new ProfilingException(ActionWork.Busy(parts.Actions.Work.Of(AppActions.AttachProfiler)!));
+        }
+        using (work)
+        {
+            try
+            {
+                (DotnetProcess found, ProfilePlace place) = await parts.InContainer(program, target.Paths ?? ContainerPaths.None, UiThread.Marshal<string>(work.Say), work.Stopping);
+                work.Say($"Recording {target.Name}…");
+                return await ProfilingSession.AttachAsync(found.Id, target.File, SnapshotFolder, place, target.Resume, work.Stopping);
+            }
+            catch (OperationCanceledException) when (work.IsStopped)
+            {
+                throw new ProfilingException($"Profiling {target.Name} was stopped as it started");
+            }
+            catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or TimeoutException
+                or System.Text.Json.JsonException or OperationCanceledException)
+            {
+                throw new ProfilingException($"Could not profile {target.Name}: {failed.Message}", failed);
+            }
+        }
+    }
+
+    /// <summary>The program Attach Profiler profiles: the one being debugged (in its container, too), else the one Profile
+    /// started that goes on after its snapshot, else the one Run runs, in the Run console or the terminal (an Avalonia app
+    /// by the process its inspector said it is; under Hot Reload, the app dotnet watch started, found as the attach begins).</summary>
     private AttachTarget? Attachable()
     {
         ProjectSession current = Session;
+        // A container's program, by its id there, recorded there through the debugger's own map of its paths.
+        if (current.Debug.Session is { State: not Debugging.DebugState.Ended, Elsewhere: true, Place: { } place, ProcessStarted.IsCompletedSuccessfully: true } remote)
+        {
+            string name = current.Debug.TabOf(remote)?.Name ?? $"process {remote.ProcessStarted.Result} in {place.Where}";
+            string program = name.Split(" in ", 2)[0];
+            DotnetProcess there = new(remote.ProcessStarted.Result, program, string.Empty, string.Empty, true) { Container = place.Where };
+            return new AttachTarget(there.Id, name, FileName(Path.GetFileNameWithoutExtension(program))) { Elsewhere = there, Paths = place.Paths };
+        }
         // The chosen session's, when its program is on this machine: a container's process id names none of this one's.
         if (current.Debug.Session is { State: not Debugging.DebugState.Ended, IsLocal: true, ProcessStarted.IsCompletedSuccessfully: true } debugging)
         {
@@ -433,7 +507,17 @@ public sealed class ProfilerCommands
 
     /// <summary>A program Attach Profiler can profile: its process, its name as the window says it and as its snapshot's
     /// file is named, and, when the process is dotnet watch's, the app's program to find among the ones it started.</summary>
-    private sealed record AttachTarget(int ProcessId, string Name, string File, string? Watched = null);
+    private sealed record AttachTarget(int ProcessId, string Name, string File, string? Watched = null)
+    {
+        /// <summary>The program in a container, recorded there; null for one of this machine's.</summary>
+        public DotnetProcess? Elsewhere { get; init; }
+
+        /// <summary>How its PDBs' paths are this machine's, for one in a container.</summary>
+        public ContainerPaths? Paths { get; init; }
+
+        /// <summary>Whether a program held at its start is let go once recording: one the debugger holds is the debugger's.</summary>
+        public bool Resume { get; init; }
+    }
 
     /// <summary>A name made fit for a file's: what a file system refuses, and a colon, as dashes.</summary>
     private static string FileName(string name) =>
@@ -490,7 +574,8 @@ public sealed class ProfilerCommands
                 // Its folder was left as it was read: it is that folder's to list when it opens again.
                 return new SnapshotRead(snapshot, read);
             }
-            shownProcess = run.ProcessId;
+            // A container's process id names nothing the Live Visual Tree follows.
+            shownProcess = run.Place is null ? run.ProcessId : null;
             Show(snapshot, name);
             // Brought forward over the console or Debug window the run's program was driven from.
             parts.Dock.Show("profiler");
@@ -584,7 +669,7 @@ public sealed class ProfilerCommands
 
     private async Task AttachReportingAsync()
     {
-        if (await AttachAsync() is { } problem)
+        if (await AttachAsync(choose: true) is { } problem)
         {
             parts.Say(problem);
         }

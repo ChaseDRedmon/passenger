@@ -214,6 +214,16 @@ public sealed class Snapshot
     /// <summary>The .nettrace file the run was written to, which other tools (PerfView, speedscope) read too.</summary>
     public string TracePath { get; }
 
+    /// <summary>Where the program ran when not on this machine (its container), whose modules' PDBs are read there
+    /// (<see cref="MethodSources.FindAsync"/>); null for a program of this machine's, or a snapshot opened from its file.</summary>
+    public ProfilePlace? Place
+    {
+        get => ReferenceEquals(Whole, this) ? place : Whole.Place;
+        internal set => place = value;
+    }
+
+    private ProfilePlace? place;
+
     /// <summary>The same views over a stretch of the run, as selecting an interval on dotTrace's timeline gives. Its work
     /// grows with the run's stacks and runs, and it reads the run without changing it, so any thread may ask.</summary>
     public Snapshot Within(double fromMs, double toMs)
