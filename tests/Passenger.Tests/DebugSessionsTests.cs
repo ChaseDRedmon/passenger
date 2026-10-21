@@ -111,50 +111,58 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     }
 
     /// <summary>A program elsewhere (a container's) has its machine's process id, which may be another program's here: a
-    /// session told so never ends a process of this machine by it. Its adapter killed, as a crash ends one, the session ends,
-    /// and the program it launched, here only for the test, runs on, where a session here takes it down with its adapter.</summary>
+    /// session told so never ends a process of this machine by it. A launched program its adapter leaves running as it goes
+    /// (let go here, as a crash leaves it) is ended by the IDE when the session is here; when the session is told its
+    /// program is elsewhere, the program it launched, here only for the test, runs on.</summary>
     [AvaloniaFact]
     public void A_session_whose_program_is_elsewhere_never_ends_a_process_here_by_its_programs_id()
     {
         MainWindow window = pair.Open(Counter);
-        int program = 0;
-        int adapter = 0;
+        List<int> started = [];
         try
         {
-            Passenger.App.Run.LaunchPlan plan = new()
-            {
-                Name = "Elsewhere",
-                Program = Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"),
-                Arguments = ["sleep"],
-                WorkingDirectory = pair.Folder,
-            };
-            Task<string?> starting = window.Debugger.StartAsync(plan, elsewhere: true);
-            Ui.WaitFor(() => starting.IsCompleted, "the session to start");
-            Assert.Null(starting.Result);
-            DebugSession session = window.Debugger.SessionNamed("Elsewhere")!;
-            Assert.True(session.Elsewhere && !session.IsLocal, "The session took its program for one of this machine's");
-            Ui.WaitFor(() => session.ProcessStarted.IsCompleted, "the adapter to say which process it started");
-            program = session.ProcessStarted.Result;
-            adapter = session.AdapterProcessId;
-            Assert.True(Processes.IsRunning(program), "The program did not start");
-            // In its loop, it writes no more: on Windows its output is a pipe of the adapter's, which a write would find broken.
-            Ui.WaitFor(() => window.Debugger.Output(session).ToString().Contains("looping", StringComparison.Ordinal), "the program to say it loops");
+            (int here, int hereAdapter) = LeftRunning(window, "Here", elsewhere: false);
+            started.AddRange([here, hereAdapter]);
+            Assert.True(Processes.Gone(here), "A session here left the program its adapter let go of running, where the IDE ends it");
 
-            using (Process debugger = Process.GetProcessById(adapter))
-            {
-                debugger.Kill();
-            }
-            Ui.WaitFor(() => session.State == DebugState.Ended, "the session to end with its adapter");
-            Ui.Hold(TimeSpan.FromSeconds(1), "a kill the session's end might have sent to land");
+            (int program, int adapter) = LeftRunning(window, "Elsewhere", elsewhere: true);
+            started.AddRange([program, adapter]);
+            Assert.True(Processes.Gone(adapter), "The adapter that let the program go did not end");
+            Ui.Hold(TimeSpan.FromSeconds(3), "the adapter's end to reach the session, which ends a program left running");
             Assert.True(Processes.IsRunning(program), "A session whose program is elsewhere ended the process of this machine that has its program's id");
-            Assert.DoesNotContain("was left running by the debugger, and is ended with it", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("was left running by the debugger, and is ended with it", window.Debugger.Output(window.Debugger.SessionNamed("Elsewhere")).ToString(), StringComparison.Ordinal);
         }
         finally
         {
             window.Close();
-            Processes.Kill(program);
-            Processes.Kill(adapter);
+            started.ForEach(Processes.Kill);
         }
+    }
+
+    /// <summary>A program launched under the debugger, its session here or elsewhere, which its adapter then lets go of and
+    /// goes, leaving it running; the program's process and the adapter's, once the session has ended.</summary>
+    private static (int Program, int Adapter) LeftRunning(MainWindow window, string name, bool elsewhere)
+    {
+        Passenger.App.Run.LaunchPlan plan = new()
+        {
+            Name = name,
+            Program = Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"),
+            Arguments = ["sleep"],
+            WorkingDirectory = Path.GetDirectoryName(Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"))!,
+        };
+        Task<string?> starting = window.Debugger.StartAsync(plan, elsewhere);
+        Ui.WaitFor(() => starting.IsCompleted, $"{name}'s session to start");
+        Assert.Null(starting.Result);
+        DebugSession session = window.Debugger.SessionNamed(name)!;
+        Assert.True(session.IsLocal != elsewhere, $"{name}'s session took its program for {(session.IsLocal ? "one of this machine's" : "another machine's")}");
+        Ui.WaitFor(() => session.ProcessStarted.IsCompleted, $"{name}'s adapter to say which process it started");
+        int program = session.ProcessStarted.Result;
+        int adapter = session.AdapterProcessId;
+        // In its loop, it writes no more: on Windows its output is a pipe of the adapter's, which a write would find broken.
+        Ui.WaitFor(() => window.Debugger.Output(session).ToString().Contains("looping", StringComparison.Ordinal), $"{name}'s program to say it loops");
+        Task letGo = session.DetachAsync();
+        Ui.WaitFor(() => letGo.IsCompleted && session.State == DebugState.Ended, $"{name}'s session to let its program go and end");
+        return (program, adapter);
     }
 
     /// <summary>A program started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, as a container service's
