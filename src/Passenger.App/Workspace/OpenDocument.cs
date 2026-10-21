@@ -8,8 +8,8 @@ using Passenger.Text;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>A file open in a tab: its text, how to write it back, and where its view was left so
-/// switching tabs returns to the same carets and scroll.</summary>
+/// <summary>A file open in a tab: its text and storage, or a read-only asset, with the view left so switching tabs
+/// returns to the same carets and scroll. An asset is shared by the file's tabs and released with its last view or hold.</summary>
 public sealed class OpenDocument : Observable
 {
     private IHighlighter? parser;
@@ -44,6 +44,25 @@ public sealed class OpenDocument : Observable
     /// disk tries first.</summary>
     private bool encodingChosen;
 
+    /// <summary>The decoded image or font owned by this document, null for text; replaced only after a successful reload.</summary>
+    public AssetPreview? Asset { get; private set; }
+
+    /// <summary>Opens a supported image or font as a read-only asset with an empty text placeholder, otherwise as text.
+    /// Unsupported binary content is refused with an <see cref="IOException"/>, never exposed to text editing or saving.</summary>
+    public static OpenDocument Load(string path)
+    {
+        if (AssetPreview.Supports(path))
+        {
+            AssetPreview asset = AssetPreview.Load(path);
+            return new OpenDocument(path, new FileText(string.Empty, new UTF8Encoding(false), false)) { Asset = asset };
+        }
+        // A workbook's tab holds no text, since its table is read from the file itself.
+        FileText file = Tables.Workbook.IsWorkbook(path) ? new FileText(string.Empty, new UTF8Encoding(false), false)
+            : FileText.Load(path) ?? throw new IOException($"{System.IO.Path.GetFileName(path)} looks like a binary file.");
+        return new OpenDocument(path, file);
+    }
+
+    /// <summary>Opens text with the encoding and line endings read from disk, and the conventions its path supplies.</summary>
     public OpenDocument(string path, FileText file)
     {
         Path = path;
@@ -321,9 +340,10 @@ public sealed class OpenDocument : Observable
         set => Set(ref showWhitespaces, value);
     }
 
-    /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
+    /// <summary>Lets go of the file's asset, colours and folds after its last view or hold closes.</summary>
     public void Close()
     {
+        Asset?.Dispose();
         (Highlighter as IDisposable)?.Dispose();
         (finder as FoldScan)?.Dispose();
     }
@@ -332,11 +352,11 @@ public sealed class OpenDocument : Observable
     public string Name => System.IO.Path.GetFileName(Path);
 
     /// <summary>Takes the file's new path once it moved on disk, keeping its text, undo, carets and folds; a new name
-    /// of another language takes that language's parser.</summary>
+    /// of another language takes that language's parser. An asset keeps its preview rather than becoming text.</summary>
     public void MoveTo(string path)
     {
         Path = path;
-        Language language = Language.ForPath(path);
+        Language language = Asset is null ? Language.ForPath(path) : Language.PlainText;
         if (language != Language)
         {
             Language = language;
@@ -448,16 +468,26 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's Line Separators: every break made <paramref name="to"/>'s and the file written so, as one undoable
-    /// step whose undo and redo write it too, and which a save keeps over the .editorconfig's <c>end_of_line</c>.</summary>
+    /// step whose undo and redo write it too, and which a save keeps over the .editorconfig's <c>end_of_line</c>.
+    /// An asset preview is left unchanged.</summary>
     public void ConvertLineSeparators(LineSeparator to)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
         IReadOnlyList<TextEdit> edits = TextEditing.Saving(Text.Snapshot.ToString(), Selections, false, false, to.Held(), Text.LineEnding)?.Edits ?? [];
         Change(edits, Current with { Separator = to, SeparatorChosen = true }, write: true);
     }
 
-    /// <summary>What another encoding would do to the file, read again or written in it.</summary>
+    /// <summary>What another encoding would do to the file, read again or written in it. An asset has no text encoding
+    /// and is refused with an <see cref="InvalidOperationException"/>.</summary>
     public EncodingChange Weigh(FileEncoding to)
     {
+        if (Asset is not null)
+        {
+            throw new InvalidOperationException("Asset previews do not have a text encoding.");
+        }
         byte[]? bytes;
         try
         {
@@ -471,9 +501,13 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's Reload: the file's bytes read again in the encoding replace the text, as one undoable step; the
-    /// file is left as it is.</summary>
+    /// file is left as it is. An asset preview is left unchanged.</summary>
     public void ReloadIn(FileEncoding to)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
         FileText read = FileText.Decode(FileText.Read(Path), to.Encoding);
         LineSeparator separator = read.Text.Contains('\n', StringComparison.Ordinal) ? SeparatorOf(read) : Separator;
         // UTF-16 is written with its BOM, the only way it is read back as UTF-16.
@@ -482,7 +516,7 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's Convert: the text written in the encoding, as one undoable step whose undo and redo write it too.
-    /// A character it cannot hold, converted anyway, becomes '?' in the text as on disk.</summary>
+    /// A character it cannot hold, converted anyway, becomes '?' in the text as on disk. Asset previews are unchanged.</summary>
     public void ConvertTo(FileEncoding to) =>
         Change(EncodingChange.Lost(to.Encoding, Text.Snapshot.ToString()), Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: true);
 
@@ -505,7 +539,8 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Rider's change and forget: an encoding that reads the file's bytes as the text it has and writes the text as
-    /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step.</summary>
+    /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step. Asset previews
+    /// are left unchanged.</summary>
     public void TakeEncoding(FileEncoding to) =>
         Change([], Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: false);
 
@@ -519,6 +554,10 @@ public sealed class OpenDocument : Observable
     /// encoding taken, is the text.</summary>
     private void Change(IReadOnlyList<TextEdit> edits, Stored after, bool write)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
         Stored before = Current;
         SelectionSet carets = Selections;
         TextEdit[] sorted = [.. edits.OrderBy(e => e.Start)];
@@ -722,28 +761,34 @@ public sealed class OpenDocument : Observable
     public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
     /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
-    /// app carries, or an MSBuild file of the .NET SDK or a package that Go to Declaration went into.</summary>
-    public bool IsReadOnly => IsDecompiled || IsWorkbook || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+    /// app carries, a workbook, an asset preview, or an MSBuild file of the .NET SDK or a package that Go to Declaration
+    /// went into.</summary>
+    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
 
     /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
     /// written over it.</summary>
     public bool IsWorkbook => Tables.Workbook.IsWorkbook(Path);
 
-    /// <summary>What the bar over a read-only file says it came from.</summary>
-    public string Origin => IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
+    /// <summary>What the bar over a read-only file says it is and where it came from.</summary>
+    public string Origin => Asset is not null ? "Asset preview, read-only"
+        : IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
         ? "Source from the library's Source Link or PDB, read-only"
         : "Decompiled code: the language server made this from the assembly, so it is read-only";
+    /// <summary>The editable text, or an empty placeholder for an asset that must never be serialized over its file.</summary>
     public TextDocument Text { get; }
+
     /// <summary>How the file is stored, which a save keeps: as it was read, as it is on disk since (a BOM a formatter
     /// added), or UTF-8 once a save needed it.</summary>
     public Encoding Encoding { get; private set; }
     public bool HasBom { get; private set; }
     public string EncodingName { get; private set; }
     public Language Language { get; private set; }
-    public bool IsModified => Text.IsModified;
+
+    /// <summary>Whether text has unsaved changes; a read-only asset is never considered modified.</summary>
+    public bool IsModified => Asset is null && Text.IsModified;
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
     public Avalonia.Media.IBrush IconBrush => Explorer.FileIcons.BrushForFile(Path);
 
@@ -753,9 +798,15 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Whether something other than this IDE changed the file's text on disk since it was last loaded or saved.
     /// A change only to how it is stored there (a BOM a formatter added, a conversion to UTF-8) is taken at once, over
-    /// unsaved edits too, since they were made over the same text: the next save keeps it, and no question is asked.</summary>
+    /// unsaved edits too, since they were made over the same text: the next save keeps it, and no question is asked.
+    /// An asset is reloaded directly and returns false, since there is no text conflict to resolve.</summary>
     public bool ChangedOnDisk()
     {
+        if (Asset is not null)
+        {
+            Reload();
+            return false;
+        }
         FileText? file;
         try
         {
@@ -796,9 +847,28 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
-    /// changes only when asked (File Cache Conflict's Load File System Changes). Whether it changed the text.</summary>
+    /// changes only when asked (File Cache Conflict's Load File System Changes). An asset is replaced only after decoding
+    /// succeeds, keeping the previous preview and setting <see cref="Notice"/> on failure. Whether text or an asset changed.</summary>
     public bool Reload(bool overUnsaved = false)
     {
+        if (Asset is not null)
+        {
+            try
+            {
+                AssetPreview replacement = AssetPreview.Load(Path);
+                AssetPreview previous = Asset;
+                Asset = replacement;
+                Raise(nameof(Asset));
+                previous.Dispose();
+                Notice = null;
+                return true;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                Notice = $"Preview reload failed; showing the previous version: {error.Message}";
+                return false;
+            }
+        }
         FileText? file;
         try
         {
@@ -834,9 +904,14 @@ public sealed class OpenDocument : Observable
     /// <summary>Writes the file, first doing to its text what its .editorconfig asks of a save (trailing whitespace off
     /// every line without one of <paramref name="carets"/>, a final line break, every break its <c>end_of_line</c>, as
     /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays. Its folder, once
-    /// another program moved or deleted it, is made again only when <paramref name="makeFolder"/> (the person's Save).</summary>
+    /// another program moved or deleted it, is made again only when <paramref name="makeFolder"/> (the person's Save). An
+    /// asset preview is never written, even when Save is called directly.</summary>
     public void Save(SelectionSet? carets = null, bool makeFolder = false)
     {
+        if (Asset is not null)
+        {
+            return;
+        }
         if (IsWorkbook)
         {
             // Its tab's text is no workbook's: written, it would empty the file.

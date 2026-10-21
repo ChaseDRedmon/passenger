@@ -58,6 +58,9 @@ public sealed class EditorGroup : DockPanel
     /// <summary>The table over the editor for a CSV or workbook, made as the group first shows one.</summary>
     private TableViewer? tables;
 
+    /// <summary>This group's view of the active asset; its bitmap or face belongs to the document, not this control.</summary>
+    private AssetPreviewControl? preview;
+
     public EditorGroup(EditorArea area)
     {
         this.area = area;
@@ -237,11 +240,12 @@ public sealed class EditorGroup : DockPanel
         }
     }
 
-    /// <summary>Shows a file's tab, keeping the carets and scroll of the one it replaces.</summary>
+    /// <summary>Shows a file's text or asset preview, keeping the carets and scroll of the text it replaces. An asset
+    /// detaches the hidden text editor so editing commands cannot change the previous file.</summary>
     public void Show(OpenDocument document)
     {
         Add(document);
-        if (active?.Document == document && Editor.IsVisible)
+        if (active?.Document == document && (Editor.IsVisible || preview is not null))
         {
             return;
         }
@@ -254,6 +258,21 @@ public sealed class EditorGroup : DockPanel
         active = tabs.First(t => t.Document == document);
         active.IsActive = true;
         document.PropertyChanged += OnDocumentChanged;
+        ClearPreview();
+        if (document.Asset is { } asset)
+        {
+            Find.Detach();
+            Editor.Detach();
+            Editor.IsReadOnly = true;
+            Editor.IsVisible = false;
+            Side = null;
+            tables?.Hide();
+            preview = new AssetPreviewControl(asset);
+            body.Children.Add(preview);
+            ShowBanner(document);
+            tabBar.IsVisible = true;
+            return;
+        }
         (SelectionSet selections, Vector scroll) = views.TryGetValue(document, out var view) ? view : (document.Selections, document.Scroll);
         Editor.LineCommentPrefix = document.Language.LineComment;
         Editor.BlockComment = document.Language.BlockComment;
@@ -355,6 +374,7 @@ public sealed class EditorGroup : DockPanel
         document.Text.Changed -= OnTabTextChanged;
         if (tab == active)
         {
+            ClearPreview();
             document.PropertyChanged -= OnDocumentChanged;
             active = null;
             if (tabs.Count > 0)
@@ -403,19 +423,19 @@ public sealed class EditorGroup : DockPanel
 
     /// <summary>Where a tab's carets are in this group: the editor's for the one shown, else as it was left.</summary>
     public SelectionSet SelectionsOf(OpenDocument document) =>
-        active?.Document == document ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
+        active?.Document == document && document.Asset is null ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
 
     /// <summary>Where a tab's editor was scrolled in this group: the editor's for the one shown, else as it was left.</summary>
     public Vector ScrollOf(OpenDocument document) =>
-        active?.Document == document ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
+        active?.Document == document && document.Asset is null ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
 
     /// <summary>Puts a tab's carets (and scroll) where they were kept, for when it is shown.</summary>
     public void Remember(OpenDocument document, SelectionSet selections, Vector scroll = default) => views[document] = (selections, scroll);
 
-    /// <summary>The carets and scroll of the file shown, kept for when its tab is shown again.</summary>
+    /// <summary>The carets and scroll of the text shown, kept for when its tab is shown again; an asset has no editor state.</summary>
     public void Keep()
     {
-        if (active is not null)
+        if (active is not null && active.Document.Asset is null)
         {
             views[active.Document] = (Editor.Selections, Editor.ScrollOffset);
             active.Document.Selections = Editor.Selections;
@@ -440,6 +460,14 @@ public sealed class EditorGroup : DockPanel
         }
         switch (e.PropertyName)
         {
+            case nameof(OpenDocument.Asset):
+                ClearPreview();
+                if (document.Asset is { } asset)
+                {
+                    preview = new AssetPreviewControl(asset);
+                    body.Children.Add(preview);
+                }
+                break;
             case nameof(OpenDocument.Highlighter):
                 Editor.Highlighter = document.Highlighter;
                 break;
@@ -497,6 +525,17 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.ShowWhitespaces):
                 Editor.ShowWhitespaces = document.ShowWhitespaces;
                 break;
+        }
+    }
+
+    /// <summary>Removes this group's view and its glyph runs, leaving the shared asset to its owning document.</summary>
+    private void ClearPreview()
+    {
+        if (preview is not null)
+        {
+            body.Children.Remove(preview);
+            preview.Dispose();
+            preview = null;
         }
     }
 
