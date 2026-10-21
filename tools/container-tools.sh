@@ -38,9 +38,14 @@ if [ -z "$rid" ]; then
     esac
 fi
 
+# The version as tools/package-linux.sh takes it: a vX.Y.Z tag on this commit, else Directory.Build.props' Version. The
+# IDE uses tools of its own version alone (passenger-tools version), so a release's must say the release's.
+version=$(git describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null | sed 's/^v//' || true)
+[ -n "$version" ] || version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -n 1)
+
 out=artifacts/container-tools/$rid
 rm -rf "$out"
-AVALONIA_TELEMETRY_OPTOUT=1 dotnet publish src/Passenger.ContainerTools -c Release -r "$rid" --self-contained -o "$out" -nologo -v:q
+AVALONIA_TELEMETRY_OPTOUT=1 dotnet publish src/Passenger.ContainerTools -c Release -r "$rid" --self-contained -p:Version="$version" -o "$out" -nologo -v:q
 test -x "$out/passenger-tools"
 echo "$out: $(du -sh "$out" | cut -f1)"
 

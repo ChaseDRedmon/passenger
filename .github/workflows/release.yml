@@ -9,7 +9,9 @@
 # Passenger-windows-x64.exe, Passenger-windows-arm64.exe, Passenger-linux-x64.tar.gz and
 # Passenger-linux-arm64.tar.gz. A Linux archive is one passenger/ folder with its install.sh, as site/linux.html tells
 # people to use it; it is not signed, and Passenger on Linux does not update itself: its update notice downloads the
-# newer archive, whose install.sh replaces the old.
+# newer archive, whose install.sh replaces the old. The container tools (tools/container-tools.sh, #344) go beside them
+# as Passenger-container-tools-<rid>.tar.gz for linux-x64, linux-arm64, linux-musl-x64 and linux-musl-arm64, which the
+# IDE downloads from its own version's release (releases/download/vX.Y.Z/NAME) and checks against its SHA256SUMS.
 #
 # Signed only when the repository's secrets hold the credentials, and otherwise unsigned, as the owner decided the MVP
 # may ship (#34, #36):
@@ -331,11 +333,63 @@ jobs:
           compression-level: 0
           retention-days: 1
 
+  # Passenger's container tools for each Linux system a container may run (#344): the debug adapter and its process
+  # lister, self-contained, as `just container-tools RID --archive` makes them, at the tag's version. The IDE downloads
+  # its own version's by these fixed names on a first Debug in a container, checked against SHA256SUMS.
+  container-tools:
+    name: Container tools (${{ matrix.rid }})
+    needs: [version, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      RID: ${{ matrix.rid }}
+    steps:
+      # The whole history: the script takes the version from the commit's tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore cached NuGet packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Publish and pack
+        run: |
+          tools/container-tools.sh "$RID" --archive
+          mkdir -p artifacts/release
+          cp "artifacts/container-tools/Passenger-container-tools-$RID.tar.gz" artifacts/release/
+          tar -tzf "artifacts/release/Passenger-container-tools-$RID.tar.gz" | grep -qx './passenger-tools'
+          ls -l artifacts/release
+
+      - name: Upload the release's files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-container-tools-${{ matrix.rid }}
+          path: artifacts/release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   # Everything the release carries, in one place: checked by name, so a renamed package never replaces one the site
   # links to, with SHA256SUMS over it and the notes. A dry run keeps it as the run's artifact.
   assets:
     name: Assets
-    needs: [version, package]
+    needs: [version, package, container-tools]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -358,7 +412,11 @@ jobs:
       - name: Check the release's files
         working-directory: release/assets
         run: |
-          expected="Passenger-linux-arm64.tar.gz
+          expected="Passenger-container-tools-linux-arm64.tar.gz
+          Passenger-container-tools-linux-musl-arm64.tar.gz
+          Passenger-container-tools-linux-musl-x64.tar.gz
+          Passenger-container-tools-linux-x64.tar.gz
+          Passenger-linux-arm64.tar.gz
           Passenger-linux-x64.tar.gz
           Passenger-macos-arm64.dmg
           Passenger-windows-arm64.exe

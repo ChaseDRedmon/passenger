@@ -28,6 +28,13 @@
     </ItemGroup>
   </Target>
 
+  <!-- Passenger's licence and the notices of what it carries (the runtime and the debugger's packages, all named there)
+       go with the tools, as with the app. -->
+  <ItemGroup>
+    <None Include="../../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="../Passenger.DebugAdapter/AdapterProgram.cs" Link="DebugAdapter/AdapterProgram.cs" />
     <Compile Include="../Passenger.DebugAdapter/DebugAdapter.cs" Link="DebugAdapter/DebugAdapter.cs" />

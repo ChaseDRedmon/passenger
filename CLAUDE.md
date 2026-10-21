@@ -34,6 +34,9 @@ just package-linux [RID]   # artifacts/package/Passenger-linux-x64.tar.gz (or -a
                            # the launcher, install.sh, the desktop entry, icon and file types from tools/linux), checked
 just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -arm64), Velopack's per-user installer;
                            # signed on Windows by PASSENGER_SIGNTOOL_PARAMS or PASSENGER_ARTIFACT_SIGNING_METADATA
+just container-tools [RID] [--archive]  # artifacts/container-tools/<rid>/, the container tools self-contained (linux-x64,
+                           # linux-arm64, linux-musl-x64, linux-musl-arm64; none: the engine's processor, glibc), where a
+                           # dev build finds them; --archive also the release's Passenger-container-tools-<rid>.tar.gz
 just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
                            # notices miss
 just test [filter]         # every test, or those whose name matches
@@ -540,6 +543,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   and back, for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
   #344's debugger takes it at the protocol's edge. Debug and Profile of a container configuration are refused
   (`LaunchPlan.InContainers`). `ContainerRunsTests` run them against the engine on aspnet:10.0 and busybox.
+  `ContainerTools` is the
+  container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
+  image's processor, musl when docker cp finds `/lib/ld-musl-*`, read once per image; an image never run is read from a
+  container created and removed, `SystemOfImageAsync`) found beside the app (`container-tools/<rid>/`), in a dev build's
+  `artifacts/container-tools/<rid>/` or the state's `cache/container-tools/<version>/<rid>/`, else downloaded from the
+  release of this version (`ReleaseFeed.Downloads`, `Releases.DownloadAsync`, HTTPS only) and checked against that
+  release's SHA256SUMS (a mismatch refused and said), unpacked through a temporary folder renamed
+  (`ContainerToolsSource`, the window's `ContainerToolsFrom`); then mounted read-only at `/passenger/tools` where Passenger
+  starts the container (`MountFor`, the `-v` value or Compose volume a run configuration adds) or copied to
+  `/tmp/passenger-tools` (`CopyIntoAsync`), used only when its `version` is the IDE's. `ContainerProcesses` is what
+  Attach to Process lists of the running containers: the tools' `processes` where they are in, else `docker top` from
+  outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
+  copied in as the person attaches (the dialog's heading says so first), name them.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -900,7 +916,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   let go by Detach, by leaving its folder, by the window's close and by the adapter when the IDE goes without disconnecting
   (`ManagedDebugger.Abandon`), never ended by them. On macOS the debugger needs no entitlement and no
   get-task-allow on its target: the adapter runs under the machine's dotnet and talks to the runtime through its
-  pipes, so the package carries no com.apple.security.cs.debugger.
+  pipes, so the package carries no com.apple.security.cs.debugger. The dialog (`MainWindow.AttachableAsync`) also lists
+  the running containers' programs under each container (`DotnetProcess.Container`, its `Id` the container's own):
+  attaching one runs the adapter inside it (`MainWindow.InContainerAsync`: the tools put in, the program found by its
+  command line there, an `AdapterPlace` of `docker exec -i CONTAINER …/passenger-tools dap … --remote`), Hot Reload
+  offered when the tools found it started with DOTNET_MODIFIABLE_ASSEMBLIES=debug (`DotnetProcess.HotReload`); one whose
+  runtime has DOTNET_EnableDiagnostics=0 says why and cannot be chosen (`WhyNot`), and a Release build (its
+  DebuggableAttribute) or a container of another processor than the engine's says so first (`Note`, after its command
+  line, and in the status bar once attached). Reattach finds them by container and command line; MCP's
+  `debug_processes` names the container and `debug_attach` takes `container`.
 - Return values and Smart Step Into: a step over sets a breakpoint after each call in its statement
   (`ICorDebugCode3.GetReturnValueLiveOffset`) and keeps each value by a strong handle (a value type boxed by an eval,
   after which the step's stepper is made anew, since an eval mid-step loses it); `$ReturnValue`/`$ReturnValueN` are
@@ -931,7 +955,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`Breakpoint.Tell`: bound where any bound it) until its session ends (`BreakpointStore.Leave`); a data breakpoint goes
   to the session whose object it watches alone. A session `Elsewhere` (a container's program) never holds, signals or
   kills a process of this machine by its program's id (`DebugSession.IsLocal`, which Attach Profiler asks too), its
-  adapter started with `--remote` so its `process` events say `isLocalProcess: false`. The engine decides exception breakpoints (`ExceptionRule`)
+  adapter started with `--remote` so its `process` events say `isLocalProcess: false`. A session given an
+  `AdapterPlace` (`DebugController.StartAsync`/`AttachAsync`'s `place`) runs its adapter there, a container's over
+  `docker exec -i` (the protocol unchanged over its standard input and output; killing the CLI, Stop and Detach close the
+  adapter's input there, which lets the program go and ends it), and crosses paths at the protocol's edge through the
+  place's `DebugPaths` (launch's program and folder, breakpoints, Run to Cursor, Set Next Statement, Hot Reload's line
+  updates and active statements, stack frames): the same path unless a run configuration's map (#343's `ContainerPaths`)
+  is given as `new DebugPaths(toContainer, toHost)`. The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
@@ -976,7 +1006,17 @@ window or takes the focus; it shows everything but the system's own window chrom
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
-  `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`). Before
+  `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`; its flags
+  and loop are `AdapterProgram`). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
+  container: `dap` (`AdapterProgram` and `DebugAdapter.cs` compiled in, the one engine), `processes` (the container's
+  .NET programs as JSON, `DotnetProcesses.List` plus those mapping libcoreclr.so with no debugger pipe, each with
+  whether it was started for Hot Reload, built optimized, and why it cannot be attached to) and `version`; #345 adds
+  `trace` and `heap` beside them. Self-contained and InvariantGlobalization, never carried by the app (the release's
+  `Passenger-container-tools-<rid>.tar.gz`, or `just container-tools`); a musl publish keeps its own libdbgshim.so
+  (`KeepMuslDbgShim`: the glibc package's matches a musl system too, and won). The engine's `SourcePaths.Match` takes a
+  PDB document that exists where the adapter runs while the breakpoint's file does not (the IDE's, outside the
+  container) by what they share from the end, and compares a Windows path (C:\…, \\server\…) ignoring case on any
+  system; the engine gives a Windows document's path back with forward slashes. Before
   letting a program go (Disconnect without terminating), the engine runs it off any patch or single-step stop and stops
   it again (`ManagedDebugger_LetGo.cs`): under CET a thread resumes from a breakpoint only through the debugger's
   out-of-process SetThreadContext, which mscordbi's Detach waits for only once it has answered one such flare, so a
@@ -1123,7 +1163,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (arm64)", the check that stands for it). Every workflow runs only when started by hand (the owner's
   choice, to spend Actions' minutes on purpose): `ci.yml` (`gh workflow run CI --ref main`, with the packages' and
   notices' jobs) calls it, and so does `release.yml`, run from a `vX.Y.Z` tag with dry run unticked: the tests, then the Apple Silicon disk image (no
-  Intel Mac build, the owner's call), both Windows installers and both Linux archives at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
+  Intel Mac build, the owner's call), both Windows installers, both Linux archives and the four container tools' archives at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
   names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing. ci.yml
   makes one disk image, so it and the four macOS shards fit GitHub's five macOS runners at once.
 
@@ -1366,7 +1406,13 @@ a callback from List.ForEach, CoreLib's frame below it. `BindingValuesTests` deb
 debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `DebugSessionsTests` (Alone) debug two
 programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpTests.Sessions.cs` has an agent name
 which; its test of a session elsewhere has the adapter let its program go rather than killing the adapter, since on
-Windows a killed debugger takes its program with it. `WpfPreviewTests` (Windows only)
+Windows a killed debugger takes its program with it. `ContainerDebuggingTests` (Alone, skipped saying why without a Linux
+engine) attach through Attach to Process to a program in a container they start themselves (`Turns`: a .NET 10 console
+app built here in Debug, as it is, with its PDB naming the container's paths and naming a Windows machine's by PathMap,
+copied into images of `mcr.microsoft.com/dotnet/runtime:10.0` and its `-alpine`, labelled with the run's label and
+removed with the fixture), on glibc and musl, through a path map (`AttachThrough`, as a container run configuration
+will), and with tools downloaded from `UpdatesTests.StandIn`; the fixture publishes the tools for the engine's processor
+into `artifacts/container-tools` (seconds when up to date, a minute or two the first time). `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
