@@ -33,21 +33,25 @@ public static class ContainerProcesses
         {
             return [];
         }
-        JsonElement inspected = await engine.JsonAsync(["inspect", "--type", "container", .. ids], cancel);
         string engineArchitecture = await ContainerTools.EngineArchitectureAsync(engine, cancel);
-        IEnumerable<Task<IReadOnlyList<DotnetProcess>>> each = inspected.EnumerateArray().Select(c => OfAsync(engine, c, engineArchitecture, cancel));
+        // Each asked on its own: one that ended since it was listed leaves the others listed.
+        IEnumerable<Task<IReadOnlyList<DotnetProcess>>> each = ids.Select(id => OfAsync(engine, id, engineArchitecture, cancel));
         return [.. (await Task.WhenAll(each)).SelectMany(p => p).OrderBy(p => p.Container, StringComparer.Ordinal).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
     }
 
-    /// <summary>One container's .NET programs.</summary>
-    private static async Task<IReadOnlyList<DotnetProcess>> OfAsync(ContainerEngine engine, JsonElement container, string engineArchitecture, CancellationToken cancel)
+    /// <summary>One container's .NET programs; none for one that ended meanwhile or would not be described.</summary>
+    private static async Task<IReadOnlyList<DotnetProcess>> OfAsync(ContainerEngine engine, string id, string engineArchitecture, CancellationToken cancel)
     {
-        string name = (ContainerEngine.Text(container, "Name") ?? ContainerEngine.Text(container, "Id") ?? string.Empty).TrimStart('/');
-        bool dotnetImage = container.TryGetProperty("Config", out JsonElement config) && config.TryGetProperty("Env", out JsonElement env)
-            && env.ValueKind == JsonValueKind.Array && env.EnumerateArray().Any(v => v.GetString() is { } variable
-                && (variable == "DOTNET_RUNNING_IN_CONTAINER=true" || variable.StartsWith("DOTNET_VERSION=", StringComparison.Ordinal)));
+        string name = id;
         try
         {
+            JsonElement inspected = await engine.JsonAsync(["inspect", "--type", "container", id], cancel);
+            JsonElement container = inspected.ValueKind == JsonValueKind.Array && inspected.GetArrayLength() > 0 ? inspected[0] : default;
+            name = (ContainerEngine.Text(container, "Name") ?? id).TrimStart('/');
+            bool dotnetImage = container.ValueKind == JsonValueKind.Object && container.TryGetProperty("Config", out JsonElement config)
+                && config.ValueKind == JsonValueKind.Object && config.TryGetProperty("Env", out JsonElement env) && env.ValueKind == JsonValueKind.Array
+                && env.EnumerateArray().Any(v => v.ValueKind == JsonValueKind.String && v.GetString() is { } variable
+                    && (variable == "DOTNET_RUNNING_IN_CONTAINER=true" || variable.StartsWith("DOTNET_VERSION=", StringComparison.Ordinal)));
             IReadOnlyList<DotnetProcess> outside = await TopAsync(engine, name, dotnetImage, cancel);
             if (outside.Count == 0)
             {

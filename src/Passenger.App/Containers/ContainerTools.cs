@@ -81,21 +81,83 @@ public static class ContainerTools
     /// are none.</summary>
     public static async Task<string> FolderAsync(ContainerToolsSource source, string rid, Action<string>? say, CancellationToken cancel)
     {
+        string version = Product.Version;
+        string? stale = null;
         foreach (string local in source.Local)
         {
             string folder = Path.Combine(local, rid);
             if (File.Exists(Path.Combine(folder, Executable)))
             {
+                // A copy of another version (a dev build's made before the version moved) is passed over, never used.
+                if (VersionOf(folder) is { } other && other != version)
+                {
+                    stale = $"the copy at {folder} is version {other}";
+                    IdeLog.Write(IdeLog.Debugger, $"Passenger's container tools at {folder} are version {other}, not {version}: passed over");
+                    continue;
+                }
                 return folder;
             }
         }
-        string version = Product.Version;
         string cached = Path.Combine(source.Cache, version, rid);
         if (File.Exists(Path.Combine(cached, Executable)))
         {
             return cached;
         }
-        return await DownloadAsync(source, version, rid, cached, say, cancel).ConfigureAwait(false);
+        // One download a system at a time in this process; another process's is kept as it lands (DownloadAsync).
+        SemaphoreSlim one = Downloads.GetOrAdd(cached, _ => new SemaphoreSlim(1, 1));
+        await one.WaitAsync(cancel).ConfigureAwait(false);
+        try
+        {
+            if (File.Exists(Path.Combine(cached, Executable)))
+            {
+                return cached;
+            }
+            return await DownloadAsync(source, version, rid, cached, say, cancel).ConfigureAwait(false);
+        }
+        catch (ContainerToolsException failed) when (stale is not null)
+        {
+            throw new ContainerToolsException($"{failed.Message} ({stale}, not this Passenger's {version}: just container-tools {rid} makes this version's)");
+        }
+        finally
+        {
+            one.Release();
+        }
+    }
+
+    /// <summary>The downloads under way, one a system's folder.</summary>
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> Downloads = new(StringComparer.Ordinal);
+
+    /// <summary>The version a folder's tools say they are (their assembly's informational version, less its commit), read
+    /// from their files without running them; null when it cannot be read.</summary>
+    public static string? VersionOf(string folder)
+    {
+        string assembly = Path.Combine(folder, $"{Executable}.dll");
+        try
+        {
+            using FileStream file = File.OpenRead(assembly);
+            using System.Reflection.PortableExecutable.PEReader pe = new(file);
+            System.Reflection.Metadata.MetadataReader metadata = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+            foreach (System.Reflection.Metadata.CustomAttributeHandle handle in metadata.GetAssemblyDefinition().GetCustomAttributes())
+            {
+                System.Reflection.Metadata.CustomAttribute attribute = metadata.GetCustomAttribute(handle);
+                if (attribute.Constructor.Kind != System.Reflection.Metadata.HandleKind.MemberReference)
+                {
+                    continue;
+                }
+                System.Reflection.Metadata.MemberReference constructor = metadata.GetMemberReference((System.Reflection.Metadata.MemberReferenceHandle)attribute.Constructor);
+                if (constructor.Parent.Kind != System.Reflection.Metadata.HandleKind.TypeReference
+                    || metadata.GetString(metadata.GetTypeReference((System.Reflection.Metadata.TypeReferenceHandle)constructor.Parent).Name) != "AssemblyInformationalVersionAttribute")
+                {
+                    continue;
+                }
+                System.Reflection.Metadata.BlobReader value = metadata.GetBlobReader(attribute.Value);
+                return value.ReadUInt16() == 1 && value.ReadSerializedString() is { } said ? said.Split('+')[0] : null;
+            }
+        }
+        catch (Exception unread) when (unread is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException)
+        {
+        }
+        return null;
     }
 
     /// <summary>The tools of a release downloaded, checked and unpacked into <paramref name="cached"/>.</summary>
@@ -135,11 +197,19 @@ public static class ContainerTools
             {
                 throw new ContainerToolsException($"{asset} of {tag} holds no {Executable}");
             }
-            if (Directory.Exists(cached))
+            if (Directory.Exists(cached) && !File.Exists(Path.Combine(cached, Executable)))
             {
+                // Something left with no tools in it, never a copy another Passenger put there whole.
                 Directory.Delete(cached, recursive: true);
             }
-            Directory.Move(unpacking, cached);
+            try
+            {
+                Directory.Move(unpacking, cached);
+            }
+            catch (IOException) when (File.Exists(Path.Combine(cached, Executable)))
+            {
+                // Another Passenger's download landed while this one unpacked: theirs stays, and this one goes below.
+            }
             return cached;
         }
         catch (Exception failed) when (failed is UpdateFailedException or UpdateRefusedException)
@@ -174,25 +244,67 @@ public static class ContainerTools
     public static async Task<ContainerSystem> SystemOfContainerAsync(ContainerEngine engine, string container, CancellationToken cancel)
     {
         JsonElement inspected = await engine.JsonAsync(["inspect", "--type", "container", container], cancel).ConfigureAwait(false);
-        string image = ContainerEngine.Text(inspected[0], "Image") ?? throw new ContainerToolsException($"docker inspect named no image of {container}");
+        string image = ContainerEngine.Text(First(inspected), "Image") ?? throw new ContainerToolsException($"docker inspect named no image of {container}");
         if (Systems.TryGetValue(image, out ContainerSystem? known))
         {
             return known;
         }
         JsonElement described = await engine.JsonAsync(["image", "inspect", image], cancel).ConfigureAwait(false);
-        string architecture = ContainerEngine.Text(described[0], "Architecture") ?? "amd64";
+        string architecture = ContainerEngine.Text(First(described), "Architecture") ?? "amd64";
         string loader = architecture == "arm64" ? "aarch64" : architecture == "amd64" ? "x86_64" : architecture;
-        string probe = Path.Combine(Path.GetTempPath(), $"passenger-libc-{Guid.NewGuid():N}");
+        ContainerSystem system = new(architecture, await HasAsync(engine, container, $"/lib/ld-musl-{loader}.so.1", cancel).ConfigureAwait(false));
+        Systems[image] = system;
+        return system;
+
+        static JsonElement First(JsonElement array) => array.ValueKind == JsonValueKind.Array && array.GetArrayLength() > 0 ? array[0] : default;
+    }
+
+    /// <summary>Whether a container has a file, asked of <c>docker cp … -</c>, whose archive is only begun: nothing is
+    /// written here, and no more of a file the image made huge is read than its header.</summary>
+    private static async Task<bool> HasAsync(ContainerEngine engine, string container, string path, CancellationToken cancel)
+    {
+        System.Diagnostics.Process process;
         try
         {
-            ChildResult copied = await engine.RunAsync(["cp", $"{container}:/lib/ld-musl-{loader}.so.1", probe], cancel: cancel).ConfigureAwait(false);
-            ContainerSystem system = new(architecture, copied.Succeeded);
-            Systems[image] = system;
-            return system;
+            System.Diagnostics.ProcessStartInfo start = engine.Command(["cp", $"{container}:{path}", "-"]);
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            process = ChildProcesses.Start(start);
         }
-        finally
+        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            File.Delete(probe);
+            throw new ContainerToolsException($"Could not read the system of container {container}: {failed.Message}");
+        }
+        using (process)
+        {
+            _ = process.StandardError.ReadToEndAsync(CancellationToken.None).ContinueWith(read => read.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            limit.CancelAfter(ContainerEngine.AskLimit);
+            try
+            {
+                // An archive's first header is 512 bytes: their coming says the file is there.
+                byte[] header = new byte[512];
+                int read = await process.StandardOutput.BaseStream.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, limit.Token).ConfigureAwait(false);
+                if (read == header.Length)
+                {
+                    return true;
+                }
+                await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
+                return false;
+            }
+            catch (Exception failed) when (failed is IOException or ObjectDisposedException)
+            {
+                return false;
+            }
+            catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+            {
+                throw new ContainerToolsException($"Container {container} did not say within {ContainerEngine.AskLimit.TotalSeconds:0} s whether it has {path}");
+            }
+            finally
+            {
+                ChildProcesses.Kill(process);
+            }
         }
     }
 
@@ -237,20 +349,38 @@ public static class ContainerTools
         return null;
     }
 
-    /// <summary>Copies the tools into a container (<see cref="Copied"/>), and gives where their executable is there.</summary>
+    /// <summary>Copies the tools into a container (<see cref="Copied"/>), and gives where their executable is there, once
+    /// they say they are this Passenger's version; refused, saying which they are, when they are another's.</summary>
     public static async Task<string> CopyIntoAsync(ContainerEngine engine, string container, string folder, CancellationToken cancel)
     {
+        string version = Product.Version;
+        if (VersionOf(folder) is { } known && known != version)
+        {
+            throw new ContainerToolsException(Mismatch(folder, known));
+        }
         // docker cp makes the folder and keeps each file's mode, the executable's among them (Windows' CLI marks every file executable).
         ChildResult copied = await engine.RunAsync(["cp", Path.Combine(folder, "."), $"{container}:{Copied}"], TimeSpan.FromMinutes(2), cancel).ConfigureAwait(false);
         if (!copied.Succeeded)
         {
             throw new ContainerToolsException($"Could not copy Passenger's container tools into {container}: {ContainerEngine.Said(copied)}");
         }
+        string executable = $"{Copied}/{Executable}";
+        ChildResult said = await engine.RunAsync(["exec", .. Unheld, container, executable, "version"], cancel: cancel).ConfigureAwait(false);
+        if (said.Output.Trim() != version)
+        {
+            throw new ContainerToolsException(said.Succeeded ? Mismatch(folder, said.Output.Trim())
+                : $"Passenger's container tools copied into {container} did not run: {ContainerEngine.Said(said)}");
+        }
         CopiedInto[container] = Copied;
-        return $"{Copied}/{Executable}";
+        return executable;
+
+        static string Mismatch(string folder, string other) =>
+            $"Passenger's container tools at {folder} are version {other}, and this Passenger is {Product.Version}: they were not used "
+            + $"(just container-tools {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))} makes this version's)";
     }
 
-    /// <summary>The tools' <c>processes</c> in a container: its .NET programs, by their ids there.</summary>
+    /// <summary>The tools' <c>processes</c> in a container: its .NET programs, by their ids there. What the container
+    /// answers is read as it is: an entry with no id is passed over, an answer that is no list refused.</summary>
     public static async Task<IReadOnlyList<DotnetProcess>> ProcessesAsync(ContainerEngine engine, string container, string executable, CancellationToken cancel)
     {
         ChildResult listed = await engine.RunAsync(["exec", .. Unheld, container, executable, "processes"], cancel: cancel).ConfigureAwait(false);
@@ -258,16 +388,28 @@ public static class ContainerTools
         {
             throw new ContainerToolsException($"Passenger's tools could not list the programs in {container}: {ContainerEngine.Said(listed)}");
         }
-        using JsonDocument document = JsonDocument.Parse(listed.Output);
-        return [.. document.RootElement.EnumerateArray().Select(p => new DotnetProcess(
-            p.GetProperty("id").GetInt32(), p.GetProperty("name").GetString() ?? string.Empty, p.GetProperty("commandLine").GetString() ?? string.Empty,
-            p.GetProperty("user").GetString() ?? string.Empty, true)
+        try
         {
-            Container = container,
-            HotReload = p.TryGetProperty("hotReload", out JsonElement hot) && hot.ValueKind == JsonValueKind.True,
-            Note = p.TryGetProperty("optimized", out JsonElement optimized) && optimized.ValueKind == JsonValueKind.True ? ReleaseBuild : null,
-            WhyNot = p.TryGetProperty("whyNot", out JsonElement why) ? why.GetString() : null,
-        })];
+            using JsonDocument document = JsonDocument.Parse(listed.Output);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new ContainerToolsException($"Passenger's tools in {container} listed no programs");
+            }
+            return [.. document.RootElement.EnumerateArray()
+                .Where(p => p.ValueKind == JsonValueKind.Object && p.TryGetProperty("id", out JsonElement id) && id.ValueKind == JsonValueKind.Number && id.TryGetInt32(out _))
+                .Select(p => new DotnetProcess(p.GetProperty("id").GetInt32(), ContainerEngine.Text(p, "name") ?? string.Empty,
+                    ContainerEngine.Text(p, "commandLine") ?? string.Empty, ContainerEngine.Text(p, "user") ?? string.Empty, true)
+                {
+                    Container = container,
+                    HotReload = p.TryGetProperty("hotReload", out JsonElement hot) && hot.ValueKind == JsonValueKind.True,
+                    Note = p.TryGetProperty("optimized", out JsonElement optimized) && optimized.ValueKind == JsonValueKind.True ? ReleaseBuild : null,
+                    WhyNot = ContainerEngine.Text(p, "whyNot"),
+                })];
+        }
+        catch (JsonException unread)
+        {
+            throw new ContainerToolsException($"Passenger's tools in {container} answered what is no list of programs: {unread.Message}");
+        }
     }
 
     /// <summary>What a person should know of a Release build: Just My Code finds none of its code the user's.</summary>

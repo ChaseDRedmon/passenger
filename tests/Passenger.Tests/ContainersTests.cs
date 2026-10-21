@@ -467,22 +467,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         // Stand-in tools of this version: one program, a recording begun at once, and each heap mode started sends a frame.
-        string tools = TestFolders.Create("ctr-heap-tools-");
-        string script = Path.Combine(tools, ContainerTools.Executable);
-        File.WriteAllText(script, string.Join('\n',
-            "#!/bin/sh",
-            "case \"$1\" in",
-            $"  version) echo {Passenger.App.Product.Version} ;;",
-            "  processes) echo '[{\"id\":7,\"name\":\"Spins\",\"commandLine\":\"dotnet /app/Spins.dll\",\"user\":\"root\"}]' ;;",
-            "  trace) echo recording >&2; cat > /dev/null ;;",
-            "  heap) n=$(cat /tmp/heaps 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/heaps; read line; cat /tmp/frames/$n; cat > /dev/null ;;",
-            "esac",
-            string.Empty));
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
-                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-        }
+        string tools = StandInTools("[{\"id\":7,\"name\":\"Spins\",\"commandLine\":\"dotnet /app/Spins.dll\",\"user\":\"root\"}]");
         string frames = TestFolders.Create("ctr-heap-frames-");
         // A frame that says it is 1.5 GB long, and sends nothing of it.
         File.WriteAllBytes(Path.Combine(frames, "1"), Frame((byte)'S', 3L << 29, []));
@@ -578,6 +563,67 @@ public sealed class ContainersTests
             }
             return Frame((byte)'S', body.Length, body.ToArray());
         }
+    }
+
+    [AvaloniaFact]
+    public void Attaching_in_a_container_never_uses_tools_of_another_version_nor_a_list_of_programs_that_is_none()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        // A copy of the tools for every system that says it is another version than this Passenger's, and no release to download from.
+        string stale = TestFolders.Create("ctr-stale-tools-");
+        foreach (string rid in (string[])["linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64"])
+        {
+            string folder = Directory.CreateDirectory(Path.Combine(stale, rid)).FullName;
+            File.Copy(Path.Combine(StandInTools("[]"), ContainerTools.Executable), Path.Combine(folder, ContainerTools.Executable));
+            File.Copy(typeof(Assert).Assembly.Location, Path.Combine(folder, $"{ContainerTools.Executable}.dll"));
+        }
+        ContainerToolsSource source = new([stale], new Passenger.App.Updates.ReleaseFeed(new Uri("http://127.0.0.1:9/repos/Zaneris/passenger/releases/latest"),
+            TimeSpan.FromSeconds(5)), TestFolders.Create("ctr-tools-cache-"));
+        string bare = Docker.Container("bare", "sleep 600");
+        MainWindow window = new() { Width = 1200, Height = 800, ContainerToolsFrom = source };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-attach-"));
+        Ui.Settle();
+        try
+        {
+            string? refused = Ui.Await(window.AttachAsync(new DotnetProcess(0, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = bare }), "the attach's answer");
+            Assert.True(refused?.Contains("is version", StringComparison.Ordinal) == true && refused.Contains($"not this Passenger's {Passenger.App.Product.Version}", StringComparison.Ordinal),
+                $"Attaching with only another version's tools here answered: {refused}");
+            Assert.Contains("absent", Docker.Run("exec", bare, "sh", "-c", $"test -e {ContainerTools.Copied} && echo there || echo absent"), StringComparison.Ordinal);
+
+            // Tools of this version whose list of programs names none by an id: no program is taken for one.
+            string listing = Docker.Container("listing", "sleep 600");
+            Docker.Run("cp", Path.Combine(StandInTools("[{\"name\":\"Spins\",\"commandLine\":\"dotnet /app/Spins.dll\"},{\"id\":\"seven\"},3]"), "."), $"{listing}:{ContainerTools.Copied}");
+            string? none = Ui.Await(window.AttachAsync(new DotnetProcess(0, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = listing }), "the attach's answer");
+            Assert.True(none?.Contains($"no longer runs in {listing}", StringComparison.Ordinal) == true, $"Attaching to a program the tools named by no id answered: {none}");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Stand-in container tools of this version: a script that says the version, lists the programs given, begins a
+    /// recording at once, and in its heap mode sends <c>/tmp/frames/N</c> to the Nth start; the folder holding it.</summary>
+    private static string StandInTools(string processes)
+    {
+        string tools = TestFolders.Create("ctr-standin-tools-");
+        string script = Path.Combine(tools, ContainerTools.Executable);
+        File.WriteAllText(script, string.Join('\n',
+            "#!/bin/sh",
+            "case \"$1\" in",
+            $"  version) echo {Passenger.App.Product.Version} ;;",
+            $"  processes) echo '{processes}' ;;",
+            "  trace) echo recording >&2; cat > /dev/null ;;",
+            "  heap) n=$(cat /tmp/heaps 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/heaps; read line; cat /tmp/frames/$n; cat > /dev/null ;;",
+            "esac",
+            string.Empty));
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+        return tools;
     }
 
     [AvaloniaFact]

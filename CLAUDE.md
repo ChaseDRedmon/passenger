@@ -587,15 +587,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   (unlabelled, the SDK's) is removed by the test that made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
-  image's processor, musl when docker cp finds `/lib/ld-musl-*`, read once per image; an image never run is read from a
-  container created and removed, `SystemOfImageAsync`) found beside the app (`container-tools/<rid>/`), in a dev build's
-  `artifacts/container-tools/<rid>/` or the state's `cache/container-tools/<version>/<rid>/`, else downloaded from the
+  image's processor, musl when docker cp's archive of `/lib/ld-musl-*` begins, nothing written here and the copy ended at
+  its first header, read once per image; an image never run is read from a container created and removed,
+  `SystemOfImageAsync`) found beside the app (`container-tools/<rid>/`), in a dev build's `artifacts/container-tools/<rid>/`
+  (one of another version, as its `passenger-tools.dll` says without being run, `VersionOf`, passed over and named should
+  the download then fail) or the state's `cache/container-tools/<version>/<rid>/`, else downloaded from the
   release of this version (`ReleaseFeed.Downloads`, `Releases.DownloadAsync`, HTTPS only) and checked against that
-  release's SHA256SUMS (a mismatch refused and said), unpacked through a temporary folder renamed
+  release's SHA256SUMS (a mismatch refused and said), unpacked through a temporary folder renamed, one download a system
+  at a time in a process, another process's copy that lands first kept and a folder with the tools in it never deleted
   (`ContainerToolsSource`, the window's `ContainerToolsFrom`); then mounted read-only at `/passenger/tools` where Passenger
   starts the container (`MountFor`, the `-v` value or Compose volume a run configuration adds) or copied to
-  `/tmp/passenger-tools` (`CopyIntoAsync`), used only when its `version` is the IDE's. `ContainerProcesses` is what
-  Attach to Process lists of the running containers: the tools' `processes` where they are in, else `docker top` from
+  `/tmp/passenger-tools` (`CopyIntoAsync`, refused, saying both versions, unless the copy's `version` there is the IDE's),
+  used only when its `version` is the IDE's; what the tools' `processes` answers is read as it comes (an entry with no
+  numeric id passed over). `ContainerProcesses` is what Attach to Process lists of the running containers, each inspected
+  on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client

@@ -513,8 +513,7 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
     {
         int first = 1;
         int last = 1;
-        if (found.TryGetProperty("location", out JsonElement location) && location.TryGetProperty("ranges", out JsonElement ranges)
-            && ranges.ValueKind == JsonValueKind.Array && ranges.GetArrayLength() > 0)
+        if (Property(found, "location") is { } location && Property(location, "ranges") is { ValueKind: JsonValueKind.Array } ranges && ranges.GetArrayLength() > 0)
         {
             JsonElement range = ranges[0];
             first = LineOf(range, "start") ?? 1;
@@ -524,7 +523,10 @@ internal sealed class DockerfileCheck(EngineChecks owner, OpenDocument document,
         return new Finding(severity, message, path, text.GetPosition(marked.Start), marked);
 
         static int? LineOf(JsonElement range, string end) =>
-            range.TryGetProperty(end, out JsonElement place) && place.TryGetProperty("line", out JsonElement line) && line.TryGetInt32(out int n) && n > 0 ? n : null;
+            Property(range, end) is { } place && Property(place, "line") is { ValueKind: JsonValueKind.Number } line && line.TryGetInt32(out int n) && n > 0 ? n : null;
+
+        static JsonElement? Property(JsonElement element, string name) =>
+            element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out JsonElement value) ? value : null;
     }
 
     /// <summary>Whether a build error is the check's to say: not the Dockerfile's syntax, which its server marks as typed,
