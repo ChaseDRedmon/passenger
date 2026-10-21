@@ -1254,12 +1254,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   and Porta.Pty's job ends it on Windows. Docker Desktop, which the status bar's link starts, is the person's: `open -a`
   (through ChildProcesses) on macOS, `StartApart` on Windows.
 - **Containers are ended by label**, since no child holds one and Lifeline cannot end it: everything Passenger has an
-  engine make carries `ContainerLabels.Arguments` (`net.passenger-ide.state`, a hash of the state folder, and
-  `net.passenger-ide.process`, the process's id and start time, and the folder's), its folder's `ProjectSession.Containers`
-  removes what it started as the folder ends, the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the
-  process's own on macOS and Linux however it ends, and the next start (`ContainerLabels.RemoveLeftoversAsync`) removes
-  those of its state whose process is gone, once the state has labelled anything (`ContainerLabels.EverLabelled`). Tests
-  label what they make with the run's `Docker.RunLabel`, removed at its end.
+  engine make carries `ContainerLabels.Arguments` (`net.passenger-ide.state`, a hash of the state folder,
+  `net.passenger-ide.machine`, a hash of the machine's name and id, `net.passenger-ide.process`, the process's id and start
+  time, and the folder's), its folder's `ProjectSession.Containers` removes what it started as the folder ends (of a
+  Compose project only the containers and networks this process's labels are on, never `down`, which would take the
+  person's own of it), the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the process's own on macOS and
+  Linux however it ends, reaching the engine the IDE's commands reach (the CLI's DOCKER_* variables as the IDE has them,
+  the context by name, told again when it changes), and the next start (`ContainerLabels.RemoveLeftoversAsync`) removes
+  those of its state and machine whose process is gone, once the state has labelled anything
+  (`ContainerLabels.EverLabelled`): another machine's on a shared engine are never judged by this one's processes. Tests
+  label what they make with the run's `Docker.RunLabel` (its machine and process), removed at its end, and the first test
+  that uses the engine removes what a run of this machine whose process is gone left: its label's objects and what its
+  IDE made under its state (`Docker.RemoveDeadRuns`).
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.

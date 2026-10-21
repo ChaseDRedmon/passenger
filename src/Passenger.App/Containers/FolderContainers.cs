@@ -44,8 +44,9 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
     /// <summary>Whether a Compose project (its words) is one the folder started and has yet to end.</summary>
     public bool Holds(IReadOnlyList<string> compose) => projects.Any(p => p.SequenceEqual(compose));
 
-    /// <summary>Ends what the folder started: its containers removed and its projects taken down, off the UI thread, done
-    /// once the engine has answered (or given up after its limit).</summary>
+    /// <summary>Ends what the folder started: its containers removed, and of its Compose projects the containers and
+    /// networks this process's labels are on (what its own <c>up</c> made, never the person's own of the project, as
+    /// <c>down</c> would take), off the UI thread, done once the engine has answered (or given up after its limit).</summary>
     public Task EndAsync()
     {
         string[] removing = [.. containers];
@@ -56,16 +57,50 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
         {
             return Task.CompletedTask;
         }
+        string[] ours = ["--filter", $"label={ContainerLabels.Machine}={ContainerLabels.MachineValue}", "--filter", $"label={ContainerLabels.Process}={ContainerLabels.ProcessValue}",
+            .. folder is null ? Array.Empty<string>() : ["--filter", $"label={ContainerLabels.Folder}={ContainerLabels.FolderValue(folder)}"]];
         // Not held: nothing it does is drawn, and the process waits for it once the window's loop has stopped.
         return Task.Run(async () =>
         {
-            List<Task> ending = [.. downing.Select(project => Quietly([.. project, "down", "--remove-orphans"]))];
+            List<Task> ending = [.. downing.Select(project => DownAsync(project, ours))];
             if (removing.Length > 0)
             {
                 ending.Add(Quietly(["rm", "-f", .. removing]));
             }
             await Task.WhenAll(ending);
         });
+
+        async Task DownAsync(IReadOnlyList<string> compose, string[] labels)
+        {
+            int named = compose.ToList().IndexOf("-p");
+            if (named < 0 || named + 1 >= compose.Count)
+            {
+                return;
+            }
+            string[] filters = ["--filter", $"label={ComposeLabels.Project}={compose[named + 1]}", .. labels];
+            if (await IdsAsync(["ps", "-aq", .. filters]) is { Length: > 0 } made)
+            {
+                await Quietly(["rm", "-f", .. made]);
+            }
+            if (await IdsAsync(["network", "ls", "-q", .. filters]) is { Length: > 0 } networks)
+            {
+                await Quietly(["network", "rm", .. networks]);
+            }
+        }
+
+        async Task<string[]> IdsAsync(IReadOnlyList<string> words)
+        {
+            try
+            {
+                Core.ChildResult listed = await Engine.RunAsync(words, ContainerEngine.AskLimit);
+                return listed.Succeeded ? listed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
+            }
+            catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
+            {
+                IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed as the folder closed: {failed.Message}");
+                return [];
+            }
+        }
 
         async Task Quietly(IReadOnlyList<string> words)
         {

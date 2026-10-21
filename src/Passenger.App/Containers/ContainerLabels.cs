@@ -1,25 +1,32 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Passenger.Core;
 
 namespace Passenger.App.Containers;
 
 /// <summary>The labels on everything Passenger has an engine make (containers, networks): the state folder it keeps state
-/// in, by a hash of it, and the process that made it, by its id and start time. No child holds a container, so
-/// <see cref="ChildProcesses"/>' lifeline cannot end one: Passenger ends them by these labels instead, with the folder that
-/// started them (<see cref="FolderContainers"/>), on macOS and Linux as the process ends however it ends (the watchdog's
-/// last command, <see cref="ChildProcesses.AtIdeEnd"/>), and at the next start, which removes those of this state whose
-/// process is gone (<see cref="RemoveLeftoversAsync"/>).</summary>
-public static class ContainerLabels
+/// in, by a hash of it, the machine and the process that made it. No child holds a container, so <see cref="ChildProcesses"/>'
+/// lifeline cannot end one: Passenger ends them by these labels instead, with the folder that started them
+/// (<see cref="FolderContainers"/>), on macOS and Linux as the process ends however it ends (the watchdog's last command,
+/// <see cref="ChildProcesses.AtIdeEnd"/>), and at the next start, which removes those of this state and machine whose
+/// process is gone (<see cref="RemoveLeftoversAsync"/>): an engine others share has their machines' too.</summary>
+public static partial class ContainerLabels
 {
     public const string State = "net.passenger-ide.state";
     public const string Process = "net.passenger-ide.process";
     public const string Folder = "net.passenger-ide.folder";
+    public const string Machine = "net.passenger-ide.machine";
 
-    private static int toldWatchdog;
+    /// <summary>The variables the CLI reads its engine from, which the watchdog's command is given as the IDE's had them.</summary>
+    private static readonly string[] EngineVariables = ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS"];
+
+    /// <summary>The last command the watchdog was given, told again when the engine it reaches changes.</summary>
+    private static string? toldWatchdog;
 
     /// <summary>The state folder's <c>containers.json</c>, the process's: whether anything was ever labelled for it, which
     /// a headless IDE's labelling sets as a person's window's does.</summary>
@@ -35,7 +42,7 @@ public static class ContainerLabels
     public static void Flush() => Kept.Value.Flush();
 
     /// <summary>The state folder's label value: the first 16 hex digits of a SHA-256 of its path.</summary>
-    public static string StateValue => Hash(StateStoreRoot());
+    public static string StateValue => StateValueOf(global::Passenger.App.State.StateStore.DefaultRoot);
 
     /// <summary>This process's label value: its id and start time, so a process given the same id later is another.</summary>
     public static string ProcessValue { get; } = Of(Environment.ProcessId, StartOf(System.Diagnostics.Process.GetCurrentProcess()));
@@ -46,20 +53,40 @@ public static class ContainerLabels
     /// <summary>A folder's label value: the first 16 hex digits of a SHA-256 of its canonical path.</summary>
     public static string FolderValue(string folder) => Hash(folder);
 
-    /// <summary>The <c>--label</c> words for something made for a folder (or none): the first time, the watchdog told to
-    /// remove what this process made once it has ended, and the state folder told something was labelled for it. UI thread.</summary>
+    /// <summary>A state folder's label value, as the Passenger keeping its state there labels what it makes.</summary>
+    public static string StateValueOf(string stateFolder)
+    {
+        try
+        {
+            return Hash(PathNames.Canonical(stateFolder));
+        }
+        catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
+        {
+            return Hash(stateFolder);
+        }
+    }
+
+    /// <summary>This machine's label value: a hash of its name and its own id (Linux's machine-id, macOS's hardware UUID,
+    /// Windows' MachineGuid), so an engine several machines share tells their Passengers' leftovers apart.</summary>
+    public static string MachineValue { get; } = Hash($"{Environment.MachineName}\n{MachineId()}");
+
+    /// <summary>The <c>--label</c> words for something made for a folder (or none): the watchdog told to remove what this
+    /// process made once it has ended (again whenever the engine it would reach changes), and the state folder told
+    /// something was labelled for it. UI thread.</summary>
     public static IReadOnlyList<string> Arguments(ContainerEngine engine, string? folder)
     {
         UiThread.Check();
-        if (Interlocked.Exchange(ref toldWatchdog, 1) == 0 && engine.Cli is { } cli)
+        // The CLI as the engine's last state found it, so finding it never waits on the window's thread.
+        if (engine.Known is { Cli: { } cli } known && EndCommand(cli, known.Context) is { } end && end != toldWatchdog)
         {
-            ChildProcesses.AtIdeEnd(EndCommand(cli));
+            toldWatchdog = end;
+            ChildProcesses.AtIdeEnd(end);
         }
         if (!Kept.Value.Value.Labelled)
         {
             Kept.Value.Set(new ContainersState { Labelled = true });
         }
-        List<string> words = ["--label", $"{State}={StateValue}", "--label", $"{Process}={ProcessValue}"];
+        List<string> words = ["--label", $"{State}={StateValue}", "--label", $"{Machine}={MachineValue}", "--label", $"{Process}={ProcessValue}"];
         if (folder is not null)
         {
             words.AddRange(["--label", $"{Folder}={FolderValue(folder)}"]);
@@ -67,26 +94,75 @@ public static class ContainerLabels
         return words;
     }
 
-    /// <summary>The shell command that removes this process's containers and networks, for the watchdog.</summary>
-    private static string EndCommand(string cli)
+    /// <summary>The shell command that removes this process's containers and networks, for the watchdog, which runs it with
+    /// its own environment: the engine the IDE's commands reach is put in it, the CLI's variables as the IDE has them and
+    /// its context by name. Null for a value no line can hold.</summary>
+    private static string? EndCommand(string cli, string? context)
     {
-        string docker = $"'{cli.Replace("'", "'\\''", StringComparison.Ordinal)}'";
-        string label = $"'label={Process}={ProcessValue}'";
-        return $"{docker} rm -f $({docker} ps -aq --filter {label}); {docker} network rm $({docker} network ls -q --filter {label})";
+        StringBuilder command = new();
+        foreach (string variable in EngineVariables)
+        {
+            if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value)
+            {
+                command.Append(CultureInfo.InvariantCulture, $"export {variable}={Quoted(value)}; ");
+            }
+        }
+        string docker = Quoted(cli);
+        if (context is { Length: > 0 } && ContextName().IsMatch(context))
+        {
+            docker += $" --context {Quoted(context)}";
+        }
+        string labels = $"--filter {Quoted($"label={Process}={ProcessValue}")} --filter {Quoted($"label={Machine}={MachineValue}")}";
+        command.Append(CultureInfo.InvariantCulture, $"{docker} rm -f $({docker} ps -aq {labels}); {docker} network rm $({docker} network ls -q {labels})");
+        string said = command.ToString();
+        return said.Contains('\n', StringComparison.Ordinal) || said.Contains('\r', StringComparison.Ordinal) || said.Contains('\0', StringComparison.Ordinal) ? null : said;
     }
 
-    private static string StateStoreRoot()
+    /// <summary>A word in single quotes for sh, a quote in it closed, escaped and opened again.</summary>
+    private static string Quoted(string word) => $"'{word.Replace("'", "'\\''", StringComparison.Ordinal)}'";
+
+    /// <summary>A name the CLI takes for a context.</summary>
+    [GeneratedRegex(@"^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$")]
+    private static partial Regex ContextName();
+
+    /// <summary>This machine's own id, or nothing where none is read.</summary>
+    private static string MachineId()
     {
-        string root = global::Passenger.App.State.StateStore.DefaultRoot;
         try
         {
-            return PathNames.Canonical(root);
+            if (OperatingSystem.IsLinux())
+            {
+                return ((string[])["/etc/machine-id", "/var/lib/dbus/machine-id"]).Where(File.Exists).Select(f => File.ReadAllText(f).Trim()).FirstOrDefault() ?? string.Empty;
+            }
+            if (OperatingSystem.IsMacOS())
+            {
+                Span<byte> uuid = stackalloc byte[16];
+                TimeSpec wait = default;
+                return HostUuid(uuid, ref wait) == 0 ? Convert.ToHexStringLower(uuid) : string.Empty;
+            }
+            if (OperatingSystem.IsWindows())
+            {
+                using Microsoft.Win32.RegistryKey? key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography");
+                return key?.GetValue("MachineGuid") as string ?? string.Empty;
+            }
         }
-        catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
+        catch (Exception unread) when (unread is IOException or UnauthorizedAccessException or System.Security.SecurityException or DllNotFoundException
+            or EntryPointNotFoundException)
         {
-            return root;
         }
+        return string.Empty;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TimeSpec
+    {
+        public nint Seconds;
+        public nint Nanoseconds;
+    }
+
+    /// <summary>macOS's <c>gethostuuid</c>: the machine's hardware UUID, as IOPlatformUUID gives it.</summary>
+    [LibraryImport("libc", EntryPoint = "gethostuuid")]
+    private static partial int HostUuid(Span<byte> uuid, ref TimeSpec wait);
 
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..16];
 
@@ -123,26 +199,29 @@ public static class ContainerLabels
         }
     }
 
-    /// <summary>Removes the containers and networks labelled with this state whose process is gone: what a crash left, or
-    /// a process the watchdog could not clean up after (Windows). Off the UI thread; quiet when there is no engine.</summary>
+    /// <summary>Removes the containers and networks labelled with this state and this machine whose process is gone: what a
+    /// crash left, or a process the watchdog could not clean up after (Windows); another machine's on an engine they share
+    /// are never judged by this machine's processes. Off the UI thread; quiet when there is no engine.</summary>
     public static async Task<IReadOnlyList<string>> RemoveLeftoversAsync(ContainerEngine engine, CancellationToken cancel = default)
     {
         List<string> removed = [];
+        // Not held: nothing it does is drawn; finding the CLI may wait on the login shell, never on the caller's thread.
         if (await Task.Run(() => engine.Cli, cancel) is null)
         {
             return removed;
         }
         string filter = $"label={State}={StateValue}";
+        string machine = $"label={Machine}={MachineValue}";
         try
         {
-            IReadOnlyList<JsonElement> containers = await engine.JsonLinesAsync(["ps", "-a", "--filter", filter, "--format", "json"], cancel);
+            IReadOnlyList<JsonElement> containers = await engine.JsonLinesAsync(["ps", "-a", "--filter", filter, "--filter", machine, "--format", "json"], cancel);
             string[] gone = [.. containers.Select(ContainerInfo.Read).Where(c => c.Labels.GetValueOrDefault(Process) is { } made && IsGone(made)).Select(c => c.Id)];
             if (gone.Length > 0)
             {
                 await engine.RunAsync(["rm", "-f", .. gone], ContainerEngine.AskLimit * 3, cancel);
                 removed.AddRange(gone);
             }
-            IReadOnlyList<JsonElement> networks = await engine.JsonLinesAsync(["network", "ls", "--filter", filter, "--format", "json"], cancel);
+            IReadOnlyList<JsonElement> networks = await engine.JsonLinesAsync(["network", "ls", "--filter", filter, "--filter", machine, "--format", "json"], cancel);
             string[] left = [.. networks.Where(n => ContainerInfo.ReadLabels(ContainerEngine.Text(n, "Labels")).GetValueOrDefault(Process) is { } made && IsGone(made))
                 .Select(n => ContainerEngine.Text(n, "ID")).OfType<string>()];
             if (left.Length > 0)

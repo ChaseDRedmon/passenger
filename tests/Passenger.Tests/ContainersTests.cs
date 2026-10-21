@@ -15,11 +15,15 @@ namespace Passenger.Tests;
 
 /// <summary>The engine a test runs containers on: the person's docker, used only where its server runs Linux containers
 /// (Docker Desktop, Docker Engine, Colima, OrbStack), each object a test makes carrying the run's label, which the run's
-/// end removes (<see cref="RemoveEverything"/>). Tiny public images only: busybox.</summary>
+/// end removes (<see cref="RemoveEverything"/>), and which a later run removes once the run's process is gone, should it
+/// end without its own end (<see cref="RemoveDeadRuns"/>). Tiny public images only: busybox.</summary>
 internal static class Docker
 {
-    /// <summary>The run's label: everything a test makes carries it, and the run's end removes whatever carries it.</summary>
-    public static readonly string RunLabel = $"net.passenger-ide.test-run={Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}";
+    private const string RunKey = "net.passenger-ide.test-run";
+
+    /// <summary>The run's label, its machine's and process's (its id and start): everything a test makes carries it, the
+    /// run's end removes whatever carries it, and a later run what carries a run's of this machine whose process is gone.</summary>
+    public static readonly string RunLabel = $"{RunKey}={ContainerLabels.MachineValue}.{ContainerLabels.ProcessValue}";
 
     public const string Image = "busybox:1.37";
 
@@ -29,18 +33,74 @@ internal static class Docker
         {
             return "No docker command is installed here, so no container can run";
         }
+        TimeSpan limit = TimeSpan.FromSeconds(30).Scaled();
         try
         {
-            ChildResult info = Ask(["info", "--format", "{{.OSType}}"], TimeSpan.FromSeconds(30));
+            ChildResult info = Ask(["info", "--format", "{{.OSType}}"], limit);
             string os = info.Output.Trim();
-            return !info.Succeeded ? $"The container engine is not running here: {ContainerEngine.Said(info)}"
+            string? why = !info.Succeeded ? $"The container engine is not running here: {ContainerEngine.Said(info)}"
                 : os != "linux" ? $"The container engine here runs {os} containers, and these tests run Linux ones" : null;
+            if (why is null)
+            {
+                RemoveDeadRuns();
+            }
+            return why;
         }
         catch (TimeoutException)
         {
-            return "The container engine did not answer docker info within 30 s";
+            return $"The container engine did not answer docker info within {limit.TotalSeconds:0} s";
         }
     });
+
+    /// <summary>What runs of this machine that ended without their own end (killed, crashed) left: everything with a run's
+    /// label whose process is gone, and what such a run had its IDE make, labelled with that run's state and process.</summary>
+    private static void RemoveDeadRuns()
+    {
+        string machine = $"{ContainerLabels.MachineValue}.";
+        TimeSpan limit = TimeSpan.FromSeconds(60).Scaled();
+        try
+        {
+            // Each object's id and the labels that say whose it is.
+            foreach ((string kind, string[] list, string[] remove) in (ReadOnlySpan<(string, string[], string[])>)[
+                ("container", ["ps", "-a"], ["rm", "-f"]), ("network", ["network", "ls"], ["network", "rm"]), ("volume", ["volume", "ls"], ["volume", "rm", "-f"])])
+            {
+                string id = kind == "volume" ? "{{.Name}}" : "{{.ID}}";
+                string[] dead = [.. Lines(Ask([.. list, "--filter", $"label={RunKey}", "--format", $"{id}|{{{{.Label \"{RunKey}\"}}}}"], limit).Output)
+                    .Select(l => l.Split('|')).Where(l => l.Length == 2 && l[1].StartsWith(machine, StringComparison.Ordinal) && ContainerLabels.IsGone(l[1][machine.Length..]))
+                    .Select(l => l[0])
+                    .Concat(Lines(Ask([.. list, "--filter", $"label={ContainerLabels.Machine}={ContainerLabels.MachineValue}", "--format",
+                            $"{id}|{{{{.Label \"{ContainerLabels.State}\"}}}}|{{{{.Label \"{ContainerLabels.Process}\"}}}}"], limit).Output)
+                        .Select(l => l.Split('|')).Where(l => l.Length == 3 && IsDeadRuns(l[1], l[2])).Select(l => l[0]))
+                    .Distinct(StringComparer.Ordinal)];
+                if (dead.Length > 0)
+                {
+                    Ask([.. remove, .. dead], limit);
+                }
+            }
+            string[] images = Lines(Ask(["image", "ls", "-a", "-q", "--filter", $"label={RunKey}"], limit).Output);
+            if (images.Length > 0)
+            {
+                string[] dead = [.. Lines(Ask(["image", "inspect", "--format", $"{{{{.Id}}}}|{{{{index .Config.Labels \"{RunKey}\"}}}}", .. images.Distinct(StringComparer.Ordinal)], limit).Output)
+                    .Select(l => l.Split('|')).Where(l => l.Length == 2 && l[1].StartsWith(machine, StringComparison.Ordinal) && ContainerLabels.IsGone(l[1][machine.Length..]))
+                    .Select(l => l[0])];
+                if (dead.Length > 0)
+                {
+                    Ask(["rmi", "-f", .. dead], limit);
+                }
+            }
+        }
+        catch (Exception failed) when (failed is TimeoutException or System.ComponentModel.Win32Exception or IOException)
+        {
+            Console.Error.WriteLine($"What earlier test runs left could not be removed: {failed.Message}");
+        }
+
+        static string[] Lines(string output) => output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // An IDE's in a test run of this machine whose process is gone: the state it labels with is that run's own.
+        static bool IsDeadRuns(string state, string process) =>
+            process.Split('-')[0] is var id && ContainerLabels.IsGone(process)
+            && state == ContainerLabels.StateValueOf(Path.Combine(Path.GetTempPath(), TestRun.Prefix + id, "settings"));
+    }
 
     /// <summary>Runs docker to its end off the caller's thread, which may be the window's: its continuations never wait on it.</summary>
     private static ChildResult Ask(string[] words, TimeSpan limit) => Task.Run(() => ContainerEngine.Shared.RunAsync(words, limit)).GetAwaiter().GetResult();
@@ -111,31 +171,31 @@ internal static class Docker
         {
             foreach (string label in (string[])[RunLabel, $"{ContainerLabels.State}={ContainerLabels.StateValue}"])
             {
-                ChildResult containers = Ask(["ps", "-aq", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                ChildResult containers = Ask(["ps", "-aq", "--filter", $"label={label}"], TimeSpan.FromSeconds(30).Scaled());
                 string[] ids = containers.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (ids.Length > 0)
                 {
-                    Ask(["rm", "-f", .. ids], TimeSpan.FromSeconds(60));
+                    Ask(["rm", "-f", .. ids], TimeSpan.FromSeconds(60).Scaled());
                 }
-                ChildResult networks = Ask(["network", "ls", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                ChildResult networks = Ask(["network", "ls", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30).Scaled());
                 string[] made = networks.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (made.Length > 0)
                 {
-                    Ask(["network", "rm", .. made], TimeSpan.FromSeconds(60));
+                    Ask(["network", "rm", .. made], TimeSpan.FromSeconds(60).Scaled());
                 }
-                ChildResult volumes = Ask(["volume", "ls", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                ChildResult volumes = Ask(["volume", "ls", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30).Scaled());
                 string[] kept = volumes.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (kept.Length > 0)
                 {
-                    Ask(["volume", "rm", "-f", .. kept], TimeSpan.FromSeconds(60));
+                    Ask(["volume", "rm", "-f", .. kept], TimeSpan.FromSeconds(60).Scaled());
                 }
                 // The run's images (a container run's builds and the tests' own carry the label), never a base image they share
                 // layers with; untagged ones too, since one removed while a container ran is only untagged and stays.
-                ChildResult images = Ask(["image", "ls", "-a", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                ChildResult images = Ask(["image", "ls", "-a", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30).Scaled());
                 string[] built = [.. images.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.Ordinal)];
                 if (built.Length > 0)
                 {
-                    Ask(["rmi", "-f", .. built], TimeSpan.FromSeconds(60));
+                    Ask(["rmi", "-f", .. built], TimeSpan.FromSeconds(60).Scaled());
                 }
             }
         }
@@ -246,6 +306,30 @@ public sealed class ContainersTests
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
         Ui.WaitFor(() => Docker.State(name) is null && Row(view, name) is null, $"{name} removed, and gone from the window");
         Assert.Null(window.Asked);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_folders_end_removes_what_passenger_started_of_a_compose_project_and_leaves_the_persons_own_of_it()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string folder = TestFolders.Create("ctr-project-");
+        MainWindow window = Open(folder);
+        string project = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}ours";
+        // web as Passenger's own up makes it, with the folder's labels; db as the person started it, with none of Passenger's.
+        string ours = string.Join(", ", window.Session.Containers.Labels.Where(w => w != "--label").Append(Docker.RunLabel).Select(l => l.Split('=', 2)).Select(l => $"\"{l[0]}\": \"{l[1]}\""));
+        string run = Docker.RunLabel.Replace("=", ": \"", StringComparison.Ordinal) + "\"";
+        string compose = Path.Combine(folder, "compose.yaml");
+        File.WriteAllText(compose, $"name: {project}\nservices:\n  web:\n    image: {Docker.Image}\n    command: [\"sleep\", \"600\"]\n    labels: {{ {ours} }}\n"
+            + $"  db:\n    image: {Docker.Image}\n    command: [\"sleep\", \"600\"]\n    labels: {{ {run} }}\nnetworks:\n  default:\n    labels: {{ {run} }}\n");
+        Docker.Run("compose", "-f", compose, "up", "-d");
+        window.Session.Containers.StartedProject(["compose", "-p", project, "-f", compose]);
+        string web = $"{project}-web-1";
+        string db = $"{project}-db-1";
+        Assert.Null(window.CloseSolution());
+        Ui.Settle();
+        Ui.WaitFor(() => Docker.State(web) is null, $"{web}, which Passenger's labels are on, removed as the folder ended");
+        Assert.Equal("running", Docker.State(db));
         window.Close();
     }
 

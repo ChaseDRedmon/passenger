@@ -36,7 +36,7 @@ public static class TestApp
 /// killed left goes when the next begins.</summary>
 public sealed class TestRun : IDisposable
 {
-    private const string Prefix = "passenger-run-";
+    internal const string Prefix = "passenger-run-";
 
     /// <summary>The run's folder, named for the test process.</summary>
     public static string Root { get; } = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));

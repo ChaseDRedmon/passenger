@@ -125,7 +125,7 @@ public sealed partial class McpTests
     }
 
     [AvaloniaFact]
-    public void Containers_a_passenger_that_is_gone_left_are_removed_as_the_next_one_starts()
+    public void Containers_a_passenger_of_this_machine_that_is_gone_left_are_removed_as_the_next_one_starts_and_another_machines_stay()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         MainWindow window = new() { Width = 1200, Height = 800 };
@@ -136,15 +136,20 @@ public sealed partial class McpTests
         string[] labels = [.. window.Session.Containers.Labels.Where(word => word != "--label")];
         ContainerLabels.Flush();
         string state = labels.Single(l => l.StartsWith(ContainerLabels.State, StringComparison.Ordinal));
-        // One a crashed Passenger of this state left, and one of this living process, which stays.
-        string left = Docker.Container("left", "sleep 600", state, $"{ContainerLabels.Process}={ContainerLabels.Of(int.MaxValue - 7, 1)}");
+        string machine = labels.Single(l => l.StartsWith(ContainerLabels.Machine, StringComparison.Ordinal));
+        // One a crashed Passenger of this state left, and one of this living process, which stays; and one another machine's
+        // Passenger left on a shared engine, whose process this machine cannot tell is gone, which stays too.
+        string gone = $"{ContainerLabels.Process}={ContainerLabels.Of(int.MaxValue - 7, 1)}";
+        string left = Docker.Container("left", "sleep 600", state, machine, gone);
         string living = Docker.Container("living", "sleep 600", labels);
+        string elsewhere = Docker.Container("elsewhere", "sleep 600", state, $"{ContainerLabels.Machine}=0123456789abcdef", gone);
         McpClient client = Await(Task.Run(() => Start(["--mcp", folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings })), "Passenger starting");
         try
         {
             Ui.WaitFor(() => Docker.State(left) is null, $"{left}, labelled with this state and a process that is gone, removed as Passenger started",
                 TimeSpan.FromSeconds(60));
             Assert.Equal("running", Docker.State(living));
+            Assert.Equal("running", Docker.State(elsewhere));
         }
         finally
         {
