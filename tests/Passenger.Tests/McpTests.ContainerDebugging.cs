@@ -13,7 +13,7 @@ public sealed partial class McpTests
     public async Task An_agents_debug_start_debugs_each_service_of_a_compose_configuration_and_debug_attach_reaches_a_program_in_a_container()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        ContainerDebuggingTests.Turns.Publish($"linux-{(Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64")}");
+        ContainerPrograms.Publish($"linux-{(Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64")}");
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
         madeFolders.Add(shop);
         await using McpClient client = await Start(["--mcp", shop]);
