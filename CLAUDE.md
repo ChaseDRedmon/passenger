@@ -480,9 +480,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `Programs` then Docker Desktop's, OrbStack's and Rancher Desktop's folders, every command through
   ChildProcesses (`Command` to stream, `RunAsync`, `RunForAsync` to read for a while, `JsonAsync`/`JsonLinesAsync` for
   `--format json`; one given a folder has PWD set to it, which Compose reads for `$PWD` over its working folder), its `StateAsync` (no CLI, not running, Windows containers, no Compose v2; the context's endpoint for
-  `DOCKER_HOST`) and `Follow` (`docker events --format json` while anyone follows). `ContainerSnapshot` reads what the
-  engine holds at once (Compose projects by `com.docker.compose.project`, stopped ones too, then containers, images,
-  volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
+  `DOCKER_HOST`) and `Follow` (`docker events --format json` while anyone follows, started on a worker, never the
+  caller's thread, which finding the CLI could hold on the login shell; ended by the engine, as Docker Desktop's quit or
+  restart ends it, it starts again once `StateAsync` says the engine is ready, asked every 2 s doubling to 10 s, the
+  followers told `engine` `stopped` and `started`, on which the window reads it all again). `ContainerSnapshot` reads what the
+  engine holds at once (Compose projects by `com.docker.compose.project`, stopped ones too, their statuses from `compose
+  ls` where the CLI has Compose v2, else from their containers' states, then containers, images, volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
   `container_action` share. `ContainersView` (`MainWindow.Containers.cs`) asks the engine only while shown, its lists
   again as events say; a container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
@@ -527,7 +530,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   run).
   Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
-  busybox and Compose files they write, and never prune or start or stop Docker Desktop.
+  busybox and Compose files they write, and never prune or start or stop Docker Desktop: an engine that stops and starts
+  again, or has no Compose v2, is `ContainersTests.StandInEngine`'s, a shell script (so skipped on Windows) whose `state`
+  file says up or down; stand-in container tools are a script copied to `ContainerTools.Copied` in a busybox container.
   Container run configurations (#343): a `RunConfiguration`'s `Kind` (Project, Compose, Dockerfile, SdkContainer), made as
   the folder opens by `ContainerConfigurations` (compose files beside the folder, the solution or a project, overrides with
   them; a .dcproj's properties and DockerCompose profiles, read as XML; a runnable project's Dockerfile; a project file

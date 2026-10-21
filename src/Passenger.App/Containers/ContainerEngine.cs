@@ -253,6 +253,7 @@ public sealed class ContainerEngine
             {
                 return under.WaitAsync(cancel);
             }
+            // Not held: what draws the answer holds its own wait for it (a BackgroundWork.Run round StateAsync).
             asking = Task.Run(AskStateAsync, CancellationToken.None);
             return asking.WaitAsync(cancel);
         }
@@ -277,7 +278,7 @@ public sealed class ContainerEngine
 
     private async Task<EngineState> AskStateAsync()
     {
-        EngineState state = await Task.Run(ReadStateAsync);
+        EngineState state = await ReadStateAsync();
         EngineState? before;
         lock (gate)
         {
@@ -392,20 +393,101 @@ public sealed class ContainerEngine
         };
     }
 
+    /// <summary>What a follower is told when the engine's events stop (it stopped, Docker Desktop quit) and when they come
+    /// again once it is ready: an event of the engine's own, <c>stopped</c> or <c>started</c>.</summary>
+    public const string EngineEvent = "engine";
+
+    /// <summary>How long the engine is let be before it is asked again whether it is ready, after its events stopped: the
+    /// first wait, doubled while the events go on ending at once, to <see cref="LongestRetry"/>.</summary>
+    private static readonly TimeSpan Retry = TimeSpan.FromSeconds(2);
+
+    private static readonly TimeSpan LongestRetry = TimeSpan.FromSeconds(10);
+
+    /// <summary>Whether the worker that keeps the events going runs (<see cref="FollowAsync"/>).</summary>
+    private bool keeping;
+
     /// <summary>Follows the engine's events for as long as the answer is kept: <c>docker events --format json</c> runs while
-    /// anyone follows, each line given to every follower on a worker thread; it ends with the last follower, or by itself
-    /// when the engine stops (a follower then hears nothing more until it follows again).</summary>
+    /// anyone follows, each line given to every follower on a worker thread; it ends with the last follower. Ended by the
+    /// engine (stopped, or Docker Desktop restarted), it starts again once the engine is ready, the followers told of both
+    /// (<see cref="EngineEvent"/>). Nothing is started on the caller's thread, which finding the CLI could hold up.</summary>
     public IDisposable Follow(Action<ContainerEvent> follower)
     {
         lock (gate)
         {
             followers.Add(follower);
-            if (events is null)
+            if (!keeping)
             {
-                StartEvents();
+                keeping = true;
+                // Not held: it runs for as long as anyone follows, and what it tells the window holds its own work.
+                _ = Task.Run(FollowAsync);
             }
         }
         return new Following(this, follower);
+    }
+
+    /// <summary>Keeps <c>docker events</c> going while anyone follows: started, read to its end, and once it ends by itself,
+    /// started again when the engine says it is ready, each follower told it stopped and started.</summary>
+    private async Task FollowAsync()
+    {
+        TimeSpan wait = Retry;
+        while (true)
+        {
+            if (!StillFollowed())
+            {
+                return;
+            }
+            long began = Stopwatch.GetTimestamp();
+            bool read = await ReadEventsAsync();
+            if (!StillFollowed())
+            {
+                return;
+            }
+            Tell(new ContainerEvent(EngineEvent, "stopped", string.Empty, new Dictionary<string, string>()));
+            // Events that end at once (an engine not running) are asked for again less and less often.
+            wait = read && Stopwatch.GetElapsedTime(began) > LongestRetry ? Retry : wait;
+            while (true)
+            {
+                await Task.Delay(wait);
+                if (!StillFollowed())
+                {
+                    return;
+                }
+                EngineState state = await StateAsync(again: true);
+                wait = TimeSpan.FromTicks(Math.Min(wait.Ticks * 2, LongestRetry.Ticks));
+                if (state.Status is EngineStatus.Ready or EngineStatus.NoCompose)
+                {
+                    break;
+                }
+            }
+            Tell(new ContainerEvent(EngineEvent, "started", string.Empty, new Dictionary<string, string>()));
+        }
+    }
+
+    /// <summary>Whether anyone still follows; once no one does, the worker is done, and the next follower starts another.</summary>
+    private bool StillFollowed()
+    {
+        lock (gate)
+        {
+            if (followers.Count > 0)
+            {
+                return true;
+            }
+            keeping = false;
+            return false;
+        }
+    }
+
+    private void Tell(ContainerEvent told)
+    {
+        Action<ContainerEvent>[] now;
+        lock (gate)
+        {
+            now = [.. followers];
+        }
+        foreach (Action<ContainerEvent> follower in now)
+        {
+            follower(told);
+        }
     }
 
     private sealed class Following(ContainerEngine engine, Action<ContainerEvent> follower) : IDisposable
@@ -439,7 +521,8 @@ public sealed class ContainerEngine
         }
     }
 
-    private void StartEvents()
+    /// <summary><c>docker events</c> read to its end, each line told to the followers; false when it would not start.</summary>
+    private async Task<bool> ReadEventsAsync()
     {
         Process process;
         try
@@ -451,43 +534,45 @@ public sealed class ContainerEngine
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return;
+            return false;
         }
-        events = process;
-        _ = Task.Run(async () =>
+        lock (gate)
         {
-            try
+            if (followers.Count == 0)
             {
-                while (await process.StandardOutput.ReadLineAsync() is { } line)
+                // The last follower went as it started.
+                ChildProcesses.Kill(process);
+                process.Dispose();
+                return true;
+            }
+            events = process;
+        }
+        // Its errors are read through, so a CLI that says much never stops on a full pipe; a read the end cut short is no fault.
+        _ = process.StandardError.ReadToEndAsync(CancellationToken.None).ContinueWith(read => read.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        try
+        {
+            while (await process.StandardOutput.ReadLineAsync() is { } line)
+            {
+                if (Event(line) is { } told)
                 {
-                    if (Event(line) is not { } told)
-                    {
-                        continue;
-                    }
-                    Action<ContainerEvent>[] now;
-                    lock (gate)
-                    {
-                        now = [.. followers];
-                    }
-                    foreach (Action<ContainerEvent> follower in now)
-                    {
-                        follower(told);
-                    }
+                    Tell(told);
                 }
             }
-            catch (Exception ended) when (ended is IOException or ObjectDisposedException or InvalidOperationException)
+        }
+        catch (Exception ended) when (ended is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Ended under its read.
+        }
+        lock (gate)
+        {
+            if (events == process)
             {
-                // Ended under its read.
+                events = null;
             }
-            lock (gate)
-            {
-                if (events == process)
-                {
-                    events = null;
-                }
-            }
-            process.Dispose();
-        });
+        }
+        process.Dispose();
+        return true;
     }
 
     private static ContainerEvent? Event(string line)

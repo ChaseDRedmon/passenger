@@ -92,6 +92,39 @@ public sealed partial class McpTests
     }
 
     [AvaloniaFact]
+    public void An_agent_lists_an_engine_without_compose_by_its_containers_labels_and_reads_a_log()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        (string cli, _) = ContainersTests.StandInEngine(TestFolders.Create("ctr-standin-"), up: true);
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(Plain("mcp-nocompose-"));
+        Ui.Settle();
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Task<JsonElement> listing = Task.Run(() => Call(client, "containers"));
+            Press(Admission(window, "the window to ask whether the agent may work there"), AgentAdmissionDialog.Allow);
+            JsonElement listed = Await(listing, "the engine's containers, though its CLI has no compose to list projects");
+            Assert.Equal("NoCompose", listed.GetProperty("status").GetString());
+            JsonElement project = Assert.Single(listed.GetProperty("projects").EnumerateArray());
+            Assert.Equal(("shop", "running(1)"), (project.GetProperty("name").GetString(), project.GetProperty("status").GetString()));
+            Assert.Equal("shop-web-1", Assert.Single(listed.GetProperty("containers").EnumerateArray()).GetProperty("name").GetString());
+            Assert.Contains("hello from the stand-in web", Text(Await(Task.Run(() => Call(client, "container_logs", new() { ["container"] = "shop-web-1" })), "the container's log")),
+                StringComparison.Ordinal);
+            // A project's log is Compose's to read: the engine's refusal is the agent's answer, never a fault of Passenger's.
+            CallToolResult merged = Await(Task.Run(() => Result(client, "container_logs", new() { ["container"] = "shop" })), "the project's log");
+            Assert.True(merged.IsError == true && Text(merged).Contains("'compose' is not a docker command", StringComparison.Ordinal)
+                && !Text(merged).Contains("Passenger failed", StringComparison.Ordinal), $"The project's log answered: {Text(merged)}");
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Containers_a_passenger_that_is_gone_left_are_removed_as_the_next_one_starts()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);

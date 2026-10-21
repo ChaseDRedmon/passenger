@@ -546,6 +546,75 @@ public sealed class ContainersTests
         down.Close();
     }
 
+    [AvaloniaFact]
+    public void The_window_follows_an_engine_that_starts_stops_and_starts_again_and_lists_compose_projects_by_their_labels_with_no_compose()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        (string cli, string state) = StandInEngine(TestFolders.Create("ctr-standin-"), up: false);
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-follow-"));
+        Ui.Settle();
+        try
+        {
+            ContainersView view = Shown(window);
+            Ui.WaitFor(() => view.HasRead && view.State?.Status == EngineStatus.NotRunning, "the stopped engine's state read");
+
+            // Started, as Docker Desktop is, the window reads it again by itself: a Compose project listed by its containers' labels
+            // though the CLI has no docker compose to list it.
+            File.WriteAllText(state, "up");
+            Ui.WaitFor(() => view.State?.Status == EngineStatus.NoCompose && view.Rows.Any(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == "shop" && r.Service == "web"),
+                $"the started engine's Compose project listed, not [{string.Join(", ", view.Rows.Select(r => r.Label))}] ({view.State?.Status})", TimeSpan.FromSeconds(60));
+            Assert.Equal("running(1)", view.Rows.Single(r => r.Kind == ContainerRowKind.Project && r.Label == "shop").Detail);
+            Assert.StartsWith("Docker Compose v2 (docker compose) is not installed", window.Status, StringComparison.Ordinal);
+
+            // Stopped and started again (Docker Desktop restarted): the window follows both.
+            File.WriteAllText(state, "down");
+            Ui.WaitFor(() => view.State?.Status == EngineStatus.NotRunning && view.Rows.Count == 0, "the stopped engine's empty window", TimeSpan.FromSeconds(60));
+            File.WriteAllText(state, "up");
+            Ui.WaitFor(() => view.State?.Status == EngineStatus.NoCompose && view.Rows.Any(r => r.Label == "shop"), "the engine's project again once it started", TimeSpan.FromSeconds(60));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A docker of the test's own whose engine is running or not as its <c>state</c> file says ("up" or "down"):
+    /// a Linux server with no Compose v2 and no buildx, holding one container of a Compose project "shop" (service web),
+    /// whose events go on while it is up. The CLI and the state file.</summary>
+    internal static (string Cli, string State) StandInEngine(string folder, bool up)
+    {
+        string state = Path.Combine(folder, "state");
+        File.WriteAllText(state, up ? "up" : "down");
+        const string Down = "echo 'Cannot connect to the Docker daemon at unix:///nowhere/docker.sock. Is the docker daemon running?' >&2; exit 1";
+        string cli = Path.Combine(folder, "docker");
+        File.WriteAllText(cli, string.Join('\n',
+            "#!/bin/sh",
+            "here=$(dirname \"$0\")",
+            "running=$(cat \"$here/state\")",
+            "case \"$1\" in",
+            "  version) if [ \"$running\" = up ]; then echo '{\"Client\":{\"Version\":\"29.0.0\",\"Context\":\"stand-in\"},\"Server\":{\"Version\":\"29.0.0\",\"Os\":\"linux\",\"Arch\":\"arm64\"}}'; exit 0; fi",
+            $"    echo '{{\"Client\":{{\"Version\":\"29.0.0\",\"Context\":\"stand-in\"}},\"Server\":null}}'; {Down} ;;",
+            "  context) echo '[{\"Name\":\"stand-in\",\"Endpoints\":{\"docker\":{\"Host\":\"unix:///nowhere/docker.sock\"}}}]'; exit 0 ;;",
+            "  compose|buildx) echo \"docker: '$1' is not a docker command.\" >&2; exit 1 ;;",
+            "esac",
+            $"[ \"$running\" = up ] || {{ {Down}; }}",
+            "case \"$1\" in",
+            "  ps) echo '{\"ID\":\"5a5d0c0ffee1\",\"Names\":\"shop-web-1\",\"Image\":\"busybox:1.37\",\"State\":\"running\",\"Status\":\"Up 5 minutes\",\"Ports\":\"\",\"Labels\":\"com.docker.compose.project=shop,com.docker.compose.service=web\"}' ;;",
+            "  images|volume|network) ;;",
+            "  logs) echo 'hello from the stand-in web' ;;",
+            "  events) while [ \"$(cat \"$here/state\")\" = up ]; do sleep 0.2; done ;;",
+            "  *) exit 1 ;;",
+            "esac",
+            string.Empty));
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        return (cli, state);
+    }
+
     /// <summary>A docker that answers as a CLI does whose engine is not running: its client's version, then an error.</summary>
     internal static string StandInCli(string folder)
     {

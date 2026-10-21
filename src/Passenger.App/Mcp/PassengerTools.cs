@@ -1167,7 +1167,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             });
         }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException
-            or HttpRequestException or DapException or LanguageServerFailed or LiveTree.LiveAppException)
+            or HttpRequestException or DapException or LanguageServerFailed or LiveTree.LiveAppException or global::Passenger.App.Containers.ContainerCommandException
+            or global::Passenger.App.Containers.ContainerToolsException)
         {
             throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
         }

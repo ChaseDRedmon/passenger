@@ -140,11 +140,13 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
     /// <summary>Every container, those of projects first.</summary>
     public IEnumerable<ContainerInfo> AllContainers => Projects.SelectMany(p => p.Containers).Concat(Containers);
 
-    /// <summary>Reads it all, each list asked of the CLI at once; a <see cref="ContainerCommandException"/> when one fails.</summary>
+    /// <summary>Reads it all, each list asked of the CLI at once; a <see cref="ContainerCommandException"/> when one fails,
+    /// but for Compose's list of projects, which only words their statuses (an engine with no Compose v2 has none: the
+    /// projects are its containers' labels, their statuses their states).</summary>
     public static async Task<ContainerSnapshot> ReadAsync(ContainerEngine engine, CancellationToken cancel = default)
     {
         Task<IReadOnlyList<JsonElement>> containers = engine.JsonLinesAsync(["ps", "-a", "--format", "json"], cancel);
-        Task<IReadOnlyList<JsonElement>> projects = engine.JsonLinesAsync(["compose", "ls", "-a", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> projects = ProjectsAsync();
         Task<IReadOnlyList<JsonElement>> images = engine.JsonLinesAsync(["images", "--format", "json"], cancel);
         Task<IReadOnlyList<JsonElement>> volumes = engine.JsonLinesAsync(["volume", "ls", "--format", "json"], cancel);
         Task<IReadOnlyList<JsonElement>> networks = engine.JsonLinesAsync(["network", "ls", "--format", "json"], cancel);
@@ -174,6 +176,18 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
 
         static string Status(IEnumerable<ContainerInfo> containers) =>
             string.Join(", ", containers.GroupBy(c => c.State).Select(g => $"{g.Key}({g.Count()})"));
+
+        async Task<IReadOnlyList<JsonElement>> ProjectsAsync()
+        {
+            try
+            {
+                return await engine.JsonLinesAsync(["compose", "ls", "-a", "--format", "json"], cancel);
+            }
+            catch (Exception unread) when (unread is ContainerCommandException or JsonException)
+            {
+                return [];
+            }
+        }
     }
 
     private static string ImageName(JsonElement image)

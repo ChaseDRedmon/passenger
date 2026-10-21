@@ -14,13 +14,8 @@ public sealed partial class PassengerTools
         "projects with their services, and every container with its state, health, ports and image.")]
     public Task<ContainersInfo> Containers(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        ContainerEngine engine = window.Engine;
         AgentCall.Say("Asking the container engine");
-        (EngineState state, ContainerSnapshot snapshot) = await Task.Run(async () =>
-        {
-            EngineState state = await engine.StateAsync(again: true, cancel);
-            return (state, state.Status is EngineStatus.Ready or EngineStatus.NoCompose ? await ContainerSnapshot.ReadAsync(engine, cancel) : ContainerSnapshot.Empty);
-        }, cancel);
+        (EngineState state, ContainerSnapshot snapshot) = await EngineHoldsAsync(again: true, cancel);
         return new ContainersInfo(state.Status.ToString(), state.Problem, state.Context, state.ServerVersion, state.ComposeVersion,
             [.. snapshot.Projects.Select(p => new ComposeInfo(p.Name, p.Status, [.. p.Services.Select(s => s.Service)]))],
             [.. snapshot.AllContainers.Select(c => new ContainerSummary(c.Name, c.Id, c.Image, c.State, c.Health, c.Project, c.Service, [.. c.Ports.Select(p => p.ToString())],
@@ -101,17 +96,31 @@ public sealed partial class PassengerTools
     /// engine cannot serve or nothing has that name.</summary>
     private async Task<ContainerRow> NamedContainer(string name, CancellationToken cancel)
     {
-        ContainerEngine engine = window.Engine;
-        (EngineState state, ContainerSnapshot snapshot) = await Task.Run(async () =>
-        {
-            EngineState state = await engine.StateAsync(cancel: cancel);
-            return (state, state.Status is EngineStatus.Ready or EngineStatus.NoCompose ? await ContainerSnapshot.ReadAsync(engine, cancel) : ContainerSnapshot.Empty);
-        }, cancel);
+        (EngineState state, ContainerSnapshot snapshot) = await EngineHoldsAsync(again: false, cancel);
         if (state.Problem is { } problem && state.Status is not EngineStatus.NoCompose)
         {
             throw new InvalidOperationException(problem);
         }
         return ContainerRow.Named(snapshot, name) ?? throw new ArgumentException($"No container, Compose project or project/service is named {name}: containers lists them");
+    }
+
+    /// <summary>The engine's state and, when it can serve, what it holds, read off the window's thread; an answer of the
+    /// CLI's that does not read is the agent's to hear, as the engine's refusal is.</summary>
+    private async Task<(EngineState State, ContainerSnapshot Snapshot)> EngineHoldsAsync(bool again, CancellationToken cancel)
+    {
+        ContainerEngine engine = window.Engine;
+        try
+        {
+            return await Task.Run(async () =>
+            {
+                EngineState state = await engine.StateAsync(again, cancel);
+                return (state, state.Status is EngineStatus.Ready or EngineStatus.NoCompose ? await ContainerSnapshot.ReadAsync(engine, cancel) : ContainerSnapshot.Empty);
+            }, cancel);
+        }
+        catch (System.Text.Json.JsonException unread)
+        {
+            throw new InvalidOperationException($"The container engine's answer could not be read: {unread.Message}", unread);
+        }
     }
 }
 

@@ -209,8 +209,9 @@ public sealed class ContainersView : DockPanel
         shown = true;
         following ??= parts.Engine().Follow(told =>
         {
-            // What the window's own tabs do (exec for Files, attach and copy) changes nothing it lists, and would read again for ever.
-            if (told.Type is "container" or "network" or "volume" or "image" && !Quiet(told.Action))
+            // What the window's own tabs do (exec for Files, attach and copy) changes nothing it lists, and would read again for ever;
+            // the engine stopping or coming back changes all of it.
+            if (told.Type is "container" or "network" or "volume" or "image" or ContainerEngine.EngineEvent && !Quiet(told.Action))
             {
                 UiThread.Post(() =>
                 {
