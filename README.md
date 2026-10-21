@@ -3,14 +3,13 @@
 An IDE for C# and modern .NET, written in C# with Avalonia, free and open source under MIT. Windows and macOS first,
 with builds for Linux ([how to install them](https://passenger-ide.net/linux)).
 
-**[passenger-ide.net](https://passenger-ide.net)**: what it does, downloads, and how to connect a coding agent.
-
 <p align="center">
+  <a href="https://passenger-ide.net">Website</a> •
+  <a href="https://passenger-ide.net/#download">Download</a> •
   <a href="#what-it-does">What it does</a> •
   <a href="#your-coding-agent-using-the-ide-as-you-do">Your coding agent</a> •
   <a href="#building">Building</a> •
-  <a href="#contributing">Contributing</a> •
-  <a href="#licence">Licence</a>
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <picture>
@@ -326,11 +325,8 @@ push to main that touches it.
 
 ## Contributing
 
-Working on Passenger needs only open-source tools: the .NET SDK, just, and the open-source packages the projects
-restore, among them Avalonia's MIT framework. Passenger uses none of Avalonia's commercial tooling (Avalonia Accelerate's
-DevTools, Hot Reload and the rest), and takes no contribution that adds any. A licence you hold for a commercial tool,
-Avalonia's or any other vendor's, is between you and that vendor: nothing here asks you to use one, so if its terms
-could cover work on another IDE, work on Passenger without it.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) says how to report a bug, propose a change and open a pull request, and what
+working on Passenger needs.
 
 ## Licence
 
