@@ -316,6 +316,14 @@ the lock files name.
 The website is [`site/`](site), plain HTML and CSS deployed to [passenger-ide.net](https://passenger-ide.net) by each
 push to main that touches it.
 
+## Contributing
+
+Working on Passenger needs only open-source tools: the .NET SDK, just, and the open-source packages the projects
+restore, among them Avalonia's MIT framework. Passenger uses none of Avalonia's commercial tooling (Avalonia Accelerate's
+DevTools, Hot Reload and the rest), and takes no contribution that adds any. A licence you hold for a commercial tool,
+Avalonia's or any other vendor's, is between you and that vendor: nothing here asks you to use one, so if its terms
+could cover work on another IDE, work on Passenger without it.
+
 ## Licence
 
 MIT (`LICENSE`). Third-party code and assets keep their own licences, listed in `THIRD_PARTY_NOTICES.md`.
