@@ -1271,7 +1271,10 @@ Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests
 `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
 a callback from List.ForEach, CoreLib's frame below it. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread). `AvaloniaFramesTests` (Alone) profile,
-debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `WpfPreviewTests` (Windows only)
+debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `DebugSessionsTests` (Alone) debug two
+programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpTests.Sessions.cs` has an agent name
+which; its test of a session elsewhere has the adapter let its program go rather than killing the adapter, since on
+Windows a killed debugger takes its program with it. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
