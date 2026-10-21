@@ -25,7 +25,7 @@ public sealed class McpProxy
     /// the state PASSENGER_SETTINGS names, never the person's installed Passenger.</summary>
     public const string StartVariable = "PASSENGER_START";
 
-    /// <summary>How long a call waits for a Passenger started or asked to open the folder to show its window.</summary>
+    /// <summary>How long joining may take, including old connection cleanup, opening a window and initialization.</summary>
     private static readonly TimeSpan StartLimit = TimeSpan.FromMinutes(2);
 
     private readonly int? processId;
@@ -181,7 +181,7 @@ public sealed class McpProxy
         }
         catch (Exception error) when (window.Completion.IsCompleted && error is not OperationCanceledException)
         {
-            return Refused($"The Passenger window closed before it answered {tool}; a later call joins one again.");
+            return Refused($"The connection to the Passenger window ended before it answered {tool}; a later call joins one again.");
         }
         finally
         {
@@ -272,56 +272,66 @@ public sealed class McpProxy
 
     /// <summary>The window the agent works in: the one joined, while it stays, else one over the folder, which a running
     /// Passenger is asked to open or a new one started on, waited for. Joined in the protocol version the agent agreed
-    /// with this server, so what the window answers, passed on as it is, has nothing of a later version in it.</summary>
+    /// with this server, so what the window answers, passed on as it is, has nothing of a later version in it.
+    /// The whole join has <see cref="StartLimit"/>.</summary>
     private async Task<McpClient> JoinAsync(Implementation? agent, string? protocol, AgentCall call, CancellationToken cancel)
     {
-        await joining.WaitAsync(cancel);
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        limit.CancelAfter(StartLimit);
+        CancellationToken joiningCancel = limit.Token;
+        bool acquired = false;
         try
         {
-            if (joined is { Completion.IsCompleted: false } live)
+            await joining.WaitAsync(joiningCancel);
+            acquired = true;
+            joiningCancel.ThrowIfCancellationRequested();
+            if (joined is { Completion.IsCompleted: false } live && !Closed(joinedSocket) && !Moved())
             {
-                // A window that closed has closed its end already, which the session may not have read yet: it ends soon after.
-                if (Closed(joinedSocket))
-                {
-                    await Task.WhenAny(live.Completion, Task.Delay(TimeSpan.FromSeconds(1), cancel));
-                }
-                if (!live.Completion.IsCompleted && !Moved())
-                {
-                    return live;
-                }
+                return live;
             }
-            if (joined is not null)
+            McpClient? old = joined;
+            Socket? oldSocket = joinedSocket;
+            joined = null;
+            joinedSocket = null;
+            joinedPath = null;
+            joinedOn = null;
+            oldSocket?.Dispose();
+            if (old is not null)
             {
-                await Quietly(joined);
-                joined = null;
+                await Quietly(old).WaitAsync(joiningCancel);
             }
-            (NetworkStream stream, string socket) = Connect() ?? await StartAsync(call, cancel);
-            // A window whose thread does not answer the handshake is given up on, as one that never opened is.
-            using CancellationTokenSource handshake = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-            handshake.CancelAfter(StartLimit);
+            (NetworkStream stream, string socket) = await ConnectAsync(joiningCancel) ?? await StartAsync(call, joiningCancel);
             try
             {
                 // The agent's own name, which the window shows the person when it asks.
                 joined = await McpClient.CreateAsync(new StreamClientTransport(stream, stream),
-                    new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" }, ProtocolVersion = protocol }, cancellationToken: handshake.Token);
+                    new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" }, ProtocolVersion = protocol }, cancellationToken: joiningCancel);
                 joined.RegisterNotificationHandler(NotificationMethods.ProgressNotification, Heard);
                 joinedSocket = stream.Socket;
                 joinedPath = socket;
                 joinedOn = McpHost.WindowFolder(socket);
             }
-            catch (Exception error) when (error is IOException or McpException or InvalidOperationException
-                || (error is OperationCanceledException && !cancel.IsCancellationRequested))
+            catch (Exception error)
             {
                 await stream.DisposeAsync();
-                throw new NotJoined(handshake.IsCancellationRequested
-                    ? $"The Passenger window on {here} did not answer within {StartLimit.TotalSeconds:0} s as the agent joined it; a later call tries again."
-                    : $"The Passenger window on {here} closed as the agent joined it; a later call tries again.");
+                if (error is IOException or McpException or InvalidOperationException)
+                {
+                    throw new NotJoined($"The connection to the Passenger window on {here} ended as the agent joined it; a later call tries again.");
+                }
+                throw;
             }
             return joined;
         }
+        catch (OperationCanceledException) when (joiningCancel.IsCancellationRequested && !cancel.IsCancellationRequested)
+        {
+            throw new NotJoined($"Joining the Passenger window on {here} timed out after {StartLimit.TotalSeconds:0} s; a later call tries again.");
+        }
         finally
         {
-            joining.Release();
+            if (acquired)
+            {
+                joining.Release();
+            }
         }
     }
 
@@ -339,8 +349,8 @@ public sealed class McpProxy
         }
     }
 
-    /// <summary>A connection to the window to join, with its socket's file, or null when no window of Passenger's is over the folder.</summary>
-    private (NetworkStream Stream, string Socket)? Connect()
+    /// <summary>A connection to the window to join, with its socket's file, or null when none connects. Each endpoint has five seconds.</summary>
+    private async Task<(NetworkStream Stream, string Socket)?> ConnectAsync(CancellationToken cancel)
     {
         McpHost.RemoveStale();
         foreach (string path in Windows())
@@ -348,12 +358,19 @@ public sealed class McpProxy
             Socket socket = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             try
             {
-                socket.Connect(new UnixDomainSocketEndPoint(path));
+                using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+                limit.CancelAfter(TimeSpan.FromSeconds(5));
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), limit.Token);
                 return (new NetworkStream(socket, ownsSocket: true), path);
             }
-            catch (SocketException)
+            catch (Exception error) when (error is SocketException || (error is OperationCanceledException && !cancel.IsCancellationRequested))
             {
                 socket.Dispose();
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
             }
         }
         return null;
@@ -404,10 +421,9 @@ public sealed class McpProxy
         {
             call.Waits($"Waiting for the running Passenger to open {here} (at most {StartLimit.TotalSeconds:0} s)");
         }
-        long began = Stopwatch.GetTimestamp();
-        while (Stopwatch.GetElapsedTime(began) < StartLimit)
+        while (true)
         {
-            if (Connect() is { } stream)
+            if (await ConnectAsync(cancel) is { } stream)
             {
                 call.Waited("its window listens");
                 return stream;
@@ -418,7 +434,6 @@ public sealed class McpProxy
             }
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancel);
         }
-        throw new NotJoined($"No Passenger window opened on {here} within {StartLimit.TotalSeconds:0} s.");
     }
 
     /// <summary>Starts Passenger on the folder: the installed app this is, through LaunchServices on macOS (which hands it

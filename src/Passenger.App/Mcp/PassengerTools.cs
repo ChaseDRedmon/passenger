@@ -177,7 +177,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             })];
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
-        (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync();
+        (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync(cancel);
         TextSnapshot answered = lsp.Text.Snapshot;
         return (IReadOnlyList<Finding>)[.. found.Select(d =>
         {

@@ -486,8 +486,20 @@ public sealed class LanguageServer : IAsyncDisposable
         using IDisposable flight = inFlight ? InFlight.Begin(method, who) : InFlight.None;
         try
         {
-            return Refused(method) ? throw new LanguageServerFailed("the language server refused it: as a test asked", method)
-                : await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel).ConfigureAwait(false);
+            if (Refused(method))
+            {
+                throw new LanguageServerFailed("the language server refused it: as a test asked", method);
+            }
+            Task<T?> answer = rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+            try
+            {
+                return await answer.WaitAsync(cancel).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                _ = answer.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                throw;
+            }
         }
         catch (Exception error) when (Failure(method, error, cancel) is { } failed)
         {
