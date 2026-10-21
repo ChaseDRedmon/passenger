@@ -188,12 +188,14 @@ public sealed partial class McpTests
             read.GetProperty("settings").EnumerateArray().Single(s => s.GetProperty("name").GetString() == name);
     }
 
-    /// <summary>Attach Profiler for an agent: the program Run started, profiled from now for a while, left running after.</summary>
+    /// <summary>Attach Profiler for an agent: the program Run started, profiled from now for a while, left running after. Its
+    /// hot spot is named at the editor's line, below a comment whose breaks the compiler counted into the PDB's lines.</summary>
     [Fact]
     public async Task An_agent_profiles_a_program_already_running_and_leaves_it_running()
     {
         Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{folder}\", \"spin.pid\"), Environment.ProcessId.ToString());\n"
-            + "long turns = 0;\nwhile (true)\n{\n    turns = Spin.Turn(turns);\n}\n\nstatic class Spin\n{\n    public static long Turn(long turns) => turns + 1;\n}\n");
+            + "long turns = 0;\nwhile (true)\n{\n    turns = Spin.Turn(turns);\n}\n\n"
+            + $"/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\nstatic class Spin\n{{\n    public static long Turn(long turns) => turns + 1;\n}}\n");
         await using McpClient client = await Start(["--mcp", folder]);
         CallToolResult unattached = await Result(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
         Assert.True(unattached.IsError == true, $"Attach Profiler with nothing running answered: {Text(unattached)}");
@@ -202,9 +204,11 @@ public sealed partial class McpTests
         int spinning = await WrittenId("spin.pid", "the program to start");
         JsonElement profiled = await Call(client, "profile", new() { ["attach"] = true, ["seconds"] = 2 });
         Assert.True(profiled.GetProperty("samples").GetInt32() > 0, $"Attach Profiler sampled nothing: {profiled.GetRawText()}");
-        // The folder's own hot spot says where it is written, from the build's PDB, for the agent to go straight there.
+        // The folder's own hot spot says where it is written, from the build's PDB, for the agent to go straight there: the
+        // editor's line 11, which the compiler, ending a line at each of the comment's four breaks, numbered 15.
         JsonElement turn = Assert.Single(profiled.GetProperty("hotSpots").EnumerateArray(), h => h.GetProperty("method").GetString()!.Contains("Spin.Turn", StringComparison.Ordinal));
-        Assert.True(turn.TryGetProperty("source", out JsonElement source) && source.GetString() == "Program.cs:10", $"Spin.Turn's hot spot says no place: {turn}");        using Process program = Process.GetProcessById(spinning);
+        Assert.True(turn.TryGetProperty("source", out JsonElement source) && source.GetString() == "Program.cs:11", $"Spin.Turn's hot spot is not named at its line: {turn}");
+        using Process program = Process.GetProcessById(spinning);
         Assert.False(program.HasExited, "The program an agent attached the profiler to ended with its snapshot");
         await Call(client, "stop");
     }

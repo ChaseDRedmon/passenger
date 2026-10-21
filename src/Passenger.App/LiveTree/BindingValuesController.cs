@@ -289,8 +289,8 @@ public sealed class BindingValuesController
         return shown;
     }
 
-    /// <summary>Where a binding's element was in the build the app runs, as Avalonia records it (from one); none for an element
-    /// on a line written since.</summary>
+    /// <summary>Where a binding's element was in the build the app runs, as Avalonia records it (from one, an XML reader's
+    /// lines); none for an element on a line written since.</summary>
     private (int Line, int Column)? Spot(OpenDocument document, XamlBinding binding)
     {
         DebugController? debug = session?.Debug;
@@ -298,7 +298,8 @@ public sealed class BindingValuesController
         {
             return null;
         }
-        return ((debug?.BuiltLine(document.Path, binding.Line) ?? binding.Line) + 1, binding.Column + 1);
+        TextPosition built = debug?.BuiltPlace(document.Path, binding.Line, binding.Column) ?? new TextPosition(binding.Line, binding.Column);
+        return (built.Line + 1, built.Column + 1);
     }
 
     /// <summary>What the app read, and, when it read nothing, why in full (its <see cref="XamlValues.Problem"/> is the short of it).</summary>

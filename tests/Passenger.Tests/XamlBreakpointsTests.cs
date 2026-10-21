@@ -117,6 +117,63 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         window.Close();
     }
 
+    /// <summary>XamlIl counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028 or U+2029, so
+    /// below a comment holding all four and past a lone '\r' in Save's tag the PDB's lines run two ahead of the editor's: the
+    /// breakpoint on Save's Background stops there with the arrow on its line, the frame's row and an agent's place say it,
+    /// and a line typed above while paused moves the arrow and the row with their code, as the next stop, Delete's, is.</summary>
+    [AvaloniaFact]
+    public void Below_line_breaks_only_an_xml_reader_counts_a_xaml_breakpoint_stops_on_its_attribute_at_the_editors_line()
+    {
+        string xaml = File.ReadAllText(Xaml)
+            .Replace("    <StackPanel", $"    <!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd -->\n    <StackPanel", StringComparison.Ordinal)
+            .Replace("<Button x:Name=\"Save\" Content=\"Save\"", "<Button x:Name=\"Save\"\r        Content=\"Save\"", StringComparison.Ordinal);
+        File.WriteAllText(Xaml, xaml);
+        (int save, int background) = EditorPlace(xaml, "Background=\"Orange\"");
+        (int delete, int button) = EditorPlace(xaml, "Button x:Name=\"Delete\"");
+        MainWindow window = Opened();
+        Assert.Null(window.OpenFile(Xaml));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(save, background + 3));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        editor.GoTo(new TextPosition(delete, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Assert.Equal([$"MainWindow.axaml:{save + 1} Background", $"MainWindow.axaml:{delete + 1}"], window.Debugger.Breakpoints.In(Xaml).Select(b => b.Location));
+
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
+        DebugStop stop = Stopped(window, "the stop where Save's Background is set");
+        // The debugger names XamlIl's line and column (from one), past both lone '\r's: Background's begins at the tag's.
+        int named = xaml.IndexOf("Background=\"Orange\"", StringComparison.Ordinal);
+        Assert.Equal((save + 3, named - xaml.LastIndexOf('\r', named)), (stop.Top!.Line, stop.Top.Column));
+        Assert.Equal(new TextPosition(save, background), window.Debugger.PlaceOf(stop.Top));
+        Assert.Contains(new LineMark(save, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(editor.LineMarks, m => m.Line == save && m.Kind == LineMarkKind.BreakpointBound);
+        window.ShowToolWindow("debug");
+        window.BottomPanel.Debug.ShowTab(console: false);
+        Ui.WaitFor(() => FrameRows(window).Contains($"MainWindow.axaml:{save + 1}"), $"the frame's row to name Save's line, not {string.Join(", ", FrameRows(window))}");
+        Passenger.App.Mcp.DebugSnapshot told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).GetDebugState(), "the stop as an agent is told it");
+        Assert.Equal($"MainWindow.axaml:{save + 1}:{background + 1}", told.Location);
+        Assert.EndsWith($"at MainWindow.axaml:{save + 1}", told.Frames[0], StringComparison.Ordinal);
+
+        // A line broken at the top while paused: the arrow and the frame's row go down with Save's code.
+        editor.GoTo(new TextPosition(0, 0));
+        editor.Focus();
+        Ui.Press(window, "Enter");
+        Assert.Contains(new LineMark(save + 1, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains($"MainWindow.axaml:{save + 2}", FrameRows(window));
+
+        // Delete's element, below them all: its breakpoint, moved by the line, still stops where it was set.
+        Resume(window);
+        stop = Stopped(window, "the stop where Delete is made");
+        Assert.Equal(delete + 3, stop.Top!.Line);
+        Assert.Equal(new TextPosition(delete + 1, button), window.Debugger.PlaceOf(stop.Top));
+        Assert.Contains(new LineMark(delete + 1, LineMarkKind.ExecutionPoint), editor.LineMarks);
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Break_when_value_changes_stops_in_the_code_the_style_or_the_binding_that_changed_that_controls_property()
     {
@@ -295,6 +352,21 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         window.MouseDown(at, MouseButton.Left);
         window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
+    }
+
+    /// <summary>Where (line and column from zero) some text begins in a text as the editor counts lines, at each '\n' alone.</summary>
+    private static (int Line, int Column) EditorPlace(string text, string find)
+    {
+        int at = text.IndexOf(find, StringComparison.Ordinal);
+        return (text.AsSpan(0, at).Count('\n'), at - text.LastIndexOf('\n', at) - 1);
+    }
+
+    /// <summary>The places the Debug window's frame rows name, as drawn.</summary>
+    private static List<string?> FrameRows(MainWindow window)
+    {
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        ListBox frames = view.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        return [.. frames.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text)];
     }
 
     /// <summary>The line (from zero) of a file holding some text, so a test names what it means rather than a number.</summary>

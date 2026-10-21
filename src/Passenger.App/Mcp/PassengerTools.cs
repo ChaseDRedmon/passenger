@@ -1231,12 +1231,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         string? folder = Session.Folder;
         bool Own(DapStackFrame frame) => frame.Source?.Path is { } path && (folder is null || PathNames.IsUnder(path, folder));
+        // The editor's line (from one) of the frame's code, in its file now: the debugger's is its build's compiler's.
+        int LineOf(DapStackFrame frame) => (Session.Debug.PlaceOf(frame)?.Line ?? frame.Line - 1) + 1;
         List<string> lines = [];
         for (int i = 0; i < frames.Count && lines.Count < 20; i++)
         {
             if (Own(frames[i]))
             {
-                lines.Add($"{i}: {frames[i].Name} at {Relative(frames[i].Source!.Path!)}:{(Session.Debug.PlaceOf(frames[i])?.Line ?? frames[i].Line - 1) + 1}");
+                lines.Add($"{i}: {frames[i].Name} at {Relative(frames[i].Source!.Path!)}:{LineOf(frames[i])}");
                 continue;
             }
             int last = i;
@@ -1246,7 +1248,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
             if (last == i)
             {
-                lines.Add($"{i}: {frames[i].Name}{(frames[i].Source?.Path is { } path ? $" at {path}:{frames[i].Line}" : "")}");
+                lines.Add($"{i}: {frames[i].Name}{(frames[i].Source?.Path is { } path ? $" at {path}:{LineOf(frames[i])}" : "")}");
                 continue;
             }
             string[] modules = [.. frames.Skip(i).Take(last - i + 1).Select(f => f.Name.IndexOf('!', StringComparison.Ordinal) is > 0 and int bang ? f.Name[..bang] : null)

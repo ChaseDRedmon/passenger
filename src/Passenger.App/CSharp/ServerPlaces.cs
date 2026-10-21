@@ -60,6 +60,29 @@ public static class ServerPlaces
     public static bool CountedByRoslyn(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".cs" or ".csx" or ".vb" or ".razor" or ".cshtml";
 
+    /// <summary>Whether a file is XAML, whose compilers (Avalonia's XamlIl, WPF's markup compiler) count its lines as an XML
+    /// reader does (<see cref="ServerLines.OfXml"/>) in the places they write: a PDB's sequence points, an element's own.</summary>
+    public static bool CountedAsXml(string path) => Path.GetExtension(path).ToLowerInvariant() is ".axaml" or ".xaml";
+
+    /// <summary>Whether a file's compiler counts its lines apart from the editor's, Roslyn's or XAML's.</summary>
+    public static bool CountedApart(string path) => CountedByRoslyn(path) || CountedAsXml(path);
+
+    /// <summary>A text's lines as its file's compiler counts them (Roslyn's, else an XML reader's for XAML) where they are
+    /// not the editor's, else null, as for a text that could not be read or a file no such compiler reads.</summary>
+    public static ServerLines? Compiled(string path, TextSnapshot? text) =>
+        text is null ? null
+        : CountedByRoslyn(path) ? Differing(text)
+        : CountedAsXml(path) && ServerLines.OfXml(text) is { } lines && lines.LineCount != text.LineCount ? lines : null;
+
+    /// <summary>A place a compiler wrote of a file (a PDB's line, a XAML element's; from zero) as the editor's line and
+    /// column in the file's text; as written in a file that cannot be read.</summary>
+    public static TextPosition PositionOfCompiled(string path, TextSnapshot? text, LspPosition at) => PositionOf(Compiled(path, text), at);
+
+    /// <summary>The editor's line and column in a file's text as its compiler counts them; as they are in a file that
+    /// cannot be read.</summary>
+    public static LspPosition CompiledPositionOf(string path, TextSnapshot? text, TextPosition at) =>
+        text is not null && Compiled(path, text) is { } lines ? lines.PositionOf(text.GetOffset(at)) : new LspPosition(at.Line, at.Column);
+
     /// <summary>Edits in a text's offsets as the server's, in its lines, for a workspace edit applied to that text.</summary>
     public static List<LspTextEdit> EditsOf(TextSnapshot text, IEnumerable<TextEdit> edits)
     {

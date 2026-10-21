@@ -329,6 +329,7 @@ public sealed partial class PassengerTools
         }
         // The folder's own methods by their place, from their PDBs, for an agent to go straight to.
         using Passenger.Profiler.MethodSources sources = new();
+        Func<string, TextSnapshot?> texts = CSharp.ServerPlaces.Texts(Editors);
         return new ProfileInfo(
             Math.Round(snapshot.Duration.TotalMilliseconds),
             snapshot.Samples,
@@ -351,7 +352,10 @@ public sealed partial class PassengerTools
                 return null;
             }
             string file = PathNames.Canonical(at.File);
-            return PathNames.IsUnder(file, folder) ? $"{Relative(file)}:{at.Line}" : null;
+            // The PDB's line is its compiler's, counted apart from the editor's in a file holding a break only it counts.
+            return PathNames.IsUnder(file, folder)
+                ? $"{Relative(file)}:{CSharp.ServerPlaces.PositionOfCompiled(file, texts(file), new Lsp.LspPosition(at.Line - 1, 0)).Line + 1}"
+                : null;
         }
     });
 

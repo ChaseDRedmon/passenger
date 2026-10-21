@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Passenger.Core;
 using Passenger.Dap;
+using Passenger.Text;
 
 namespace Passenger.App.Debugging;
 
@@ -650,7 +651,7 @@ public sealed class DebugSession
         IEnumerable<LineBreakpoint> sending = breakpoints.Muted ? [] : breakpoints.In(path).Where(b => b.Enabled);
         List<LineBreakpoint> built = [.. sending.Where(b => lines.IsBuilt(path, b.Line))];
         List<LineBreakpoint> unbuilt = [.. sending.Where(b => !lines.IsBuilt(path, b.Line))];
-        List<DapSourceBreakpoint> requests = [.. built.Select(b => new DapSourceBreakpoint(lines.ToBuilt(path, b.Line) + 1, columns(b), b.Condition, b.HitCondition, b.LogMessage, b.Suspend))];
+        List<DapSourceBreakpoint> requests = [.. built.Select(b => Request(path, b))];
         if (runToCursor is { } target && target.Path == path && requests.All(r => r.Line != target.Line + 1))
         {
             requests.Add(new DapSourceBreakpoint(target.Line + 1));
@@ -677,6 +678,15 @@ public sealed class DebugSession
         breakpoints.Report(path,
             [.. response.Breakpoints.Take(built.Count).Select(b => Status(path, b)), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
             [.. built.Take(response.Breakpoints.Count), .. unbuilt]);
+    }
+
+    /// <summary>A breakpoint as the debugger is asked for it: at its built line, and in XAML at its name's column there, both
+    /// as the compiler counted them (a lone '\r' before the name begins another line in XAML).</summary>
+    private DapSourceBreakpoint Request(string path, LineBreakpoint breakpoint)
+    {
+        int? column = columns(breakpoint);
+        TextPosition at = lines.ToBuilt(path, breakpoint.Line, column is int named ? named - 1 : 0);
+        return new DapSourceBreakpoint(at.Line + 1, column is null ? null : at.Column + 1, breakpoint.Condition, breakpoint.HitCondition, breakpoint.LogMessage, breakpoint.Suspend);
     }
 
     /// <summary>Sends every breakpoint whose request differs from what the debugger was last sent: each file's (one that lost

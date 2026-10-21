@@ -257,7 +257,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   build's problems and console links to its messages and to stack frames are read through it as well, and so are the
   debugger's lines, which are the PDB's: `Debugging/BuiltLines` sends breakpoints, Run to Cursor and Set Next Statement
   at the compiler's line in the built text and shows a stop's frame (the arrow, its row, MCP's place) at the editor's
-  line now, and Hot Reload's rude edits are listed at the editor's line.
+  line now, and Hot Reload's rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
+  does (`ServerLines.OfXml`: a lone '\r' ends a line, U+0085, U+2028 and U+2029 do not), and `ServerPlaces.Compiled`
+  gives any file's lines as its compiler counts them, which BuiltLines and a profile's hot spots read the PDB through.
   `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
   HTML in the HTML server (`LanguageServer.HtmlServer`) as `<uri>__virtual.html` and forwards Razor's HTML questions
@@ -761,7 +763,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   for first. `nuget_install`/`nuget_remove` answer a `PackageChange`: the version installed and the files that changed
   (the project, the nearest Directory.Packages.props). `profile`'s hot spots in the folder's code carry `source`
   (path:line of the method's first sequence point: `Profiler/MethodSources` reads the module's PDB by the trace's
-  module path and method token, `HotSpot.Code`). A resume of a debugged test run (`debug_continue`, `debug_step`)
+  module path and method token, `HotSpot.Code`; the line the editor's, through `ServerPlaces.Compiled`). A resume of a debugged test run (`debug_continue`, `debug_step`)
   whose host ends waits for the run and answers its tally as `tests_run` does (`DebugSnapshot.Tests`). Usability pass
   (#236): an agent's `--mcp-attach` with no window open starts the person's Passenger in a window they see, so a pass
   drives `--mcp FOLDER` (or `--mcp-attach` with `PASSENGER_START=headless` and a state of its own, as `TestRun` sets).
@@ -808,7 +810,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   binds at `JitBoundaryAtOrBefore` (after a call, a nop, the method's start), an attribute with no point of its own at
   the one after the attribute before it (`UnpointedAttribute`), a template's root in its builder, and the stop is shown
   at the breakpoint's place. `LineBreakpoint.Attribute` is an attribute's breakpoint (F9 on it, `XamlBreakpoints`),
-  kept with the folder, sent with its name's column. `PropertyBreakpoint` is the Live Visual Tree's Break When Value
+  kept with the folder, sent with its name's column, line and column both as XamlIl counted them (an XML reader's,
+  `BuiltLines`). `PropertyBreakpoint` is the Live Visual Tree's Break When Value
   Changes, for one session: the inspector watches that element's property (protocol v3 `watch`, `PropertyBreaks.cs`)
   and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
   `breakpoint == Id && (…)`, the hit count kept in the app). The inspector is never optimized (the debugger reads that

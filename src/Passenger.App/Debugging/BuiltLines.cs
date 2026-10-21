@@ -13,8 +13,8 @@ public sealed class BuiltLines
 {
     private readonly Dictionary<string, Lines> files = new(StringComparer.Ordinal);
 
-    /// <summary>Each file's built text's lines as Roslyn's compiler counted them into the PDB (<see cref="ServerLines"/>)
-    /// where they are not the editor's, else null, as in most files.</summary>
+    /// <summary>Each file's built text's lines as its compiler counted them into the PDB (<see cref="ServerPlaces.Compiled"/>:
+    /// Roslyn's, XAML's an XML reader's) where they are not the editor's, else null, as in most files.</summary>
     private readonly Dictionary<string, ServerLines?> compiled = new(StringComparer.Ordinal);
 
     /// <summary>A file's text as the editor has it, else as on disk: the built text until the file's first edit.</summary>
@@ -29,9 +29,9 @@ public sealed class BuiltLines
         {
             return;
         }
-        if (ServerPlaces.CountedByRoslyn(path) && !compiled.ContainsKey(path))
+        if (ServerPlaces.CountedApart(path) && !compiled.ContainsKey(path))
         {
-            compiled[path] = ServerPlaces.Differing(change.Before);
+            compiled[path] = ServerPlaces.Compiled(path, change.Before);
         }
         if (!files.TryGetValue(path, out Lines? lines))
         {
@@ -64,10 +64,20 @@ public sealed class BuiltLines
 
     /// <summary>The built line (from zero, the compiler's) a line of a file was; for one written since, the built line its
     /// code goes before.</summary>
-    public int ToBuilt(string path, int line)
+    public int ToBuilt(string path, int line) => ToBuilt(path, line, 0).Line;
+
+    /// <summary>The built place (line and column from zero, the compiler's) a place in a file now was: its line's built line,
+    /// at that column in it, where a break only the compiler counts may have begun another line.</summary>
+    public TextPosition ToBuilt(string path, int line, int column)
     {
         int built = files.TryGetValue(path, out Lines? edited) ? edited.ToBuilt(line) : line;
-        return Compiled(path) is { } lines ? lines.PositionOf(lines.Text.GetLineStart(Math.Clamp(built, 0, lines.Text.LineCount - 1))).Line : built;
+        if (Compiled(path) is not { } lines)
+        {
+            return new TextPosition(built, column);
+        }
+        LineSpan span = lines.Text.GetLine(Math.Clamp(built, 0, lines.Text.LineCount - 1));
+        LspPosition at = lines.PositionOf(span.Start + Math.Clamp(column, 0, span.Length));
+        return new TextPosition(at.Line, at.Character);
     }
 
     /// <summary>Whether a line's code is the build's, rather than written since: no breakpoint can stop on one that is not.</summary>
@@ -76,13 +86,13 @@ public sealed class BuiltLines
     /// <summary>A file's built lines as its compiler counted them where they are not the editor's, each file read once.</summary>
     private ServerLines? Compiled(string path)
     {
-        if (!ServerPlaces.CountedByRoslyn(path))
+        if (!ServerPlaces.CountedApart(path))
         {
             return null;
         }
         if (!compiled.TryGetValue(path, out ServerLines? lines))
         {
-            compiled[path] = lines = ServerPlaces.Differing(texts(path));
+            compiled[path] = lines = ServerPlaces.Compiled(path, texts(path));
         }
         return lines;
     }

@@ -324,8 +324,7 @@ public sealed class DebugController : IDisposable
         {
             return null;
         }
-        TextSnapshot? text = editors.Documents.FirstOrDefault(d => d.Path == breakpoint.Path)?.Text.Snapshot
-            ?? (File.Exists(breakpoint.Path) ? TextSnapshot.From(File.ReadAllText(breakpoint.Path)) : null);
+        TextSnapshot? text = CSharp.ServerPlaces.TextOf(editors, breakpoint.Path);
         return text is null ? null : XamlBreakpoints.Column(text, breakpoint.Line, breakpoint.Attribute);
     }
 
@@ -1431,12 +1430,16 @@ public sealed class DebugController : IDisposable
     }
 
     /// <summary>Carries the stop shown in a file through an edit to it, as Rider's execution point and inline values go
-    /// with the text: the arrow from the built lines, the values a line at a time.</summary>
+    /// with the text: the arrow and the frames' rows from the built lines, the values a line at a time.</summary>
     private void FollowStop(OpenDocument document, DocumentChangedEventArgs change)
     {
         if (executionPoint is { } point && point.Path == document.Path)
         {
             UpdateMarks(document);
+        }
+        if (change.After.LineCount != change.Before.LineCount && view.Frames.Count > 0)
+        {
+            view.ShowPlacesAgain();
         }
         if (document.LineAnnotations.Count > 0)
         {
@@ -1448,8 +1451,17 @@ public sealed class DebugController : IDisposable
     /// (an app's XAML places) are read against.</summary>
     public int CurrentLine(string path, int line) => Current(path, line);
 
-    /// <summary>The built line a line (from zero) of a file has, while a session runs.</summary>
-    public int BuiltLine(string path, int line) => Built(path, line);
+    /// <summary>The built place (line and column from zero, as the compiler counted them) a place in a file now has: through
+    /// the edits since the build while a session runs, else in the file's text as it is.</summary>
+    public TextPosition BuiltPlace(string path, int line, int column)
+    {
+        if (lines is not null)
+        {
+            return lines.ToBuilt(path, line, column);
+        }
+        Lsp.LspPosition at = CSharp.ServerPlaces.CompiledPositionOf(path, CSharp.ServerPlaces.TextOf(editors, path), new TextPosition(line, column));
+        return new TextPosition(at.Line, at.Character);
+    }
 
     /// <summary>Whether a line (from zero) of a file is the build's, rather than written since the session began.</summary>
     public bool IsBuiltLine(string path, int line) => lines?.IsBuilt(path, line) ?? true;

@@ -8,6 +8,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Threading;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Passenger.App.Debugging;
 using Passenger.Dap;
 using Passenger.Editor;
@@ -463,6 +464,18 @@ public sealed class DebugView : DockPanel
     /// <summary>The line (from one) a frame's row names: where its code is in the editor's lines.</summary>
     private int LineOf(DapStackFrame frame) => PlaceOf?.Invoke(frame) is { } place ? place.Line + 1 : frame.Line;
 
+    /// <summary>Says again the place each frame's row names, whose code an edit made while paused may have moved.</summary>
+    public void ShowPlacesAgain()
+    {
+        foreach (TextBlock where in frames.GetVisualDescendants().OfType<TextBlock>())
+        {
+            if (where.Tag is DapStackFrame { Source.Name: { } file } frame)
+            {
+                where.Text = $"{file}:{LineOf(frame)}";
+            }
+        }
+    }
+
     private Control FrameRow(DapStackFrame? frame)
     {
         if (frame is null)
@@ -480,6 +493,7 @@ public sealed class DebugView : DockPanel
         }
         TextBlock where = new()
         {
+            Tag = frame,
             Text = frame.Source?.Name is { } file ? $"{file}:{LineOf(frame)}" : module,
             FontSize = 12,
             Margin = new Thickness(8, 0, 0, 0),
