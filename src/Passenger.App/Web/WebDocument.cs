@@ -7,7 +7,7 @@ using Passenger.Text;
 
 namespace Passenger.App.Web;
 
-/// <summary>One open JavaScript, TypeScript, HTML, CSS or JSON file's share of its language server: kept in step, marked
+/// <summary>One open JavaScript, TypeScript, HTML, CSS, JSON, Dockerfile or YAML file's share of its language server: kept in step, marked
 /// with the diagnostics the server pulls or pushes (moved with the text between them, as a C# file's are), and, where the
 /// server finds colours (CSS's), a swatch in the gutter beside each line that writes one. Of one server only: a server
 /// started again gives the file a new one, so what asks the server asks <see cref="WebLanguages.For"/> each time.</summary>
@@ -25,6 +25,14 @@ public sealed class WebDocument : IServerDocument, IDisposable
     private Diagnostic[] found = [];
     private TextRange[] ranges = [];
     private IReadOnlyList<Diagnostic>? placed = [];
+
+    /// <summary>The file's checks held, for the Dockerfile and YAML servers, which push a file's diagnostics after each
+    /// change of it, from the change until that push lands or <see cref="PushLimit"/> passes: what an agent's diagnostics
+    /// and a screenshot wait for.</summary>
+    private IDisposable? awaitingPush;
+    private CancellationTokenSource? pushLimit;
+
+    private static readonly TimeSpan PushLimit = TimeSpan.FromSeconds(5);
 
     /// <summary>The file's markers from its own server, and from ESLint, which the editor shows together.</summary>
     private IReadOnlyList<Marker> own = [];
@@ -84,8 +92,50 @@ public sealed class WebDocument : IServerDocument, IDisposable
         session = started;
         Lsp = started.Open(document.Path, document.Text, LanguageId);
         Lsp.DiagnosticsPushed += OnPushed;
+        AwaitPush();
         Refresh();
         Unreached();
+    }
+
+    /// <summary>Holds the file's checks until its server's push for the text as it stands (<see cref="awaitingPush"/>).</summary>
+    private void AwaitPush()
+    {
+        if (Lsp is null || Kind is not (WebServerKind.Dockerfile or WebServerKind.Yaml))
+        {
+            return;
+        }
+        if (awaitingPush is null)
+        {
+            awaitingPush = document.Checking();
+            BackgroundWork.Begin();
+        }
+        pushLimit?.Cancel();
+        CancellationTokenSource limit = pushLimit = new CancellationTokenSource();
+        _ = Task.Delay(PushLimit, limit.Token).ContinueWith(waited =>
+        {
+            if (!waited.IsCanceled)
+            {
+                UiThread.Post(() =>
+                {
+                    if (pushLimit == limit)
+                    {
+                        PushLanded();
+                    }
+                });
+            }
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    }
+
+    private void PushLanded()
+    {
+        pushLimit?.Cancel();
+        pushLimit = null;
+        if (awaitingPush is { } held)
+        {
+            awaitingPush = null;
+            held.Dispose();
+            BackgroundWork.End();
+        }
     }
 
     /// <summary>The diagnostics and colours asked for again (the server's refresh, a server started again).</summary>
@@ -94,6 +144,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
     public void Dispose()
     {
         pulling?.Cancel();
+        PushLanded();
         Unreached();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
@@ -121,6 +172,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
             lint = [.. lint.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
             document.Markers = [.. own, .. lint];
         }
+        AwaitPush();
         Pull(Settle);
     }
 
@@ -139,6 +191,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
                     if (version == document.Text.Version)
                     {
                         Show(diagnostics);
+                        PushLanded();
                     }
                 }
             });

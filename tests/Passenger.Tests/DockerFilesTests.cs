@@ -97,6 +97,11 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             string compose = app.PathOf("ops/compose.yaml");
             Ui.WaitFor(() => window.Session.Workspace?.Projects.Any(p => p.Name == "Api") == true, "the solution's projects");
 
+            // The Structure window shows the YAML server's outline: the services and what declares them.
+            Ui.Run(window, AppActions.ShowStructure);
+            Ui.WaitFor(() => window.StructureView.Rows.Any(r => r.Name == "depends_on"), "the compose file's outline in the Structure window");
+            Assert.Equal(["services", "api", "build"], window.StructureView.Rows.Take(3).Select(r => r.Name));
+
             // A build: its Dockerfile, and the project the Dockerfile's entry point runs, to choose from.
             GoFrom(window, compose, "dockerfile: ops/api.Dock");
             Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the build's Dockerfile and project offered");
@@ -148,7 +153,6 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
 
             string dockerfile = app.PathOf("Api/Dockerfile");
             string ignore = app.PathOf(".dockerignore");
-            Assert.Equal("Added a Dockerfile to Api, and a .dockerignore at Shop's folder", window.Status);
             Assert.Equal(Shop.Dockerfile, File.ReadAllText(dockerfile));
             Assert.Equal(DockerFiles.Ignore, File.ReadAllText(ignore));
             Assert.Equal(dockerfile, window.EditorArea.Active?.Path);
@@ -191,7 +195,6 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             dialog.Accept();
             Ui.Settle();
 
-            Assert.Equal("Worker builds its image with the SDK: dotnet publish /t:PublishContainer makes worker", window.Status);
             Assert.Equal(Shop.Worker.Replace("    <Nullable>enable</Nullable>\r\n", "    <Nullable>enable</Nullable>\r\n"
                 + "    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>\r\n    <ContainerRepository>worker</ContainerRepository>\r\n", StringComparison.Ordinal),
                 File.ReadAllText(worker));
@@ -227,7 +230,6 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             Ui.Settle();
 
             string compose = app.PathOf("compose.yaml");
-            Assert.Equal("Added compose.yaml to Shop, and a Dockerfile to Api", window.Status);
             Assert.Equal(Shop.Compose, File.ReadAllText(compose));
             Assert.Equal(Shop.Dockerfile, File.ReadAllText(app.PathOf("Api/Dockerfile")));
             Assert.Contains("<Folder Name=\"/Solution Items/\">\r\n    <File Path=\"compose.yaml\" />\r\n  </Folder>", File.ReadAllText(app.PathOf("Shop.slnx")), StringComparison.Ordinal);

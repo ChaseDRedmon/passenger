@@ -275,16 +275,30 @@ window or takes the focus; it shows everything but the system's own window chrom
   and `package-lock.json` everything they bring, each with its sha512; `tools/Passenger.NodePackages` puts them in
   place at build with no Node.js (cached in `artifacts/node/cache`), leaving out the HTML server's own TypeScript's
   tsserver, tsc and translations and moving its `lib*.d.ts` to `node_modules/node_modules/typescript/lib`, where the
-  HTML server reads them; SchemaStore schemas go to `web/schemas`. To move a pin: edit package.json, run
+  HTML server reads them; SchemaStore schemas and the Compose specification's (`compose-spec.json`, pinned by commit)
+  go to `web/schemas`. To move a pin: edit package.json, run
   `npm install --package-lock-only --ignore-scripts` there, then update THIRD_PARTY_NOTICES.md's "Inside web/" table.
 - `src/Passenger.App/Web`: `WebLanguages` is `ProjectSession.Web`, one server per kind (TypeScript over the project's
-  own node_modules/typescript, else Passenger's; HTML; CSS, SCSS and Less; JSON), each run on `NodeRuntime` (Settings'
+  own node_modules/typescript, else Passenger's; HTML; CSS, SCSS and Less; JSON; Dockerfiles, by name before extension
+  (`WebLanguages.IsDockerfile`: Dockerfile.dev, Containerfile, *.dockerfile), dockerfile-language-server-nodejs; YAML,
+  yaml-language-server), each run on `NodeRuntime` (Settings'
   Node.js page, else `Programs.Node()`) through ChildProcesses and started with the first file of its kind; without
-  Node.js, `OpenDocument.Notice` (the editor's banner) and the status bar say why and the file keeps its colours.
+  Node.js, `OpenDocument.Notice` (the editor's banner) and the status bar say why and the file keeps its colours. Every
+  per-kind switch in `WebLanguages` names each kind (JSON is their fallback). The YAML server reads its settings from
+  `workspace/configuration` (`YamlSettings`): schema store and Kubernetes' catalogue off, Compose's `!reset` and
+  `!override` known, compose files (`JsonSchemas.ComposeFiles`) on the carried Compose schema by its file URI, and
+  `yaml/registerContentRequest` sends any HTTP schema through `JsonSchemas`, so it fetches nothing itself. The Dockerfile
+  and YAML servers push diagnostics, and a file's checks are held from a change until its push lands (5 s at most).
   `WebDocument` is an `IServerDocument`, as `CSharpDocument` is, and `CodeAssist` asks it through `Current`.
   `JsonSchemas` answers `vscode/content` from the carried schemas, else downloads while Settings' Remote JSON Schemas
   allows (`PASSENGER_SCHEMAS` points the tests at a dead address). `CodeAssist.Web.cs` gives JSON the Go to Declaration
-  (package.json dependencies) and property Rename its server lacks. Agents' MCP tools don't know web files yet.
+  (package.json dependencies) and property Rename its server lacks. `ComposeDeclarations` is Passenger's own Go to
+  Declaration in a compose file (from the YAML server's outline: a build to its Dockerfile and the project its ENTRYPOINT
+  or dotnet publish names, a service, volume, network, config or secret named to its declaration, `${VAR}` to `.env` or
+  an env_file, an env_file to its file, an image to its registry's page through `CodeAssist.Browse`), tried before the
+  server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`. The Structure window shows the web servers'
+  outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
+  The Dockerfile server completes a FROM image's tags by asking Docker Hub itself.
   `WebLanguages.Eslint` (`EslintService`/`EslintDocument`) runs vscode-langservers-extracted's ESLint server per folder
   on the project's own eslint (`ProjectPackages`: found from the file up, or Settings' Manual package); its fixes are
   commands whose edits come back as `workspace/applyEdit` (`ServerStart.ApplyEdit`, applied through `WorkspaceEdits`),
@@ -606,7 +620,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`MainWindow.RenameProject`) renames its file, its solution entry (a .sln's name too) and every reference to it
   following, one command Undo and Redo take whole. `ProjectEdits` puts a project's
   `ProjectReference`s in and takes them out as text, the rest kept byte for byte (never `dotnet add reference`), for
-  Add > Reference (`MainWindow.References.cs`). `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
+  Add > Reference (`MainWindow.References.cs`), and sets a property (`SetProperty`) for Add > Docker Support's SDK
+  route. `MainWindow.DockerSupport.cs` is Add > Docker Support on a project (a Dockerfile beside it and a .dockerignore
+  at the context, the solution's folder; or EnableSdkContainerSupport and ContainerRepository) and Add > Docker Compose
+  on the solution (compose.yaml, a Dockerfile for each project chosen without one, the backing services its packages
+  call for with healthchecks and connection strings, listed in Solution Items), the text from `Workspace/DockerFiles`,
+  each Add one `Commands.Record` with every file watched before it is written. `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
