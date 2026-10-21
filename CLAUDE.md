@@ -136,7 +136,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
   Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
-  goes with the text before it; the hints at an offset are a caret place of their own, as IntelliJ's inlays are.
+  goes with the text before it, or a value (`InlayHintKind.Value`: what a compose file's `${VAR}` comes to), which goes
+  with the text before it as a type does and shows whatever Settings say of the other two; the hints at an offset are a
+  caret place of their own, as IntelliJ's inlays are.
   `CodeEditor.Usages.cs` is what the caret lights up: the host's usage highlights (an edit takes them away unless
   kept, as Highlight Usages in File's are) and the bracket pair from a highlighter that is an `IBraceMatcher`
   (`CSharpHighlighter`, from the bracket's own node, never the server); a grammar's bracket or tag pair
@@ -307,7 +309,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `WebLanguages.Eslint` (`EslintService`/`EslintDocument`) runs vscode-langservers-extracted's ESLint server per folder
   on the project's own eslint (`ProjectPackages`: found from the file up, or Settings' Manual package); its fixes are
   commands whose edits come back as `workspace/applyEdit` (`ServerStart.ApplyEdit`, applied through `WorkspaceEdits`),
-  and its markers go beside the server's (`WebDocument.ShowLint`). `WebLanguages.Prettier` runs the project's prettier
+  and its markers go beside the server's (`WebDocument.ShowLint`), as the container engine's do (`WebDocument.ShowEngine`,
+  an engine's left off a line the server already marks as gravely). `WebLanguages.Prettier` runs the project's prettier
   through `Web/prettier.cjs` (carried as `web/passenger/prettier.cjs`), one warm Node.js per folder over JSON lines,
   Prettier 2 or 3: a request's answer is the line of its id (any other line ends the runner), and what a plugin or
   configuration prints goes to its standard error, the IDE's log.
@@ -490,7 +493,25 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`TestController.ContainerEngine`; untested, since a project referencing it restores from nuget.org). `ContainerLabels`
   and `FolderContainers` (`ProjectSession.Containers`) are what a folder starts and how it is ended (Rules); the store's
   `containers.json` (`ContainersState`) says the state ever labelled something, without which a start runs no docker.
-  Its tests (`ContainersTests`, `McpTests.Containers.cs`) skip saying why unless `docker info`'s OSType is linux, use
+  `EngineChecks` (`WebLanguages.Checks`, given each Dockerfile and compose file with its server, as ESLint is) is what the
+  engine says of the open files while `StateAsync` says it can, each check off the UI thread as background work holding
+  the file's `Checking()`, one at a time, dropped when the text moved on before it landed: BuildKit's own checks as a
+  Dockerfile opens and is saved (`DockerfileCheck`: `docker buildx build --call=check,format=json -` on its text, on the
+  context's own builder, no context sent; a rule's warning linked to its page, a build error but for a parse error,
+  which the server marks, or a registry out of reach), and Compose's model of a compose file as typed (`ComposeCheck`,
+  for the files Compose reads unasked: the first of compose.yaml, compose.yml, docker-compose.yml and
+  docker-compose.yaml in a folder and the first override beside it; `docker compose --project-directory … -f - [-f
+  override] config --format json --no-path-resolution`, the text typed as `-`, again as the other or the .env changes).
+  Compose's error is marked where its message names a place (a parser's line, or a model path `ComposeText`, Passenger's
+  reading of block YAML, finds), else on the first line, or listed as the other file's; each `${VAR}` gets a hint of
+  what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
+  here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
+  scalar written (a value it normalizes gets none). Their problems are Problems' Containers tab by file
+  (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
+  second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
+  run), so no setting turns them off.
+  Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`) skip saying why unless `docker info`'s
+  OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
