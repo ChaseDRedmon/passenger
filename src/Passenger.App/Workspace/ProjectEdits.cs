@@ -78,36 +78,55 @@ public static partial class ProjectEdits
         return null;
     }
 
-    /// <summary>The project following files and folders that moved or were renamed, as Rider's project model does: an
-    /// item that names a file by itself (its Include or Update, no wildcards) names where it went, and a DependentUpon or
-    /// LastGenOutput naming one (relative to its item's folder) names it there. Whether the file changed.</summary>
+    /// <summary>The project (at its path now) following files and folders that moved or were renamed: an item's Include,
+    /// Update, Remove or Exclude naming a file, or a glob's folder, names where it went (a list or a property stays as
+    /// written), and a DependentUpon or LastGenOutput naming one (relative to its item's file) names it there. A project
+    /// that moved itself reads its paths from where it was, so one naming a file outside it still finds it. Whether it
+    /// changed.</summary>
     public static bool MoveItems(string project, IReadOnlyList<(string From, string To)> moves)
     {
         ProjectText file = new(project);
         string folder = Path.GetDirectoryName(project)!;
         // A file moved, or one inside a folder that was.
         string Moved(string path) => moves.FirstOrDefault(m => PathNames.Within(path, m.From)) is { From: not null } move ? PathNames.Moved(path, move.From, move.To) : path;
+        string before = Path.GetDirectoryName(moves.FirstOrDefault(m => PathNames.Within(project, m.To)) is { To: not null } back ? PathNames.Moved(project, back.To, back.From) : project)!;
         List<(int Start, int End)> comments = [.. Comment().Matches(file.Text).Select(m => (m.Index, m.Index + m.Length))];
         string text = ItemElement().Replace(file.Text, item =>
         {
-            string items = item.Groups["items"].Value;
-            if (comments.Any(c => item.Index >= c.Start && item.Index < c.End) || items.IndexOfAny(['*', '?', ';', '$', '@', '%']) >= 0)
+            if (comments.Any(c => item.Index >= c.Start && item.Index < c.End))
             {
                 return item.Value;
             }
-            string was = Path.GetFullPath(Path.Combine(folder, items.Replace('\\', '/')));
-            string now = Moved(was);
-            // What the item names beside it, relative to its folder: where that is now, from where the item is now.
-            string element = RelatedName().Replace(item.Value, related =>
+            // Each path written from where the project was names where that file is now, from where the project is now; a
+            // glob by the folder it begins in, so Remove="Legacy\**" still removes what it did, and a folder's ("Legacy\").
+            string start = ItemAttribute().Replace(item.Groups["start"].Value, attribute =>
+            {
+                string items = attribute.Groups["items"].Value;
+                int wild = items.IndexOfAny(['*', '?']);
+                string path = (wild < 0 ? items : items[..Math.Max(0, items.LastIndexOfAny(['\\', '/'], wild))]).TrimEnd('\\', '/');
+                if (path.Trim().Length == 0 || items.IndexOfAny([';', '$', '@', '%']) >= 0)
+                {
+                    return attribute.Value;
+                }
+                string now = Moved(Full(before, path));
+                return PathNames.Same(Full(folder, path), now) ? attribute.Value
+                    : Spliced(attribute, attribute.Groups["items"], Written(Path.GetRelativePath(folder, now), path) + items[path.Length..]);
+            });
+            string element = $"<{item.Groups["tag"].Value}{start}{item.Groups["end"].Value}";
+            if (ItemAttribute().Matches(item.Groups["start"].Value).FirstOrDefault(a => a.Groups["kind"].Value is "Include" or "Update" && OneFile(a.Groups["items"].Value)) is not { } own)
+            {
+                return element;
+            }
+            // What the item names beside it, relative to its file: where that is now, from where its file is now.
+            string was = Path.GetDirectoryName(Full(before, own.Groups["items"].Value))!;
+            string at = Path.GetDirectoryName(Moved(Full(before, own.Groups["items"].Value)))!;
+            return RelatedName().Replace(element, related =>
             {
                 Capture value = related.Groups["value"];
-                string named = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(was)!, value.Value.Trim().Replace('\\', '/')));
-                string target = Moved(named);
-                return target == named && now == was ? related.Value
-                    : Spliced(related, value, Written(Path.GetRelativePath(Path.GetDirectoryName(now)!, target), value.Value));
+                string target = Moved(Full(was, value.Value.Trim()));
+                return PathNames.Same(Full(at, value.Value.Trim()), target) ? related.Value
+                    : Spliced(related, value, Written(Path.GetRelativePath(at, target), value.Value));
             });
-            return now == was ? element : ItemAttribute().Replace(element, attribute =>
-                Spliced(attribute, attribute.Groups["items"], Written(Path.GetRelativePath(folder, now), items)), 1);
         });
         if (text == file.Text)
         {
@@ -115,6 +134,10 @@ public static partial class ProjectEdits
         }
         file.Write(text);
         return true;
+
+        static bool OneFile(string items) => items.Trim().Length > 0 && items.IndexOfAny(['*', '?', ';', '$', '@', '%']) < 0;
+
+        static string Full(string folder, string relative) => Path.GetFullPath(Path.Combine(folder, relative.Replace('\\', '/')));
     }
 
     /// <summary>A path as a project writes it, with the separators the value it replaces had.</summary>
@@ -179,11 +202,12 @@ public static partial class ProjectEdits
     [GeneratedRegex(@"<ItemGroup\b(?<attributes>[^>]*?)>(?<body>.*?)</ItemGroup\s*>", RegexOptions.Singleline)]
     private static partial Regex ItemGroup();
 
-    /// <summary>An item that names files: its start tag's Include or Update, and its end.</summary>
-    [GeneratedRegex(@"<(?<tag>[A-Za-z_][\w.-]*)(?=[^>]*\b(?:Include|Update)\s*=)[^>]*?\b(?:Include|Update)\s*=\s*""(?<items>[^""]*)""[^>]*?(?:/>|>.*?</\k<tag>\s*>)", RegexOptions.Singleline)]
+    /// <summary>An item that names files: its tag, the rest of its start tag (an Include, Update, Remove or Exclude among
+    /// it), and its end.</summary>
+    [GeneratedRegex(@"<(?<tag>[A-Za-z_][\w.-]*)(?<start>(?=[^>]*\b(?:Include|Update|Remove|Exclude)\s*=)[^>]*?)(?<end>/>|>.*?</\k<tag>\s*>)", RegexOptions.Singleline)]
     private static partial Regex ItemElement();
 
-    [GeneratedRegex(@"\b(?:Include|Update)\s*=\s*""(?<items>[^""]*)""")]
+    [GeneratedRegex(@"\b(?<kind>Include|Update|Remove|Exclude)\s*=\s*""(?<items>[^""]*)""")]
     private static partial Regex ItemAttribute();
 
     /// <summary>A file an item names beside it: what it depends on, or what generates from it, as an attribute or an element.</summary>

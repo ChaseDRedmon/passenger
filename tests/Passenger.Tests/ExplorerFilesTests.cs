@@ -7,6 +7,7 @@ using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Editors;
 using Passenger.App.Explorer;
+using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -15,8 +16,8 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 /// <summary>The Explorer's file operations as Rider's: New Class writes a class in its folder's namespace and opens it;
-/// a rename moves the file or folder and its open tabs with it; a delete goes to the Trash and closes its tab, and a
-/// project's leaves the solution; a name already there is refused with why.</summary>
+/// a rename moves the file or folder and its open tabs with it, its project including and removing what it did; a delete
+/// goes to the Trash and closes its tab, and a project's leaves the solution; a name already there is refused with why.</summary>
 public sealed class ExplorerFilesTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("files-");
@@ -192,6 +193,49 @@ public sealed class ExplorerFilesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_folder_renamed_keeps_out_of_the_build_the_files_its_project_removed_by_name_or_by_glob_and_undo_puts_the_project_back()
+    {
+        // Old.cs and Stale.cs no longer compile, so the project removes them: one by its name, the other by its folder's glob.
+        string project = Path.Combine(folder, "Shop.csproj");
+        string written = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n"
+            + "  <ItemGroup>\n    <Compile Remove=\"Legacy\\Old.cs\" />\n    <Compile Remove=\"Legacy\\Generated\\**\" />\n    <Folder Include=\"Legacy\\Generated\\\" />\n  </ItemGroup>\n</Project>\n";
+        File.WriteAllText(project, written);
+        string legacy = PathNames.Canonical(Path.Combine(folder, "Legacy"));
+        Directory.CreateDirectory(Path.Combine(legacy, "Generated"));
+        File.WriteAllText(Path.Combine(legacy, "Kept.cs"), "namespace Shop.Legacy;\n\npublic class Kept\n{\n}\n");
+        File.WriteAllText(Path.Combine(legacy, "Old.cs"), "this was C# once\n");
+        File.WriteAllText(Path.Combine(legacy, "Generated", "Stale.cs"), "and so was this\n");
+        Builds(project, "the project removed its files");
+        MainWindow window = Open();
+        List<string> asked = Answer(window);
+
+        // F2 on the folder in the Solution view: the project removes the same files from where they went.
+        window.ExplorerView.Reveal(legacy);
+        Ui.Settle();
+        Choose(window, window.ExplorerView.Tree.Rows.First(r => r.Path == legacy));
+        Ui.Press(window, "F2");
+        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+        popup.Text = string.Empty;
+        window.KeyTextInput("Archive");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
+        Assert.True(Directory.Exists(Path.Combine(folder, "Archive")), $"Legacy was not renamed: {window.Status}");
+        Assert.Equal(written.Replace("Legacy\\", "Archive\\", StringComparison.Ordinal), File.ReadAllText(project));
+        Builds(project, "the folder holding the files the project removes was renamed");
+
+        // Undo takes the folder and the project back together, asked first.
+        string archive = PathNames.Canonical(Path.Combine(folder, "Archive"));
+        window.ExplorerView.Reveal(archive);
+        Ui.Settle();
+        Choose(window, window.ExplorerView.Tree.Rows.First(r => r.Path == archive));
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(["Undo"], asked);
+        Assert.True(Directory.Exists(legacy), $"Undo did not rename Archive back: {window.Status}");
+        Assert.Equal(written, File.ReadAllText(project));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Renaming_a_folder_with_two_open_files_keeps_the_one_in_front_in_front()
     {
         string models = PathNames.Canonical(Path.Combine(folder, "Models"));
@@ -280,6 +324,13 @@ public sealed class ExplorerFilesTests : IDisposable
             return Task.FromResult(true);
         };
         return asked;
+    }
+
+    /// <summary>dotnet build of a project as it is on disk now, which fails the test naming what was done to it.</summary>
+    private static void Builds(string project, string after)
+    {
+        ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", project]), limit: Restore.Limit)).GetAwaiter().GetResult();
+        Assert.True(built.Succeeded, $"Once {after}, dotnet build no longer builds the project:\n{built.Output}{built.Error}");
     }
 
     /// <summary>Whether the status bar says the work ended, as it does or with why it could not.</summary>
