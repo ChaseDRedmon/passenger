@@ -372,7 +372,9 @@ icon used, from three sets the file-icons package (https://github.com/file-icons
 (https://github.com/file-icons/icons, ISC), MFixx, its fork of Font Mfizz (https://github.com/file-icons/MFixx, MIT),
 and GitHub's Octicons (https://github.com/primer/octicons, MIT). Which file takes which icon and colour family
 (`src/Passenger.App/Explorer/FileIconSet.cs`) follows the file-icons package's own rules
-(https://github.com/file-icons/atom, MIT). The F#, Visual Basic, Rust, Swift and Dart icons are Passenger's own.
+(https://github.com/file-icons/atom, MIT). The F#, Visual Basic, Rust, Swift, Dart, npm, Racket and Haxe icons are
+Passenger's own, and the script draws the sets' solid badges (dotenv, Markdown, HTML, PowerShell and the like) as
+outlines.
 
 file-icons' icons:
 
