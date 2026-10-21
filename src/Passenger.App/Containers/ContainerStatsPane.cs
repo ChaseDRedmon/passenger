@@ -44,12 +44,13 @@ public sealed class ContainerStatsPane : DockPanel
     private readonly TextBlock waiting = new() { Classes = { "emptyText" }, Text = "Waiting for the engine's first reading…" };
     private readonly Dictionary<string, ContainerStatsSample> latest = new(StringComparer.Ordinal);
     private Process? streaming;
+    private readonly HashSet<string> sinceLast = new(StringComparer.Ordinal);
     private string? key;
 
     public ContainerStatsPane(Func<ContainerEngine> engine)
     {
         this.engine = engine;
-        Grid charts = new() { ColumnDefinitions = new ColumnDefinitions("*,*"), Height = 90, Margin = new Thickness(8, 0, 8, 8), [DockProperty] = Dock.Bottom };
+        Grid charts = new() { ColumnDefinitions = new ColumnDefinitions("*,*"), Height = 72, Margin = new Thickness(8, 0, 8, 8), [DockProperty] = Dock.Bottom };
         charts.Children.Add(Chart("CPU %", cpu, 0));
         charts.Children.Add(Chart("Memory %", memory, 1));
         Children.Add(charts);
@@ -126,6 +127,7 @@ public sealed class ContainerStatsPane : DockPanel
         }
         key = null;
         latest.Clear();
+        sinceLast.Clear();
         cpu.Clear();
         memory.Clear();
         table.Children.Clear();
@@ -139,10 +141,17 @@ public sealed class ContainerStatsPane : DockPanel
         }
         foreach (ContainerStatsSample sample in read)
         {
+            // docker stats writes each container a line a reading: a name read again begins the next, and the lines take
+            // the sum of the one before.
+            if (!sinceLast.Add(sample.Name))
+            {
+                cpu.Add(latest.Values.Sum(s => s.Cpu));
+                memory.Add(latest.Values.Sum(s => s.MemoryPercent));
+                sinceLast.Clear();
+                sinceLast.Add(sample.Name);
+            }
             latest[sample.Name] = sample;
         }
-        cpu.Add(latest.Values.Sum(s => s.Cpu));
-        memory.Add(latest.Values.Sum(s => s.MemoryPercent));
         waiting.IsVisible = false;
         table.Children.Clear();
         table.Children.Add(Line("Container", "CPU", "Memory", "Network I/O", "Disk I/O", "PIDs", heading: true));
