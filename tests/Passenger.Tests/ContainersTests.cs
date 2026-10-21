@@ -88,6 +88,9 @@ internal static class Docker
         return result.Succeeded ? result.Output.Trim() : null;
     }
 
+    /// <summary>Whether a volume of that name is there.</summary>
+    public static bool VolumeExists(string name) => Ask(["volume", "inspect", name], TimeSpan.FromSeconds(30).Scaled()).Succeeded;
+
     /// <summary>Removes every container and network the run's tests made or had the IDE make (the run's state's label), as
     /// the run ends; quiet where there is no engine.</summary>
     public static void RemoveEverything()
@@ -112,6 +115,12 @@ internal static class Docker
                 if (made.Length > 0)
                 {
                     Ask(["network", "rm", .. made], TimeSpan.FromSeconds(60));
+                }
+                ChildResult volumes = Ask(["volume", "ls", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                string[] kept = volumes.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (kept.Length > 0)
+                {
+                    Ask(["volume", "rm", "-f", .. kept], TimeSpan.FromSeconds(60));
                 }
             }
         }
@@ -190,6 +199,14 @@ public sealed class ContainersTests
         // Lines go on coming while it is shown.
         int ticks = Ticks(console);
         Ui.WaitFor(() => Ticks(console) > ticks, "the worker's next tick, streamed");
+
+        // Find over the log takes a regular expression, as the editor's does.
+        view.Log.OpenFind();
+        Ui.Settle();
+        view.Log.Find.FindControl<Avalonia.Controls.Primitives.ToggleButton>("UseRegex")!.IsChecked = true;
+        view.Log.Find.FindControl<TextBox>("Query")!.Text = @"worker tick \d+$";
+        Ui.Settle();
+        Assert.Matches(@"^\d+/([2-9]|\d\d+)$", view.Log.Find.CountText);
         window.Close();
 
         static int Ticks(OutputView console) => Text(console).Split('\n').Count(l => l.Contains("worker tick", StringComparison.Ordinal));
@@ -213,7 +230,50 @@ public sealed class ContainersTests
         Ui.WaitFor(() => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name) != started, $"{name} restarted");
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
         Ui.WaitFor(() => Docker.State(name) is null && Row(view, name) is null, $"{name} removed, and gone from the window");
+        Assert.Null(window.Asked);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Removing_a_volume_asks_first_since_its_data_goes_with_it()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string volume = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}data";
+        Docker.Run("volume", "create", "--label", Docker.RunLabel, volume);
+        MainWindow window = Open(TestFolders.Create("ctr-volume-"));
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Rows.Any(r => r.Key == "group:Volumes"), "the Volumes heading");
+        view.Toggle(view.Rows.First(r => r.Key == "group:Volumes"));
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Volume && r.Label == volume), $"{volume}'s row");
+
+        // Cancelled, the volume stays.
+        Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
+        ConfirmDialog asked = DialogButtonsTests.Check(Asked(window));
+        Assert.Contains(Texts(asked), t => t.StartsWith($"Remove the volume {volume} and the data it holds?", StringComparison.Ordinal));
+        Press(asked, "Cancel");
+        Assert.True(Docker.VolumeExists(volume), "The volume was removed though the question was cancelled");
+
+        // Allowed, it goes.
+        Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
+        Press(Asked(window), "Remove");
+        Ui.WaitFor(() => !Docker.VolumeExists(volume) && !view.Rows.Any(r => r.Label == volume),
+            $"{volume} removed, and gone from the window");
+        window.Close();
+
+        static ConfirmDialog Asked(MainWindow window)
+        {
+            Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(d => d.IsVisible), "Remove's question");
+            return window.OwnedWindows.OfType<ConfirmDialog>().Single(d => d.IsVisible);
+        }
+
+        static string[] Texts(Window dialog) => [.. dialog.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
+
+        static void Press(Window dialog, string button)
+        {
+            dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button)
+                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.Settle();
+        }
     }
 
     [AvaloniaFact]

@@ -124,11 +124,15 @@ public partial class MainWindow
             {
                 Bottom.Tests.FocusSearch();
             }
+            else if (c.ToolWindow?.Id == "containers")
+            {
+                ContainersWindow.Log.OpenFind();
+            }
             else
             {
                 Editors.ShowFind(replace: false);
             }
-        }, c => c.ToolWindow?.Id == "tests" ? null : NeedsFile(c), ("Edit/Find", 0, 0));
+        }, c => c.ToolWindow?.Id is "tests" or "containers" ? null : NeedsFile(c), ("Edit/Find", 0, 0));
         Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), NeedsFile, ("Edit/Find", 0, 1));
         Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), NeedsFile, ("Edit/Find", 0, 2));
         Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), NeedsFile, ("Edit/Find", 0, 3));

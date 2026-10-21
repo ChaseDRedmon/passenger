@@ -76,7 +76,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "container_action", Title = "Start, stop, restart or remove a container", Destructive = true), Description(
         "As the Containers window's buttons: start, stop, restart or remove a container (its name or id), a Compose project " +
-        "(remove takes it down) or a project/service.")]
+        "(remove takes it down, its volumes kept) or a project/service. Volumes and images are not its to remove.")]
     public Task<string> ContainerAction(string container, [Description("start, stop, restart or remove")] string action, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (!ContainerCommands.AgentActions.Contains(action))

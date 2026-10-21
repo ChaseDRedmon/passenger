@@ -68,17 +68,32 @@ public sealed partial class McpTests
         }
     }
 
-    [Fact]
-    public async Task Containers_a_passenger_that_is_gone_left_are_removed_as_the_next_one_starts()
+    [AvaloniaFact]
+    public void Containers_a_passenger_that_is_gone_left_are_removed_as_the_next_one_starts()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string state = $"{ContainerLabels.State}={ContainerLabels.StateValue}";
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(Plain("mcp-left-"));
+        Ui.Settle();
+        // The labels a folder's containers carry, which also record that this state labelled something: a start then looks.
+        string[] labels = [.. window.Session.Containers.Labels.Where(word => word != "--label")];
+        ContainerLabels.Flush();
+        string state = labels.Single(l => l.StartsWith(ContainerLabels.State, StringComparison.Ordinal));
         // One a crashed Passenger of this state left, and one of this living process, which stays.
         string left = Docker.Container("left", "sleep 600", state, $"{ContainerLabels.Process}={ContainerLabels.Of(int.MaxValue - 7, 1)}");
-        string living = Docker.Container("living", "sleep 600", state, $"{ContainerLabels.Process}={ContainerLabels.ProcessValue}");
-        await using McpClient client = await Start(["--mcp", folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings });
-        Assert.True(await Waiting.UntilAsync(() => Docker.State(left) is null, TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken),
-            $"{left}, labelled with this state and a process that is gone, was still there a minute after Passenger started");
-        Assert.Equal("running", Docker.State(living));
+        string living = Docker.Container("living", "sleep 600", labels);
+        McpClient client = Await(Task.Run(() => Start(["--mcp", folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings })), "Passenger starting");
+        try
+        {
+            Ui.WaitFor(() => Docker.State(left) is null, $"{left}, labelled with this state and a process that is gone, removed as Passenger started",
+                TimeSpan.FromSeconds(60));
+            Assert.Equal("running", Docker.State(living));
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+        }
     }
 }

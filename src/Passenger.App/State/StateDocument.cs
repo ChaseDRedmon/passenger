@@ -147,6 +147,10 @@ public sealed class StateDocument<T> where T : class, IStateDocument<T>, new()
         }
     }
 
+    /// <summary>The file's value as read and clamped now, on any thread, without taking it in: what the process's start
+    /// reads before any window keeps the document.</summary>
+    public T Peek() => ReadNow().Value;
+
     /// <summary>The value, read off the UI thread the first time and taken in on it, for a document large enough that
     /// reading it there would hold the window up (a solution's project caches, megabytes each).</summary>
     public async Task<T> ValueAsync()

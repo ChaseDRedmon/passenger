@@ -31,13 +31,27 @@ public sealed class ContainerLogPane : DockPanel
         Console.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
         timestamps = new ToggleButton { Classes = { "segment" }, Content = "Timestamps", VerticalAlignment = VerticalAlignment.Center, Name = "containerTimestamps" };
         timestamps.IsCheckedChanged += (_, _) => Restart();
+        // The editor's own Find, over the console's text: case, whole words and regular expressions, every match marked.
+        Find = new Editors.FindBar { [DockProperty] = Dock.Top };
+        Find.Attach(Console.Editor);
+        Button finding = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false, VerticalAlignment = VerticalAlignment.Center, Name = "containerLogFind" };
+        ((PathIcon)finding.Content).Bind(PathIcon.DataProperty, finding.GetResourceObservable("Icon.Search"));
+        ToolTip.SetTip(finding, "Find in the log");
+        finding.Click += (_, _) => OpenFind();
+        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 4, [DockProperty] = Dock.Right, Children = { finding, timestamps } };
         DockPanel bar = new() { [DockProperty] = Dock.Top, Height = 32, Margin = new Thickness(8, 0) };
-        DockPanel.SetDock(timestamps, Dock.Right);
-        bar.Children.Add(timestamps);
+        bar.Children.Add(right);
         bar.Children.Add(services);
         Children.Add(bar);
+        Children.Add(Find);
         Children.Add(Console);
     }
+
+    /// <summary>Find over the log, as the editor's: shown by its button and by Find's keys while the window has them.</summary>
+    public Editors.FindBar Find { get; }
+
+    /// <summary>Opens Find over the log.</summary>
+    public void OpenFind() => Find.Open(replace: false);
 
     /// <summary>A link in the log clicked.</summary>
     public event EventHandler<LinkTarget>? LinkClicked;

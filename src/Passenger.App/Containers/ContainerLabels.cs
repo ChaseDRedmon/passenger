@@ -21,6 +21,19 @@ public static class ContainerLabels
 
     private static int toldWatchdog;
 
+    /// <summary>The state folder's <c>containers.json</c>, the process's: whether anything was ever labelled for it, which
+    /// a headless IDE's labelling sets as a person's window's does.</summary>
+    private static readonly Lazy<global::Passenger.App.State.StateDocument<ContainersState>> Kept =
+        new(() => new(Path.Combine(global::Passenger.App.State.StateStore.DefaultRoot, "containers.json")));
+
+    /// <summary>Whether Passenger ever labelled something for this state folder: a start looks for what a crash left only
+    /// then, so a person who never used containers here runs no docker command as Passenger starts. Any thread.</summary>
+    public static bool EverLabelled => Kept.Value.Peek().Labelled;
+
+    /// <summary>Writes the record of a first labelling now, rather than a moment later: for a test that starts the next
+    /// Passenger at once.</summary>
+    public static void Flush() => Kept.Value.Flush();
+
     /// <summary>The state folder's label value: the first 16 hex digits of a SHA-256 of its path.</summary>
     public static string StateValue => Hash(StateStoreRoot());
 
@@ -33,13 +46,18 @@ public static class ContainerLabels
     /// <summary>A folder's label value: the first 16 hex digits of a SHA-256 of its canonical path.</summary>
     public static string FolderValue(string folder) => Hash(folder);
 
-    /// <summary>The <c>--label</c> words for something made for a folder (or none), and, the first time, the watchdog told
-    /// to remove what this process made once it has ended.</summary>
+    /// <summary>The <c>--label</c> words for something made for a folder (or none): the first time, the watchdog told to
+    /// remove what this process made once it has ended, and the state folder told something was labelled for it. UI thread.</summary>
     public static IReadOnlyList<string> Arguments(ContainerEngine engine, string? folder)
     {
+        UiThread.Check();
         if (Interlocked.Exchange(ref toldWatchdog, 1) == 0 && engine.Cli is { } cli)
         {
             ChildProcesses.AtIdeEnd(EndCommand(cli));
+        }
+        if (!Kept.Value.Value.Labelled)
+        {
+            Kept.Value.Set(new ContainersState { Labelled = true });
         }
         List<string> words = ["--label", $"{State}={StateValue}", "--label", $"{Process}={ProcessValue}"];
         if (folder is not null)

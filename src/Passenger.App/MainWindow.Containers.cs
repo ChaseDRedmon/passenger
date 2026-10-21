@@ -46,7 +46,7 @@ public partial class MainWindow
             (AppActions.ContainerRemove, "Remove", "remove"),
             (AppActions.ContainerPull, "Pull", "pull")])
         {
-            actions!.Add(new IdeAction(id, title, "Containers", context => _ = view.ActAsync(id, action, view.Chosen!))
+            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(view.Chosen!) : view.ActAsync(id, action, view.Chosen!))
             {
                 WhyNot = _ => ContainerCommands.For(action, view.Chosen) is { Words: null } refused ? refused.WhyNot ?? $"{view.Chosen?.Name} cannot {action}" : null,
                 Works = id,
@@ -169,7 +169,23 @@ public partial class MainWindow
         await containersView!.ActAsync(AppActions.ContainerPrune, "prune", row, words);
     }
 
-    /// <summary>The question Prune asked last, for the tests.</summary>
+    /// <summary>Remove: a container, image or network at once, a Compose project taken down with its volumes kept, and a
+    /// volume only once asked, since its data goes with it.</summary>
+    private async Task<string?> RemoveAsync(ContainerRow row)
+    {
+        if (row.Object is { Kind: "volume" } volume)
+        {
+            ConfirmDialog asked = new("Remove Volume", $"Remove the volume {volume.Name} and the data it holds? This cannot be undone.", "Remove");
+            Asked = asked;
+            if (!await asked.ShowDialog<bool>(this))
+            {
+                return "Not removed";
+            }
+        }
+        return await containersView!.ActAsync(AppActions.ContainerRemove, "remove", row);
+    }
+
+    /// <summary>The question Prune or a volume's Remove asked last, for the tests.</summary>
     public ConfirmDialog? Asked { get; private set; }
 
     /// <summary>Scale: how many containers a Compose service runs, asked for, then <c>docker compose up --scale</c>.</summary>

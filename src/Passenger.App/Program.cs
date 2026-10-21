@@ -45,9 +45,12 @@ internal static class Program
         Core.ShellEnvironment.Load();
         if (options.Mcp != McpMode.Attach && options.Screenshot is null)
         {
-            // What a crash left (containers no child holds) goes now: those of this state whose process is gone. Not held,
-            // and off the start's way: an engine that answers slowly or not at all delays nothing.
-            _ = Task.Run(() => Containers.ContainerLabels.RemoveLeftoversAsync(Containers.ContainerEngine.Shared));
+            // What a crash left (containers no child holds) goes now: those of this state whose process is gone, for a state
+            // that ever labelled something, so one that never used containers runs no docker. Not held, and off the start's
+            // way: an engine that answers slowly or not at all delays nothing.
+            _ = Task.Run(() => Containers.ContainerLabels.EverLabelled
+                ? Containers.ContainerLabels.RemoveLeftoversAsync(Containers.ContainerEngine.Shared)
+                : Task.FromResult<IReadOnlyList<string>>([]));
         }
         switch (options.Mcp)
         {

@@ -394,7 +394,7 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
-  `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
+  `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`, `containers.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
   configurations, Find in Files' scope, `localHistory/`, the
   profiler's `snapshots/`), with the debugger's decompiled
@@ -475,15 +475,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
   `container_action` share. `ContainersView` (`MainWindow.Containers.cs`) asks the engine only while shown, its lists
   again as events say; a container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
-  consoles'), a project's merged one (a toggle a service), Stats (`docker stats`, streamed only while its tab shows) and
-  Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp …:path -` under the state's
-  `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON there). Open Shell is
-  `docker exec -it … sh` in a Terminal tab, an image with no shell said. The status bar and Problems' Containers tab say
-  the engine's problem, the link starting Docker Desktop where it is installed; a test run of a project referencing a
-  `Testcontainers*` package asks the engine first (`TestController.ContainerEngine`). `ContainerLabels` and
-  `FolderContainers` (`ProjectSession.Containers`) are what a folder starts and how it is ended (Rules). Its tests
-  (`ContainersTests`, `McpTests.Containers.cs`) skip saying why unless `docker info`'s OSType is linux, use busybox and
-  Compose files they write, and never prune or start or stop Docker Desktop.
+  consoles'), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
+  the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
+  streamed only while its tab shows) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
+  …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
+  there). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
+  Remove ask first; a project's Remove is `down`, its volumes kept, and `container_action` reaches no volume or image.
+  The status bar and Problems' Containers tab say the engine's problem, the link starting Docker Desktop where it is
+  installed; a test run of a project referencing a `Testcontainers*` package asks the engine first
+  (`TestController.ContainerEngine`; untested, since a project referencing it restores from nuget.org). `ContainerLabels`
+  and `FolderContainers` (`ProjectSession.Containers`) are what a folder starts and how it is ended (Rules); the store's
+  `containers.json` (`ContainersState`) says the state ever labelled something, without which a start runs no docker.
+  Its tests (`ContainersTests`, `McpTests.Containers.cs`) skip saying why unless `docker info`'s OSType is linux, use
+  busybox and Compose files they write, and never prune or start or stop Docker Desktop.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -1089,7 +1093,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `net.passenger-ide.process`, the process's id and start time, and the folder's), its folder's `ProjectSession.Containers`
   removes what it started as the folder ends, the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the
   process's own on macOS and Linux however it ends, and the next start (`ContainerLabels.RemoveLeftoversAsync`) removes
-  those of its state whose process is gone. Tests label what they make with the run's `Docker.RunLabel`, removed at its end.
+  those of its state whose process is gone, once the state has labelled anything (`ContainerLabels.EverLabelled`). Tests
+  label what they make with the run's `Docker.RunLabel`, removed at its end.
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
