@@ -101,6 +101,12 @@ public partial class MainWindow
             case ExplorerAction.AddReference when (node.Kind == NodeKind.Project ? path : node.Owner) is { } project:
                 ShowAddReference(project);
                 break;
+            case ExplorerAction.AddDockerSupport when node.Kind == NodeKind.Project && path is not null:
+                ShowDockerSupport(path);
+                break;
+            case ExplorerAction.AddDockerCompose when node.Kind == NodeKind.Solution:
+                ShowDockerCompose();
+                break;
             case ExplorerAction.Delete when node is { Kind: NodeKind.ProjectReference, Owner: { } owner, Referenced: { } referenced }:
                 await RemoveReferenceAsync(owner, referenced);
                 break;

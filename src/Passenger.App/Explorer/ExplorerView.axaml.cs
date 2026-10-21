@@ -45,6 +45,8 @@ public enum ExplorerAction
     CompareWithBranch,
     FindInFiles,
     ReplaceInFiles,
+    AddDockerSupport,
+    AddDockerCompose,
 }
 
 /// <summary>Files and folders dragged onto a row: moved into the folder it stands for, or copied with the platform's
@@ -229,6 +231,10 @@ public partial class ExplorerView : UserControl
                 add.Items.Add(Action("New Project...", ExplorerAction.NewProject, AppActions.NewProject));
                 add.Items.Add(Item("New Solution Folder...", ExplorerAction.NewSolutionFolder));
                 add.Items.Add(Item("Existing Project...", ExplorerAction.AddExistingProject));
+                if (node.Kind == NodeKind.Solution)
+                {
+                    add.Items.Add(Item("Docker Compose...", ExplorerAction.AddDockerCompose));
+                }
             }
             if (solutionFolder)
             {
@@ -249,6 +255,7 @@ public partial class ExplorerView : UserControl
             {
                 add.Items.Add(new Separator());
                 add.Items.Add(Item("Reference...", ExplorerAction.AddReference));
+                add.Items.Add(Item("Docker Support...", ExplorerAction.AddDockerSupport));
             }
             menu.Items.Add(add);
             menu.Items.Add(new Separator());

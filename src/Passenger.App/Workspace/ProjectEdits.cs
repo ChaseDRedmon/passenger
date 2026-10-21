@@ -4,8 +4,8 @@ using Passenger.Core;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>Rider's Add Reference and Remove on a project reference, and its items following a file moved, made to the
-/// project file's text: a reference goes beside the project's others, or in an item group of its own before
+/// <summary>Rider's Add Reference and Remove on a project reference, its items following a file moved, and a property set
+/// (Add > Docker Support's container properties), made to the project file's text: a reference goes beside the project's others, or in an item group of its own before
 /// &lt;/Project&gt;, written as dotnet add reference writes it (relative, with backslashes); taking it out takes the group
 /// it leaves empty, so the file is as it was. The rest of the file keeps its bytes, its byte order mark, line endings and
 /// indentation: dotnet add reference reformats what it writes back. Paths are canonical. A reference's edit returns null
@@ -75,6 +75,62 @@ public static partial class ProjectEdits
             return null;
         }
         file.Write(text.Remove(start, end - start));
+        return null;
+    }
+
+    /// <summary>Sets a property in the project file, as Add > Docker Support sets the SDK's container properties: where an
+    /// unconditioned property group sets it already, its value there; else on a line of its own at the end of the first
+    /// unconditioned property group, indented as that group's last property; else in a property group of its own before
+    /// &lt;/Project&gt;. Null once done, else why not.</summary>
+    public static string? SetProperty(string project, string name, string value)
+    {
+        ProjectText file = new(project);
+        string text = file.Text;
+        string written = System.Security.SecurityElement.Escape(value);
+        List<(int Start, int End)> comments = [.. Comment().Matches(text).Select(m => (m.Index, m.Index + m.Length))];
+        List<Match> groups = [.. PropertyGroup().Matches(text).Where(m => !comments.Any(c => m.Index >= c.Start && m.Index < c.End)
+            && !m.Groups["attributes"].Value.Contains("Condition", StringComparison.OrdinalIgnoreCase))];
+        Regex element = new($@"<{Regex.Escape(name)}\s*>(?<value>[^<]*)</{Regex.Escape(name)}\s*>");
+        foreach (Match group in groups)
+        {
+            Capture body = group.Groups["body"];
+            if (element.Match(text, body.Index, body.Length) is { Success: true } set)
+            {
+                Capture old = set.Groups["value"];
+                if (old.Value != written)
+                {
+                    file.Write(text.Remove(old.Index, old.Length).Insert(old.Index, written));
+                }
+                return null;
+            }
+        }
+        string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        string indent = IndentUnit(text);
+        string line = $"<{name}>{written}</{name}>";
+        if (groups.FirstOrDefault() is { } first)
+        {
+            Capture body = first.Groups["body"];
+            int closeLine = text.LastIndexOf('\n', body.Index + body.Length - 1) + 1;
+            if (closeLine <= body.Index || text[closeLine..(body.Index + body.Length)].Trim().Length > 0)
+            {
+                // The group closes on a line it shares: the property goes just before its close.
+                file.Write(text.Insert(body.Index + body.Length, line));
+                return null;
+            }
+            // Indented as the group's last property, or a level under the group with none.
+            int previous = text.LastIndexOf('\n', Math.Max(0, closeLine - 2)) + 1;
+            string under = previous <= first.Index ? LineIndent(text, first.Index) + indent : LineIndent(text, closeLine - 1);
+            file.Write(text.Insert(closeLine, $"{under}{line}{eol}"));
+            return null;
+        }
+        int close = text.LastIndexOf("</Project>", StringComparison.Ordinal);
+        if (close < 0)
+        {
+            return $"{Path.GetFileName(project)} is not a project file";
+        }
+        int closeAt = text.LastIndexOf('\n', Math.Max(0, close - 1)) + 1;
+        bool spaced = closeAt >= 2 && text[..closeAt].TrimEnd('\r', '\n').Length < text[..closeAt].Length - eol.Length;
+        file.Write(text.Insert(closeAt, $"{indent}<PropertyGroup>{eol}{indent}{indent}{line}{eol}{indent}</PropertyGroup>{eol}{(spaced ? eol : string.Empty)}"));
         return null;
     }
 
@@ -201,6 +257,9 @@ public static partial class ProjectEdits
 
     [GeneratedRegex(@"<ItemGroup\b(?<attributes>[^>]*?)>(?<body>.*?)</ItemGroup\s*>", RegexOptions.Singleline)]
     private static partial Regex ItemGroup();
+
+    [GeneratedRegex(@"<PropertyGroup\b(?<attributes>[^>]*?)>(?<body>.*?)</PropertyGroup\s*>", RegexOptions.Singleline)]
+    private static partial Regex PropertyGroup();
 
     /// <summary>An item that names files: its tag, the rest of its start tag (an Include, Update, Remove or Exclude among
     /// it), and its end.</summary>
