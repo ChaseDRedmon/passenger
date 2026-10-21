@@ -170,7 +170,7 @@ public sealed class ProfilerCommands
     /// <summary>Why Profile cannot start another program: the one it started last goes on after its snapshot, and Kill, Stop
     /// and the folder's end reach one such program at a time.</summary>
     private static string? GoesOn(ProjectSession folder) =>
-        folder.Profiled is { } program ? $"{program.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again" : null;
+        folder.Profiled is { Run.HasExited: false } program ? $"{program.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again" : null;
 
     /// <summary>Why Profile cannot start a program now: the Run console it writes to is Run's program's, running or about
     /// to, whose output it would clear and whose typing it would take.</summary>

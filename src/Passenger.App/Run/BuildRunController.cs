@@ -400,7 +400,7 @@ public sealed class BuildRunController
         {
             return Said(ActionWork.Busy(profiling));
         }
-        if (session.Profiled is { } profiled)
+        if (session.Profiled is { Run.HasExited: false } profiled)
         {
             return Said($"{profiled.Name}, which Profile started, uses the Run console: Kill it first");
         }

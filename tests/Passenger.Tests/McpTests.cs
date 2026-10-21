@@ -782,10 +782,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
-    /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs, profiles, debugs
-    /// and builds a program and its language server loads the project. Each program writes its id to a file named for how
-    /// it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once the folder has a
-    /// linger file, the build run a step that would take ten minutes, as a slow tool or a hung test would.</summary>
+    /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs (and has profiled)
+    /// a program, debugs another and builds the project and its language server loads it. Each program writes its id to a
+    /// file named for how it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once
+    /// the folder has a linger file, the build run a step that would take ten minutes, as a slow tool or a hung test would.</summary>
     [Fact]
     public async Task A_Passenger_killed_while_it_loads_runs_profiles_debugs_and_builds_a_project_leaves_none_of_it_running()
     {
@@ -819,8 +819,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             int load = await WrittenId("load.pid", "the language server's load of the project");
             await Call(client, "run", new() { ["arguments"] = "run", ["waitSeconds"] = 1 });
             int run = await WrittenId("run.pid", "the program Run started");
-            await Call(client, "profile", new() { ["arguments"] = "profile", ["seconds"] = 1 });
-            int profiled = await WrittenId("profile.pid", "the program profiled");
+            // The Run console is Run's program's, so the profiler attaches to it rather than start another there.
+            await Call(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
             await Call(client, "debug_start", new() { ["arguments"] = "debug", ["waitSeconds"] = 1 });
             int debugged = await WrittenId("debug.pid", "the program debugged");
             File.WriteAllText(Path.Combine(folder, "linger"), string.Empty);
@@ -836,7 +836,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             int shell = await WrittenId("shell.pid", "the terminal's shell");
 
             started.AddRange(Processes.Descendants(passenger.Id));
-            Assert.Subset(started.ToHashSet(), new HashSet<int> { load, run, profiled, debugged, build, shell });
+            Assert.Subset(started.ToHashSet(), new HashSet<int> { load, run, debugged, build, shell });
             giveUp.Cancel();
             passenger.Kill();
             string[] left = [.. started.Where(id => !Processes.Gone(id)).Select(Processes.Describe)];

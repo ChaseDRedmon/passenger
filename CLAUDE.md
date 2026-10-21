@@ -450,12 +450,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ProfiledProgram.Landed`): Get Snapshot ends the run and lets go of its port (`StopAsync`), but the program goes on,
   Kill, Stop and the folder's end ending it, and is put away (`DisposeAsync`, after which its end is never heard) only
   once it has ended. It writes to the Run console, which is one program's at a time: Profile is refused while Run's
-  program has it, and Run while Profile's does. The folder's end lets go of every run (`LetGoAsync`: its port and listener), the leave waits for
-  the program's end to land, and the window's next session clears the profiler window's run (`ProfilerCommands.Rebind`).
-  `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port (Run > Attach
-  Profiler to Running Program: the debugged one, else Profile's going on, else Run's, in the Run console or the
-  terminal, under Hot Reload the app dotnet watch started, found by `DotnetProcesses.Under` as the attach begins); an
-  `Attached` one is never killed.
+  program has it, and Run while Profile's does. The folder's end lets go of every run (`LetGoAsync`: its port and
+  listener), the leave waits for the program's end to land, and the window's next session clears the profiler window's
+  run (`ProfilerCommands.Rebind`). `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port
+  (Run > Attach Profiler to Running Program: the debugged one, else Profile's going on, else Run's, in the Run console
+  or the terminal, under Hot Reload the app dotnet watch started, found by `DotnetProcesses.Under` as the attach
+  begins); an `Attached` one is never killed.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
@@ -868,7 +868,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Avalonia.Diagnostics.Diagnostic.IsEnabled` switch, so Avalonia makes its `Avalonia.Diagnostic.Source` Measure and
   Arrange activities (tagged `Control`) and `Avalonia.Diagnostic.Meter` histograms; `FrameRecorder` (`Frames.cs`)
   listens only while a session enables Passenger's EventSource `Passenger-Avalonia`, so they land in the .nettrace; a
-  session's end lets go, on the UI thread, of the layout it had under way, whose own end it no longer hears. Protocol v5 `overlays` sets each window's `RendererDiagnostics.DebugOverlays` (the Run and Debug windows' toggle,
+  session's end lets go, on the UI thread, of the layout it had under way, whose own end it no longer hears. Protocol
+  v5 `overlays` sets each window's `RendererDiagnostics.DebugOverlays` (the Run and Debug windows' toggle,
   `LiveTree/OverlaysCommands`, `ToolWindows/OverlaysButton`, Run > Avalonia Debug Overlays; the last choice is the next
   launch's `PASSENGER_INSPECTOR_OVERLAYS`). Profile launches get the inspector too (`ProjectSession.InspectedProfile`).
   `src/Passenger.Inspector.Wpf` is the WPF counterpart (MIT, net8.0-windows, built everywhere with EnableWindowsTargeting,
