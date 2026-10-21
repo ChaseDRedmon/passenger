@@ -303,6 +303,129 @@ public sealed class ContainerRunsTests
         }
     }
 
+    [AvaloniaFact]
+    public void A_service_that_is_not_dotnet_and_declares_a_watch_has_Composes_own_watch_while_the_run_lasts()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string folder = TestFolders.Create("ctr-watch-");
+        string project = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}watch";
+        Write(folder, "site/index.html", "first\n");
+        Write(folder, "Dockerfile", $"FROM {Docker.Image}\nCOPY site /www\nCMD [\"httpd\", \"-f\", \"-p\", \"8080\", \"-h\", \"/www\"]\n");
+        Write(folder, "compose.yaml", $"name: {project}\nservices:\n  site:\n    build: .\n    init: true\n"
+            + "    develop:\n      watch:\n        - { action: sync, path: ./site, target: /www }\n");
+        MainWindow window = Open(folder);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            Launched(window, "the site to come up");
+            string site = Container(project, "site");
+            Assert.Equal("first", Docker.Run("exec", site, "cat", "/www/index.html"));
+            // Compose's watch syncs a change into the running container, with no rebuild and no restart.
+            Ui.WaitFor(() => Run(window).Contains("Watch", StringComparison.OrdinalIgnoreCase), "Compose's watch to start in the Run window", TimeSpan.FromMinutes(1));
+            File.WriteAllText(Path.Combine(folder, "site", "index.html"), "second\n");
+            Assert.True(Waiting.Until(() => Docker.Run("exec", site, "cat", "/www/index.html") == "second", TimeSpan.FromMinutes(1)),
+                $"Compose's watch did not sync the change: {Run(window)}");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "Stop to take the site down", TimeSpan.FromMinutes(2));
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Backing_services_kept_after_Stop_run_on_until_the_folder_closes()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Shop("keep");
+        MainWindow window = Open(folder);
+        RunConfiguration keeping = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with
+        {
+            Name = "Web and its cache",
+            Services = ["web"],
+            KeepBackingServices = true,
+            Generated = false,
+        };
+        window.SetConfigurations([keeping], keeping.Name);
+        Launched(window, "web and its cache to come up");
+        Assert.Equal(["cache", "web"], States(project).Keys.Order(StringComparer.Ordinal));
+        window.Perform(AppActions.Stop);
+        Ui.WaitFor(() => !States(project).ContainsKey("web"), "Stop to take web down", TimeSpan.FromMinutes(2));
+        Assert.Equal("running", States(project)["cache"]);
+        Assert.Equal("Web and its cache stopped: its .NET services were taken down, cache kept running", window.Status);
+        // Kept for the next run, never left behind: the folder's end takes it down.
+        window.Close();
+        Assert.True(Waiting.Until(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2)),
+            "The kept cache outlived its folder");
+    }
+
+    [AvaloniaFact]
+    public void A_service_that_serves_HTTPS_has_the_development_certificate_and_the_projects_user_secrets_mounted()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        ChildResult check = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "--check"], TestFolders.Create("devcerts-")))).GetAwaiter().GetResult();
+        Assert.SkipWhen(!check.Succeeded, "No ASP.NET Core development certificate here to export, and making one would change this machine's certificate store");
+        (string folder, string project) = Shop("https");
+        Write(folder, "Web/Web.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            + "    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>passenger-test-https</UserSecretsId>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
+            .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
+        MainWindow window = Open(folder);
+        RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
+        window.SetConfigurations([web], web.Name);
+        try
+        {
+            Launched(window, "web to come up over HTTPS");
+            string said = Docker.Run("compose", "-p", project, "port", "web", "8081").Split('\n')[0].Trim();
+            int port = int.Parse(said[(said.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
+            string? subject = null;
+            using HttpClientHandler handler = new()
+            {
+                ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
+                {
+                    subject = certificate?.Subject;
+                    return true;
+                },
+            };
+            using HttpClient https = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
+            string? answer = null;
+            Assert.True(Waiting.Until(() => (answer = Get(https, new Uri($"https://localhost:{port}/"))) is not null, TimeSpan.FromMinutes(1)), $"Nothing answered over HTTPS on {port}");
+            Assert.Equal("web 1", answer);
+            Assert.Equal("CN=localhost", subject);
+            string mounts = Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));
+            Assert.Contains("/https", mounts, StringComparison.Ordinal);
+            string secrets = OperatingSystem.IsWindows()
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".microsoft", "usersecrets");
+            if (Directory.Exists(secrets))
+            {
+                Assert.Contains("/home/app/.microsoft/usersecrets", mounts, StringComparison.Ordinal);
+                Assert.Contains("/root/.microsoft/usersecrets", mounts, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "Stop to take web down", TimeSpan.FromMinutes(2));
+            window.Close();
+        }
+
+        static string? Get(HttpClient client, Uri address)
+        {
+            try
+            {
+                return Task.Run(() => client.GetStringAsync(address)).GetAwaiter().GetResult();
+            }
+            catch (Exception failed) when (failed is HttpRequestException or TaskCanceledException)
+            {
+                return null;
+            }
+        }
+    }
+
     private static void Press(Avalonia.Controls.Button button)
     {
         button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
