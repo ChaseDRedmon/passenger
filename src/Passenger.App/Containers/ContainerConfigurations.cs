@@ -75,6 +75,8 @@ public static partial class ContainerConfigurations
                     Kind = RunKind.Dockerfile,
                     Project = project.Path,
                     Dockerfile = dockerfile,
+                    // Every port its image exposes, each on a port the engine chooses, as Visual Studio's publishAllPorts.
+                    RunArguments = "-P",
                     LaunchBrowser = IsWeb(project),
                     BrowserUrl = IsWeb(project) ? ServiceUrl : string.Empty,
                     Origin = $"Generated for {project.Name}'s {Path.GetFileName(dockerfile)}",
@@ -87,6 +89,7 @@ public static partial class ContainerConfigurations
                     Name = $"{project.Name}: SDK container",
                     Kind = RunKind.SdkContainer,
                     Project = project.Path,
+                    RunArguments = "-P",
                     LaunchBrowser = IsWeb(project),
                     BrowserUrl = IsWeb(project) ? ServiceUrl : string.Empty,
                     Origin = $"Generated for {project.Name}, whose project file has the .NET SDK make its container",

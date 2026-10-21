@@ -327,7 +327,7 @@ public static class ContainerPlans
         {
             service["environment"] = environment;
         }
-        return new JsonObject { ["name"] = $"passenger-{Slug(configuration.Name)}", ["services"] = new JsonObject { [name] = service } };
+        return new JsonObject { ["name"] = $"passenger-{Slug(configuration.Name)}-{ContainerLabels.FolderValue(workspace.Folder)[..8]}", ["services"] = new JsonObject { [name] = service } };
     }
 
     /// <summary>The image tag of a project's newest .NET (10.0 of net10.0), else 10.0.</summary>
@@ -359,13 +359,17 @@ public static class ContainerPlans
                 JsonArray volumes = [];
                 if (mode == ContainerMode.Fast)
                 {
-                    JsonObject build = (JsonObject)(entry["build"] ??= new JsonObject());
-                    if (built.Stage is { } stage)
+                    // An image of its own stops at the runtime stage, tagged apart from the image a build as deployed makes; an
+                    // image it only pulls (an SDK container's base) is run as it is.
+                    if (entry["build"] is JsonObject build)
                     {
-                        build["target"] = stage;
+                        if (built.Stage is { } stage)
+                        {
+                            build["target"] = stage;
+                        }
+                        entry["image"] = $"{model.Name}-{service.Name}:passenger-fast";
+                        entry["pull_policy"] = "build";
                     }
-                    entry["image"] = $"{model.Name}-{service.Name}:passenger-fast";
-                    entry["pull_policy"] = "build";
                     entry["entrypoint"] = new JsonArray("dotnet", $"{AppFolder}/{built.Assembly}.dll");
                     entry["working_dir"] = AppFolder;
                     entry["init"] = true;

@@ -108,6 +108,121 @@ public sealed class ContainerRunsTests
         }
     }
 
+    [AvaloniaFact]
+    public void A_Dockerfile_project_an_SDK_container_project_and_a_Docker_launch_profile_each_run_their_project_in_a_container()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, _) = Shop("single");
+        File.Delete(Path.Combine(folder, "compose.yaml"));
+        int port = FreePort();
+        Write(folder, "Api/Properties/launchSettings.json", $$"""
+            {
+              "profiles": {
+                "Container": { "commandName": "Docker", "launchBrowser": true, "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}/", "httpPort": {{port}} }
+              }
+            }
+            """);
+        Write(folder, "Tool/Tool.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            + "    <ImplicitUsings>enable</ImplicitUsings>\n    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>\n  </PropertyGroup>\n</Project>\n");
+        Write(folder, "Tool/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/\", () => \"tool 1\");\napp.Run();\n");
+        Write(folder, "Shop.slnx", "<Solution>\n  <Project Path=\"Web/Web.csproj\" />\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"Tool/Tool.csproj\" />\n</Solution>\n");
+        MainWindow window = Open(folder);
+        Ui.WaitFor(() => window.Configurations.Any(c => c.Name == "Tool: SDK container"), "the SDK container project's configuration");
+        Assert.Equal(RunKind.Dockerfile, window.Configurations.Single(c => c.Name == "Web: Dockerfile").Kind);
+        Assert.Equal(RunKind.Dockerfile, window.Configurations.Single(c => c.Name == "Api: Container").Kind);
+        // A project with a Docker profile has that profile's configuration, not a second of its Dockerfile.
+        Assert.DoesNotContain("Api: Dockerfile", window.Configurations.Select(c => c.Name));
+        foreach ((string name, string answer, int? fixedPort) in (ReadOnlySpan<(string, string, int?)>)[("Web: Dockerfile", "web 1", null), ("Api: Container", "api 1", port), ("Tool: SDK container", "tool 1", null)])
+        {
+            Assert.True(window.SelectConfiguration(name));
+            string? project = null;
+            try
+            {
+                Launched(window, $"{name} to come up");
+                project = window.Builds.Containers!.Plan.ProjectName;
+                string service = window.Builds.Containers.Plan.Dotnet.Single().Service;
+                int published = fixedPort ?? Published(project, service);
+                Assert.Equal(answer, Page(published));
+                Ui.WaitFor(() => window.Browsed.Any(u => u.Port == published), $"{name}'s browser at port {published}", TimeSpan.FromMinutes(1));
+            }
+            finally
+            {
+                window.Perform(AppActions.Stop);
+                if (project is not null)
+                {
+                    Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                        $"Stop to take {name}'s container down", TimeSpan.FromMinutes(2));
+                }
+                Ui.WaitFor(() => !window.IsRunning, $"{name}'s log to stop being followed");
+            }
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_Docker_Compose_projects_properties_and_launch_profiles_are_its_configurations_and_it_is_never_built_as_a_project()
+    {
+        (string folder, string project) = Shop("dcproj");
+        File.Move(Path.Combine(folder, "compose.yaml"), Path.Combine(folder, "docker-compose.yml"));
+        Write(folder, "docker-compose.override.yml", "services:\n  web:\n    environment: { GREETING: hi }\n");
+        Write(folder, "docker-compose.dcproj", """
+            <?xml version="1.0" encoding="utf-8"?>
+            <Project ToolsVersion="15.0" Sdk="Microsoft.Docker.Sdk">
+              <PropertyGroup Label="Globals">
+                <ProjectVersion>2.1</ProjectVersion>
+                <DockerTargetOS>Linux</DockerTargetOS>
+                <DockerLaunchAction>LaunchBrowser</DockerLaunchAction>
+                <DockerServiceUrl>{Scheme}://localhost:{ServicePort}/</DockerServiceUrl>
+                <DockerServiceName>web</DockerServiceName>
+              </PropertyGroup>
+              <ItemGroup>
+                <None Include="docker-compose.override.yml"><DependentUpon>docker-compose.yml</DependentUpon></None>
+                <None Include="docker-compose.yml" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write(folder, "Properties/launchSettings.json", """
+            {
+              "profiles": {
+                "Web only": {
+                  "commandName": "DockerCompose",
+                  "composeLaunchServiceName": "web",
+                  "serviceActions": { "web": "StartDebugging", "api": "DoNotStart", "cache": "StartWithoutDebugging" }
+                }
+              }
+            }
+            """);
+        Write(folder, "Shop.slnx", "<Solution>\n  <Project Path=\"Web/Web.csproj\" />\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"docker-compose.dcproj\" />\n</Solution>\n");
+        MainWindow window = Open(folder);
+        // Never loaded as a project: Visual Studio's SDK is not .NET's, and building the solution would fail on it.
+        Assert.DoesNotContain(window.Projects, p => p.Path.EndsWith(".dcproj", StringComparison.Ordinal));
+        RunConfiguration own = window.Configurations.Single(c => c.Name == "docker-compose");
+        Assert.Equal(RunKind.Compose, own.Kind);
+        Assert.Equal([Path.Combine(folder, "docker-compose.yml"), Path.Combine(folder, "docker-compose.override.yml")], own.ComposeFiles);
+        Assert.Equal("web", own.LaunchService);
+        Assert.True(own.LaunchBrowser, "The .dcproj's LaunchBrowser action was not taken");
+        Assert.Equal("{Scheme}://localhost:{ServicePort}/", own.BrowserUrl);
+        RunConfiguration profile = window.Configurations.Single(c => c.Name == "docker-compose: Web only");
+        Assert.Equal(ServiceStart.Debug, profile.ServiceActions["web"]);
+        Assert.Equal(ServiceStart.DontStart, profile.ServiceActions["api"]);
+        Assert.Equal(ServiceStart.Run, profile.ServiceActions["cache"]);
+        // A plain compose configuration of the same files is not listed beside the project's own.
+        Assert.DoesNotContain(window.Configurations, c => c.Name.StartsWith("Compose:", StringComparison.Ordinal));
+        // Debugging in a container comes later, and Debug says so rather than starting a program here.
+        Assert.True(window.SelectConfiguration("docker-compose: Web only"));
+        Assert.Equal(LaunchPlan.InContainers("docker-compose: Web only"), Ui.Await(window.DebugAsync(), "the debugger's refusal"));
+        window.Close();
+        Assert.NotNull(project);
+    }
+
+    /// <summary>A port nothing listens on now, for a profile that names its own.</summary>
+    private static int FreePort()
+    {
+        using System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
     /// <summary>A folder with a solution of two ASP.NET Core projects, each with a Dockerfile of .NET's own stages, and a
     /// compose.yaml running them beside a busybox "cache" they do not need; its Compose project named for the test.</summary>
     private static (string Folder, string Project) Shop(string name)

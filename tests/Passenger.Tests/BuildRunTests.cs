@@ -803,8 +803,11 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             }
             """);
         MainWindow window = Open();
-        // A profile that runs something else (a container here) is listed, as Rider lists it, and says why it does not run.
+        // A Docker profile is a container configuration of its project, which runs, not one greyed.
         Assert.Equal(["Hello: Greet", "Hello: Docker"], window.Configurations.Select(c => c.Name));
+        RunConfiguration docker = window.Configurations.Single(c => c.Name == "Hello: Docker");
+        Assert.Equal(RunKind.Dockerfile, docker.Kind);
+        Assert.Null(window.WhyNotHere(docker));
         // A profile that names no working folder runs in the project's, as Run, Debug and Profile all do (one LaunchPlan).
         Assert.Contains($"Hi [--name|Ada Lovelace] in {Passenger.Core.PathNames.Canonical(Path.Combine(folder, "src", "Hello"))}.", RunToEnd(window), StringComparison.Ordinal);
 
@@ -812,10 +815,9 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
         Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
 
+        // Run starts it in a container (ContainerRunsTests); Debug says it does not debug one yet.
         Assert.True(window.SelectConfiguration("Hello: Docker"));
-        Assert.Equal("Hello: Docker cannot run here: a container profile runs in Docker, which Passenger does not start",
-            Ui.Await(window.RunAsync(), "the run's refusal"));
-        Assert.Equal("Hello: Docker cannot run here: a container profile runs in Docker, which Passenger does not start", window.Status);
+        Assert.Equal(LaunchPlan.InContainers("Hello: Docker"), Ui.Await(window.DebugAsync(), "the debugger's refusal"));
         window.Close();
     }
 
