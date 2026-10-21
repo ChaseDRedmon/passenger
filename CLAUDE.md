@@ -519,6 +519,27 @@ window or takes the focus; it shows everything but the system's own window chrom
   Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop.
+  Container run configurations (#343): a `RunConfiguration`'s `Kind` (Project, Compose, Dockerfile, SdkContainer), made as
+  the folder opens by `ContainerConfigurations` (compose files beside the folder, the solution or a project, overrides with
+  them; a .dcproj's properties and DockerCompose profiles, read as XML; a runnable project's Dockerfile; a project file
+  that has the SDK make its container; a Docker or SdkContainer launch profile is its project's). `ContainerPlans.ResolveAsync`
+  reads Compose's own model (`ComposeModel`, `config --format json`; a Dockerfile or SDK container configuration is a
+  compose file of one service Passenger writes) and the project each service runs (its Dockerfile's ENTRYPOINT assembly
+  or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command
+  takes Passenger's override from the folder's state (`workspaces/…/containers/<config>.override.yaml`, JSON, written
+  after the host's build): labels on every service, image build and network; in fast mode each .NET service's runtime
+  stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
+  read-only, its static web assets' folders mounted and its manifest rewritten (`ASPNETCORE_STATICWEBASSETS`); in images
+  mode BUILD_CONFIGURATION=Debug where the Dockerfile declares it; the dev certificate (`DevelopmentCertificate`) for a
+  service that serves HTTPS and user secrets in Development. `ContainerRun` (`ProjectSession.ContainerRun`) is `up
+  --detach --wait` streamed into the Run console, then `logs --follow` through the session's `Runner` (so Run's Stop,
+  `IsRunning` and its end are the log's), Compose's own watch for other services that declare one, Rerun's restart of the
+  services whose build changed (`Changed`, by the output's stamps; a restarted container may publish another port), and
+  `StopAsync` (`down`, or `rm --stop` of the .NET services when backing services are kept, which then go with the folder).
+  `ContainerPaths` maps an image's paths (its Dockerfile's COPY of the context into WORKDIR, and `/_/`) to the workspace's
+  and back, for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
+  #344's debugger takes it at the protocol's edge. Debug and Profile of a container configuration are refused
+  (`LaunchPlan.InContainers`). `ContainerRunsTests` run them against the engine on aspnet:10.0 and busybox.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -612,7 +633,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
   cannot launch here saying why: a project whose framework references Microsoft.WindowsDesktop.App runs only on
   Windows (`ProjectModel.WindowsOnly`), so off Windows the Solution view marks it, `RunConfiguration.WhyNotHere` greys
-  its configurations and `LaunchPlan.ResolveAsync` refuses it before its build); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
+  its configurations and `LaunchPlan.ResolveAsync` refuses it before its build; a container kind's are run by
+  `BuildRunController.Containers.cs`, Containers above, the store's version 2 giving older ones the Project kind);
+  `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
@@ -668,7 +691,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   inside the move's command): every project's items through `ProjectEdits.MoveItems` (an `Include`, `Update`, `Remove`
   or `Exclude`, a glob by the folder it begins in, `DependentUpon`, `LastGenOutput`, a `ProjectReference`) and the
   solution's projects and files through `SolutionEdits.Move`. A tool window's own header ⋮ items are `ToolWindow.Options`.
-- `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
+- `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view (a
+  Docker Compose project, .dcproj, stays in the solution's entries but out of `WorkspaceModel.Projects`, its
+  `ComposeProjects`: never evaluated, design-time built or built, and a solution holding one is built project by
+  project, since its SDK is Visual Studio's), and
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out, paths
   following moves): a .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file
   stays byte for byte as it was; never `dotnet sln`, which rewrites a whole .sln. `MainWindow.Solution.cs` is the

@@ -42,7 +42,10 @@ public partial class MainWindow
     {
         RunConfigurations configurations = session.Configurations;
         RunConfigurationsDialog dialog = new([.. configurations.All.Where(c => c.Generated)], configurations.Own, [.. Projects.Where(p => p.Exists && p.IsRunnable)],
-            configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects));
+            configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects))
+        {
+            Folder = Folder,
+        };
         RunConfigurationsDialog = dialog;
         dialog.Closed += (_, _) =>
         {

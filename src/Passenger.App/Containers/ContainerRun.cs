@@ -91,6 +91,11 @@ public static class ContainerPlans
             {
                 mode = ContainerMode.Images;
             }
+            // The SDK's own image (dotnet publish's PublishContainer) is not made yet: its base image runs Passenger's build.
+            if (configuration.Kind == RunKind.SdkContainer)
+            {
+                mode = ContainerMode.Fast;
+            }
             string service = DockerFiles.ServiceName(single.Name.Split(' ')[0]);
             fixedProjects[service] = single.Path;
             string composed = Path.Combine(state, $"{file}.compose.yaml");

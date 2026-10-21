@@ -37,6 +37,29 @@ public sealed partial class McpTests
         Assert.True(unknown.IsError == true && Text(unknown).Contains("containers lists them", StringComparison.Ordinal), $"A stop of no such container answered: {Text(unknown)}");
     }
 
+    [Fact]
+    public async Task An_agents_run_brings_a_compose_configuration_up_with_its_services_state_and_stop_takes_it_down()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string compose = Plain("mcp-compose-");
+        string project = $"ptest{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}agentrun";
+        File.WriteAllText(Path.Combine(compose, "compose.yaml"), $"name: {project}\nservices:\n  ticker:\n    image: {Docker.Image}\n"
+            + "    command: [\"sh\", \"-c\", \"echo ticker-up; trap 'exit 0' TERM; while true; do sleep 1; done\"]\n");
+        await using McpClient client = await Start(["--mcp", compose]);
+
+        JsonElement ran = await Call(client, "run", new() { ["configuration"] = "Compose: compose.yaml" });
+        Assert.True(ran.GetProperty("stillRunning").GetBoolean(), $"The run did not go on: {ran}");
+        string status = ran.GetProperty("status").GetString()!;
+        Assert.Contains($"Compose project {project}", status, StringComparison.Ordinal);
+        Assert.Contains("ticker: running", status, StringComparison.Ordinal);
+        Assert.Equal("running", Docker.Run("compose", "-p", project, "ps", "--format", "{{.State}}"));
+        Assert.True(await Waiting.UntilAsync(async () => Text(await Call(client, "run_output")).Contains("ticker-up", StringComparison.Ordinal), TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken),
+            "run_output never had the service's log");
+
+        Assert.Equal("Stopped", Text(await Call(client, "stop")));
+        Assert.Equal(string.Empty, Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}"));
+    }
+
     [AvaloniaFact]
     public void An_agents_command_in_a_container_waits_for_the_person_to_allow_it()
     {

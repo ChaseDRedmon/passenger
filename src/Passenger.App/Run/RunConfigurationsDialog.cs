@@ -48,7 +48,7 @@ public sealed class RunConfigurationsDialog : Window
         AddButton = Tool("Icon.Add", "Add New Configuration");
         CopyButton = Tool("Icon.Copy", "Copy Configuration");
         RemoveButton = Tool("Icon.Minimize", "Remove Configuration");
-        AddButton.Click += (_, _) => Add();
+        AddButton.Click += (_, _) => ChooseKind();
         CopyButton.Click += (_, _) => Copy();
         RemoveButton.Click += (_, _) => Remove();
         list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration, row?.Configuration.WhyNotHere(projects)));
@@ -91,6 +91,34 @@ public sealed class RunConfigurationsDialog : Window
         BrowserUrlBox.TextChanged += (_, _) => Edit(c => c with { BrowserUrl = BrowserUrlBox.Text?.Trim() ?? string.Empty });
         AddVariableButton.Click += (_, _) => AddVariable(string.Empty, string.Empty, focus: true);
 
+        KindText = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        ComposeFilesBox = Field("compose.yaml; compose.override.yaml");
+        EnvFilesBox = Field("The .env beside the first file");
+        ProfilesBox = Field("None");
+        ServicesBox = Field("Every service");
+        ServiceActionsBox = Field("web=Run, worker=Don't start");
+        ToolTip.SetTip(ServiceActionsBox, "What each .NET service does: Run, Debug or Don't start, as name=action, separated by commas; a service unnamed runs");
+        LaunchServiceBox = Field("The first .NET service");
+        ModeBox = new ComboBox { Classes = { "form" }, ItemsSource = (string[])[FastMode, ImagesMode] };
+        ToolTip.SetTip(ModeBox, "Fast runs each .NET service in its image's runtime stage with Passenger's build mounted in, so a code change needs no image rebuild; the other builds every image as Compose says");
+        KeepBackingBox = new CheckBox { Content = "Keep backing services running after Stop" };
+        DockerfileBox = Field("The project's own, beside it");
+        ContextBox = Field("The project's DockerfileContext, else the solution's folder");
+        BuildArgumentsBox = Field("NAME=value");
+        RunArgumentsBox = Field("-p 8080:8080 -e NAME=value --env-file .env");
+        ComposeFilesBox.TextChanged += (_, _) => Edit(c => c with { ComposeFiles = Paths(ComposeFilesBox.Text) });
+        EnvFilesBox.TextChanged += (_, _) => Edit(c => c with { EnvFiles = Paths(EnvFilesBox.Text) });
+        ProfilesBox.TextChanged += (_, _) => Edit(c => c with { Profiles = Names(ProfilesBox.Text) });
+        ServicesBox.TextChanged += (_, _) => Edit(c => c with { Services = Names(ServicesBox.Text) });
+        ServiceActionsBox.TextChanged += (_, _) => Edit(c => c with { ServiceActions = Actions(ServiceActionsBox.Text) });
+        LaunchServiceBox.TextChanged += (_, _) => Edit(c => c with { LaunchService = LaunchServiceBox.Text?.Trim() ?? string.Empty });
+        ModeBox.SelectionChanged += (_, _) => Edit(c => c with { Mode = ModeBox.SelectedIndex == 1 ? ContainerMode.Images : ContainerMode.Fast });
+        KeepBackingBox.IsCheckedChanged += (_, _) => Edit(c => c with { KeepBackingServices = KeepBackingBox.IsChecked == true });
+        DockerfileBox.TextChanged += (_, _) => Edit(c => c with { Dockerfile = Full(DockerfileBox.Text) });
+        ContextBox.TextChanged += (_, _) => Edit(c => c with { Context = Full(ContextBox.Text) });
+        BuildArgumentsBox.TextChanged += (_, _) => Edit(c => c with { BuildArguments = BuildArgumentsBox.Text ?? string.Empty });
+        RunArgumentsBox.TextChanged += (_, _) => Edit(c => c with { RunArguments = RunArgumentsBox.Text ?? string.Empty });
+
         OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" } };
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         Button applyButton = new() { Content = "Apply" };
@@ -107,26 +135,42 @@ public sealed class RunConfigurationsDialog : Window
         Border leftPane = new() { BorderThickness = new Thickness(0, 0, 1, 0), Child = left };
         leftPane.Bind(Border.BorderBrushProperty, leftPane.GetResourceObservable("Passenger.Divider"));
 
-        form = new StackPanel
+        // Each kind's page is the rows it takes: a project's as before, a Compose application's files and services, a
+        // Dockerfile's build, an SDK container's run; the name, environment and browser every kind's.
+        Control projectRow = Row("Project", ProjectBox);
+        Control environmentRow = Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true);
+        pages =
+        [
+            (projectRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Target framework", FrameworkBox), [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Launch profile", ProfileBox), [RunKind.Project]),
+            (Row("Exe path", ProgramBox), [RunKind.Project]),
+            (Row("Program arguments", ArgumentsBox), [RunKind.Project]),
+            (Row("Working directory", WorkingDirectoryBox), [RunKind.Project]),
+            (Row("Compose files", ComposeFilesBox), [RunKind.Compose]),
+            (Row("Env files", EnvFilesBox), [RunKind.Compose]),
+            (Row("Profiles", ProfilesBox), [RunKind.Compose]),
+            (Row("Services", ServicesBox), [RunKind.Compose]),
+            (Row(".NET services", ServiceActionsBox), [RunKind.Compose]),
+            (Row("Dockerfile", DockerfileBox), [RunKind.Dockerfile]),
+            (Row("Context", ContextBox), [RunKind.Dockerfile]),
+            (Row("Build arguments", BuildArgumentsBox), [RunKind.Dockerfile]),
+            (Row("Run arguments", RunArgumentsBox), [RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Mode", ModeBox), [RunKind.Compose, RunKind.Dockerfile]),
+            (Row(string.Empty, KeepBackingBox), [RunKind.Compose]),
+            (environmentRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row(string.Empty, ConsoleBox), [RunKind.Project]),
+            (Row("Open browser", BrowserBox), [RunKind.Project, RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("URL", BrowserUrlBox), [RunKind.Project, RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Launched service", LaunchServiceBox), [RunKind.Compose]),
+            (Row("Before launch", BuildBox), [RunKind.Project]),
+        ];
+        StackPanel rows = new() { Spacing = 10, Children = { Row("Name", NameBox), Row("Kind", KindText), note } };
+        foreach ((Control row, _) in pages)
         {
-            Spacing = 10,
-            Children =
-            {
-                Row("Name", NameBox),
-                note,
-                Row("Project", ProjectBox),
-                Row("Target framework", FrameworkBox),
-                Row("Launch profile", ProfileBox),
-                Row("Exe path", ProgramBox),
-                Row("Program arguments", ArgumentsBox),
-                Row("Working directory", WorkingDirectoryBox),
-                Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true),
-                Row(string.Empty, ConsoleBox),
-                Row("Open browser", BrowserBox),
-                Row("URL", BrowserUrlBox),
-                Row("Before launch", BuildBox),
-            },
-        };
+            rows.Children.Add(row);
+        }
+        form = rows;
         Border editorPane = new()
         {
             Child = new ScrollViewer { Content = new Panel { Margin = new Thickness(20, 16, 20, 16), Children = { form, nothing } } },
@@ -181,6 +225,93 @@ public sealed class RunConfigurationsDialog : Window
     public CheckBox BrowserBox { get; }
 
     public TextBox BrowserUrlBox { get; }
+
+    /// <summary>The configuration's kind, which its page follows: a .NET project, Docker Compose, a Dockerfile, an SDK container.</summary>
+    public TextBlock KindText { get; }
+
+    /// <summary>A Compose configuration's files, the base first, separated by ';' (relative to the open folder or full).</summary>
+    public TextBox ComposeFilesBox { get; }
+
+    public TextBox EnvFilesBox { get; }
+
+    public TextBox ProfilesBox { get; }
+
+    /// <summary>The services started, separated by commas; empty for every one.</summary>
+    public TextBox ServicesBox { get; }
+
+    /// <summary>What each .NET service does, as name=Run, Debug or Don't start, separated by commas.</summary>
+    public TextBox ServiceActionsBox { get; }
+
+    public TextBox LaunchServiceBox { get; }
+
+    /// <summary>Fast (Passenger's build in the runtime stage) or Build images, as deployed.</summary>
+    public ComboBox ModeBox { get; }
+
+    public CheckBox KeepBackingBox { get; }
+
+    public TextBox DockerfileBox { get; }
+
+    public TextBox ContextBox { get; }
+
+    public TextBox BuildArgumentsBox { get; }
+
+    public TextBox RunArgumentsBox { get; }
+
+    private const string FastMode = "Fast: Passenger's build in the runtime stage";
+
+    private const string ImagesMode = "Build images, as deployed";
+
+    /// <summary>Each kind's rows of the form, and the kinds that show each.</summary>
+    private readonly (Control Row, RunKind[] Kinds)[] pages;
+
+    /// <summary>The open folder, against which the paths typed are read and shown.</summary>
+    public string? Folder { get; init; }
+
+    private static string KindName(RunKind kind) => kind switch
+    {
+        RunKind.Compose => "Docker Compose",
+        RunKind.Dockerfile => "Dockerfile",
+        RunKind.SdkContainer => "SDK Container",
+        _ => ".NET Project",
+    };
+
+    private static string ActionName(ServiceStart action) => action switch
+    {
+        ServiceStart.Debug => "Debug",
+        ServiceStart.DontStart => "Don't start",
+        _ => "Run",
+    };
+
+    /// <summary>A path as the form shows it: relative to the open folder when inside it.</summary>
+    private string Shown(string path) => Folder is { } folder && path.Length > 0 && Core.PathNames.IsUnder(path, folder)
+        ? Path.GetRelativePath(folder, path).Replace('\\', '/')
+        : path;
+
+    /// <summary>A path typed, made full against the open folder.</summary>
+    private string Full(string? typed) => typed?.Trim() is not { Length: > 0 } path ? string.Empty
+        : Folder is { } folder ? Core.PathNames.Canonical(Path.Combine(folder, path)) : path;
+
+    private List<string> Paths(string? typed) => [.. (typed ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Full)];
+
+    private static List<string> Names(string? typed) => [.. (typed ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    private static Dictionary<string, ServiceStart> Actions(string? typed)
+    {
+        Dictionary<string, ServiceStart> actions = new(StringComparer.Ordinal);
+        foreach (string pair in Names(typed))
+        {
+            if (pair.Split('=', 2, StringSplitOptions.TrimEntries) is [{ Length: > 0 } service, var action])
+            {
+                actions[service] = action.Replace(" ", string.Empty, StringComparison.Ordinal).Replace("'", string.Empty, StringComparison.Ordinal).ToLowerInvariant() switch
+                {
+                    "debug" => ServiceStart.Debug,
+                    "dontstart" => ServiceStart.DontStart,
+                    _ => ServiceStart.Run,
+                };
+            }
+        }
+        return actions;
+    }
 
     /// <summary>Every configuration listed: the generated ones, then the folder's own as they stand in the dialog.</summary>
     public IReadOnlyList<RunConfiguration> Rows => [.. Entries.Select(e => e.Configuration)];
@@ -250,21 +381,55 @@ public sealed class RunConfigurationsDialog : Window
             {
                 return (row, $"Two configurations are named {configuration.Name}");
             }
-            if (configuration.Project.Length == 0)
+            if (configuration.Kind == RunKind.Compose ? configuration.ComposeFiles.Count == 0 : configuration.Project.Length == 0)
             {
-                return (row, $"{configuration.Name} has no project to run");
+                return (row, configuration.Kind == RunKind.Compose ? $"{configuration.Name} has no compose file to run" : $"{configuration.Name} has no project to run");
             }
         }
         return null;
     }
 
-    /// <summary>Rider's Add New Configuration: a .NET project configuration named Unnamed, of the first executable project.</summary>
-    private void Add()
+    /// <summary>Add New Configuration's menu of kinds, under the button, as Rider lists its configuration types.</summary>
+    public ContextMenu? AddMenu { get; private set; }
+
+    private void ChooseKind()
+    {
+        ContextMenu menu = new();
+        foreach ((RunKind kind, string title) in (ReadOnlySpan<(RunKind, string)>)[(RunKind.Project, ".NET Project"), (RunKind.Compose, "Docker Compose"),
+            (RunKind.Dockerfile, "Dockerfile"), (RunKind.SdkContainer, "SDK Container")])
+        {
+            MenuItem item = new() { Header = title };
+            item.Click += (_, _) =>
+            {
+                menu.Close();
+                Add(kind);
+            };
+            menu.Items.Add(item);
+        }
+        menu.Closed += (_, _) =>
+        {
+            if (AddMenu == menu)
+            {
+                AddMenu = null;
+            }
+        };
+        AddMenu = menu;
+        menu.Open(AddButton);
+    }
+
+    /// <summary>Rider's Add New Configuration: a configuration of the kind chosen named Unnamed, of the first executable
+    /// project (a Compose one of the folder's first compose file).</summary>
+    private void Add(RunKind kind)
     {
         Entry added = new(new RunConfiguration
         {
             Name = RunConfiguration.UniqueName("Unnamed", Rows.Select(r => r.Name)),
-            Project = projects.FirstOrDefault()?.Path ?? string.Empty,
+            Kind = kind,
+            Project = kind == RunKind.Compose ? string.Empty : projects.FirstOrDefault()?.Path ?? string.Empty,
+            ComposeFiles = kind == RunKind.Compose ? [.. generated.Select(g => g.Configuration).FirstOrDefault(g => g.Kind == RunKind.Compose)?.ComposeFiles ?? []] : [],
+            LaunchBrowser = kind != RunKind.Project,
+            BrowserUrl = kind != RunKind.Project ? Containers.ContainerConfigurations.ServiceUrl : string.Empty,
+            RunArguments = kind is RunKind.Dockerfile or RunKind.SdkContainer ? "-P" : string.Empty,
         });
         mine.Add(added);
         List();
@@ -279,12 +444,12 @@ public sealed class RunConfigurationsDialog : Window
         {
             return;
         }
-        Entry copy = new(source.Configuration with
+        Entry copy = new(source.Configuration.Copied() with
         {
             Name = RunConfiguration.UniqueName(source.Configuration.Name, Rows.Select(r => r.Name)),
-            Environment = new Dictionary<string, string>(source.Configuration.Environment),
             Generated = false,
             Unsupported = null,
+            Origin = null,
         });
         mine.Insert(mine.IndexOf(source) is >= 0 and var at ? at + 1 : mine.Count, copy);
         List();
@@ -395,6 +560,23 @@ public sealed class RunConfigurationsDialog : Window
             ConsoleBox.IsChecked = shown.Console == ConsoleKind.Terminal;
             BrowserBox.IsChecked = shown.LaunchBrowser;
             BrowserUrlBox.Text = shown.BrowserUrl;
+            KindText.Text = KindName(shown.Kind);
+            ComposeFilesBox.Text = string.Join("; ", shown.ComposeFiles.Select(Shown));
+            EnvFilesBox.Text = string.Join("; ", shown.EnvFiles.Select(Shown));
+            ProfilesBox.Text = string.Join(", ", shown.Profiles);
+            ServicesBox.Text = string.Join(", ", shown.Services);
+            ServiceActionsBox.Text = string.Join(", ", shown.ServiceActions.Select(a => $"{a.Key}={ActionName(a.Value)}"));
+            LaunchServiceBox.Text = shown.LaunchService;
+            ModeBox.SelectedIndex = shown.Mode == ContainerMode.Images ? 1 : 0;
+            KeepBackingBox.IsChecked = shown.KeepBackingServices;
+            DockerfileBox.Text = Shown(shown.Dockerfile);
+            ContextBox.Text = Shown(shown.Context);
+            BuildArgumentsBox.Text = shown.BuildArguments;
+            RunArgumentsBox.Text = shown.RunArguments;
+            foreach ((Control row, RunKind[] kinds) in pages)
+            {
+                row.IsVisible = kinds.Contains(shown.Kind);
+            }
             variables.Children.Clear();
             foreach ((string name, string value) in shown.Environment)
             {
@@ -403,7 +585,8 @@ public sealed class RunConfigurationsDialog : Window
             note.Text = NoteOn(shown, project, shown.WhyNotHere(projects));
             note.IsVisible = note.Text.Length > 0;
             bool editable = !shown.Generated;
-            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BrowserBox, BrowserUrlBox, BuildBox, AddVariableButton, variables])
+            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BrowserBox, BrowserUrlBox, BuildBox, AddVariableButton, variables,
+                ComposeFilesBox, EnvFilesBox, ProfilesBox, ServicesBox, ServiceActionsBox, LaunchServiceBox, ModeBox, KeepBackingBox, DockerfileBox, ContextBox, BuildArgumentsBox, RunArgumentsBox])
             {
                 field.IsEnabled = editable;
             }
@@ -419,6 +602,7 @@ public sealed class RunConfigurationsDialog : Window
     {
         string name = project?.Name ?? Path.GetFileNameWithoutExtension(shown.Project);
         string origin = !shown.Generated ? string.Empty
+            : shown.Origin is { } container ? $"{container}. Copy it to change it."
             : shown.LaunchProfile.Length > 0 ? $"Generated from the launch profile {shown.LaunchProfile} in {name}'s Properties/launchSettings.json. Copy it to change it."
             : $"Generated for the executable project {name}. Copy it to change it.";
         return whyNot is { } why ? $"{origin} It cannot run here: {why}.".Trim() : origin;

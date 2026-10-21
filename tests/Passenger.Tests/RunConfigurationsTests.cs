@@ -54,7 +54,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
         Assert.Equal("Hello", dialog.Chosen?.Name);
 
-        Click(dialog.AddButton);
+        Add(dialog);
         Assert.Equal("Unnamed", dialog.Chosen?.Name);
         Assert.True(dialog.NameBox.IsEnabled, "A configuration just added cannot be named");
         Assert.True(dialog.NameBox.IsFocused, "A configuration just added does not have its name ready to type");
@@ -270,13 +270,54 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     }
 
     [AvaloniaFact]
+    public void A_compose_configuration_added_in_the_dialog_shows_its_kinds_page_and_is_kept_with_its_files_and_choices()
+    {
+        Write("compose.yaml", "services:\n  web:\n    image: busybox:1.37\n");
+        Write("compose.override.yaml", "services:\n  web:\n    environment: { A: \"1\" }\n");
+        MainWindow window = Keeping();
+        RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+        Click(dialog.AddButton);
+        Click(dialog.AddMenu!.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "Docker Compose"));
+        Assert.Equal("Docker Compose", dialog.KindText.Text);
+        // A Compose configuration's page: its files and services, no project's program, framework or working folder.
+        Assert.True(dialog.ComposeFilesBox.IsEffectivelyVisible && dialog.ModeBox.IsEffectivelyVisible && dialog.KeepBackingBox.IsEffectivelyVisible, "The Compose page is not shown");
+        Assert.False(dialog.ProgramBox.IsEffectivelyVisible || dialog.WorkingDirectoryBox.IsEffectivelyVisible || dialog.ProjectBox.IsEffectivelyVisible,
+            "A Compose configuration shows a project's fields");
+        Assert.Equal("compose.yaml; compose.override.yaml", dialog.ComposeFilesBox.Text);
+        Type(dialog.NameBox, "Everything");
+        Type(dialog.ProfilesBox, "tools");
+        Type(dialog.ServiceActionsBox, "web=Don't start");
+        dialog.ModeBox.SelectedIndex = 1;
+        dialog.KeepBackingBox.IsChecked = true;
+        Ui.Settle();
+        Click(dialog.OkButton);
+        Assert.Null(window.RunConfigurationsDialog);
+        RunConfiguration made = window.Configurations.Single(c => c.Name == "Everything");
+        Assert.Equal(RunKind.Compose, made.Kind);
+        Assert.Equal([Path.Combine(PathNames.Canonical(folder), "compose.yaml"), Path.Combine(PathNames.Canonical(folder), "compose.override.yaml")], made.ComposeFiles);
+        Assert.Equal(["tools"], made.Profiles);
+        Assert.Equal(ServiceStart.DontStart, made.ServiceActions["web"]);
+        Assert.Equal(ContainerMode.Images, made.Mode);
+        Assert.True(made.KeepBackingServices, "Keep backing services was not kept");
+        window.Close();
+
+        // The store keeps its files relative to the folder, and the folder opened again has it as it was.
+        MainWindow again = Keeping();
+        RunConfiguration kept = again.Configurations.Single(c => c.Name == "Everything");
+        Assert.Equal(made.ComposeFiles, kept.ComposeFiles);
+        Assert.Equal(ContainerMode.Images, kept.Mode);
+        Assert.Equal(ServiceStart.DontStart, kept.ServiceActions["web"]);
+        again.Close();
+    }
+
+    [AvaloniaFact]
     public void A_name_taken_or_missing_is_refused_with_why_and_nothing_changes()
     {
         MainWindow window = Keeping();
         try
         {
             RunConfigurationsDialog dialog = window.ShowRunConfigurations();
-            Click(dialog.AddButton);
+            Add(dialog);
             Type(dialog.NameBox, "Hello");
             Click(dialog.OkButton);
             Assert.Equal("Two configurations are named Hello", dialog.Problem);
@@ -305,7 +346,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         try
         {
             RunConfigurationsDialog dialog = window.ShowRunConfigurations();
-            Click(dialog.AddButton);
+            Add(dialog);
             Type(dialog.NameBox, Long);
             Click(dialog.OkButton);
             dialog = window.ShowRunConfigurations();
@@ -342,6 +383,15 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     {
         box.Text = text;
         Ui.Settle();
+    }
+
+    /// <summary>Add New Configuration, its menu's .NET Project chosen, as a person adds one; the menu lists every kind.</summary>
+    private static void Add(RunConfigurationsDialog dialog)
+    {
+        Click(dialog.AddButton);
+        ContextMenu kinds = Assert.IsType<ContextMenu>(dialog.AddMenu);
+        Assert.Equal([".NET Project", "Docker Compose", "Dockerfile", "SDK Container"], kinds.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
+        Click(kinds.Items.OfType<MenuItem>().First());
     }
 
     private static void Click(Control control)
