@@ -5,15 +5,13 @@ with builds for Linux ([how to install them](https://passenger-ide.net/linux)).
 
 **[passenger-ide.net](https://passenger-ide.net)**: what it does, downloads, and how to connect a coding agent.
 
-**Contents**
-
-- [What it does](#what-it-does): [Avalonia and WPF](#avalonia-and-wpf) · [Profiling](#profiling) · [Debugging](#debugging) ·
-  [The editor and C#](#the-editor-and-c) · [Project files and the web languages](#project-files-and-the-web-languages) ·
-  [Git](#git) · [Search](#search) · [And the rest](#and-the-rest)
-- [Your coding agent, using the IDE as you do](#your-coding-agent-using-the-ide-as-you-do)
-- [Building](#building)
-- [Contributing](#contributing)
-- [Licence](#licence)
+<p align="center">
+  <a href="#what-it-does">What it does</a> •
+  <a href="#your-coding-agent-using-the-ide-as-you-do">Your coding agent</a> •
+  <a href="#building">Building</a> •
+  <a href="#contributing">Contributing</a> •
+  <a href="#licence">Licence</a>
+</p>
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="site/images/editor-light.webp">
