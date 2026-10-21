@@ -872,8 +872,9 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
     /// app carries, a workbook, an asset preview, a binary file shown as its bytes, or an MSBuild file of the .NET SDK or
-    /// a package that Go to Declaration went into.</summary>
-    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+    /// a package that Go to Declaration went into, or a copy of a container's file or of what the engine says of one.</summary>
+    public bool IsReadOnly => Asset is not null || IsDecompiled || IsWorkbook || IsBinary || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path)
+        || Containers.ContainerFilesPane.IsCopy(Path);
 
     /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
     /// written over it.</summary>
@@ -901,6 +902,7 @@ public sealed class OpenDocument : Observable
         : IsBinary ? "A binary file, shown as its bytes' text, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
+        : Containers.ContainerFilesPane.IsCopy(Path) ? "A copy of what a container holds, or of what the engine says of it, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
         ? "Source from the library's Source Link or PDB, read-only"
         : "Decompiled code: the language server made this from the assembly, so it is read-only";

@@ -22,8 +22,8 @@ namespace Passenger.App;
 /// its state and Local History are kept, how folders are watched, the warm language server a test's windows share, the
 /// consoles, Debug window and tests tree its runners, debugger and test runner write to, the build a test run starts with,
 /// the tab of the Terminal window a program the debugger launches there runs in, the settings as they stand (the
-/// Node.js the web language servers run on, whether remote JSON schemas are downloaded), and the window's work under way,
-/// which Git's operations and test runs show themselves in.</summary>
+/// Node.js the web language servers run on, whether remote JSON schemas are downloaded), the window's work under way,
+/// which Git's operations and test runs show themselves in, and the container engine the folder's containers run on.</summary>
 public sealed record SessionSetup(
     EditorArea Editors,
     string StateFolder,
@@ -35,7 +35,8 @@ public sealed record SessionSetup(
     Func<CancellationToken, Task<BuildOutcome>> BuildForTests,
     Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger,
     Func<Settings.AppSettings> Settings,
-    ActionWork Work);
+    ActionWork Work,
+    Func<Containers.ContainerEngine> Engine);
 
 /// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
 /// packages the projects reference, changed with them.</summary>
@@ -69,6 +70,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
+        Containers = new Containers.FolderContainers(folder, setup.Engine());
         Vcs.Work = setup.Work;
         Debug = new DebugController(setup.Editors, setup.Views.Debug)
         {
@@ -291,6 +293,9 @@ public sealed class ProjectSession : IAsyncDisposable
     public VcsController Vcs { get; } = new();
 
     public BookmarkStore Bookmarks { get; } = new();
+
+    /// <summary>What the folder had the container engine start, and the labels it goes on with: ended with the folder.</summary>
+    public Containers.FolderContainers Containers { get; }
 
     /// <summary>What the folder's .http requests may take from the person's computer to a host, as they answered.</summary>
     public Endpoints.EndpointGrants EndpointGrants { get; } = new();
@@ -728,6 +733,8 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharp = null;
         parts.Add(("the web language servers", Web?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         Web = null;
+        // No child holds a container: what the folder started is ended by asking the engine.
+        parts.Add(("the folder's containers", Containers.EndAsync()));
         Xaml.Dispose();
         MSBuild.Dispose();
         return parts;

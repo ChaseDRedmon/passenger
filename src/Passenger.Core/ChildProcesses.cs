@@ -157,6 +157,11 @@ public static class ChildProcesses
         }
     }
 
+    /// <summary>A one-line shell command run on macOS and Linux once the IDE's process has ended, however it ended, after
+    /// its children are: for what lives outside any child (the containers an engine runs), which only a command ends. It
+    /// takes the place of the one given before; on Windows nothing runs it, and the next start ends what is left.</summary>
+    public static void AtIdeEnd(string command) => Lifeline.AtEnd(command);
+
     /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first; an
     /// exit code among <paramref name="answers"/> is its answer (git's "no such file"), not a failure to log. Canceled, or
     /// still running after <paramref name="limit"/>, it is killed with all it started, its output let go, and the task is

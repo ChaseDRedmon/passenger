@@ -82,6 +82,21 @@ public static class AppActions
     public const string ShowEndpoints = "app.showEndpoints";
     public const string TestEndpoint = "app.endpoints.test";
 
+    // The Containers window over the person's container engine and its actions on the row chosen there: no keys of Rider's,
+    // whose Services window has none in its Visual Studio keymaps.
+    public const string ShowContainers = "app.showContainers";
+    public const string ContainersRefresh = "app.containers.refresh";
+    public const string ContainerStart = "app.containers.start";
+    public const string ContainerStop = "app.containers.stop";
+    public const string ContainerRestart = "app.containers.restart";
+    public const string ContainerPause = "app.containers.pause";
+    public const string ContainerRemove = "app.containers.remove";
+    public const string ContainerScale = "app.containers.scale";
+    public const string ContainerPull = "app.containers.pull";
+    public const string ContainerPrune = "app.containers.prune";
+    public const string ContainerInspect = "app.containers.inspect";
+    public const string ContainerShell = "app.containers.shell";
+
     // Avalonia's renderer debug overlays in an app Run, Debug or Profile launched (Avalonia's own names): no key of Rider's.
     public const string OverlayFps = "app.avalonia.overlay.Fps";
     public const string OverlayDirtyRects = "app.avalonia.overlay.DirtyRects";

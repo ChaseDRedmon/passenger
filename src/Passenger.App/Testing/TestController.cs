@@ -101,6 +101,10 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>A run of tests ended, whether every test passed: Local History's Tests Passed or Tests Failed label.</summary>
     public event EventHandler<bool>? Ran;
 
+    /// <summary>Asks the container engine before a run of a project that references Testcontainers: why it cannot serve
+    /// (not running, no CLI), or the <c>DOCKER_HOST</c> of its current context, for a test host that has none set.</summary>
+    public Func<CancellationToken, Task<(string? Problem, string? DockerHost)>>? ContainerEngine { get; set; }
+
     /// <summary>A test to debug: the debugger launches the test host the runner gives and says what process it is.</summary>
     public Func<TestHostStart, Task<int>>? LaunchUnderDebugger { get; set; }
 
@@ -232,6 +236,22 @@ public sealed class TestController : IAsyncDisposable
                 return chosen is null ? "There are no tests to run" : "None of these tests was found in the test projects as built";
             }
             List<TestNode> methods = [.. tests.Select(Tree.Node).OfType<TestNode>().Select(n => n.Kind == TestNodeKind.Row ? n.Parent! : n).Distinct()];
+            HashSet<string> containerized = [.. projects().Where(p => p.Packages.Any(n => n.Name.StartsWith("Testcontainers", StringComparison.OrdinalIgnoreCase)))
+                .Select(p => p.Path).Where(p => tests.Any(t => t.Project == p))];
+            string? dockerHost = null;
+            if (containerized.Count > 0 && ContainerEngine is { } engine)
+            {
+                // Testcontainers' own words for a missing engine are a page per test; the engine's state says it once.
+                working?.Say("Checking the container engine for Testcontainers…");
+                (string? engineProblem, dockerHost) = await engine(stop.Token);
+                if (engineProblem is not null)
+                {
+                    string said = $"{prefix}The tests were not run: they use Testcontainers, and {engineProblem}";
+                    Summary = said;
+                    Message?.Invoke(this, said);
+                    return said;
+                }
+            }
             lastRun = chosen ?? [];
             working?.Say($"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}…");
             Tree.Begin(tests);
@@ -244,7 +264,7 @@ public sealed class TestController : IAsyncDisposable
                 void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
                 // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
                 Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
-                    .ToDictionary(p => p, EnvironmentOf, StringComparer.Ordinal);
+                    .ToDictionary(p => p, p => containerized.Contains(p) ? WithDockerHost(EnvironmentOf(p), dockerHost) : EnvironmentOf(p), StringComparer.Ordinal);
                 foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
                     .Select(t => (Test: t, Environment: environments[t.Project]))
                     .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
@@ -496,6 +516,17 @@ public sealed class TestController : IAsyncDisposable
             ? profile.EnvironmentVariables
             : new Dictionary<string, string>();
         return its.Any(a => TestFrames.Draws(a.Path)) ? TestFrames.With(environment) : environment;
+    }
+
+    /// <summary>A Testcontainers project's environment with the engine's context's endpoint as <c>DOCKER_HOST</c>, unless its
+    /// profile or the IDE's environment sets one: Testcontainers reads no Docker context of its own.</summary>
+    private static IReadOnlyDictionary<string, string> WithDockerHost(IReadOnlyDictionary<string, string> environment, string? host)
+    {
+        if (host is null || environment.ContainsKey("DOCKER_HOST") || Environment.GetEnvironmentVariable("DOCKER_HOST") is { Length: > 0 })
+        {
+            return environment;
+        }
+        return new Dictionary<string, string>(environment) { ["DOCKER_HOST"] = host };
     }
 
     private static string Tally(IReadOnlyList<TestNode> methods, RunSummary summary)

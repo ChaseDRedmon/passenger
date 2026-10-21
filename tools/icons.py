@@ -123,6 +123,8 @@ ICONS = [
     ("Hierarchy", "Diagram", "20_regular"),
     # The Endpoints window's stripe button: the requests of the folder's .http files, sent over the web.
     ("Endpoints", "Globe", "20_regular"),
+    # The Containers window's stripe button: the engine's containers, images, volumes and networks.
+    ("Containers", "Box Multiple", "20_regular"),
 ]
 
 

@@ -24,6 +24,9 @@ public enum ProblemsTab
 
     /// <summary>The edits the last Hot Reload could not apply, or warned of, each at its line.</summary>
     HotReload,
+
+    /// <summary>The container engine's problems: no CLI, not running, Windows containers, no Compose v2.</summary>
+    Containers,
 }
 
 /// <summary>A row of Problems: a group (a project or a file, with its count) or a problem, at its depth. A problem of the
@@ -68,6 +71,7 @@ public sealed class ProblemsView : DockPanel
     private IReadOnlyList<BindingProblem> bindings = [];
     private IReadOnlyList<Problem>? hotReload;
     private string hotReloadSaid = string.Empty;
+    private IReadOnlyList<Problem> containers = [];
     private string? fileName;
 
     public ProblemsView()
@@ -169,6 +173,7 @@ public sealed class ProblemsView : DockPanel
         ProblemsTab.Toolset => "Toolset, Environment",
         ProblemsTab.Bindings => "Bindings",
         ProblemsTab.HotReload => "Hot Reload",
+        ProblemsTab.Containers => "Containers",
         _ => "Build",
     };
 
@@ -267,6 +272,16 @@ public sealed class ProblemsView : DockPanel
         Refresh();
     }
 
+    /// <summary>The container engine's problems, in Containers, its tab there while it has any.</summary>
+    public void ShowContainers(IReadOnlyList<Problem> problems)
+    {
+        containers = [.. Ordered(problems)];
+        Refresh();
+    }
+
+    /// <summary>The container engine's problems.</summary>
+    public IReadOnlyList<Problem> ContainerProblems => containers;
+
     /// <summary>The projects' load problems, in Toolset, Environment.</summary>
     public void ShowToolset(IReadOnlyList<Problem> problems)
     {
@@ -307,6 +322,8 @@ public sealed class ProblemsView : DockPanel
         tabs[ProblemsTab.Bindings].Content = Titled(TitleOf(ProblemsTab.Bindings), bindings.Count);
         tabs[ProblemsTab.HotReload].Content = Titled(TitleOf(ProblemsTab.HotReload), hotReload?.Count ?? 0);
         tabs[ProblemsTab.HotReload].IsVisible = hotReload is not null;
+        tabs[ProblemsTab.Containers].Content = Titled(TitleOf(ProblemsTab.Containers), containers.Count);
+        tabs[ProblemsTab.Containers].IsVisible = containers.Count > 0 || Shown == ProblemsTab.Containers;
         foreach ((ProblemsTab tab, ToggleButton button) in tabs)
         {
             button.IsChecked = tab == Shown;
@@ -359,6 +376,13 @@ public sealed class ProblemsView : DockPanel
                 rows.Add(new ProblemRow(0, hotReloadSaid, null, null));
                 Grouped(hotReload ?? []);
                 empty.Text = "Hot Reload applied every change";
+                break;
+            case ProblemsTab.Containers:
+                foreach (Problem problem in containers)
+                {
+                    rows.Add(new ProblemRow(0, problem.Message, null, problem));
+                }
+                empty.Text = "The container engine has no problems";
                 break;
             default:
                 Grouped(Problems);

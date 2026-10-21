@@ -20,24 +20,29 @@ internal static partial class Lifeline
     /// number the system has since given to another.</summary>
     private static readonly TimeSpan PruneEvery = TimeSpan.FromSeconds(10);
 
-    /// <summary>The watchdog: "+N" puts group N on its list and "-N" strikes it off; at the end of its input every group
-    /// still listed is killed. It writes nothing, and a terminal's hangup or interrupt is not its to obey.</summary>
+    /// <summary>The watchdog: "+N" puts group N on its list and "-N" strikes it off; "!C" makes C the command it runs last,
+    /// after every group still listed at the end of its input is killed. It writes nothing, and a terminal's hangup or
+    /// interrupt is not its to obey.</summary>
     private const string Watch = """
         exec >/dev/null 2>&1
         trap '' HUP INT
         groups=' '
+        last=''
         while IFS= read -r line; do
           case $line in
             +*) groups="$groups${line#+} " ;;
             -*) case $groups in *" ${line#-} "*) groups="${groups%% ${line#-} *} ${groups#* ${line#-} }" ;; esac ;;
+            !*) last="${line#!}" ;;
           esac
         done
         for group in $groups; do kill -s KILL -- "-$group"; done
+        if [ -n "$last" ]; then eval "$last"; fi
         """;
 
     private static readonly object Gate = new();
     private static readonly HashSet<int> Groups = [];
     private static Process? watchdog;
+    private static string? atEnd;
     private static bool unavailable;
     private static Timer? pruning;
 
@@ -72,6 +77,22 @@ internal static partial class Lifeline
             Groups.Add(group);
             Tell($"+{group}");
             pruning ??= new Timer(_ => Prune(), null, PruneEvery, PruneEvery);
+        }
+    }
+
+    /// <summary>Has the watchdog run a one-line shell command once Passenger's process has ended and its children's groups
+    /// are killed, in place of the one given before: for what no group holds, such as the containers an engine runs for
+    /// Passenger, which only a command to that engine ends. Nothing on Windows, which has no watchdog.</summary>
+    public static void AtEnd(string command)
+    {
+        if (OperatingSystem.IsWindows() || command.Contains('\n', StringComparison.Ordinal))
+        {
+            return;
+        }
+        lock (Gate)
+        {
+            atEnd = command;
+            Tell($"!{command}");
         }
     }
 
@@ -159,6 +180,10 @@ internal static partial class Lifeline
             foreach (int group in Groups)
             {
                 started.StandardInput.Write($"+{group}\n");
+            }
+            if (atEnd is not null)
+            {
+                started.StandardInput.Write($"!{atEnd}\n");
             }
             started.StandardInput.Flush();
             watchdog = started;

@@ -1,0 +1,185 @@
+using System.Globalization;
+using System.Text.Json;
+
+namespace Passenger.App.Containers;
+
+/// <summary>A port a container publishes: on the host's port, from the container's, by its protocol. A TCP one is a link
+/// to <c>http://localhost:port</c>.</summary>
+public sealed record ContainerPort(string HostPort, string Inside, string Protocol)
+{
+    public Uri? Link => Protocol == "tcp" && int.TryParse(HostPort, NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+        ? new Uri($"http://localhost:{port}/") : null;
+
+    public override string ToString() => $"{HostPort}→{Inside}{(Protocol == "tcp" ? string.Empty : $"/{Protocol}")}";
+
+    /// <summary>The ports in <c>docker ps</c>'s words ("0.0.0.0:8080->80/tcp, [::]:8080->80/tcp, 443/tcp"): those published,
+    /// each once whichever addresses it is on.</summary>
+    public static IReadOnlyList<ContainerPort> Read(string? said)
+    {
+        List<ContainerPort> ports = [];
+        foreach (string part in (said ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int arrow = part.IndexOf("->", StringComparison.Ordinal);
+            if (arrow < 0)
+            {
+                continue;
+            }
+            string host = part[..arrow];
+            string inside = part[(arrow + 2)..];
+            string[] protocol = inside.Split('/');
+            ContainerPort port = new(host[(host.LastIndexOf(':') + 1)..], protocol[0], protocol.Length > 1 ? protocol[1] : "tcp");
+            if (!ports.Contains(port))
+            {
+                ports.Add(port);
+            }
+        }
+        return ports;
+    }
+}
+
+/// <summary>A container as <c>docker ps -a</c> lists it: its id, name, image, state (running, exited, paused, created,
+/// restarting, dead), status words, health (healthy, unhealthy, starting, or none), ports and labels, and the Compose
+/// project and service it belongs to, if any.</summary>
+public sealed record ContainerInfo(string Id, string Name, string Image, string State, string Status, string? Health, IReadOnlyList<ContainerPort> Ports,
+    IReadOnlyDictionary<string, string> Labels)
+{
+    public string? Project => Labels.GetValueOrDefault(ComposeLabels.Project);
+
+    public string? Service => Labels.GetValueOrDefault(ComposeLabels.Service);
+
+    /// <summary>Started by Testcontainers (its <c>org.testcontainers</c> label), for a test.</summary>
+    public bool IsTestcontainers => Labels.ContainsKey("org.testcontainers");
+
+    public bool IsRunning => State is "running" or "restarting";
+
+    public bool IsPaused => State == "paused";
+
+    internal static ContainerInfo Read(JsonElement row)
+    {
+        string status = ContainerEngine.Text(row, "Status") ?? string.Empty;
+        string? health = ContainerEngine.Text(row, "HealthStatus") is { } said && said != "none" ? said
+            : status.Contains("(healthy)", StringComparison.Ordinal) ? "healthy"
+            : status.Contains("(unhealthy)", StringComparison.Ordinal) ? "unhealthy"
+            : status.Contains("(health: starting)", StringComparison.Ordinal) ? "starting" : null;
+        return new ContainerInfo(ContainerEngine.Text(row, "ID") ?? string.Empty, (ContainerEngine.Text(row, "Names") ?? string.Empty).Split(',')[0],
+            ContainerEngine.Text(row, "Image") ?? string.Empty, (ContainerEngine.Text(row, "State") ?? string.Empty).ToLowerInvariant(), status, health,
+            ContainerPort.Read(ContainerEngine.Text(row, "Ports")), ReadLabels(ContainerEngine.Text(row, "Labels")));
+    }
+
+    /// <summary>Labels as the CLI's table joins them, "a=1,b=2": a part with no '=' belongs to the value before it (Compose's
+    /// depends_on lists services with commas).</summary>
+    internal static IReadOnlyDictionary<string, string> ReadLabels(string? joined)
+    {
+        Dictionary<string, string> labels = new(StringComparer.Ordinal);
+        string? lastKey = null;
+        foreach (string part in (joined ?? string.Empty).Split(','))
+        {
+            int equals = part.IndexOf('=', StringComparison.Ordinal);
+            if (equals > 0 && !part[..equals].Contains(':', StringComparison.Ordinal))
+            {
+                lastKey = part[..equals];
+                labels[lastKey] = part[(equals + 1)..];
+            }
+            else if (lastKey is not null)
+            {
+                labels[lastKey] += "," + part;
+            }
+        }
+        return labels;
+    }
+}
+
+/// <summary>Compose's own labels on what it makes.</summary>
+public static class ComposeLabels
+{
+    public const string Project = "com.docker.compose.project";
+    public const string Service = "com.docker.compose.service";
+    public const string ConfigFiles = "com.docker.compose.project.config_files";
+    public const string WorkingDir = "com.docker.compose.project.working_dir";
+}
+
+/// <summary>A Compose project: its name, its status as <c>docker compose ls</c> words it ("running(2)", "exited(1)"), its
+/// files and folder, and its services, each with its containers (a stopped project's too, while they exist).</summary>
+public sealed record ComposeProject(string Name, string Status, IReadOnlyList<string> ConfigFiles, string? WorkingDir,
+    IReadOnlyList<(string Service, IReadOnlyList<ContainerInfo> Containers)> Services)
+{
+    public IEnumerable<ContainerInfo> Containers => Services.SelectMany(s => s.Containers);
+
+    public bool IsRunning => Containers.Any(c => c.IsRunning);
+
+    /// <summary>The words that make <c>docker compose</c> act on this project: its name, and its files and folder where
+    /// they are known (to pull, scale or start what it has not made yet).</summary>
+    public IReadOnlyList<string> Arguments
+    {
+        get
+        {
+            List<string> words = ["compose", "-p", Name];
+            foreach (string file in ConfigFiles.Where(File.Exists))
+            {
+                words.AddRange(["-f", file]);
+            }
+            if (WorkingDir is { } folder && Directory.Exists(folder))
+            {
+                words.AddRange(["--project-directory", folder]);
+            }
+            return words;
+        }
+    }
+}
+
+/// <summary>An image, a volume or a network, as the CLI lists it: its kind, id, name and the words after it.</summary>
+public sealed record EngineObject(string Kind, string Id, string Name, string Detail, IReadOnlyDictionary<string, string> Labels);
+
+/// <summary>What the engine holds, read in one go: its Compose projects (with their services and containers), every other
+/// container, and its images, volumes and networks.</summary>
+public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, IReadOnlyList<ContainerInfo> Containers, IReadOnlyList<EngineObject> Images,
+    IReadOnlyList<EngineObject> Volumes, IReadOnlyList<EngineObject> Networks)
+{
+    public static ContainerSnapshot Empty { get; } = new([], [], [], [], []);
+
+    /// <summary>Every container, those of projects first.</summary>
+    public IEnumerable<ContainerInfo> AllContainers => Projects.SelectMany(p => p.Containers).Concat(Containers);
+
+    /// <summary>Reads it all, each list asked of the CLI at once; a <see cref="ContainerCommandException"/> when one fails.</summary>
+    public static async Task<ContainerSnapshot> ReadAsync(ContainerEngine engine, CancellationToken cancel = default)
+    {
+        Task<IReadOnlyList<JsonElement>> containers = engine.JsonLinesAsync(["ps", "-a", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> projects = engine.JsonLinesAsync(["compose", "ls", "-a", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> images = engine.JsonLinesAsync(["images", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> volumes = engine.JsonLinesAsync(["volume", "ls", "--format", "json"], cancel);
+        Task<IReadOnlyList<JsonElement>> networks = engine.JsonLinesAsync(["network", "ls", "--format", "json"], cancel);
+        await Task.WhenAll(containers, projects, images, volumes, networks);
+        List<ContainerInfo> all = [.. (await containers).Select(ContainerInfo.Read).OrderBy(c => c.Name, StringComparer.Ordinal)];
+        Dictionary<string, string> statuses = (await projects).Where(p => ContainerEngine.Text(p, "Name") is not null)
+            .ToDictionary(p => ContainerEngine.Text(p, "Name")!, p => ContainerEngine.Text(p, "Status") ?? string.Empty, StringComparer.Ordinal);
+        List<ComposeProject> composed = [];
+        foreach (IGrouping<string, ContainerInfo> project in all.Where(c => c.Project is not null).GroupBy(c => c.Project!).OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            ContainerInfo first = project.First();
+            string[] files = first.Labels.GetValueOrDefault(ComposeLabels.ConfigFiles)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [];
+            List<(string, IReadOnlyList<ContainerInfo>)> services = [.. project.GroupBy(c => c.Service ?? c.Name).OrderBy(g => g.Key, StringComparer.Ordinal)
+                .Select(g => (g.Key, (IReadOnlyList<ContainerInfo>)[.. g]))];
+            composed.Add(new ComposeProject(project.Key, statuses.GetValueOrDefault(project.Key) ?? Status(project), files,
+                first.Labels.GetValueOrDefault(ComposeLabels.WorkingDir), services));
+        }
+        return new ContainerSnapshot(composed, [.. all.Where(c => c.Project is null)],
+            [.. (await images).Select(i => new EngineObject("image", ContainerEngine.Text(i, "ID") ?? string.Empty, ImageName(i),
+                $"{ContainerEngine.Text(i, "Size")}, {ContainerEngine.Text(i, "CreatedSince")}", new Dictionary<string, string>()))],
+            [.. (await volumes).Select(v => new EngineObject("volume", ContainerEngine.Text(v, "Name") ?? string.Empty, ContainerEngine.Text(v, "Name") ?? string.Empty,
+                ContainerEngine.Text(v, "Driver") ?? string.Empty, ContainerInfo.ReadLabels(ContainerEngine.Text(v, "Labels"))))
+                .OrderBy(v => v.Labels.ContainsKey("com.docker.volume.anonymous")).ThenBy(v => v.Name, StringComparer.Ordinal)],
+            [.. (await networks).Select(n => new EngineObject("network", ContainerEngine.Text(n, "ID") ?? string.Empty, ContainerEngine.Text(n, "Name") ?? string.Empty,
+                ContainerEngine.Text(n, "Driver") ?? string.Empty, ContainerInfo.ReadLabels(ContainerEngine.Text(n, "Labels"))))
+                .OrderBy(n => n.Name, StringComparer.Ordinal)]);
+
+        static string Status(IEnumerable<ContainerInfo> containers) =>
+            string.Join(", ", containers.GroupBy(c => c.State).Select(g => $"{g.Key}({g.Count()})"));
+    }
+
+    private static string ImageName(JsonElement image)
+    {
+        string repository = ContainerEngine.Text(image, "Repository") ?? "<none>";
+        string tag = ContainerEngine.Text(image, "Tag") ?? "<none>";
+        return repository == "<none>" ? ContainerEngine.Text(image, "ID") ?? repository : tag == "<none>" ? repository : $"{repository}:{tag}";
+    }
+}
