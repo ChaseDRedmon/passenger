@@ -424,18 +424,7 @@ public sealed class FileColoursTests : IDisposable
     [AvaloniaFact]
     public void A_key_in_twenty_thousand_lines_of_XML_or_five_thousand_of_Markdown_reads_the_line_it_changed()
     {
-        StringBuilder xml = new("<Project Sdk=\"Microsoft.NET.Sdk\">\n");
-        for (int i = 0; i < 1000; i++)
-        {
-            xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"  <!-- Group {i}:\n       its items. -->\n  <ItemGroup Condition=\"'$(Group)' == '{i}' &gt; 0\">\n");
-            for (int j = 0; j < 10; j++)
-            {
-                xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"    <Compile Include=\"File{i}_{j}.cs\" Label=\"a > b\" />\n");
-            }
-            xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"    <PackageReference Include=\"Package{i}\"\n                      Version=\"1.0.{i}\" />\n");
-            xml.Append("    <None Update=\"x.json\">\n      <CopyToOutputDirectory>Always</CopyToOutputDirectory>\n    </None>\n  </ItemGroup>\n\n");
-        }
-        string large = xml.Append("</Project>\n").ToString();
+        string large = Groups(1000);
         Assert.True(large.Count(c => c == '\n') > 20_000);
         StringBuilder md = new("# Notes\n\n");
         for (int i = 0; md.ToString().Count(c => c == '\n') < 5000; i++)
@@ -474,6 +463,86 @@ public sealed class FileColoursTests : IDisposable
         (long after, _, TimeSpan took) = highlighter.Worked;
         TestContext.Current.TestOutputHelper?.WriteLine($"Opening a comment at the top: {after - before:N0} lines read in {(took - time).TotalMilliseconds:F0} ms");
         window.Close();
+    }
+
+    /// <summary>The caret moved onto a tag's name finds its pair by reading the tags between them where they stand, near the
+    /// caret only, as every move asks: onto the root element's start tag or its end tag in 1,900 lines of XML, a move and
+    /// the pair it lights up allocate on the UI thread what they do in a hundred lines, where every tag read on the way made
+    /// a string of its name and copied its line two or three times more. In 20,000 lines the root's pair is too far to
+    /// light up, where each move read the whole file; Move Caret to Matching Brace, asked once, still goes there and back.</summary>
+    [AvaloniaFact]
+    public void Moving_the_caret_onto_a_tags_name_reads_only_the_tags_near_it_and_Matching_Brace_goes_as_far_as_its_pair()
+    {
+        MainWindow window = Window();
+        (long longStart, long longEnd) = TagMoves(window, "Long.xml", Groups(95));
+        (long shortStart, long shortEnd) = TagMoves(window, "Short.xml", Groups(5));
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"A move onto the root's start tag and its pair allocated {longStart:N0} bytes in 1,900 lines and {shortStart:N0} in 100; onto its end tag {longEnd:N0} and {shortEnd:N0}.");
+        Assert.True(longStart <= shortStart + (16 * 1024),
+            $"A move onto the root element's start tag in 1,900 lines allocated {longStart / 1024.0:F1} KB on the UI thread, against {shortStart / 1024.0:F1} KB in 100: it allocated for the tags between it and its end tag");
+        Assert.True(longEnd <= shortEnd + (16 * 1024),
+            $"A move onto the root element's end tag in 1,900 lines allocated {longEnd / 1024.0:F1} KB on the UI thread, against {shortEnd / 1024.0:F1} KB in 100: it allocated for the tags between it and its start tag");
+
+        string longest = Groups(1000);
+        CodeEditor editor = Open(window, "Longest.xml", longest);
+        int start = longest.IndexOf("<Project", StringComparison.Ordinal) + 1;
+        int end = longest.LastIndexOf("</Project>", StringComparison.Ordinal) + 2;
+        Assert.Null(PairAt(editor, start + 3));
+        int group = longest.IndexOf("<ItemGroup", StringComparison.Ordinal) + 1;
+        Assert.Equal((group, longest.IndexOf("</ItemGroup>", StringComparison.Ordinal) + 2), PairAt(editor, group + 3));
+        editor.Selections = SelectionSet.Single(start + 3);
+        editor.Focus();
+        Ui.Run(window, EditorActions.MatchBrace);
+        Assert.Equal(end, editor.Selections.Primary.Caret);
+        Ui.Run(window, EditorActions.MatchBrace);
+        Assert.Equal(start, editor.Selections.Primary.Caret);
+        window.Close();
+    }
+
+    /// <summary>What moving the caret onto the root element's start tag's name, and onto its end tag's, and the pair it
+    /// lights up allocate on the UI thread, each from a blank line beside it: the least of a few moves, each finding its pair.</summary>
+    private (long Start, long End) TagMoves(MainWindow window, string file, string text)
+    {
+        CodeEditor editor = Open(window, file, text);
+        int start = text.IndexOf("<Project", StringComparison.Ordinal) + 1;
+        int end = text.LastIndexOf("</Project>", StringComparison.Ordinal) + 2;
+        long Moves(int onName, int away, int pair)
+        {
+            long least = long.MaxValue;
+            for (int i = 0; i < 5; i++)
+            {
+                editor.Selections = SelectionSet.Single(away);
+                Ui.Settle();
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                editor.Selections = SelectionSet.Single(onName);
+                BracePair? found = editor.MatchedBraces;
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+                Assert.True(found?.Matching.Start == pair, $"The tag's name at {onName} in {file} paired with {found?.Matching.Start}, not {pair}");
+                Ui.Settle();
+            }
+            return least;
+        }
+        long first = Moves(start + 3, text.IndexOf('\n') + 1, end);
+        long last = Moves(end + 3, end - 3, start);
+        return (first, last);
+    }
+
+    /// <summary>A project file of item groups, twenty lines each, each under a comment, with items that close themselves, an
+    /// item with an element inside, and attributes with a bracket in their values.</summary>
+    private static string Groups(int count)
+    {
+        StringBuilder xml = new("<Project Sdk=\"Microsoft.NET.Sdk\">\n");
+        for (int i = 0; i < count; i++)
+        {
+            xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"  <!-- Group {i}:\n       its items. -->\n  <ItemGroup Condition=\"'$(Group)' == '{i}' &gt; 0\">\n");
+            for (int j = 0; j < 10; j++)
+            {
+                xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"    <Compile Include=\"File{i}_{j}.cs\" Label=\"a > b\" />\n");
+            }
+            xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"    <PackageReference Include=\"Package{i}\"\n                      Version=\"1.0.{i}\" />\n");
+            xml.Append("    <None Update=\"x.json\">\n      <CopyToOutputDirectory>Always</CopyToOutputDirectory>\n    </None>\n  </ItemGroup>\n\n");
+        }
+        return xml.Append("</Project>\n").ToString();
     }
 
     /// <summary>A file opened in the window and typed in at a place: the median time a key takes the UI thread, the time

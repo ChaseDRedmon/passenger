@@ -114,7 +114,7 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     public BracePair? PairAt(TextSnapshot snapshot, int offset) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset);
 
     /// <summary>The syntax's tag pair, a Razor file's markup's.</summary>
-    public BracePair? TagPairAt(TextSnapshot snapshot, int caret) => (syntax as IBraceMatcher)?.TagPairAt(snapshot, caret);
+    public BracePair? TagPairAt(TextSnapshot snapshot, int caret, bool far = false) => (syntax as IBraceMatcher)?.TagPairAt(snapshot, caret, far);
 
     public void Dispose()
     {

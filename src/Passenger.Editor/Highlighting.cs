@@ -119,8 +119,9 @@ public interface IBraceMatcher
 
     /// <summary>The name of the XML or HTML tag a caret is in or at the end of, and the name of the tag it pairs with (a
     /// start tag's end tag, an end tag's start tag), as IntelliJ highlights them; null outside a tag's name, for a tag
-    /// with no pair, or in a language without tags.</summary>
-    BracePair? TagPairAt(TextSnapshot text, int caret) => null;
+    /// with no pair, or in a language without tags. The pair is looked for near the caret, as every caret move asks for
+    /// it, unless <paramref name="far"/> (Move Caret to Matching Brace, asked once).</summary>
+    BracePair? TagPairAt(TextSnapshot text, int caret, bool far = false) => null;
 }
 
 /// <summary>A bracket and the one it pairs with, each as its range in the text.</summary>
