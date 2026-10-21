@@ -145,6 +145,7 @@ public sealed class SettingsStore : IDisposable
         {
             AppActions.UserShortcuts = after.Shortcuts;
         }
+        Explorer.FileIcons.Theme = after.FileIcons;
         IdeLog.Traces = after.TraceProtocols;
         IdeLog.Programs = after.LogEveryProgram;
     }

@@ -82,6 +82,14 @@ public partial class MainWindow
         FollowViewSettings(before, next);
         FollowTitleBar(next);
         Explorer.NestFiles = next.NestFiles;
+        if (before.FileIcons != next.FileIcons)
+        {
+            Explorer.Tree.IconsChanged();
+            foreach (Workspace.OpenDocument document in Editors.Documents)
+            {
+                document.IconsChanged();
+            }
+        }
         assist.Templates = CSharp.TemplateSet.Of(next);
         assist.XamlFormat = next.XamlFormat;
         terminal!.View.FontSize = next.TerminalFontSize;

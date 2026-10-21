@@ -55,6 +55,16 @@ public sealed class ExplorerTree
 
     private IReadOnlyList<string> cut = [];
 
+    /// <summary>The icon set changed (<see cref="FileIcons.Theme"/>): the rows shown draw theirs again, and the rest as
+    /// they show.</summary>
+    public void IconsChanged()
+    {
+        foreach (ExplorerNode row in Rows)
+        {
+            row.IconsChanged();
+        }
+    }
+
     /// <summary>Dims what was cut and waits to be pasted, as Rider's Solution view does, and what it holds.</summary>
     public void SetCut(IReadOnlyList<string> paths)
     {
@@ -756,6 +766,12 @@ public sealed class ExplorerNode : Observable
     public double Opacity => IsDimmed || IsCut ? 0.55 : 1;
     public Geometry Icon => FileIcons.For(this);
     public IBrush IconBrush => FileIcons.BrushFor(this);
+
+    internal void IconsChanged()
+    {
+        Raise(nameof(Icon));
+        Raise(nameof(IconBrush));
+    }
 
     /// <summary>Whether a path lies under this node: inside its folder, or its project's folder, or nested under its file.</summary>
     public bool Contains(string path)
