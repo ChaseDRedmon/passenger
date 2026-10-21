@@ -200,7 +200,8 @@ public sealed partial class EditorArea : UserControl
 
     /// <summary>A file's document for something beside the tabs to show and edit (Local History's diff): the open one, else
     /// one read from disk with no tab, held (<see cref="Hold"/>) until the hold is disposed. Null when it cannot be read as
-    /// text. An asset is never borrowed as editable text, even if its file has since been renamed.</summary>
+    /// text. An asset, or a binary file's bytes, is never borrowed as editable text, even if its file has since been
+    /// renamed.</summary>
     public (OpenDocument Document, IDisposable Hold)? Borrow(string path)
     {
         string full = PathNames.Canonical(path);
@@ -208,7 +209,7 @@ public sealed partial class EditorArea : UserControl
         {
             return null;
         }
-        return Load(full) is { Asset: null } document ? (document, Hold(document)) : null;
+        return Load(full, asBytes: false) is { Asset: null, IsBinary: false } document ? (document, Hold(document)) : null;
     }
 
     /// <summary>Names a change made across files through these editors (a refactoring's), for Local History: held while
@@ -685,9 +686,9 @@ public sealed partial class EditorArea : UserControl
         return new EditorFrame.Leaf(group);
     }
 
-    /// <summary>A file's document, open already or loaded as text, a workbook or an asset now (still decoding); null when
-    /// it cannot be loaded.</summary>
-    private OpenDocument? Load(string path)
+    /// <summary>A file's document, open already or loaded as text, a workbook, an asset now (still decoding) or, when
+    /// <paramref name="asBytes"/>, a binary file's bytes; null when it cannot be loaded.</summary>
+    private OpenDocument? Load(string path, bool asBytes = true)
     {
         string full = PathNames.Canonical(path);
         if (documents.FirstOrDefault(d => d.Path == full) is { } open)
@@ -696,7 +697,7 @@ public sealed partial class EditorArea : UserControl
         }
         try
         {
-            OpenDocument document = OpenDocument.Load(full);
+            OpenDocument document = OpenDocument.Load(full, asBytes);
             document.PreviewFailed += OnPreviewFailed;
             Opened?.Invoke(this, document);
             documents.Add(document);

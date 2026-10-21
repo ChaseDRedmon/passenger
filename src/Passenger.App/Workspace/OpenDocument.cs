@@ -78,8 +78,9 @@ public sealed class OpenDocument : Observable
     /// <summary>Opens a supported image or font as a read-only asset with an empty text placeholder, otherwise as text.
     /// An asset's tab shows it loading until its decode lands off the UI thread; a missing, empty or oversized one is
     /// refused at once. Other binary content opens as its bytes' text, read-only and never written
-    /// (<see cref="FileText.Bytes"/>).</summary>
-    public static OpenDocument Load(string path)
+    /// (<see cref="FileText.Bytes"/>), or, unless <paramref name="asBytes"/> (for what would edit it), is refused with an
+    /// <see cref="IOException"/>.</summary>
+    public static OpenDocument Load(string path, bool asBytes = true)
     {
         if (AssetPreview.KindOf(path) is { } kind)
         {
@@ -93,7 +94,7 @@ public sealed class OpenDocument : Observable
         }
         // A workbook's tab holds no text, since its table is read from the file itself.
         FileText file = Tables.Workbook.IsWorkbook(path) ? new FileText(string.Empty, new UTF8Encoding(false), false)
-            : FileText.Load(path) ?? FileText.Bytes(path);
+            : FileText.Load(path) ?? (asBytes ? FileText.Bytes(path) : throw new IOException($"{System.IO.Path.GetFileName(path)} looks like a binary file."));
         return new OpenDocument(path, file);
     }
 
@@ -648,7 +649,8 @@ public sealed class OpenDocument : Observable
     /// encoding taken, is the text.</summary>
     private void Change(IReadOnlyList<TextEdit> edits, Stored after, bool write)
     {
-        if (Asset is not null)
+        // A workbook's empty stand-in or a binary file's signs, written, would replace the file.
+        if (!HoldsText)
         {
             return;
         }
@@ -945,7 +947,7 @@ public sealed class OpenDocument : Observable
     {
         try
         {
-            return Asset is { } asset ? asset.IsOf(path) : File.Exists(path) && FileText.Load(path, Chosen)?.Text == Text.Saved.ToString();
+            return Asset is { } asset ? asset.IsOf(path) : File.Exists(path) && FromDisk(path)?.Text == Text.Saved.ToString();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -956,8 +958,9 @@ public sealed class OpenDocument : Observable
     /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
     private Encoding? Chosen => encodingChosen ? Encoding : null;
 
-    /// <summary>The file's text on disk as it was read when opened: a binary file's as its bytes.</summary>
-    private FileText? FromDisk() => IsBinary ? FileText.Bytes(Path) : FileText.Load(Path, Chosen);
+    /// <summary>A file's text on disk (this one's, unless another is named) read as this one was when opened: a binary
+    /// file's as its bytes.</summary>
+    private FileText? FromDisk(string? path = null) => IsBinary ? FileText.Bytes(path ?? Path) : FileText.Load(path ?? Path, Chosen);
 
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved

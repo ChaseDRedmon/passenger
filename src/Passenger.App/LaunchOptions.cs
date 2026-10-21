@@ -176,9 +176,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     break;
                 case "--open":
                     string opened = Value(args, ref i, flag);
-                    steps.Add(new ScriptStep.Open(Directory.Exists(opened) || (File.Exists(opened) && WorkspaceModel.Opens(opened))
+                    // As File, Open takes it: a solution, project or folder as the workspace, any other file in a tab.
+                    steps.Add(new ScriptStep.Open(Directory.Exists(opened) || File.Exists(opened)
                         ? Path.GetFullPath(opened)
-                        : throw new FormatException($"--open takes a folder, a solution (.sln, .slnx) or a C# project (.csproj), not '{opened}'")));
+                        : throw new FormatException($"--open takes a file or folder that is there, not '{opened}'")));
                     break;
                 case "--agent":
                     string agentText = Value(args, ref i, flag);

@@ -183,6 +183,36 @@ public sealed class LocalHistoryTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A binary file's tab holds its bytes drawn as signs, none of the file's text: a revert to a version from when
+    /// the file was text writes that version's bytes, and the tab shows them, where one taken as the tab's text did nothing.</summary>
+    [AvaloniaFact]
+    public void Revert_of_a_file_open_as_its_bytes_to_a_version_from_when_it_was_text_writes_that_version()
+    {
+        string path = Write("notes.dat", "First\n");
+        MainWindow window = Open("notes.dat");
+        File.WriteAllText(path, "Second\n");
+        Ui.WaitFor(() => Text(window) == "Second\n", "the tab to take the change made elsewhere");
+        window.EditorArea.Close(window.EditorArea.Active!);
+        Ui.Settle();
+
+        // Written elsewhere as bytes no text holds, it opens as them.
+        File.WriteAllBytes(path, [0x7F, (byte)'E', 0, 1, (byte)'\n']);
+        window.OpenFile(path);
+        Ui.Settle();
+        Assert.True(window.EditorArea.Active is { IsBinary: true }, "notes.dat, now binary, did not open as its bytes' text");
+
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Ui.Landed(() => history.Rows.Count == 1, "the change made elsewhere while it was text");
+        history.Select(history.Rows[0]);
+        Ui.Settle();
+        Task reverting = history.RevertAsync();
+        Ui.WaitFor(() => reverting.IsCompleted, "the revert");
+        Assert.True(File.ReadAllText(path) == "First\n", $"The revert did not write the version back: {window.Status}");
+        Ui.WaitFor(() => Text(window) == "First\n", "the tab to show the bytes the revert wrote");
+        Assert.False(window.EditorArea.Active!.IsModified, "The revert left the binary file's tab modified");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Put_label_puts_a_label_among_the_versions_that_shows_the_file_as_it_was_then()
     {
