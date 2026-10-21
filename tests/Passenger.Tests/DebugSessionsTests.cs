@@ -137,6 +137,8 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             program = session.ProcessStarted.Result;
             adapter = session.AdapterProcessId;
             Assert.True(Processes.IsRunning(program), "The program did not start");
+            // In its loop, it writes no more: on Windows its output is a pipe of the adapter's, which a write would find broken.
+            Ui.WaitFor(() => window.Debugger.Output(session).ToString().Contains("looping", StringComparison.Ordinal), "the program to say it loops");
 
             using (Process debugger = Process.GetProcessById(adapter))
             {
