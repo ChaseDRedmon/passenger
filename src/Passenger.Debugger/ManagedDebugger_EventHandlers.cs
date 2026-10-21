@@ -444,6 +444,17 @@ public partial class ManagedDebugger
     private async Task HandleStepComplete(object? sender, StepCompleteCorDebugManagedCallbackEventArgs stepCompleteEventArgs)
     {
         ICorDebugThread corThread = stepCompleteEventArgs.Thread;
+        bool evaluatedHere = EvalStatus.ThreadId == corThread.Id || EvalStatus.Abandoned.ContainsKey(corThread.Id);
+        if (PutOffDuringEvaluation(stepCompleteEventArgs, corThread))
+        {
+            if (evaluatedHere && stepCompleteEventArgs.Stepper == _stepper)
+            {
+                // Let go with the evaluated code's events, the step ends: no breakpoint may take it for one whose end is queued.
+                _stepper = null;
+                TakeBehindStep();
+            }
+            return;
+        }
         TakeBehindStep();
         if (stepCompleteEventArgs.Stepper != _stepper)
         {

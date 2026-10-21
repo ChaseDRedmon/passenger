@@ -760,7 +760,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   resume. Nothing may leave `_stepper` set but inactive: `HandleBreakpoint` reads such a stepper as one whose
   StepComplete is queued, and lets a breakpoint on the stepping thread go (the step's stop stands for both), while
   another thread's waits behind the step's stop (`PutOffBehindStep`), handled as a hit once the program goes on. A
-  StepComplete whose stepper is no longer `_stepper` (a stop ended its step after it had completed) is let go.
+  StepComplete whose stepper is no longer `_stepper` (a stop ended its step after it had completed) is let go, and one
+  that comes during an evaluation on another thread is put off as a breakpoint's is (`PutOffDuringEvaluation`).
 - `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
@@ -1133,7 +1134,8 @@ its debugger (LaunchTests, DebuggerTests, and McpTests through a launch profile)
 with `Ui.PumpUntil`, since the start holds BackgroundWork. Attach to Process's search matches text, so tests choose a
 program's row by its id (`ChooseById`). LoopingConsoleApp's `waiting` and `waiting first` modes give an async method a builder whose
 `ObjectIdForDebugger` waits on the paused passing thread, `elsewhere` awaits something that goes on on a thread of
-its own, and `race` races a step's end with another thread's breakpoint, the hit first in most turns. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
+its own, and `race` races a step's end with another thread's breakpoint, the hit first in most turns (`race throws`,
+with its exception's handler found, which an exception breakpoint's condition is tried at). `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
 for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErrorsApp` (written the same way), whose
 caption binds a misspelt Name; "rebind" typed into its console makes it fail again. `XamlBreakpointsTests` debug

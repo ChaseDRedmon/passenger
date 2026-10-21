@@ -331,29 +331,64 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         testOutputHelper.WriteLine($"Both stops were seen in {both} of {RaceTurns} turns");
     }
 
+    [Fact]
+    public async Task A_step_that_ends_while_another_threads_exception_breakpoint_tries_its_condition_stops_once_the_condition_is_tried()
+    {
+        // The racing thread throws as it is let go, and its exception finds its handler as the step over the call that
+        // let it go ends, sooner or later each turn: the exception breakpoint's condition, which runs a getter and never
+        // holds, is tried without the step's end stopping the program part way through it.
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        (int letGo, int stepped, _) = RaceLines;
+        DapExceptionOptions raced = new([new DapExceptionPathSegment(["CLR"]), new DapExceptionPathSegment(["RaceException"])], "always")
+        {
+            Condition = "$exception.Message.Length < 0",
+        };
+        StoppedEvent stop = await LaunchRace(host, [new DapSourceBreakpoint(letGo)], raced);
+        int stepping = stop.ThreadId!.Value;
+        for (int turn = 1; turn <= ThrowingTurns; turn++)
+        {
+            Assert.Equal(("breakpoint", letGo, stepping), (stop.Reason, stop.Line, stop.ThreadId));
+            StoppedEvent step = await host.WithStepOverRequest(stepping).WaitForStoppedEvent();
+            Assert.True((step.Reason, step.Line, step.ThreadId) == ("step", stepped, stepping),
+                $"Turn {turn}: the step over the call stopped for {step.Reason} at line {step.Line} on thread {step.ThreadId}, not at line {stepped}");
+            stop = await host.WithContinueRequest().WaitForStoppedEvent();
+            Assert.True(stop.Line == letGo,
+                $"Turn {turn}: the racing thread's exception stopped the program ({stop.Reason} at line {stop.Line} on thread {stop.ThreadId}), its "
+                + "condition never holding: it could not be tried, the step's end having stopped the program while its getter ran");
+        }
+    }
+
     /// <summary>How many times a race between a step's end and another thread's breakpoint is run: each turn goes either way.</summary>
     private const int RaceTurns = 30;
+
+    /// <summary>The throwing race's turns: its forty lengths of wait twice over, so the exception's handler is found before,
+    /// as and after the step ends.</summary>
+    private const int ThrowingTurns = 80;
 
     /// <summary>LoopingConsoleApp's lines in its race: where the stepping thread lets the racing one go, where the step over
     /// that ends, and the line the racing thread passes once let go.</summary>
     private static (int LetGo, int Stepped, int Passed) RaceLines => (Debuggees.Line(Looping, "step over the call that lets the racing thread go"),
         Debuggees.Line(Looping, "the step over the call that lets it go ends here"), Debuggees.Line(Looping, "passed by the racing thread"));
 
-    /// <summary>LoopingConsoleApp launched racing with the breakpoints given; its first stop, the stepping thread at the line
-    /// where it lets the racing thread go.</summary>
-    private static async Task<StoppedEvent> LaunchRace(DebugSession host, List<DapSourceBreakpoint> breakpoints)
+    /// <summary>LoopingConsoleApp launched racing with the breakpoints given, and throwing with the exception breakpoint when
+    /// one is given; its first stop, the stepping thread at the line where it lets the racing thread go.</summary>
+    private static async Task<StoppedEvent> LaunchRace(DebugSession host, List<DapSourceBreakpoint> breakpoints, DapExceptionOptions? exceptions = null)
     {
         string program = Debuggees.Program(Looping);
         host.WithInitializeRequest().Request("launch", new LaunchArguments
         {
             Program = program,
-            Args = ["race"],
+            Args = exceptions is null ? ["race"] : ["race", "throws"],
             Cwd = Path.GetDirectoryName(program),
             Console = "internalConsole",
             JustMyCode = true,
             StopAtEntry = false,
         });
         await host.WaitForInitializedEvent();
+        if (exceptions is not null)
+        {
+            host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], ExceptionOptions: [exceptions]));
+        }
         host.WithBreakpointsRequest(Debuggees.Source(Looping, "Program.cs"), breakpoints).WithConfigurationDoneRequest();
         return await host.WaitForStoppedEvent();
     }
