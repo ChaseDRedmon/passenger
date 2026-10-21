@@ -360,6 +360,15 @@ public sealed class OpenDocument : Observable
         set => Set(ref testMarks, value);
     }
 
+    /// <summary>The run icons beside what a run configuration runs from it: a compose file's services, a Dockerfile's image.</summary>
+    public IReadOnlyList<RunMark> RunMarks
+    {
+        get => runMarks;
+        set => Set(ref runMarks, value);
+    }
+
+    private IReadOnlyList<RunMark> runMarks = [];
+
     /// <summary>The colours its lines write or name (XAML's, C#'s), each a swatch in the gutter.</summary>
     public IReadOnlyList<ColourMark> ColourMarks
     {

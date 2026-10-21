@@ -14,6 +14,29 @@ public sealed partial class BuildRunController
     /// <summary>The container run under way, if any (its services up, its log followed).</summary>
     public ContainerRun? Containers => session.ContainerRun is { IsStopped: false } run ? run : null;
 
+    /// <summary>Runs a container configuration not chosen in the toolbar (a gutter icon's: one compose service, a
+    /// Dockerfile's image), as Run runs the chosen one; a container run under way is taken down first. Null once it runs.</summary>
+    public async Task<string?> RunContainersAsync(RunConfiguration configuration)
+    {
+        UiThread.Check();
+        if (!configuration.IsContainer)
+        {
+            return Said($"{configuration.Name} runs no containers");
+        }
+        if (IsRunning && session.ContainerRun is not { IsStopped: false })
+        {
+            return Said("Already running");
+        }
+        if (parts.Work.Begin(AppActions.RunProgram, $"Working out how to run {configuration.Name}…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
+        }
+        using (work)
+        {
+            return await RunContainersAsync(configuration, work);
+        }
+    }
+
     private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work)
     {
         using IDisposable held = BackgroundWork.Scope();

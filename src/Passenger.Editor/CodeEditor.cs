@@ -231,6 +231,15 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The run icons in the gutter of what run configurations run (a compose file's services), from the host.</summary>
+    public IReadOnlyList<RunMark> RunMarks { get; private set; } = [];
+
+    public void SetRunMarks(IReadOnlyList<RunMark> marks)
+    {
+        RunMarks = marks;
+        InvalidateVisual();
+    }
+
     /// <summary>The colours lines write, each a swatch in the gutter, from the host.</summary>
     public IReadOnlyList<ColourMark> ColourMarks { get; private set; } = [];
 
@@ -528,6 +537,7 @@ public sealed partial class CodeEditor : Control
         SetBookmarks([]);
         SetGutterAnnotations([]);
         SetTestMarks([]);
+        SetRunMarks([]);
         SetColourMarks([]);
         SetLineAnnotations([]);
         SetInlayHints([]);

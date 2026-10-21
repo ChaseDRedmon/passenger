@@ -334,6 +334,7 @@ public partial class MainWindow
             if (session == next)
             {
                 ShowChosenConfiguration(next.Configurations);
+                runMarksLater?.Restart();
             }
         };
         if (next.Watcher is { } watcher)

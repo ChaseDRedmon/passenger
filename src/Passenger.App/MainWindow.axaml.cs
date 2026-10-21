@@ -82,6 +82,7 @@ public partial class MainWindow : Window
         AddBookmarks();
         AddEndpoints();
         AddContainers();
+        AddRunMarks();
         AddPlaces();
         AddHierarchy();
         AddFileOperations();
@@ -151,6 +152,12 @@ public partial class MainWindow : Window
             {
                 // A test's run icon: Rider's menu of Run and Debug for it.
                 ShowTestMenu(editor, active, click.Line);
+                return;
+            }
+            if (!click.Context && editor.IsInMarkColumn(click.Position) && active.RunMarks.Any(m => m.Line == click.Line))
+            {
+                // A compose service's or a Dockerfile's run icon: Run (and Debug) of the configurations that run it.
+                ShowRunMarkMenu(editor, active, click.Line);
                 return;
             }
             if (PickColour(editor, active, click))

@@ -1,4 +1,6 @@
 using System.Globalization;
+using Avalonia;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Containers;
@@ -250,6 +252,55 @@ public sealed class ContainerRunsTests
         Assert.Equal(ServiceStart.DontStart, made.ServiceActions["cache"]);
         Assert.False(made.ServiceActions.ContainsKey("api"), "A service left to run was kept as a choice");
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_compose_files_services_and_a_Dockerfiles_final_FROM_have_run_icons_whose_menu_runs_that_service()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Shop("marks");
+        MainWindow window = Open(folder);
+        window.OpenFile(Path.Combine(folder, "compose.yaml"));
+        Ui.Settle();
+        Passenger.App.Workspace.OpenDocument compose = window.EditorArea.Active!;
+        // Each service's line under services: has the run icon; the file's other lines have none.
+        string[] lines = compose.Text.Snapshot.ToString().Split('\n');
+        int[] services = [.. new[] { "  web:", "  api:", "  cache:" }.Select(s => Array.IndexOf(lines, s))];
+        Ui.WaitFor(() => compose.RunMarks.Select(m => m.Line).Order().SequenceEqual(services.Order()), "the services' run icons");
+        // A Dockerfile a Dockerfile configuration builds has one, on its final FROM.
+        window.OpenFile(Path.Combine(folder, "Web", "Dockerfile"));
+        Ui.Settle();
+        Passenger.App.Workspace.OpenDocument dockerfile = window.EditorArea.Active!;
+        int final = Array.FindLastIndex(dockerfile.Text.Snapshot.ToString().Split('\n'), l => l.StartsWith("FROM ", StringComparison.Ordinal));
+        Ui.WaitFor(() => dockerfile.RunMarks.Select(m => m.Line).SequenceEqual([final]), "the Dockerfile's run icon on its final FROM");
+
+        // A click on cache's icon offers Run, and Debug greyed with why; Run starts cache alone.
+        window.OpenFile(Path.Combine(folder, "compose.yaml"));
+        Ui.Settle();
+        int cache = Array.IndexOf(lines, "  cache:");
+        Passenger.Editor.CodeEditor shown = window.EditorArea.CodeEditor;
+        double x = Enumerable.Range(0, 400).First(x => shown.IsInMarkColumn(new Avalonia.Point(x, 0))) + 3;
+        Avalonia.Point at = shown.TranslatePoint(new Avalonia.Point(x, shown.PointOf(compose.Text.Snapshot.GetLineStart(cache)).Y + (shown.LineHeight / 2)), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Avalonia.Controls.MenuItem[] items = [.. Assert.IsType<Avalonia.Controls.MenuFlyout>(window.RunMarkMenu).Items.OfType<Avalonia.Controls.MenuItem>()];
+        Assert.Equal(["Run 'cache'", "Debug 'cache'"], items.Select(i => (string?)i.Header));
+        Assert.False(items[1].IsEnabled, "Debug of a container was offered before containers are debugged");
+        try
+        {
+            items[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.RunProgram) is null && window.IsRunning, "cache to come up", TimeSpan.FromMinutes(2));
+            Assert.True(window.Builds.Containers is not null, $"cache did not come up: {window.Status}");
+            Assert.Equal(["cache"], States(project).Keys);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "Stop to take cache down", TimeSpan.FromMinutes(2));
+            window.Close();
+        }
     }
 
     private static void Press(Avalonia.Controls.Button button)
