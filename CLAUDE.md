@@ -352,7 +352,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
   `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol
   traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
-  ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar.
+  ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar. A rotation
+  moves the log aside first, so one another program holds where it is (Windows: a reader not sharing deletion) is
+  written on past the limit with its rotated logs kept, and tried again once it has grown a tenth of the limit more.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
   the gutter's change bars, and `VcsController`, the folder's working tree (its session's; the Git and Commit views bind to it): status, branch, each open file's bars,
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the

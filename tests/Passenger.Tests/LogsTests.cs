@@ -264,6 +264,61 @@ public sealed class LogsTests : IDisposable
             $"The IDE's log does not have the git checkout that failed:\n{string.Join('\n', log.Where(l => l.Contains("exited with code", StringComparison.Ordinal)).TakeLast(20))}");
     }
 
+    /// <summary>The IDE's log held open by another program that does not share its deletion, as PowerShell's Get-Content
+    /// -Wait holds it, which Windows then refuses to move: the IDE writes on past the limit, every rotated log kept as it
+    /// was, and rotates it as the next lines come once it is let go, each rotated log moving up one.</summary>
+    [AvaloniaFact]
+    public void A_log_another_program_holds_open_is_written_on_with_its_rotated_logs_kept_and_rotated_once_let_go()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to move a log another program holds open");
+        long limit = IdeErrors.LogLimit;
+        IdeErrors.LogLimit = 16 * 1024;
+        try
+        {
+            // Rotated a dozen times over, so every rotated log is there.
+            Fill("before", (IdeErrors.Rotations + 1) * IdeErrors.LogLimit);
+            string[] rotated = [.. Enumerable.Range(1, IdeErrors.Rotations).Select(n => Path.Combine(IdeErrors.LogFolder, $"passenger.{n}.log"))];
+            Assert.All(rotated, path => Assert.True(File.Exists(path), $"{Path.GetFileName(path)} was not made by a dozen rotations"));
+            string[] before = [.. rotated.Select(Ui.Shared)];
+
+            using (new FileStream(IdeErrors.LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                for (int batch = 0; batch < 20; batch++)
+                {
+                    Fill($"held {batch}", 4 * 1024);
+                }
+                for (int n = 0; n < rotated.Length; n++)
+                {
+                    Assert.True(Ui.Shared(rotated[n]) == before[n], $"{Path.GetFileName(rotated[n])} changed while passenger.log was held open");
+                }
+                Assert.True(Ui.Shared(IdeErrors.LogPath).Contains("held 19 ", StringComparison.Ordinal), "The lines written while passenger.log was held open are not in it");
+            }
+
+            Fill("let go", IdeErrors.LogLimit / 4);
+            Assert.True(Ui.Shared(rotated[0]).Contains("held 19 ", StringComparison.Ordinal), "passenger.log, let go, was not rotated to passenger.1.log");
+            for (int n = 1; n < rotated.Length; n++)
+            {
+                Assert.True(Ui.Shared(rotated[n]) == before[n - 1], $"{Path.GetFileName(rotated[n])} is not what {Path.GetFileName(rotated[n - 1])} was before the rotation");
+            }
+        }
+        finally
+        {
+            // Rotated on until the log held past the limit is gone, as the rest of the run's logs are within it.
+            Fill("after", (IdeErrors.Rotations + 1) * IdeErrors.LogLimit);
+            IdeErrors.LogLimit = limit;
+        }
+
+        // Lines of the IDE's log, a kilobyte each, written now.
+        static void Fill(string name, long bytes)
+        {
+            for (int line = 0; line * 1024 < bytes; line++)
+            {
+                IdeErrors.Write($"{name} {line} {new string('-', 980)}");
+            }
+            IdeErrors.Flush();
+        }
+    }
+
     /// <summary>The lines of the IDE's log written from a moment on, by the local time each entry begins with (to the
     /// millisecond, as IdeLog writes it), with the lines that go on an entry written then.</summary>
     private static string[] Since(string log, DateTime from)

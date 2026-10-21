@@ -38,13 +38,19 @@ public static partial class IdeLog
     private static Thread? writer;
     private static volatile bool traces;
 
+    /// <summary>The logs that could not be moved aside to rotate (Windows, a reader not sharing deletion), each with the
+    /// length it had then: written on, and tried again only once it has grown by a tenth of the limit, not at every write.
+    /// Taken under <see cref="Writing"/>.</summary>
+    private static readonly Dictionary<string, long> Unmoved = new(StringComparer.Ordinal);
+
     /// <summary>How long the log's thread rests after a write, so the lines of a burst share one opening of the file.</summary>
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(250);
 
     /// <summary>The state store's <c>logs</c>, in force now: a test's settings folder changes under a running process.</summary>
     public static string Folder => Path.Combine(State.StateStore.DefaultRoot, "logs");
 
-    /// <summary>The size past which a log is rotated, Rider's idea.log.limit: no log file grows beyond it.</summary>
+    /// <summary>The size past which a log is rotated, Rider's idea.log.limit: no log file grows beyond it, but one another
+    /// program holds where it is.</summary>
     public static long Limit { get; set; } = 10_000_000;
 
     /// <summary>Settings' Trace protocol messages: every message to and from the C# language servers (lsp.log), the debug
@@ -193,15 +199,21 @@ public static partial class IdeLog
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             file = Open(path);
             long length = file.Length;
-            bool rotates = true;
             foreach (LogLine line in lines)
             {
                 byte[] bytes = Encoding.UTF8.GetBytes(line.Text);
-                if (rotates && length > 0 && length + bytes.Length > Limit)
+                if (length > 0 && length + bytes.Length > Limit && !WaitsToRotate(path, length))
                 {
                     file.Dispose();
-                    // One that cannot be moved (Windows, a reader not sharing deletion) is written on rather than lost.
-                    rotates = Rotate(path);
+                    // One that cannot be moved is written on rather than lost.
+                    if (Rotate(path))
+                    {
+                        Unmoved.Remove(path);
+                    }
+                    else
+                    {
+                        Unmoved[path] = length;
+                    }
                     file = Open(path);
                     length = file.Length;
                 }
@@ -218,11 +230,25 @@ public static partial class IdeLog
         }
     }
 
+    /// <summary>Whether a log that could not be moved aside to rotate has grown by less than a tenth of the limit since.</summary>
+    private static bool WaitsToRotate(string path, long length) => Unmoved.TryGetValue(path, out long held) && length < held + Limit / 10;
+
     private static FileStream Open(string path) => new(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
 
-    /// <summary>Rider's RollingFileHandler: the oldest goes, each moves up one, and the log becomes <c>passenger.1.log</c>.</summary>
+    /// <summary>Rider's RollingFileHandler: the oldest goes, each moves up one, and the log becomes <c>passenger.1.log</c>.
+    /// The log is moved aside first, so one that cannot be (Windows, a reader not sharing deletion) leaves the rotated ones
+    /// as they were; false then.</summary>
     private static bool Rotate(string path)
     {
+        string aside = Rotated(path, "rotating");
+        try
+        {
+            File.Move(path, aside, overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
         try
         {
             File.Delete(Rotated(path, Rotations));
@@ -233,18 +259,27 @@ public static partial class IdeLog
                     File.Move(Rotated(path, n), Rotated(path, n + 1));
                 }
             }
-            File.Move(path, Rotated(path, 1));
-            return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            return false;
+            // A rotated log held where it is: the log still takes the first place.
         }
+        try
+        {
+            File.Move(aside, Rotated(path, 1), overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Held there too: the log stays aside until the next rotation's takes its place.
+        }
+        return true;
     }
 
     /// <summary>A rotated log's path: <c>passenger.3.log</c> beside <c>passenger.log</c>.</summary>
-    private static string Rotated(string path, int number) =>
-        Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}.{number}{Path.GetExtension(path)}");
+    private static string Rotated(string path, int number) => Rotated(path, $"{number}");
+
+    private static string Rotated(string path, string part) =>
+        Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}.{part}{Path.GetExtension(path)}");
 
     private sealed record LogLine(string Path, string Text);
 
