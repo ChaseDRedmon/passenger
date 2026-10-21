@@ -362,10 +362,10 @@ public sealed class AssetPreviewTests : IDisposable
         File.WriteAllBytes(Path.Combine(folder, "small.png"), ImageBytes(".png"));
         MainWindow window = Open();
         // The first open warms what every open runs, so neither measured one pays for it.
-        Opening(window, "small.png");
+        Opening(window, "small.png", large: false);
 
-        long small = Opening(window, "small.png");
-        long big = Opening(window, "large.png");
+        long small = Opening(window, "small.png", large: false);
+        long big = Opening(window, "large.png", large: true);
         Assert.True(big - small < large.Length / 4,
             $"Opening a {large.Length / (1024 * 1024)} MB image allocated {big / 1024} KB on the UI thread, a small one {small / 1024} KB: the large one was decoded there");
         window.Close();
@@ -402,15 +402,20 @@ public sealed class AssetPreviewTests : IDisposable
         window.Close();
     }
 
-    /// <summary>Opens an image, its tab saying it is loading until the decode lands, and closes it again: what the UI thread
-    /// allocated from the open to the picture shown.</summary>
-    private static long Opening(MainWindow window, string file)
+    /// <summary>Opens an image, a large one's tab saying it is loading until the decode lands, and closes it again: what the UI
+    /// thread allocated from the open to the picture shown.</summary>
+    /// <param name="large">Whether its decode outlasts the open: a small picture's, done on the pool before the open reaches its
+    /// await, may land before the open returns.</param>
+    private static long Opening(MainWindow window, string file, bool large)
     {
         long before = GC.GetAllocatedBytesForCurrentThread();
         Assert.Null(window.OpenFile(file));
         OpenDocument document = window.EditorArea.Active!;
-        Assert.True(document.Asset!.IsPending, $"{file} was decoded before the open returned, on the UI thread");
-        Assert.Contains(Preview(window.EditorArea.ActiveGroup).GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "Loading the image…");
+        if (large)
+        {
+            Assert.True(document.Asset!.IsPending, $"{file} was decoded before the open returned");
+            Assert.Contains(Preview(window.EditorArea.ActiveGroup).GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "Loading the image…");
+        }
         Ui.Settle();
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.False(document.Asset!.IsPending, $"{file} never finished decoding");

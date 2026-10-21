@@ -65,3 +65,10 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 - The v0.1.0 release run 39337400528: a shard whose tests had all passed failed uploading its results (CreateArtifact,
   ETIMEDOUT), and the publish met an HTTP 500 from GitHub's releases API (`gh release create` removed its draft).
   Neither: **GitHub**; re-running the failed jobs published the release.
+- `TerminalTests`' flood of output, the Ubuntu VM's full run at bc93b815 (beside the Windows VM's full run and three
+  agents' builds): a key waited 268 ms against the 250 ms bound; it passed three re-runs at 6–7 s each. Neither: **the
+  machine's load**, not changed; the bound measures responsiveness, which the time scale rightly leaves alone.
+- `AssetPreviewTests`' large image off the UI thread, the Mac under load: "small.png was decoded before the open
+  returned". A small picture's decode on the pool can finish before the open reaches its await, which then goes on at
+  once, so the open returns with the picture in place. **The test**, which held every open to still be loading: only the
+  large picture's is now; the small one's off-thread decode is shown by the allocations compared.
