@@ -228,6 +228,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <c>$schema</c> on the web is downloaded to check and complete it. Those Passenger carries never are.</summary>
     public bool DownloadJsonSchemas { get; init; } = true;
 
+    /// <summary>"Complete image tags from Docker Hub": the Dockerfile server asks Docker Hub for an image's tags, naming the
+    /// image, as <c>FROM image:</c> is completed. Off, it asks Docker Hub nothing and offers no tags.</summary>
+    public bool DockerHubTags { get; init; } = true;
+
     /// <summary>Rider's Enable MCP Server: agents reaching the window through its socket (<c>passenger --mcp-attach</c>)
     /// are let in without asking. Off until the person turns it on, since any program running as them could then act with
     /// the IDE's permissions; off, the window asks the person before each agent's first call goes on.</summary>

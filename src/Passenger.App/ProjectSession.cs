@@ -36,7 +36,11 @@ public sealed record SessionSetup(
     Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger,
     Func<Settings.AppSettings> Settings,
     ActionWork Work,
-    Func<Containers.ContainerEngine> Engine);
+    Func<Containers.ContainerEngine> Engine)
+{
+    /// <summary>Where the Dockerfile server asks for image tags in Docker Hub's place: the window's stand-in, a test's.</summary>
+    public Uri? DockerHub { get; init; }
+}
 
 /// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
 /// packages the projects reference, changed with them.</summary>
@@ -119,7 +123,7 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Configurations.Configure(session.Projects);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
-        session.Web = new Web.WebLanguages(folder, setup.Settings);
+        session.Web = new Web.WebLanguages(folder, setup.Settings) { DockerHub = setup.DockerHub };
         return session;
     }
 

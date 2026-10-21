@@ -57,10 +57,14 @@ public sealed class WebLanguages : IAsyncDisposable
 
     /// <summary>The ESLint settings the ESLint server runs by, which a change of them starts it again for.</summary>
     private (ToolConfiguration, string?, string) linting;
+
+    /// <summary>Whether the Dockerfile server asks Docker Hub for an image's tags, which a change starts it again for.</summary>
+    private bool asksDockerHub;
     private bool disposed;
 
     /// <summary>A folder's servers, run on the Node.js Settings names (null for the PATH's), with ESLint and Prettier as
-    /// <paramref name="settings"/> configure them; remote JSON schemas are downloaded while Settings allows it.</summary>
+    /// <paramref name="settings"/> configure them; remote JSON schemas are downloaded, and Docker Hub asked for image
+    /// tags, while Settings allows it.</summary>
     public WebLanguages(string folder, Func<AppSettings> settings)
     {
         this.folder = folder;
@@ -68,6 +72,7 @@ public sealed class WebLanguages : IAsyncDisposable
         AppSettings now = settings();
         configured = now.NodeInterpreter;
         linting = Linting(now);
+        asksDockerHub = now.DockerHubTags;
         Schemas = new JsonSchemas(() => settings().DownloadJsonSchemas);
         Eslint = new EslintService(folder, settings, FindNodeAsync);
         Prettier = new PrettierService(folder, settings, FindNodeAsync);
@@ -84,6 +89,10 @@ public sealed class WebLanguages : IAsyncDisposable
     public event EventHandler<string>? Message;
 
     public JsonSchemas Schemas { get; }
+
+    /// <summary>Where the Dockerfile server asks for image tags in Docker Hub's place: a test's stand-in; null for the
+    /// place <c>PASSENGER_DOCKER_HUB</c> names, else Docker Hub's own (<see cref="DockerHubTags"/>).</summary>
+    public Uri? DockerHub { get; init; }
 
     /// <summary>ESLint, for the files it checks.</summary>
     public EslintService Eslint { get; }
@@ -415,6 +424,22 @@ public sealed class WebLanguages : IAsyncDisposable
         }
     }
 
+    /// <summary>Settings' Complete image tags from Docker Hub changed: the Dockerfile server, running or starting, starts
+    /// again with its files, told whether to ask Docker Hub, which it learns only as it starts.</summary>
+    public void UseDockerHub(bool asks)
+    {
+        UiThread.Check();
+        if (disposed || asks == asksDockerHub)
+        {
+            return;
+        }
+        asksDockerHub = asks;
+        if (servers.TryGetValue(WebServerKind.Dockerfile, out Server? server) && server.Problem is null)
+        {
+            Replace(server, restart: true);
+        }
+    }
+
     private Server ServerFor(WebServerKind kind)
     {
         if (!servers.TryGetValue(kind, out Server? server))
@@ -506,9 +531,12 @@ public sealed class WebLanguages : IAsyncDisposable
         }
     }
 
-    /// <summary>Why a server cannot start that this build is to blame for: its package is not beside the app.</summary>
+    /// <summary>Why a server cannot start that this build is to blame for: its package, or the Dockerfile server's preload,
+    /// is not beside the app.</summary>
     private static string? Missing(WebServerKind kind) =>
-        File.Exists(Script(kind)) ? null : $"its language server is missing from the app's folder ({Script(kind)})";
+        !File.Exists(Script(kind)) ? $"its language server is missing from the app's folder ({Script(kind)})"
+        : kind == WebServerKind.Dockerfile && !File.Exists(DockerHubTags.Preload) ? $"Passenger's part of its language server is missing from the app's folder ({DockerHubTags.Preload})"
+        : null;
 
     /// <summary>A server that cannot run: its files keep their colours and say why in their banner, the status bar in a
     /// few words (<paramref name="label"/>).</summary>
@@ -564,10 +592,17 @@ public sealed class WebLanguages : IAsyncDisposable
     };
 
     /// <summary>How a server starts: its script on Node.js in the folder, with the options its package documents. The
-    /// TypeScript server never installs type packages from npm (automatic type acquisition) behind the person's back.</summary>
+    /// TypeScript server never installs type packages from npm (automatic type acquisition) behind the person's back, nor
+    /// the Dockerfile server asks Docker Hub for image tags unless Settings allows it (its preload, <see cref="DockerHubTags"/>).</summary>
     private ServerStart Starting(WebServerKind kind, string node)
     {
-        System.Diagnostics.ProcessStartInfo process = ChildProcesses.Command(node, [Script(kind), "--stdio"], folder);
+        ProcessStartInfo process = ChildProcesses.Command(node, kind == WebServerKind.Dockerfile
+            ? ["--require", DockerHubTags.Preload, Script(kind), "--stdio"]
+            : [Script(kind), "--stdio"], folder);
+        if (kind == WebServerKind.Dockerfile && DockerHubTags.Told(asksDockerHub, DockerHub) is { } told)
+        {
+            process.Environment[DockerHubTags.Variable] = told;
+        }
         object? options = kind switch
         {
             WebServerKind.TypeScript => new

@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -6,6 +9,7 @@ using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Explorer;
+using Passenger.App.Settings;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -64,6 +68,62 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             app.Reset();
         }
     }
+
+    /// <summary>Settings' Complete image tags from Docker Hub, on at first: after FROM image: the Dockerfile server offers the
+    /// image's tags, asked of Docker Hub (a stand-in on loopback here); turned off on the Docker page, beside Remote JSON
+    /// Schemas, the server starts again and asks Docker Hub nothing, offering no tags.</summary>
+    [AvaloniaFact]
+    public void A_dockerfile_completes_an_images_tags_from_docker_hub_and_asks_it_nothing_once_settings_turn_that_off()
+    {
+        Shop.SkipWithoutNode();
+        using StandInHub hub = new();
+        MainWindow window = app.Open("ops/api.Dockerfile", hub.Place);
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Assert.True(window.Settings.DockerHubTags, "Complete image tags from Docker Hub is off in a fresh Passenger");
+            editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, "FROM postgres:1\n" + Shop.OpsDockerfile)]);
+            PlaceAfter(editor, "FROM postgres:1");
+            Ui.Run(window, AppActions.Complete);
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("17-alpine"), $"postgres's tags from Docker Hub (asked: {string.Join(", ", hub.Asked)})");
+            Assert.Equal(["16", "17", "17-alpine"], window.Assist.CompletionLabels.Order(StringComparer.Ordinal));
+            Assert.Equal([TokenAsked, TagsAsked], hub.Asked);
+            Ui.Press(window, "ESCAPE");
+
+            SettingsDialog dialog = DialogButtonsTests.Check(window.ShowSettings());
+            dialog.Query = "docker hub";
+            Ui.Settle();
+            Assert.Equal([SettingsDialog.DockerPage], dialog.Pages);
+            Assert.Equal([HubTags], dialog.Shown);
+            CheckBox asks = Editor<CheckBox>(dialog, HubTags);
+            Assert.True(asks.IsChecked == true, "Settings shows Complete image tags from Docker Hub off while it is on");
+            Click(dialog, asks);
+            dialog.Ok();
+            Ui.Settle();
+            Assert.False(window.Settings.DockerHubTags, "Clearing Complete image tags from Docker Hub left it on");
+
+            // The server, started again, answers (an instruction's completion) and offers no tags, asking Docker Hub nothing.
+            editor.Selections = SelectionSet.Single(editor.Document.Snapshot.Length);
+            TypeEach(window, "WORK");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Any(l => l.StartsWith("WORKDIR", StringComparison.Ordinal)), "the Dockerfile server started again answering");
+            Ui.Press(window, "ESCAPE");
+            PlaceAfter(editor, "FROM postgres:1");
+            Ui.Run(window, AppActions.Complete);
+            Ui.Settle();
+            Assert.True(window.Assist.CompletionLabels.Count == 0,
+                $"With Complete image tags from Docker Hub off, FROM postgres:1 still offered [{string.Join(", ", window.Assist.CompletionLabels)}]");
+            Assert.True(hub.Asked.Count == 2, $"Docker Hub was asked with Complete image tags from Docker Hub off: {string.Join(", ", hub.Asked.Skip(2))}");
+        }
+        finally
+        {
+            window.Close();
+            app.Reset();
+        }
+    }
+
+    private const string HubTags = "Complete image tags from Docker Hub";
+    private const string TokenAsked = "GET /auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull";
+    private const string TagsAsked = "GET /registry-1.docker.io/v2/library/postgres/tags/list";
 
     [AvaloniaFact]
     public void A_compose_file_completes_a_services_keys_by_the_compose_schema_marks_a_key_it_does_not_have_and_knows_composes_tags()
@@ -297,6 +357,17 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
+    private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
+        ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
+
+    private static void Click(Window window, Control control)
+    {
+        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+    }
+
     private static List<string> Answer(MainWindow window)
     {
         List<string> asked = [];
@@ -349,6 +420,109 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
         menu.Close();
         Ui.Settle();
+    }
+
+    /// <summary>Docker Hub on a loopback port of its own, each request under its host's name as the Dockerfile server's
+    /// preload sends it there: a token from auth.docker.io, and postgres's tags from registry-1.docker.io for that token;
+    /// every request kept by its method and path.</summary>
+    private sealed class StandInHub : IDisposable
+    {
+        private const string Token = "stand-in";
+
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource end = new();
+        private readonly List<string> asked = [];
+        private readonly Task accepting;
+
+        public StandInHub()
+        {
+            listener.Start();
+            Place = new Uri($"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/");
+            accepting = Task.Run(AcceptAsync);
+        }
+
+        public Uri Place { get; }
+
+        public IReadOnlyList<string> Asked
+        {
+            get
+            {
+                lock (asked)
+                {
+                    return [.. asked];
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            end.Cancel();
+            listener.Stop();
+            accepting.Wait(TimeSpan.FromSeconds(10));
+            end.Dispose();
+        }
+
+        private async Task AcceptAsync()
+        {
+            List<Task> answering = [];
+            try
+            {
+                while (true)
+                {
+                    TcpClient client = await listener.AcceptTcpClientAsync(end.Token);
+                    answering.Add(Task.Run(() => AnswerAsync(client)));
+                }
+            }
+            catch (Exception stopped) when (stopped is OperationCanceledException or SocketException or ObjectDisposedException or InvalidOperationException)
+            {
+                // Disposed.
+            }
+            await Task.WhenAll(answering);
+        }
+
+        private async Task AnswerAsync(TcpClient client)
+        {
+            using (client)
+            {
+                try
+                {
+                    NetworkStream stream = client.GetStream();
+                    StringBuilder head = new();
+                    byte[] buffer = new byte[4096];
+                    while (!head.ToString().Contains("\r\n\r\n", StringComparison.Ordinal))
+                    {
+                        int read = await stream.ReadAsync(buffer, end.Token);
+                        if (read == 0)
+                        {
+                            return;
+                        }
+                        head.Append(Encoding.ASCII.GetString(buffer, 0, read));
+                    }
+                    string[] lines = head.ToString().Split("\r\n");
+                    string request = lines[0][..lines[0].LastIndexOf(' ')];
+                    lock (asked)
+                    {
+                        asked.Add(request);
+                    }
+                    string path = request[(request.IndexOf(' ') + 1)..];
+                    bool bearer = lines.Any(l => l.Equals($"Authorization: Bearer {Token}", StringComparison.OrdinalIgnoreCase));
+                    (int status, string body) = path switch
+                    {
+                        _ when path.StartsWith("/auth.docker.io/token?", StringComparison.Ordinal) => (200, $"{{\"token\":\"{Token}\"}}"),
+                        "/registry-1.docker.io/v2/library/postgres/tags/list" when bearer => (200, "{\"name\":\"library/postgres\",\"tags\":[\"16\",\"17\",\"17-alpine\",\"latest\"]}"),
+                        _ => (404, "{}"),
+                    };
+                    byte[] content = Encoding.UTF8.GetBytes(body);
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 {status} {(status == 200 ? "OK" : "Not Found")}\r\nContent-Type: application/json\r\n"
+                        + $"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n"), end.Token);
+                    await stream.WriteAsync(content, end.Token);
+                }
+                catch (Exception gone) when (gone is IOException or OperationCanceledException or SocketException or ObjectDisposedException)
+                {
+                    // The server gave up on it, or the test ended.
+                }
+            }
+        }
     }
 
     /// <summary>A solution of an ASP.NET Core app (Api, using Npgsql, with launch profiles and a connection string), a worker
@@ -448,10 +622,11 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             }
         }
 
-        /// <summary>A window on the solution, with a file open when one is named.</summary>
-        public MainWindow Open(string? file)
+        /// <summary>A window on the solution, with a file open when one is named, its Dockerfile server asking
+        /// <paramref name="dockerHub"/> for image tags when one is given.</summary>
+        public MainWindow Open(string? file, Uri? dockerHub = null)
         {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, DockerHub = dockerHub };
             window.Show();
             window.OpenFolder(Folder);
             if (file is not null)

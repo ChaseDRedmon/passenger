@@ -20,6 +20,9 @@
     <!-- Passenger's own Prettier runner, run on the machine's Node.js with the project's own prettier (Web/Prettier.cs),
          carried beside the web language servers. -->
     <None Include="Web/prettier.cjs" Link="web/passenger/prettier.cjs" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Passenger's preload for the Dockerfile server, which keeps it from Docker Hub while Settings says so
+         (Web/DockerHubTags.cs). -->
+    <None Include="Web/docker-hub.cjs" Link="web/passenger/docker-hub.cjs" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

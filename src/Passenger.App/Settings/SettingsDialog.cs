@@ -28,6 +28,7 @@ public sealed partial class SettingsDialog : Window
     public const string EslintPage = "ESLint";
     public const string PrettierPage = "Prettier";
     public const string SchemasPage = "Remote JSON Schemas";
+    public const string DockerPage = "Docker";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
     public const string DiscordPage = "Discord";
@@ -50,7 +51,7 @@ public sealed partial class SettingsDialog : Window
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, XamlCodeStylePage, LiveTemplatesPage,
-        BuildPage, RunPage, HotReloadPage, NodePage, EslintPage, PrettierPage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+        BuildPage, RunPage, HotReloadPage, NodePage, EslintPage, PrettierPage, SchemasPage, DockerPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
     /// <summary>Rider's names for Attributes format's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeStyle"/>'s order.</summary>
     public static readonly string[] AttributeStyles = ["On single line", "First attribute on single line", "Each attribute on separate lines", "Do not touch"];
@@ -379,6 +380,11 @@ public sealed partial class SettingsDialog : Window
             "A JSON file that names a schema on the web ($schema) has it downloaded to check and complete it. package.json, "
             + "tsconfig.json, jsconfig.json, appsettings.json, launchSettings.json and global.json use the schemas Passenger "
             + "carries from SchemaStore, which are never downloaded.");
+        // Beside Remote JSON Schemas: the other thing typing asks the web for.
+        Add(DockerPage, "Complete image tags from Docker Hub", Check(Working.DockerHubTags, v => Change(s => s with { DockerHubTags = v })),
+            "docker hub dockerfile containerfile image images tag tags from completion registry remote download web network",
+            "In a Dockerfile, completion after FROM image: lists the image's tags, which the Dockerfile language server asks "
+            + "Docker Hub for, naming the image. Off, it asks Docker Hub nothing and offers no tags.");
 
         Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
         (string shell, _) = Passenger.Terminal.TerminalSession.DefaultShell();

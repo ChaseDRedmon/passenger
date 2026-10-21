@@ -42,7 +42,14 @@ public partial class MainWindow
     /// warm server it may take up, its consoles, Debug window and tests tree, a test run's build (which the session's builds
     /// and runs make), and the Terminal tab the debugger asks for.</summary>
     private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer, Bottom,
-        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings, work, () => Engine);
+        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings, work, () => Engine)
+    {
+        DockerHub = DockerHub,
+    };
+
+    /// <summary>Where this window's Dockerfile server asks for image tags in Docker Hub's place: a test's stand-in; null for
+    /// the place <c>PASSENGER_DOCKER_HUB</c> names, else Docker Hub's own.</summary>
+    public Uri? DockerHub { get; init; }
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,

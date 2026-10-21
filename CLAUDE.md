@@ -299,7 +299,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`; a Dockerfile's FROM image that names no
   stage goes to its page too (`CodeAssist.FromImageAt`). The Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
-  The Dockerfile server completes a FROM image's tags by asking Docker Hub itself.
+  The Dockerfile server completes a FROM image's tags by asking Docker Hub itself, only while Settings' Complete image
+  tags from Docker Hub (its Docker page) is on: it runs with Passenger's preload (`node --require` of `Web/docker-hub.cjs`,
+  carried as `web/passenger/docker-hub.cjs`), which `PASSENGER_DOCKER_HUB` (`DockerHubTags`) tells to answer no tags or
+  to ask another place (the window's `DockerHub` stand-in, else the IDE's own variable, which the tests' run points at a
+  dead address), and a change of the setting starts the server again (`WebLanguages.UseDockerHub`).
   `WebLanguages.Eslint` (`EslintService`/`EslintDocument`) runs vscode-langservers-extracted's ESLint server per folder
   on the project's own eslint (`ProjectPackages`: found from the file up, or Settings' Manual package); its fixes are
   commands whose edits come back as `workspace/applyEdit` (`ServerStart.ApplyEdit`, applied through `WorkspaceEdits`),

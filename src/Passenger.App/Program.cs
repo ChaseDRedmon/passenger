@@ -31,6 +31,7 @@ internal static class Program
             _ = Updates.ReleaseFeed.Default;
             _ = Discord.DiscordIpc.Default;
             Web.JsonSchemas.CheckVariable();
+            Web.DockerHubTags.CheckVariable();
             Mcp.McpProxy.CheckVariable();
             _ = MainWindow.WatchSaysLater;
             _ = Mcp.AgentCall.Every;
