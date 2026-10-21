@@ -350,8 +350,7 @@ public sealed partial class CodeEditor
         double within = scroll.Y - (top * metrics.LineHeight);
         change();
         int row = RowOfOffset(text, anchor, beforeWrap: false).Row;
-        double bottom = Math.Max(0, (RowCount - 1) * metrics.LineHeight);
-        scroll = new Vector(scroll.X, Math.Clamp((row * metrics.LineHeight) + Math.Min(within, metrics.LineHeight - 1), 0, bottom));
+        scroll = new Vector(scroll.X, Math.Clamp((row * metrics.LineHeight) + Math.Min(within, metrics.LineHeight - 1), 0, MaxScrollY));
         UpdateScrollBars();
         InvalidateVisual();
         ScrollChanged?.Invoke(this, EventArgs.Empty);

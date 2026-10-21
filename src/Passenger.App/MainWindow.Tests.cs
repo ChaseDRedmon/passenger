@@ -122,7 +122,18 @@ public partial class MainWindow
 
         async Task Go()
         {
-            if (await run() is { } problem)
+            string? problem;
+            try
+            {
+                problem = await run();
+            }
+            catch (Exception error)
+            {
+                // Nobody awaits the run: a failure no runner foresaw is an IDE error, said now rather than at a collection.
+                IdeErrors.Report(error);
+                problem = $"The tests could not run: {error.Message}";
+            }
+            if (problem is not null)
             {
                 Say(problem, StatusPlace.Window(Dock, "tests"));
                 Bottom.Tests.Status = problem;
@@ -253,7 +264,19 @@ public partial class MainWindow
         {
             throw new InvalidOperationException(problem ?? "The debugger could not start the test host");
         }
-        return await host.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
+        try
+        {
+            return await host.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException)
+        {
+            // Given up on, as an attach is: left running, the session would say the tests run with nothing under it.
+            if (debug.Session == host)
+            {
+                await debug.StopAsync();
+            }
+            throw new InvalidOperationException("The debugger did not say which test host it started within 30 s");
+        }
     }
 
     /// <summary>A test host a runner started itself, attached to: true once the debugger has hold of it.</summary>

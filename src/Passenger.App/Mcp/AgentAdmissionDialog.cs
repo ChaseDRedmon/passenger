@@ -38,8 +38,9 @@ public sealed class AgentAdmissionDialog : Window
                 new TextBlock { Text = Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap },
                 new TextBlock
                 {
-                    Text = $"It asked through Passenger's MCP server. Allowed, it can read and search {where}, see the window, and build, run "
-                        + "and debug; Passenger still asks before each kind of change it makes. Enable MCP Server in Settings lets agents in "
+                    Text = $"It asked through Passenger's MCP server. Allowed, it can read and search {where}, see the window, save files, stop "
+                        + "what runs and step through what is debugged; Passenger asks you before it first makes each other kind of change, such "
+                        + "as an edit, a build, a run, a breakpoint or code run in the debugged program. Enable MCP Server in Settings lets agents in "
                         + "without asking, and Settings' MCP Server page lists the folders allowed always, each to take back.",
                     TextWrapping = TextWrapping.Wrap,
                 },

@@ -6,6 +6,7 @@ using Avalonia.Headless.XUnit;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Passenger.App;
+using Passenger.App.Settings;
 using Passenger.Core;
 using Debuggees = Passenger.Tests.Debugging.Helpers.Debuggees;
 
@@ -236,11 +237,15 @@ public sealed partial class McpTests
             $"The longest frame is not the one the frames say: {frames}");
     }
 
+    /// <summary>On the person's window an agent asks before its first click or key in their app or in Passenger itself, and
+    /// once allowed both still never answers the questions Passenger asks the person for it, nor reaches Settings. Passenger's
+    /// own windows are inspected once a process, so this is the run's one test of them in the test process itself.</summary>
     [AvaloniaFact]
     public void An_agent_on_the_persons_window_is_asked_before_it_first_clicks_or_presses_keys_in_their_avalonia_app_or_in_passenger()
     {
         MainWindow window = AgentsWindow(appFolder);
         McpClient? client = null;
+        SettingsDialog? shown = null;
         try
         {
             Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
@@ -273,9 +278,34 @@ public sealed partial class McpTests
             string escaped = Text(Await(escaping, "the Escape"));
             string after = Text(Await(Task.Run(() => Call(agent, "app_tree", menu)), "the menu closed"));
             Assert.True(after.StartsWith("Nothing in Passenger matches", StringComparison.Ordinal), $"Escape ({escaped}) left the menu open: {after}");
+
+            // Allowed both, it never answers the question its own build waits on: its click and Enter on that question's Allow
+            // are refused, and the question stands for the person.
+            Task<CallToolResult> building = Task.Run(() => Result(agent, "build"));
+            ConfirmDialog question = Question(window, "the question for the agent's build");
+            CallToolResult clicked = Await(Task.Run(() => Result(agent, "app_click", new() { ["app"] = "ide", ["window"] = "ConfirmDialog", ["control"] = "Button \"Allow\"" })),
+                "the agent's click on the question's Allow");
+            Assert.True(clicked.IsError == true && Text(clicked).Contains("only they answer it", StringComparison.Ordinal),
+                $"The agent's click on the question its own build waits on was answered: {Text(clicked)}");
+            CallToolResult entered = Await(Task.Run(() => Result(agent, "app_key", new() { ["app"] = "ide", ["window"] = "ConfirmDialog", ["keys"] = "Enter" })),
+                "the agent's Enter in the question");
+            Assert.True(entered.IsError == true && Text(entered).Contains("only they answer it", StringComparison.Ordinal),
+                $"The agent's Enter in the question its own build waits on was answered: {Text(entered)}");
+            Assert.True(question.IsVisible && !building.IsCompleted, "The question the agent's build waits on was answered by the agent's own input");
+            Press(question, "Deny");
+            Assert.Contains("did not allow build", Text(Await(building, "the build the person denied")), StringComparison.Ordinal);
+
+            // Nor does its input reach Settings, where the person says what agents may do.
+            shown = window.ShowSettings();
+            Ui.Settle();
+            CallToolResult set = Await(Task.Run(() => Result(agent, "app_click", new() { ["app"] = "ide", ["window"] = "SettingsDialog", ["x"] = 20, ["y"] = 20 })),
+                "the agent's click in Settings");
+            Assert.True(set.IsError == true && Text(set).Contains("Settings is the person's alone", StringComparison.Ordinal),
+                $"The agent's click in Settings was answered: {Text(set)}");
         }
         finally
         {
+            shown?.Close();
             if (client is { } going)
             {
                 Await(Task.Run(async () =>

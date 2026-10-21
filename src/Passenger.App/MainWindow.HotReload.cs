@@ -31,11 +31,11 @@ public partial class MainWindow
         {
             if (session.Debug.HotReload is not null)
             {
-                _ = session.Debug.ApplyAndRestartAsync();
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAndRestartAsync);
             }
             else
             {
-                _ = SaveForWatchAsync();
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", SaveForWatchAsync);
             }
         }, _ => session.Debug.HotReload is not null || session.Debug.IsDebugging ? session.Debug.WhyNotApply()
             : buildRun.WatchesHotReload ? null
@@ -127,8 +127,6 @@ public partial class MainWindow
         Bottom.Debug.ShowHotReload(debugged, debugged && session.Debug.WhyNotApply() is null);
         Bottom.Run.ShowHotReload(watched);
     }
-
-    private void OnHotReloadClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Request(AppActions.ApplyHotReloadChanges);
 
     private void BindHotReload(ProjectSession next)
     {

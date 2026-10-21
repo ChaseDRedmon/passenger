@@ -114,11 +114,6 @@ public partial class MainWindow
         return dialog;
     }
 
-    private void OnSettingsClicked(object? sender, RoutedEventArgs e) => ShowSettings();
-
-    /// <summary>The toolbar's magnifier: Search Everywhere, as its shortcut opens it.</summary>
-    private void OnSearchClicked(object? sender, RoutedEventArgs e) => Request(AppActions.GoToEverything);
-
     private static void ApplyTo(CodeEditor editor, AppSettings with)
     {
         editor.FontSize = with.EditorFontSize;

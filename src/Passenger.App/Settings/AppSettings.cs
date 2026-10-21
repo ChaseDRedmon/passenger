@@ -27,7 +27,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <summary>Dark or light, or as the system is.</summary>
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
 
-    /// <summary>The theme, Passenger's own or Harbour, each in the dark or light <see cref="Theme"/> says.</summary>
+    /// <summary>The theme, Passenger's own or another of <see cref="Look"/>'s, each in the dark or light <see cref="Theme"/> says.</summary>
     public Look Look { get; init; } = Look.Passenger;
 
     /// <summary>The code's colours: the theme's own scheme, or Rider's for a person who keeps Rider's colours under either
@@ -276,6 +276,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public Passenger.Xaml.Features.XamlFormatSettings XamlFormat { get; init; } = new();
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, DiscordOnNamingNothing];
+
+    /// <summary><see cref="AgentFolders"/> is a set: a folder let in always from one window while another's Settings takes
+    /// back a different one stays let in.</summary>
+    public static IReadOnlyList<string> Sets { get; } = [nameof(AgentFolders)];
 
     /// <summary>Version 1 to 2, Discord's activity on at first and naming nothing of the work: a file whose activity was not
     /// turned on holds the old defaults (off, the solution and the file), written with whatever else was changed, so it

@@ -128,13 +128,19 @@ public sealed class ProfilerCommands
         {
             return busy;
         }
+        string name = profiled.Configurations.Chosen?.Name ?? "the program";
+        if (parts.Actions.Work.Begin(AppActions.Profile, $"Working out how to profile {name}…") is not { } work)
+        {
+            return ActionWork.Busy(parts.Actions.Work.Of(AppActions.Profile)!);
+        }
         launching = profiled;
         try
         {
-            return await LaunchAsync(profiled, arguments);
+            return await LaunchAsync(profiled, arguments, work);
         }
         finally
         {
+            work.Dispose();
             if (launching == profiled)
             {
                 launching = null;
@@ -149,17 +155,21 @@ public sealed class ProfilerCommands
     /// <summary>Why another run cannot be profiled in a folder now: one is, or one is still starting.</summary>
     private string? Busy(ProjectSession folder) => folder.Profiling is not null || launching == folder ? "A run is already being profiled" : null;
 
-    private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments)
+    private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments, Working work)
     {
         BuildRunController builds = parts.Builds();
         if (profiled.Configurations.Chosen is not { } chosen)
         {
             return "Nothing to profile: no executable project";
         }
-        (LaunchPlan? plan, string? problem) = await builds.ResolvePlanAsync(chosen, arguments);
-        if (plan?.Build is { } step && await builds.BuildBeforeLaunchAsync(step) is { Succeeded: false } unbuilt)
+        (LaunchPlan? plan, string? problem) = await builds.ResolvePlanAsync(chosen, arguments, work.Stopping);
+        if (plan?.Build is { } step && !work.IsStopped && await builds.BuildBeforeLaunchAsync(step) is { Succeeded: false } unbuilt)
         {
-            return unbuilt.Message;
+            return work.IsStopped ? BuildRunController.StoppedStarting(chosen.Name) : unbuilt.Message;
+        }
+        if (work.IsStopped)
+        {
+            return BuildRunController.StoppedStarting(chosen.Name);
         }
         if (profiled.IsEnded)
         {
@@ -176,6 +186,9 @@ public sealed class ProfilerCommands
         LaunchPlan launched = profiled.InspectedProfile(plan!);
         LiveApp? inspected = profiled.ProfiledApp;
         using CancellationTokenSource stop = new();
+        // The toolbar's Stop ends the start as the window's Kill does.
+        using CancellationTokenRegistration toolbarStop = work.Stopping.Register(stop.Cancel);
+        work.Say($"Starting {chosen.Name} under the profiler…");
         try
         {
             ProfileTarget target = new(launched.Program, launched.Arguments, launched.WorkingDirectory, launched.Environment);

@@ -8,7 +8,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="avares://Passenger/Theme/Tokens.axaml" />
-                <!-- Fluent's own keys as the tokens of whichever theme is in force (Themes lays Harbour after these). -->
+                <!-- Fluent's own keys as the tokens of whichever theme is in force (Themes lays any other theme after these). -->
                 <app:FluentKeys />
                 <ResourceInclude Source="avares://Passenger/Theme/Icons.axaml" />
                 <ResourceInclude Source="avares://Passenger/Theme/ControlThemes.axaml" />

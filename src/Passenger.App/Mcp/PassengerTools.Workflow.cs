@@ -91,6 +91,7 @@ public sealed partial class PassengerTools
         IReadOnlyList<FileChange> chosen = paths is null
             ? [.. vcs.Changes.Where(c => c.Kind is not ChangeKind.Unversioned)]
             : [.. paths.Select(Resolve).Select(p => vcs.Changes.FirstOrDefault(c => c.Path == p) ?? throw new ArgumentException($"{Relative(p)} has no changes to commit"))];
+        AgentCall.Say($"Committing {chosen.Count} file{(chosen.Count == 1 ? string.Empty : "s")}{(push ? " and pushing" : string.Empty)}");
         CommitResult result = await vcs.CommitAsync(chosen, message, amend, push);
         if (!result.Commit.Succeeded)
         {
@@ -144,6 +145,7 @@ public sealed partial class PassengerTools
     {
         VcsController vcs = Session.Vcs;
         await vcs.Opened;
+        AgentCall.Say($"Checking out {branch}");
         VcsOutcome switched = create ? await vcs.NewBranchAsync(branch) : await vcs.CheckoutAsync(branch);
         if (switched.Problem is { } failed)
         {
@@ -203,9 +205,11 @@ public sealed partial class PassengerTools
     public Task<PackageChange> NuGetInstall(string project, string id, string? version = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
+        AgentCall.Say($"Finding {id} on the folder's feeds");
         IPackageFeed feeds = await window.NuGet.FeedAsync(null);
         string at = version ?? (await feeds.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
             ?? throw new ArgumentException($"{feeds.Name} has no package {id}");
+        AgentCall.Say($"Installing {id} {at} into {chosen.Name} and restoring it");
         PackageManager manager = new();
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
@@ -222,6 +226,7 @@ public sealed partial class PassengerTools
     public Task<PackageChange> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
+        AgentCall.Say($"Removing {id} from {chosen.Name}");
         PackageManager manager = new();
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
@@ -287,10 +292,12 @@ public sealed partial class PassengerTools
         {
             Choose(configuration);
         }
+        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build);
         if (await (attach ? window.AttachProfilerAsync() : window.ProfileAsync(arguments)).WaitAsync(cancel) is { } problem)
         {
             throw new InvalidOperationException(WithBuildErrors(problem));
         }
+        AgentCall.Say(seconds is { } lasting ? $"Profiling for {Math.Clamp(lasting, 1, 3600)} s" : "Profiling until the program ends (10 minutes at most)");
         Passenger.Profiler.ProfilingSession running = Session.Profiling!;
         // An Avalonia app's inspector, which records its frames; null for any other program.
         LiveTree.LiveApp? inspected = Session.ProfiledApp;
@@ -307,6 +314,7 @@ public sealed partial class PassengerTools
         {
             await Until(() => running.HasExited, TimeSpan.FromMinutes(10), cancel);
         }
+        AgentCall.Say("Reading the profile");
         SnapshotRead read = await window.SnapshotAsync();
         Passenger.Profiler.Snapshot snapshot = read.Snapshot ?? throw new InvalidOperationException(read.Message);
         List<ProfileFrame> path = [];
@@ -400,6 +408,7 @@ public sealed partial class PassengerTools
         string prompt = Prompt(screen);
         int version = screen.Version;
         shell.Write(command + "\r");
+        AgentCall.Say($"Waiting up to {Math.Clamp(waitSeconds, 1, 600)} s for the terminal's command to finish");
         DateTime until = DateTime.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 1, 600));
         DateTime last = DateTime.UtcNow;
         bool answered = false;

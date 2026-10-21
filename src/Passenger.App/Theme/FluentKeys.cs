@@ -19,7 +19,7 @@ public sealed class FluentKeys : ResourceProvider
 
     public override bool TryGetResource(object key, ThemeVariant? theme, out object? value)
     {
-        // The token is asked of the whole application, so the theme laid last (Harbour over Passenger's) answers.
+        // The token is asked of the whole application, so the theme laid last (any other over Passenger's) answers.
         if (key is string name && Tokens.TryGetValue(name, out string? token) && Owner is { } owner && owner.TryGetResource(token, theme, out value))
         {
             return true;

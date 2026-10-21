@@ -5,11 +5,16 @@
 //     "ignorePath": "<the nearest .prettierignore>" | null }
 // answered { "id": 1, "formatted": "...", "cursor": 10, "version": "3.9.9" }, or { "id": 1, "ignored": true } for a file
 // .prettierignore names, { "id": 1, "unsupported": true } for one Prettier has no parser for, { "id": 1, "error": "..." }.
-// The file's .prettierrc (any of Prettier's configuration files) and .editorconfig are read by Prettier itself.
+// The file's .prettierrc (any of Prettier's configuration files) and .editorconfig are read by Prettier itself. Standard
+// output carries the answers alone: what a plugin or a JavaScript configuration prints goes to standard error.
 "use strict";
 
 const path = require("path");
 const readline = require("readline");
+
+const answerLine = process.stdout.write.bind(process.stdout);
+// console.log and the rest look up the stream's write as they write, so they reach standard error from here on.
+process.stdout.write = process.stderr.write.bind(process.stderr);
 
 const loaded = new Map();
 
@@ -36,7 +41,8 @@ async function answer(request) {
     if (typeof prettier.clearConfigCache === "function") {
         await prettier.clearConfigCache();
     }
-    const ignorePath = request.ignorePath ? [request.ignorePath] : undefined;
+    // A string, which Prettier 2 takes (it resolves it as a path) as well as 3 (a string or a list).
+    const ignorePath = request.ignorePath || undefined;
     const info = await prettier.getFileInfo(request.file, { ignorePath, resolveConfig: true });
     if (info.ignored) {
         return { ignored: true, version: prettier.version };
@@ -63,6 +69,6 @@ readline.createInterface({ input: process.stdin, terminal: false }).on("line", (
         } catch (error) {
             reply = { error: error && error.message ? String(error.message) : String(error) };
         }
-        process.stdout.write(JSON.stringify({ id, ...reply }) + "\n");
+        answerLine(JSON.stringify({ id, ...reply }) + "\n");
     });
 });

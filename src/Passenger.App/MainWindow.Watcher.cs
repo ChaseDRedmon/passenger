@@ -67,21 +67,54 @@ public partial class MainWindow
         session.MSBuild.FilesChanged(changes.Paths);
         session.Web?.FilesChanged(changes.Paths);
         EndpointFilesChanged(changes);
-        foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
-        {
-            if (File.Exists(document.Path))
-            {
-                FollowDisk(document);
-            }
-            else
-            {
-                AwaitReturn(document);
-            }
-        }
+        FollowOpenFiles(changes.Paths);
         if (changes.Paths.Count > 0 || changes.Git)
         {
             _ = session.Vcs.RefreshAsync();
         }
+    }
+
+    /// <summary>The open files a change names, or names a folder over (a folder moved, renamed or trashed is seen as that
+    /// folder alone): each still there takes the disk's text; one gone follows its folder where a folder just come holds
+    /// it as it was (a move, whose halves may be seen apart), else is awaited as a file deleted.</summary>
+    private void FollowOpenFiles(IReadOnlySet<string> paths)
+    {
+        List<string>? come = null;
+        foreach (OpenDocument document in Editors.Documents.ToList())
+        {
+            // A folder still there is named too as a file in it changes (Windows'), which leaves its other files as they are.
+            bool named = paths.Contains(document.Path) || paths.Any(p => PathNames.IsUnder(document.Path, p) && !Directory.Exists(p));
+            if (File.Exists(document.Path))
+            {
+                if (named)
+                {
+                    FollowDisk(document);
+                }
+                continue;
+            }
+            come ??= [.. paths.Where(Directory.Exists)];
+            if (!FollowMove(document, come) && named)
+            {
+                AwaitReturn(document);
+            }
+        }
+    }
+
+    /// <summary>Whether an open file gone with a folder followed it to a folder just come, with the other open files in it:
+    /// the highest folder over it that is gone is the one moved, and the new one holds the file as last loaded or saved.</summary>
+    private bool FollowMove(OpenDocument document, IReadOnlyList<string> come)
+    {
+        string? moved = null;
+        for (string? folder = Path.GetDirectoryName(document.Path); folder is not null && !Directory.Exists(folder); folder = Path.GetDirectoryName(folder))
+        {
+            moved = folder;
+        }
+        if (moved is null || come.FirstOrDefault(to => !PathNames.IsUnder(moved, to) && document.IsSavedAt(PathNames.Moved(document.Path, moved, to))) is not { } place)
+        {
+            return false;
+        }
+        Editors.FollowMove(moved, place);
+        return true;
     }
 
     /// <summary>Files a program the IDE ran has just written (dotnet add package's project file): those open take the
@@ -114,6 +147,12 @@ public partial class MainWindow
     /// <summary>An open file changed on disk: its text is taken, or with unsaved edits the person is asked which to keep.</summary>
     private void FollowDisk(OpenDocument document)
     {
+        if (document.IsWorkbook)
+        {
+            // Its tab holds no text to take: its table reads the file again.
+            Tables.TableFile.For(document)?.Follow();
+            return;
+        }
         if (!document.ChangedOnDisk())
         {
             return;

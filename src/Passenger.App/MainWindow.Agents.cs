@@ -15,6 +15,14 @@ namespace Passenger.App;
 public partial class MainWindow
 {
     private readonly List<string> agentWork = [];
+
+    /// <summary>The questions agents' calls wait on, as the status bar says them, while the person is asked.</summary>
+    private readonly List<string> agentQuestions = [];
+
+    /// <summary>The questions' dialogs, as <see cref="agentQuestions"/> words them, which a click on the status bar's words
+    /// brings forward.</summary>
+    private readonly List<Window> agentDialogs = [];
+
     private Mcp.AgentSocket? agentSocket;
     private int agents;
 
@@ -25,7 +33,8 @@ public partial class MainWindow
     /// without an agent say never.</summary>
     public bool AgentsAllowed { get; init; } = true;
 
-    /// <summary>How long an agent's call waits for the person to say whether it may work in the window.</summary>
+    /// <summary>How long an agent's call waits for the person to answer a question it asks (whether it may work in the
+    /// window, use a tool, open a folder), after which the call says nobody answered and a later one asks again.</summary>
     public TimeSpan AgentAnswerLimit { get; init; } = TimeSpan.FromMinutes(2);
 
     /// <summary>The socket agents reach this window through, else null.</summary>
@@ -43,7 +52,7 @@ public partial class MainWindow
     }
 
     /// <summary>What the status bar says of agents on the window, or null while it says nothing.</summary>
-    public string? AgentStatus => AgentText.IsVisible ? AgentText.Text : null;
+    public string? AgentStatus => AgentButton.IsVisible ? AgentText.Text : null;
 
     /// <summary>Whether nobody is at the window to ask: a screenshot's that runs an agent (<c>--agent</c>), which lets in
     /// its agent unasked and lets it use every tool. Set before its agent starts.</summary>
@@ -127,21 +136,23 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Asks the person whether an agent may work in the window, its call waiting: Allow, with Always for this
-    /// folder kept with the folder, Don't allow, or no answer within <see cref="AgentAnswerLimit"/> or before the agent
-    /// goes, which takes the question away.</summary>
-    internal async Task<Admission> AskToLetInAsync(string agent, CancellationToken gone)
+    /// <summary>The window leaves its folder for <paramref name="folder"/> (none when it closes it): the agents let in on the
+    /// folder it leaves are shut out, each asked again at its next call, unless the window lets agents in unasked where it
+    /// goes; the agent whose own open it is (<paramref name="opener"/>) stays. Those that stay are asked again before their
+    /// first use of each tool there.</summary>
+    private void AgentsGoTo(string? folder, Mcp.AgentConnection? opener) =>
+        agentSocket?.Moving(AgentsUnattended || settings.McpServer || (folder is not null && LetsIn(settings, folder)), opener);
+
+    /// <summary>Asks the person whether an agent may work in the window, its calls waiting: Allow, with Always for this
+    /// folder kept with the folder, Don't allow, or no answer within <see cref="AgentAnswerLimit"/> or before
+    /// <paramref name="takenAway"/> (no call waits any more, or the agent went), which takes the question away.</summary>
+    internal async Task<Admission> AskToLetInAsync(string agent, CancellationToken takenAway)
     {
         UiThread.Check();
         string? folder = Folder;
         AgentAdmissionDialog dialog = new(agent, folder);
         IdeErrors.Write($"Agents: {agent} asks to work in the window on {folder ?? "no folder"}");
-        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(gone);
-        limit.CancelAfter(AgentAnswerLimit);
-        using CancellationTokenRegistration closing = limit.Token.Register(() => UiThread.Post(() => dialog.Close(Admission.Unanswered)));
-        // The agent's call waits on the person, who may be in another window or program.
-        PassengerApp.BringForward(this);
-        Admission said = await dialog.ShowDialog<Admission?>(this) ?? Admission.NotAllowed;
+        Admission said = await AskForAgentAsync(dialog, Admission.NotAllowed, $"{agent} waits for you: let it in?", takenAway) ?? Admission.Unanswered;
         if (said == Admission.Allowed && dialog.Always && folder is not null && !LetsIn(settings, folder))
         {
             // Settings' list, which every window over the folder follows and the person's settings keep.
@@ -157,26 +168,99 @@ public partial class MainWindow
     }
 
     /// <summary>Asks the person whether an agent may open another folder or solution in the window, replacing the one
-    /// open; an agent that gives up on the call takes the question away unanswered.</summary>
-    internal async Task<bool> AllowAgentOpenAsync(string agent, string opening, string replacing, CancellationToken cancel)
+    /// open: no answer within <see cref="AgentAnswerLimit"/>, or the agent giving up on the call, takes the question away.</summary>
+    internal async Task<Admission> AllowAgentOpenAsync(string agent, string opening, string replacing, CancellationToken cancel)
     {
         UiThread.Check();
         string name = Path.GetFileName(opening.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         ConfirmDialog dialog = new($"Open {name} here?", $"{agent} wants to open {opening} here, replacing {replacing}.", AgentAdmissionDialog.Allow, AgentAdmissionDialog.DontAllow);
-        using CancellationTokenRegistration gone = cancel.Register(() => UiThread.Post(() => dialog.Close(false)));
-        return await dialog.ShowDialog<bool>(this);
+        return Answered(await AskForAgentAsync(dialog, false, $"{agent} waits for you: open {name} here?", cancel));
     }
 
-    /// <summary>Asks the person whether an agent may use a tool that changes something, showing what it asked with; an
-    /// agent that gives up on the call takes the question away unanswered.</summary>
-    internal async Task<bool> AllowAgentAsync(string tool, string title, IReadOnlyList<(string Name, string Value)> arguments, CancellationToken cancel)
+    /// <summary>Asks the person whether an agent may use a tool that changes something, showing what it asked with: no
+    /// answer within <see cref="AgentAnswerLimit"/>, or every call waiting giving up, takes the question away.</summary>
+    internal async Task<Admission> AllowAgentAsync(string agent, string tool, string title, IReadOnlyList<(string Name, string Value)> arguments, CancellationToken cancel)
     {
+        UiThread.Check();
         string what = char.ToLowerInvariant(title[0]) + title[1..];
         ConfirmDialog dialog = new($"Allow {tool}?",
-            $"An agent connected through Passenger's MCP server wants to {what} (its {tool} tool). Once allowed, it may use that tool again without asking until it disconnects.",
+            $"{agent}, connected through Passenger's MCP server, wants to {what} (its {tool} tool). Once allowed, it may use that tool again without asking in this folder until it disconnects.",
             "Allow", "Deny", arguments.Count == 0 ? null : AgentArguments(arguments));
-        using CancellationTokenRegistration gone = cancel.Register(() => UiThread.Post(() => dialog.Close(false)));
-        return await dialog.ShowDialog<bool>(this);
+        IdeErrors.Write($"Agents: {agent} asks to use {tool} in the window on {Folder ?? "no folder"}");
+        Admission said = Answered(await AskForAgentAsync(dialog, false, $"{agent} waits for you: allow {tool}?", cancel));
+        IdeErrors.Write($"Agents: {agent} {(said switch
+        {
+            Admission.Allowed => "allowed",
+            Admission.NotAllowed => "not allowed",
+            _ => $"not answered within {AgentConnection.Limit(this)} whether it may use",
+        })} {tool} on {Folder ?? "no folder"}");
+        return said;
+    }
+
+    private static Admission Answered(bool? said) => said switch
+    {
+        true => Admission.Allowed,
+        false => Admission.NotAllowed,
+        null => Admission.Unanswered,
+    };
+
+    /// <summary>A question an agent's call waits on, put to the person: the window brought forward (the system asked for
+    /// their attention where it cannot be) and the status bar saying who waits on what, until they answer, closing the
+    /// dialog answers <paramref name="no"/>, and <paramref name="cancel"/> or <see cref="AgentAnswerLimit"/> takes it
+    /// away unanswered (null).</summary>
+    private async Task<T?> AskForAgentAsync<T>(Window dialog, T no, string waiting, CancellationToken cancel) where T : struct
+    {
+        UiThread.Check();
+        bool takenAway = false;
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        limit.CancelAfter(AgentAnswerLimit);
+        using CancellationTokenRegistration closing = limit.Token.Register(() => UiThread.Post(() =>
+        {
+            // An answer that came first stands.
+            if (dialog.IsVisible)
+            {
+                takenAway = true;
+                dialog.Close();
+            }
+        }));
+        agentQuestions.Add(waiting);
+        agentDialogs.Add(dialog);
+        ShowAgents();
+        // The agent's call waits on the person, who may be in another window or program.
+        PassengerApp.BringForward(this);
+        using IDisposable attention = Attention.Ask(this);
+        try
+        {
+            T? said = await dialog.ShowDialog<T?>(this);
+            return takenAway ? null : said ?? no;
+        }
+        finally
+        {
+            agentQuestions.Remove(waiting);
+            agentDialogs.Remove(dialog);
+            ShowAgents();
+        }
+    }
+
+    /// <summary>Why an agent's input through the inspector (app_click, app_key, app_type and app_scroll on app ide) may not
+    /// reach one of Passenger's own top levels, else null: a question Passenger asks the person on an agent's behalf, or
+    /// Settings, where the person alone says what agents may do; a popup or dialog of either is it. The process's, as the
+    /// inspector loaded into it is (<see cref="LiveTree.LiveApp.Own"/>).</summary>
+    internal static string? KeptFromAgents(object reached)
+    {
+        UiThread.Check();
+        for (TopLevel? at = reached as TopLevel; at is not null; at = at is Avalonia.Controls.Primitives.PopupRoot { ParentTopLevel: { } parent } ? parent : (at as Window)?.Owner)
+        {
+            if (at is Settings.SettingsDialog)
+            {
+                return "Settings is the person's alone: no agent's input reaches it (settings_set changes what an agent may)";
+            }
+            if (at is Window asking && PassengerApp.Windows.Any(w => w.agentDialogs.Contains(asking)))
+            {
+                return $"\"{asking.Title}\" is Passenger's question to the person on an agent's behalf: only they answer it, never an agent's input";
+            }
+        }
+        return null;
     }
 
     internal void AgentWorkStarted(string title)
@@ -191,10 +275,30 @@ public partial class MainWindow
         ShowAgents();
     }
 
+    /// <summary>The status bar's word on agents: a question one waits on first, which the person may not have seen, then
+    /// what one runs, then how many are on the window.</summary>
     private void ShowAgents()
     {
-        AgentText.IsVisible = agents > 0 || agentWork.Count > 0;
-        AgentText.Text = agentWork.Count > 0 ? $"Agent: {agentWork[^1]}" : agents == 1 ? "Agent connected" : $"{agents} agents connected";
+        bool asking = agentQuestions.Count > 0;
+        AgentButton.IsVisible = agents > 0 || agentWork.Count > 0 || asking;
+        AgentButton.Classes.Set("asking", asking);
+        AgentIcon.IsVisible = asking;
+        AgentText.Text = asking ? agentQuestions[^1]
+            : agentWork.Count > 0 ? $"Agent: {agentWork[^1]}"
+            : agents == 1 ? "Agent connected"
+            : $"{agents} agents connected";
+        ToolTip.SetTip(AgentButton, asking
+            ? "An agent's call waits for your answer to the question this window asks: click to see it. Unanswered, the agent is told so once the time is up"
+            : "An agent is using this window through Passenger's MCP server");
+    }
+
+    /// <summary>The status bar's words on agents, clicked: the question one waits on comes forward.</summary>
+    private void OnAgentClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (agentDialogs.LastOrDefault() is { } dialog)
+        {
+            dialog.Activate();
+        }
     }
 
     private static Control AgentArguments(IReadOnlyList<(string Name, string Value)> arguments)

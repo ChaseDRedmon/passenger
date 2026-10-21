@@ -182,41 +182,57 @@ public sealed class TypeSystem
         return found;
     }
 
-    /// <summary>The interfaces a type names, its first base too when that resolves to one.</summary>
+    /// <summary>The interfaces a type names, its first base too when that resolves to one; never the type itself, which
+    /// source on its way to another name can say (<c>interface IViewModel : IViewModel</c>).</summary>
     public IEnumerable<ClrType> InterfacesOf(ClrType type)
     {
-        if (type.Base is { } first && Resolve(first) is { Kind: ClrTypeKind.Interface } asInterface)
+        if (type.Base is { } first && Resolve(first) is { Kind: ClrTypeKind.Interface } asInterface && asInterface != type)
         {
             yield return asInterface;
         }
         foreach (TypeRef named in type.Interfaces)
         {
-            if (Resolve(named) is { } found)
+            if (Resolve(named) is { } found && found != type)
             {
                 yield return found;
             }
         }
     }
 
-    /// <summary>A type and its bases, nearest first, at most a hundred deep.</summary>
+    /// <summary>A type and its bases, nearest first, each once: half-typed source can make a cycle of bases
+    /// (<c>class A : B</c> and <c>class B : A</c>), which ends where it comes round.</summary>
     public IEnumerable<ClrType> SelfAndBases(ClrType type)
     {
-        ClrType? at = type;
-        for (int depth = 0; at is not null && depth < 100; depth++)
+        HashSet<ClrType> seen = [];
+        for (ClrType? at = type; at is not null && seen.Add(at); at = BaseOf(at))
         {
             yield return at;
-            at = BaseOf(at);
         }
     }
 
-    /// <summary>Whether a type is, derives from or implements the one named.</summary>
+    /// <summary>Whether a type is, derives from or implements the one named: its bases and every interface they reach, each
+    /// looked at once, so a cycle of them (<c>interface A : B</c> and <c>interface B : A</c>, half-typed) ends.</summary>
     public bool IsA(ClrType type, string fullName)
     {
-        foreach (ClrType at in SelfAndBases(type))
+        HashSet<ClrType> seen = [];
+        Stack<ClrType> left = new([type]);
+        while (left.TryPop(out ClrType? at))
         {
-            if (at.FullName == fullName || InterfacesOf(at).Any(i => i.FullName == fullName || IsA(i, fullName)))
+            if (!seen.Add(at))
+            {
+                continue;
+            }
+            if (at.FullName == fullName)
             {
                 return true;
+            }
+            if (BaseOf(at) is { } baseType)
+            {
+                left.Push(baseType);
+            }
+            foreach (ClrType implemented in InterfacesOf(at))
+            {
+                left.Push(implemented);
             }
         }
         return false;

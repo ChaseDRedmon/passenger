@@ -22,9 +22,9 @@ public sealed class AgentSocket : IDisposable
     /// <summary>Cancelled, and made anew, when the person shuts out the agents connected (Enable MCP Server turned off).</summary>
     private CancellationTokenSource letIn = new();
 
-    /// <summary>The agents' connections, closed at once when they are shut out or the window closes, so an agent's next
-    /// call finds the window gone rather than sending into its end.</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Socket, byte> clients = new();
+    /// <summary>The agents' connections, each with what ends its calls, closed at once when they are shut out or the
+    /// window closes, so an agent's next call finds the window gone rather than sending into its end.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Socket, Served> clients = new();
 
     private AgentSocket(MainWindow window, string path, Socket listener)
     {
@@ -81,6 +81,33 @@ public sealed class AgentSocket : IDisposable
         Hangup();
     }
 
+    /// <summary>The window leaves its folder for another, or none: the agents let in on the one it leaves are shut out,
+    /// each asked to be let in again at its next call, unless <paramref name="staying"/> (the window lets agents in unasked
+    /// where it goes); the agent whose own open moves it (<paramref name="opener"/>) goes with it. Those kept are asked
+    /// again before their first use of each tool there. UI thread only.</summary>
+    public void Moving(bool staying, AgentConnection? opener)
+    {
+        UiThread.Check();
+        foreach ((Socket client, Served served) in clients)
+        {
+            if (staying || served.Connection == opener)
+            {
+                served.Connection.Moved();
+                continue;
+            }
+            try
+            {
+                // At once, so a call of the folder left that has yet to run does nothing in the one opened.
+                served.Gone.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Its connection ended as it was shut out.
+            }
+            Hangup(client);
+        }
+    }
+
     public void Dispose()
     {
         if (closed.IsCancellationRequested)
@@ -98,14 +125,19 @@ public sealed class AgentSocket : IDisposable
     {
         foreach (Socket client in clients.Keys)
         {
-            try
-            {
-                client.Shutdown(SocketShutdown.Both);
-            }
-            catch (Exception error) when (error is SocketException or ObjectDisposedException)
-            {
-                // Gone already.
-            }
+            Hangup(client);
+        }
+    }
+
+    private static void Hangup(Socket client)
+    {
+        try
+        {
+            client.Shutdown(SocketShutdown.Both);
+        }
+        catch (Exception error) when (error is SocketException or ObjectDisposedException)
+        {
+            // Gone already.
         }
     }
 
@@ -130,7 +162,7 @@ public sealed class AgentSocket : IDisposable
     {
         using CancellationTokenSource gone = CancellationTokenSource.CreateLinkedTokenSource(closed.Token, letIn.Token);
         AgentConnection connection = new(gone.Token, attached: true);
-        clients[client] = 0;
+        clients[client] = new Served(connection, gone);
         try
         {
             await using NetworkStream stream = new(client, ownsSocket: true);
@@ -152,27 +184,34 @@ public sealed class AgentSocket : IDisposable
             UiThread.Post(() => connection.Left(window));
         }
     }
+
+    /// <summary>An agent's connection as the socket serves it, and what ends its calls.</summary>
+    private sealed record Served(AgentConnection Connection, CancellationTokenSource Gone);
 }
 
-/// <summary>What the person said to an agent asking to work in the window.</summary>
+/// <summary>What the person said to an agent's question: whether it may work in the window, use a tool, open a folder.</summary>
 public enum Admission
 {
     Allowed,
     NotAllowed,
 
-    /// <summary>Nobody answered within the window's limit, or the agent went first.</summary>
+    /// <summary>Nobody answered within the window's limit, or every call waiting for the answer went first.</summary>
     Unanswered,
 }
 
 /// <summary>One agent's connection: its calls end when it does; on a person's window (attached) it is let in before its
-/// first call goes on, and a tool that changes something waits the first time for the person to allow it. UI thread
-/// only, but for <see cref="Gone"/>.</summary>
+/// first call goes on, and a tool that changes something waits the first time for the person to allow it, each question
+/// waited for at most the window's <see cref="MainWindow.AgentAnswerLimit"/>. UI thread only, but for <see cref="Gone"/>.</summary>
 public sealed class AgentConnection(CancellationToken gone, bool attached)
 {
-    private readonly Dictionary<string, Task<bool>> answers = new(StringComparer.Ordinal);
+    /// <summary>The tools the person allowed, which the agent uses unasked until it goes or the window opens another folder.</summary>
+    private readonly HashSet<string> allowed = new(StringComparer.Ordinal);
 
-    /// <summary>The question whether the agent may work in the window, while the person is asked it.</summary>
-    private Task<Admission>? asking;
+    /// <summary>Each tool's question while the person is asked it, which every call of that tool waits on.</summary>
+    private readonly Dictionary<string, Asked> allowing = new(StringComparer.Ordinal);
+
+    /// <summary>The question whether the agent may work in the window, while the person is asked it, which every call waits on.</summary>
+    private Asked? asking;
 
     /// <summary>Cancelled when the agent goes, or the window stops letting agents in.</summary>
     public CancellationToken Gone { get; } = gone;
@@ -188,18 +227,17 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
     public bool Admitted { get; private set; }
 
     /// <summary>Takes the agent's name from its client's own words.</summary>
-    internal void Named(Implementation? client)
-    {
-        if (client is not null && (client.Title is { Length: > 0 } title ? title : client.Name) is { Length: > 0 } name)
-        {
-            Agent = name;
-        }
-    }
+    internal void Named(Implementation? client) => Agent = NameOf(client);
+
+    /// <summary>An agent's name as its client gives it (initialize's clientInfo: its title, else its name).</summary>
+    internal static string NameOf(Implementation? client) =>
+        client is not null && (client.Title is { Length: > 0 } title ? title : client.Name) is { Length: > 0 } name ? name : "An agent";
 
     /// <summary>Lets the agent into a person's window before its call goes on, or says why not: at once while Enable MCP
     /// Server is on, the folder's Always holds or nobody is at the window; else the person is asked, once for every call
-    /// waiting, for at most the window's limit. A no, or no answer, is the call's answer, and a later call asks again.</summary>
-    internal async Task<string?> AdmitAsync(MainWindow window, CancellationToken cancel)
+    /// waiting, for at most the window's limit, the question going away unanswered once none waits, as a tool's does. A no,
+    /// or no answer, is the call's answer, and a later call asks again.</summary>
+    internal async Task<string?> AdmitAsync(MainWindow window, AgentCall call, CancellationToken cancel)
     {
         UiThread.Check();
         if (!Attached || Admitted)
@@ -211,27 +249,57 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
             Admit(window);
             return null;
         }
-        // A no that came after its calls gave up is no answer to this one, which asks again.
-        if (asking is { IsCompletedSuccessfully: true } past && past.Result != Admission.Allowed)
+        if (asking is null)
         {
-            asking = null;
+            CancellationTokenSource takenAway = CancellationTokenSource.CreateLinkedTokenSource(Gone);
+            asking = new(window.AskToLetInAsync(Agent, takenAway.Token), takenAway);
         }
-        asking ??= window.AskToLetInAsync(Agent, Gone);
-        Task<Admission> answer = asking;
-        Admission said = await answer.WaitAsync(cancel);
+        Asked asked = asking;
+        asked.Waiting++;
+        call.Waits($"Waiting for the person at {Where(window)} to let {Agent} in (at most {Limit(window)})");
+        Admission said;
+        try
+        {
+            said = await asked.Answer.WaitAsync(cancel);
+        }
+        finally
+        {
+            call.Waited(asked.Answer.IsCompletedSuccessfully ? asked.Answer.Result.ToString() : "given up");
+            // The last call waiting gives the question up: it closes unanswered, and the next call asks again.
+            if (--asked.Waiting == 0 && !asked.Answer.IsCompleted)
+            {
+                asked.TakenAway.Cancel();
+            }
+            if (asking == asked && (asked.Waiting == 0 || asked.Answer.IsCompleted))
+            {
+                asking = null;
+            }
+        }
         if (said == Admission.Allowed)
         {
             Admit(window);
             return null;
         }
-        if (asking == answer)
-        {
-            asking = null;
-        }
-        string where = window.Folder is { } folder ? $"the Passenger window on {folder}" : "the Passenger window";
         return said == Admission.NotAllowed
-            ? $"The person at {where} did not let {Agent} work there. Ask them, or do without it; a later call asks them again."
-            : $"Nobody at {where} answered within {window.AgentAnswerLimit.TotalSeconds:0} s whether {Agent} may work there. A later call asks again.";
+            ? $"The person at {Where(window)} did not let {Agent} work there. Ask them, or do without it; a later call asks them again."
+            : $"Nobody at {Where(window)} answered within {Limit(window)} whether {Agent} may work there. A later call asks again.";
+    }
+
+    /// <summary>The window as an answer names it.</summary>
+    internal static string Where(MainWindow window) => window.Folder is { } folder ? $"the Passenger window on {folder}" : "the Passenger window";
+
+    /// <summary>The window's limit on a question, as an answer says it.</summary>
+    internal static string Limit(MainWindow window) =>
+        window.AgentAnswerLimit.TotalSeconds >= 120 && window.AgentAnswerLimit.TotalSeconds % 60 == 0
+            ? $"{window.AgentAnswerLimit.TotalMinutes:0} minutes"
+            : $"{window.AgentAnswerLimit.TotalSeconds:0} s";
+
+    /// <summary>The window opened another folder and the agent stays let in (its own open, or agents let in unasked there):
+    /// the tools allowed in the one it left are asked for again.</summary>
+    internal void Moved()
+    {
+        UiThread.Check();
+        allowed.Clear();
     }
 
     /// <summary>The connection ended: the window stops counting it.</summary>
@@ -245,29 +313,57 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
         }
     }
 
-    /// <summary>Whether the person lets this agent use a tool: asked the first time, and again after a no; never on a
-    /// window nobody is at (<see cref="MainWindow.AgentsUnattended"/>), whose agent uses them all.</summary>
-    internal async Task<bool> AllowAsync(MainWindow window, Tool tool, IDictionary<string, System.Text.Json.JsonElement>? arguments, CancellationToken cancel)
+    /// <summary>Whether the person lets this agent use a tool, or why not: asked the first time, and again after a no or no
+    /// answer within the window's limit; never on a window nobody is at (<see cref="MainWindow.AgentsUnattended"/>), whose
+    /// agent uses them all. Every call of the tool waits on the one question, which goes away unanswered once none waits.</summary>
+    internal async Task<string?> AllowAsync(MainWindow window, Tool tool, IDictionary<string, System.Text.Json.JsonElement>? arguments, AgentCall call, CancellationToken cancel)
     {
         UiThread.Check();
-        if (window.AgentsUnattended)
+        if (window.AgentsUnattended || allowed.Contains(tool.Name))
         {
-            return true;
+            return null;
         }
-        if (!answers.TryGetValue(tool.Name, out Task<bool>? answer))
+        if (!allowing.TryGetValue(tool.Name, out Asked? asked))
         {
-            answer = window.AllowAgentAsync(tool.Name, tool.Title ?? tool.Name, [.. (arguments ?? new Dictionary<string, System.Text.Json.JsonElement>()).Select(a => (a.Key, Shown(a.Value)))], cancel);
-            answers[tool.Name] = answer;
+            CancellationTokenSource takenAway = CancellationTokenSource.CreateLinkedTokenSource(Gone);
+            asked = new(window.AllowAgentAsync(Agent, tool.Name, tool.Title ?? tool.Name,
+                [.. (arguments ?? new Dictionary<string, System.Text.Json.JsonElement>()).Select(a => (a.Key, Shown(a.Value)))], takenAway.Token), takenAway);
+            allowing[tool.Name] = asked;
         }
-        if (await answer)
+        asked.Waiting++;
+        call.Waits($"Waiting for the person at {Where(window)} to allow {Agent} to use {tool.Name} (at most {Limit(window)})");
+        Admission said;
+        try
         {
-            return true;
+            said = await asked.Answer.WaitAsync(cancel);
         }
-        if (answers.TryGetValue(tool.Name, out Task<bool>? now) && now == answer)
+        finally
         {
-            answers.Remove(tool.Name);
+            call.Waited(asked.Answer.IsCompletedSuccessfully ? asked.Answer.Result.ToString() : "given up");
+            // The last call waiting gives the question up: it closes unanswered, and the next call asks again.
+            if (--asked.Waiting == 0 && !asked.Answer.IsCompleted)
+            {
+                asked.TakenAway.Cancel();
+                Forget(tool.Name, asked);
+            }
         }
-        return false;
+        Forget(tool.Name, asked);
+        if (said == Admission.Allowed)
+        {
+            allowed.Add(tool.Name);
+            return null;
+        }
+        return said == Admission.NotAllowed
+            ? $"The person at {Where(window)} did not allow {tool.Name}. Ask them, or do without it; a later call asks them again."
+            : $"Nobody at {Where(window)} answered within {Limit(window)} whether {Agent} may use {tool.Name}. A later call asks again.";
+    }
+
+    private void Forget(string tool, Asked asked)
+    {
+        if (allowing.TryGetValue(tool, out Asked? now) && now == asked)
+        {
+            allowing.Remove(tool);
+        }
     }
 
     private void Admit(MainWindow window)
@@ -282,52 +378,87 @@ public sealed class AgentConnection(CancellationToken gone, bool attached)
 
     private static string Shown(System.Text.Json.JsonElement value) =>
         value.ValueKind == System.Text.Json.JsonValueKind.String ? value.GetString() ?? string.Empty : value.GetRawText();
+
+    /// <summary>A tool's question while it is asked: its answer, what takes it away unanswered, and how many calls wait on it.</summary>
+    private sealed class Asked(Task<Admission> answer, CancellationTokenSource takenAway)
+    {
+        public Task<Admission> Answer { get; } = answer;
+
+        public CancellationTokenSource TakenAway { get; } = takenAway;
+
+        public int Waiting { get; set; }
+    }
 }
 
 /// <summary>A tool as one connection reaches it: its call cancelled with the connection, and on a person's window held
 /// until the agent is let in, then first allowed by them when it changes something (not read-only nor declared harmless),
-/// and named in the status bar while it runs.</summary>
-internal sealed class ConnectedTool(McpServerTool tool, MainWindow window, AgentConnection connection) : DelegatingMcpServerTool(tool)
+/// and named in the status bar while it runs; told to the agent as it goes and logged (<see cref="AgentCall"/>).</summary>
+internal sealed class ConnectedTool(McpServerTool tool, MainWindow? window, AgentConnection connection, Task? ready = null) : DelegatingMcpServerTool(tool)
 {
     public override async ValueTask<CallToolResult> InvokeAsync(RequestContext<CallToolRequestParams> request, CancellationToken cancellationToken = default)
     {
         using CancellationTokenSource call = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, connection.Gone);
+        Tool shown = ProtocolTool;
+        await using AgentCall told = AgentCall.Begin(request.Server, request.Params?.ProgressToken, shown.Name, shown.Title ?? shown.Name,
+            AgentConnection.NameOf(request.Server.ClientInfo), connection.Attached ? "window" : "mcp", IdeLog.Traces);
+        try
+        {
+            CallToolResult answer = await ServeAsync(request, shown, told, call.Token);
+            told.Ended(answer.IsError == true ? "answered an error" : "answered");
+            return answer;
+        }
+        catch (OperationCanceledException)
+        {
+            told.Ended(cancellationToken.IsCancellationRequested ? "given up by the agent" : "ended as the agent went");
+            throw;
+        }
+        catch (Exception error)
+        {
+            told.Ended($"failed ({error.GetType().Name})");
+            throw;
+        }
+    }
+
+    private async Task<CallToolResult> ServeAsync(RequestContext<CallToolRequestParams> request, Tool shown, AgentCall told, CancellationToken cancel)
+    {
         if (!connection.Attached)
         {
-            return await base.InvokeAsync(request, call.Token);
+            // --mcp's own IDE, whose server answers before the IDE is up: a call waits for it.
+            if (ready is not null)
+            {
+                await ready.WaitAsync(cancel);
+            }
+            return await base.InvokeAsync(request, cancel);
         }
         // Read-only or not, no call goes on before the agent is let into the window.
         string? refused = await UiThread.InvokeAsync(() =>
         {
             connection.Named(request.Server.ClientInfo);
-            return connection.AdmitAsync(window, call.Token);
+            return connection.AdmitAsync(window!, told, cancel);
         });
+        if (refused is null && shown.Annotations is not ({ ReadOnlyHint: true } or { DestructiveHint: false }))
+        {
+            refused = await UiThread.InvokeAsync(() => connection.AllowAsync(window!, shown, request.Params?.Arguments, told, cancel));
+        }
         if (refused is not null)
         {
-            call.Token.ThrowIfCancellationRequested();
+            cancel.ThrowIfCancellationRequested();
             return Refused(refused);
         }
-        Tool shown = ProtocolTool;
-        bool readOnly = shown.Annotations is { ReadOnlyHint: true };
-        if (!readOnly && shown.Annotations is not { DestructiveHint: false }
-            && !await UiThread.InvokeAsync(() => connection.AllowAsync(window, shown, request.Params?.Arguments, call.Token)))
+        told.Logged("working");
+        if (shown.Annotations is { ReadOnlyHint: true })
         {
-            call.Token.ThrowIfCancellationRequested();
-            return Refused($"The person at this Passenger window did not allow {shown.Name}. Ask them, or do without it.");
-        }
-        if (readOnly)
-        {
-            return await base.InvokeAsync(request, call.Token);
+            return await base.InvokeAsync(request, cancel);
         }
         string title = shown.Title ?? shown.Name;
-        UiThread.Post(() => window.AgentWorkStarted(title));
+        UiThread.Post(() => window!.AgentWorkStarted(title));
         try
         {
-            return await base.InvokeAsync(request, call.Token);
+            return await base.InvokeAsync(request, cancel);
         }
         finally
         {
-            UiThread.Post(() => window.AgentWorkEnded(title));
+            UiThread.Post(() => window!.AgentWorkEnded(title));
         }
     }
 

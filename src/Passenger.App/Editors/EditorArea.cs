@@ -68,6 +68,9 @@ public sealed partial class EditorArea : UserControl
     /// <summary>A file or folder moved through <see cref="MoveFile"/>, with the open files that went with it.</summary>
     public event EventHandler<FileMove>? Moved;
 
+    /// <summary>A folder another program moved, which open files followed (<see cref="FollowMove"/>).</summary>
+    public event EventHandler<FileMove>? Followed;
+
     /// <summary>The commands that changed several files at once or moved one (a rename), which Undo takes back whole.</summary>
     public CommandHistory Commands { get; }
 
@@ -143,7 +146,7 @@ public sealed partial class EditorArea : UserControl
         FileText? file;
         try
         {
-            file = FileText.Load(full);
+            file = Read(full);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -458,21 +461,25 @@ public sealed partial class EditorArea : UserControl
         }
     }
 
-    public void SaveActive()
+    /// <summary>File, Save: the file shown when it was pressed, whichever is shown by now, its folder made again if another
+    /// program moved or deleted it, as asked; nothing once that file has closed.</summary>
+    public void SaveAsked(OpenDocument document)
     {
-        if (Active is { } active)
+        if (documents.Contains(document))
         {
-            TrySave(active);
+            TrySave(document, asked: true);
         }
     }
 
-    /// <summary>Saves every changed file, but those <paramref name="waiting"/> on a question; whether all were written.</summary>
-    public bool SaveAll(IReadOnlySet<OpenDocument>? waiting = null)
+    /// <summary>Saves every changed file, but those <paramref name="waiting"/> on a question; whether all were written. A
+    /// file whose folder another program moved or deleted is left unsaved but for the person's Save All (<paramref
+    /// name="asked"/>), so an autosave never brings that folder back.</summary>
+    public bool SaveAll(IReadOnlySet<OpenDocument>? waiting = null, bool asked = false)
     {
         bool all = true;
         foreach (OpenDocument document in documents.Where(d => d.IsModified && waiting?.Contains(d) != true).ToList())
         {
-            all &= TrySave(document);
+            all &= TrySave(document, asked: asked);
         }
         return all;
     }
@@ -512,22 +519,38 @@ public sealed partial class EditorArea : UserControl
         {
             return error.Message;
         }
-        string target = PathNames.Canonical(to);
-        foreach (OpenDocument document in moving)
+        Relocate(new FileMove(source, PathNames.Canonical(to), moving), Moved);
+        return null;
+    }
+
+    /// <summary>Open files under a folder another program moved or renamed (mv, git mv, Finder) follow it, each that the
+    /// new place holds as it was last loaded or saved: its tab, carets, edits and undo stay, under its new path.</summary>
+    public void FollowMove(string from, string to)
+    {
+        List<OpenDocument> moving = [.. documents.Where(d => PathNames.IsUnder(d.Path, from) && d.IsSavedAt(PathNames.Moved(d.Path, from, to)))];
+        if (moving.Count > 0)
         {
-            document.MoveTo(PathNames.Moved(document.Path, source, target));
+            Relocate(new FileMove(from, to, moving), Followed);
         }
-        Moved?.Invoke(this, new FileMove(source, target, moving));
+    }
+
+    private void Relocate(FileMove move, EventHandler<FileMove>? told)
+    {
+        foreach (OpenDocument document in move.Documents)
+        {
+            document.MoveTo(PathNames.Moved(document.Path, move.From, move.To));
+        }
+        told?.Invoke(this, move);
         TitleWindows();
-        if (Active is { } shown && moving.Contains(shown))
+        if (Active is { } shown && move.Documents.Contains(shown))
         {
             // What names the file shown (the title, the status bar's path, the structure) reads it again.
             ActiveChanged?.Invoke(this, EventArgs.Empty);
         }
-        return null;
     }
 
-    private bool TrySave(OpenDocument document, bool overDisk = false)
+    /// <param name="asked">The person's own Save, which makes a folder moved or deleted elsewhere again.</param>
+    private bool TrySave(OpenDocument document, bool overDisk = false, bool asked = false)
     {
         if (!overDisk && document.ChangedOnDisk())
         {
@@ -538,7 +561,7 @@ public sealed partial class EditorArea : UserControl
         {
             // The carets of the editor showing it, whose lines keep the whitespace a save would trim.
             EditorGroup? showing = activeGroup.Has(document) ? activeGroup : AllGroups.FirstOrDefault(g => g.Has(document));
-            document.Save(showing?.SelectionsOf(document));
+            document.Save(showing?.SelectionsOf(document), makeFolder: asked);
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -647,6 +670,10 @@ public sealed partial class EditorArea : UserControl
         return new EditorFrame.Leaf(group);
     }
 
+    /// <summary>A file's text as a tab holds it: a workbook's none, since its table is read from the file itself.</summary>
+    private static FileText? Read(string path) =>
+        Tables.Workbook.IsWorkbook(path) ? new FileText(string.Empty, new System.Text.UTF8Encoding(false), false) : FileText.Load(path);
+
     /// <summary>A file's document, open already or read from disk now; null when it cannot be read as text.</summary>
     private OpenDocument? Load(string path)
     {
@@ -657,7 +684,7 @@ public sealed partial class EditorArea : UserControl
         }
         try
         {
-            if (FileText.Load(full) is not { } file)
+            if (Read(full) is not { } file)
             {
                 return null;
             }

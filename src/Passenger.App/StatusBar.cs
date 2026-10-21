@@ -40,6 +40,7 @@ public sealed class StatusBar
     private readonly Button message;
     private readonly TextBlock text;
     private readonly PathIcon icon;
+    private readonly WorkingRing working;
     private readonly TextBlock caret;
     private readonly TextBlock indent;
     private readonly TextBlock language;
@@ -52,12 +53,13 @@ public sealed class StatusBar
     /// anything else said takes the icon and the place away.</summary>
     private (string Text, StatusPlace? Place)? standing;
 
-    public StatusBar(Button message, TextBlock text, PathIcon icon, TextBlock caret, TextBlock indent, TextBlock language, Button lineSeparator,
+    public StatusBar(Button message, TextBlock text, PathIcon icon, WorkingRing working, TextBlock caret, TextBlock indent, TextBlock language, Button lineSeparator,
         TextBlock lineEnding, Button encoding, TextBlock encodingText)
     {
         this.message = message;
         this.text = text;
         this.icon = icon;
+        this.working = working;
         this.caret = caret;
         this.indent = indent;
         this.language = language;
@@ -136,6 +138,17 @@ public sealed class StatusBar
         ToolTip.SetTip(message, string.IsNullOrEmpty(said) ? null : place is null ? said : $"{said}\n\nClick to {place.Name}");
     }
 
+    /// <summary>An action's work begun, at a new stage, or ended: its stage said beside the turning ring while it is under
+    /// way, the ring there while any work is, and once none is, whatever was said last left standing.</summary>
+    public void ShowWork(WorkChange change, Working? latest)
+    {
+        working.IsVisible = latest is not null;
+        if (!change.Ended)
+        {
+            Say(change.Work.Stage, null);
+        }
+    }
+
     /// <summary>The file shown, or none: with none the message line names the folder (or says there is no solution); with
     /// one, its path names it, so the message line is left for messages.</summary>
     public void ShowFile(OpenDocument? active, string? folder, CodeEditor editor, string languageLabel)
@@ -143,15 +156,20 @@ public sealed class StatusBar
         string where = folder is null ? "No solution" : Path.GetFileName(folder);
         text.Text = active is null ? where : string.Empty;
         ShowStorage(active);
-        indent.Text = active?.Indentation.Shown ?? "";
-        ToolTip.SetTip(indent, active?.Indentation.Tip(active.Language.Name));
+        OpenDocument? textual = Textual(active);
+        indent.Text = textual?.Indentation.Shown ?? "";
+        ToolTip.SetTip(indent, textual?.Indentation.Tip(textual.Language.Name));
         ShowLanguage(languageLabel);
-        ShowCaret(active is null ? null : editor);
+        ShowCaret(textual is null ? null : editor);
     }
 
+    /// <summary>The file shown while it is text: a workbook's tab holds none, so it has no breaks, encoding, indent or caret.</summary>
+    private static OpenDocument? Textual(OpenDocument? active) => active is { IsWorkbook: false } ? active : null;
+
     /// <summary>The file's line separator and encoding, which a click there offers others of.</summary>
-    public void ShowStorage(OpenDocument? active)
+    public void ShowStorage(OpenDocument? shown)
     {
+        OpenDocument? active = Textual(shown);
         lineSeparator.IsVisible = active is not null;
         encoding.IsVisible = active is not null;
         lineEnding.Text = active?.Separator.ToString() ?? string.Empty;

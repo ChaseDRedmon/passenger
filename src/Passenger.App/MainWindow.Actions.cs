@@ -18,6 +18,10 @@ public partial class MainWindow
 
     private ActionRegistry? actions;
 
+    /// <summary>What the window's actions are doing that takes a while, which the toolbar's buttons and the status bar show:
+    /// made with the window, before any session's controllers are given it.</summary>
+    private readonly ActionWork work = new();
+
     /// <summary>The window's actions and its keymap.</summary>
     public ActionRegistry Actions => actions!;
 
@@ -35,6 +39,30 @@ public partial class MainWindow
         }
         status.Text = why;
         return false;
+    }
+
+    /// <summary>The tool windows' buttons that run actions show those actions' work, as the toolbar's do.</summary>
+    private void ShowActionWork()
+    {
+        foreach (Docking.ToolWindow tool in Dock.Windows)
+        {
+            ActionButtons.ShowMarked(tool.Content, actions!);
+        }
+    }
+
+    /// <summary>Runs an action's work held under its id: begun at once with its first stage, ended with the task; asked for
+    /// again while it works, it says what is under way.</summary>
+    private async Task WorkingAsync(string id, string stage, Func<Task> run, bool stoppable = false)
+    {
+        if (work.Begin(id, stage, stoppable) is not { } working)
+        {
+            status.Text = ActionWork.Busy(work.Of(id)!);
+            return;
+        }
+        using (working)
+        {
+            await run();
+        }
     }
 
     /// <summary>Where an action asked for now runs: the file shown and its caret, what has the keys in the window in front
@@ -62,9 +90,20 @@ public partial class MainWindow
     /// <summary>The window's own actions; each feature's partial or controller adds its own beside them.</summary>
     private void AddActions()
     {
-        actions = new ActionRegistry(Context, () => keys.Keymap);
+        actions = new ActionRegistry(Context, () => keys.Keymap, work);
         Dock.Actions = actions;
         Explorer.Actions = actions;
+        // The toolbar's buttons run their actions as their keys do, each showing its action's work while it is under way.
+        foreach ((Button button, string id) in (ReadOnlySpan<(Button, string)>)[(BuildButton, A.Build), (RunButton, A.RunProgram), (DebugButton, A.Debug),
+            (ProfileButton, A.Profile), (HotReloadButton, A.ApplyHotReloadChanges), (StopButton, A.Stop), (SearchButton, A.GoToEverything), (SettingsButton, A.ShowSettings)])
+        {
+            ActionButtons.Bind(button, id, actions, action => Request(action));
+        }
+        work.Changed += (_, change) =>
+        {
+            status.ShowWork(change, work.Latest);
+            ShowStop();
+        };
         AddEditing();
         Add(A.Open, "Open...", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
         actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 2, 0)] });
@@ -170,6 +209,8 @@ public partial class MainWindow
         {
             case TextBox box when Edit(box, action):
                 return;
+            case Tables.CellGrid table when table.Execute(action):
+                return;
             case CodeEditor editor when editor != Editors.CodeEditor:
                 editor.TryExecute(action);
                 return;
@@ -186,11 +227,12 @@ public partial class MainWindow
     private void AddBuilding()
     {
         Add(A.Build, "Build Solution", "Run", _ => BuildSolution(), Unbuildable, ("Build", 0, 0));
-        Add(A.RebuildSolution, "Rebuild Solution", "Build", _ => Build(BuildKind.Rebuild), Unbuildable, ("Build", 0, 1));
-        Add(A.CleanSolution, "Clean Solution", "Build", _ => Build(BuildKind.Clean), Unbuildable, ("Build", 0, 2));
-        Add(A.BuildSelected, "Build Selected Projects", "Build", _ => Build(BuildKind.Build, SelectedProjects()), NoneSelected, ("Build", 1, 0));
-        Add(A.RebuildSelected, "Rebuild Selected Projects", "Build", _ => Build(BuildKind.Rebuild, SelectedProjects()), NoneSelected, ("Build", 1, 1));
-        Add(A.CleanSelected, "Clean Selected Projects", "Build", _ => Build(BuildKind.Clean, SelectedProjects()), NoneSelected, ("Build", 1, 2));
+        // One build at a time, whichever began it: while one works, the others say so.
+        Add(A.RebuildSolution, "Rebuild Solution", "Build", _ => Build(BuildKind.Rebuild), Unbuildable, ("Build", 0, 1), works: A.Build);
+        Add(A.CleanSolution, "Clean Solution", "Build", _ => Build(BuildKind.Clean), Unbuildable, ("Build", 0, 2), works: A.Build);
+        Add(A.BuildSelected, "Build Selected Projects", "Build", _ => Build(BuildKind.Build, SelectedProjects()), NoneSelected, ("Build", 1, 0), works: A.Build);
+        Add(A.RebuildSelected, "Rebuild Selected Projects", "Build", _ => Build(BuildKind.Rebuild, SelectedProjects()), NoneSelected, ("Build", 1, 1), works: A.Build);
+        Add(A.CleanSelected, "Clean Selected Projects", "Build", _ => Build(BuildKind.Clean, SelectedProjects()), NoneSelected, ("Build", 1, 2), works: A.Build);
 
         Add(A.RunProgram, "Run", "Run", _ => RunSelected(), _ => Unconfigured("run"), ("Run", 0, 0));
         Add(A.Debug, "Debug", "Run", _ => DebugSelected(), _ => Unconfigured("debug"), ("Run", 0, 1));
@@ -249,9 +291,9 @@ public partial class MainWindow
     private void AddTests()
     {
         Add(A.RunTests, "Run Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: false), NoTestHere, ("Tests", 0, 0));
-        Add(A.DebugTests, "Debug Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: true), NoTestHere, ("Tests", 0, 1));
-        Add(A.RunTestsUntilFailure, "Run Unit Tests Until Failure", "Unit Tests", c => RunTestsInContext(c, debug: false, untilFailure: true), NoTestHere, ("Tests", 0, 2));
-        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => session.Tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3));
+        Add(A.DebugTests, "Debug Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: true), NoTestHere, ("Tests", 0, 1), works: A.RunTests);
+        Add(A.RunTestsUntilFailure, "Run Unit Tests Until Failure", "Unit Tests", c => RunTestsInContext(c, debug: false, untilFailure: true), NoTestHere, ("Tests", 0, 2), works: A.RunTests);
+        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => session.Tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3), works: A.RunTests);
         Add(A.RerunTests, "Rerun Unit Tests", "Unit Tests", _ => RunTests(() => session.Tests.RerunAsync(Folder!)), NeedsFolder, ("Tests", 1, 0));
         Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => session.Tests.RerunFailedAsync(Folder!)), NeedsFolder, ("Tests", 1, 1));
         Add(A.StopTests, "Stop Unit Tests", "Unit Tests", _ => session.Tests.Stop(), NothingRunning, ("Tests", 1, 2));
@@ -277,11 +319,12 @@ public partial class MainWindow
 
     /// <summary>Adds one of the window's actions, listed in one place of the menus if given.</summary>
     private void Add(string id, string title, string group, Action<ActionContext> run, Func<ActionContext, string?>? whyNot = null, (string Path, int Group, int Order)? menu = null,
-        IReadOnlyList<string>? words = null) =>
+        IReadOnlyList<string>? words = null, string? works = null) =>
         actions!.Add(new IdeAction(id, title, group, run)
         {
             WhyNot = whyNot ?? (_ => null),
             Menus = menu is { } at ? [new MenuPlace(at.Path, at.Group, at.Order)] : [],
             Words = words ?? [],
+            Works = works,
         });
 }

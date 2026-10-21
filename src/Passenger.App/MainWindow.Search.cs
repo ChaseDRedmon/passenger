@@ -45,12 +45,13 @@ public partial class MainWindow
         };
         popup.ReplaceRequested += async (_, asked) =>
         {
-            int files = asked.Matches.Select(m => m.Path).Distinct().Count();
-            string what = $"{asked.Matches.Count} match{(asked.Matches.Count == 1 ? "" : "es")} in {files} file{(files == 1 ? "" : "s")}";
+            string what = FilesReplaced.Count(asked.Matches);
             if (await Confirm("Replace in Files", $"Replace {what} with '{asked.Replacement}'? An open file's change can be undone there; a closed file is written.", "Replace All"))
             {
-                IReadOnlyList<string> converted = ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
-                status.Text = string.Join("; ", [$"Replaced {what}", .. converted]);
+                FilesReplaced done = ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
+                IReadOnlyList<SearchMatch> replaced = done.Replaced(asked.Matches);
+                string? refused = done.NotReplaced(Path.GetFileName);
+                status.Text = string.Join("; ", [replaced.Count > 0 ? $"Replaced {FilesReplaced.Count(replaced)}" : "Nothing replaced", .. done.Converted, .. refused is null ? [] : new[] { refused }]);
                 await popup.SearchAsync();
             }
         };
@@ -188,10 +189,12 @@ public partial class MainWindow
 
     /// <summary>Replaces a query's matches in these files: an open one as one undoable step changing only its matches,
     /// so its carets, folds and breakpoints stay put; a closed one written in its own encoding, or as UTF-8 when that
-    /// cannot hold the replacement, which is said of each such file in what this returns.</summary>
-    public IReadOnlyList<string> ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
+    /// cannot hold the replacement, said of each such file. A closed file the system refuses to write (read-only, access
+    /// denied, held by another program) is left as it was and named with why, and the rest are replaced all the same.</summary>
+    public FilesReplaced ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
     {
         List<string> converted = [];
+        List<(string Path, string Why)> refused = [];
         foreach (string path in paths)
         {
             if (Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open)
@@ -203,17 +206,31 @@ public partial class MainWindow
                     open.Text.Edit(edits, open.Selections, TextEditing.MapThrough(open.Selections, edits));
                     open.Text.BreakUndoGroup();
                 }
+                continue;
             }
-            else if (FileText.Load(path) is { } file)
+            try
             {
-                string after = FileSearch.ReplaceAll(file.Text, query, replacement);
-                if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom, file.CrBreaks).Converted is { } note)
+                if (FileText.Load(path) is { } file)
                 {
-                    converted.Add(note);
+                    string after = FileSearch.ReplaceAll(file.Text, query, replacement);
+                    if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom, file.CrBreaks).Converted is { } note)
+                    {
+                        converted.Add(note);
+                    }
                 }
             }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                refused.Add((path, error switch
+                {
+                    ReadOnlyFileException => "read-only",
+                    UnauthorizedAccessException => "access denied",
+                    FileNotFoundException or DirectoryNotFoundException => "gone",
+                    _ => error.Message,
+                }));
+            }
         }
-        return converted;
+        return new FilesReplaced(converted, refused);
     }
 
     /// <summary>Recent Files (Ctrl+,): the files opened last, the latest first, narrowed as a name is typed; a file

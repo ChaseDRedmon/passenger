@@ -188,6 +188,47 @@ public partial class ManagedDebugger
     /// engine's lock is asked for, since configurationDone holds that lock while it waits for the program's runtime.</summary>
     public void Ending() => _ = _ending.CancelAsync();
 
+    /// <summary>A request that leaves the stop (a continue, a step, a disconnect, a terminate) has come and waits for the
+    /// engine's lock: an evaluation a read is running for the stop is left at once to end in the program, and no read
+    /// evaluates, until that request holds the lock and calls <see cref="Left"/>. Called once it is in line for it.</summary>
+    public void Leaving() => EvalStatus.Leave();
+
+    /// <summary>The request that called <see cref="Leaving"/> holds the engine's lock.</summary>
+    public void Left() => EvalStatus.Left();
+
+    /// <summary>Set while a read (frames, values, an evaluation the client asked for) holds the engine's lock, whose
+    /// evaluations give way to a request that leaves the stop.</summary>
+    public bool Reading
+    {
+        get => EvalStatus.ForRead;
+        set => EvalStatus.ForRead = value;
+    }
+
+    /// <summary>Aborts an evaluation left running in the program for a request that left its stop, once the time evaluations
+    /// are given (<see cref="Extensions.EvaluationTimeout"/>) is up, as it would have been had it been waited for: an
+    /// evaluation that never returns would hold its thread for good. Nothing when it has ended by then, or the session has.</summary>
+    private async Task AbortWhenDueAsync(int thread, ICorDebugEval eval, TimeSpan after)
+    {
+        try
+        {
+            await Task.Delay(after > TimeSpan.Zero ? after : TimeSpan.Zero, _ending.Token).ConfigureAwait(false);
+            using (await DapRequestAndRuntimeEventLock.LockAsync(_ending.Token).ConfigureAwait(false))
+            {
+                // Its end may be among the events queued meanwhile, and let go with them.
+                await DrainRuntimeEventQueue().ConfigureAwait(false);
+                if (EvalStatus.Abandoned.TryGetValue(thread, out ICorDebugEval? running) && running == eval)
+                {
+                    _logger?.Invoke($"The evaluation left running on thread {thread} has had its {Extensions.EvaluationTimeout.TotalSeconds:0.#} s, and is aborted");
+                    eval.TryAbort();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The session ended first, letting the program go.
+        }
+    }
+
     /// <summary>How often the program has been let go, so an event put off for a decompile is dropped when it was let go
     /// meanwhile (<see cref="AfterDecompiling"/>).</summary>
     private int _continued;
@@ -200,7 +241,7 @@ public partial class ManagedDebugger
         _variableManager = new VariableManager();
         _frameReferenceManager = new FrameReferenceManager();
         _callbacks = new CorDebugManagedCallback();
-        EvalStatus = new EvalStatus();
+        EvalStatus = new EvalStatus { AbortWhenDue = (thread, eval, after) => _ = AbortWhenDueAsync(thread, eval, after) };
         _asyncStepper = new AsyncStepper(_modules, this);
         // The runtime's callback thread writes, and so does whichever thread hands back an event put off during an evaluation.
         _runtimeEventChannel = Channel.CreateUnbounded<CorDebugManagedCallbackEventArgs>(new UnboundedChannelOptions
@@ -1179,9 +1220,13 @@ internal sealed class EvalStatus
     /// nothing reads them outside the engine's lock.</summary>
     internal CancellationToken Reading { get; set; }
 
-    /// <summary>Evaluations given up that could not be stopped, by their thread: each runs on in the program until it
-    /// returns, and its end, whenever it comes, is let go rather than taken for another's.</summary>
+    /// <summary>Evaluations given up, by their thread, that could not be stopped or were left to a request that left the
+    /// stop: each runs on in the program until it returns, and its end, whenever it comes, is let go rather than taken for
+    /// another's.</summary>
     internal Dictionary<int, ICorDebugEval> Abandoned { get; } = [];
+
+    /// <summary>Aborts an evaluation left running for a request that left its stop once the time it had left is up.</summary>
+    internal Action<int, ICorDebugEval, TimeSpan>? AbortWhenDue { get; init; }
 
     /// <summary>Why code the debugger would run of itself (a getter, a ToString, a proxy) is not run, until the program
     /// next runs on, as Visual Studio and Rider stop running it once an evaluation has timed out.</summary>
@@ -1189,4 +1234,55 @@ internal sealed class EvalStatus
 
     /// <summary>Set while an evaluation asked for by name runs (the Evaluate window, a watch), which runs code regardless.</summary>
     internal bool Explicit { get; set; }
+
+    private readonly Lock leavingGate = new();
+    private CancellationTokenSource leaving = new();
+    private int leavers;
+
+    /// <summary>Set while a read (what a stop shows, an evaluation the client asked for) holds the engine's lock: its
+    /// evaluations give way to a request that leaves the stop (<see cref="Leaving"/>).</summary>
+    internal bool ForRead { get; set; }
+
+    /// <summary>Cancelled while a request that leaves the stop (a continue, a step, a stop) waits for the engine's lock, for
+    /// a read's evaluations alone: the one running is left to the program then, and no other starts.</summary>
+    internal CancellationToken Leaving
+    {
+        get
+        {
+            if (!ForRead)
+            {
+                return CancellationToken.None;
+            }
+            lock (leavingGate)
+            {
+                return leaving.Token;
+            }
+        }
+    }
+
+    /// <summary>A request that leaves the stop has come; told on the thread pool, so what the read under way does as it gives
+    /// way never runs on the thread that reads the client's requests.</summary>
+    internal void Leave()
+    {
+        CancellationTokenSource cancelling;
+        lock (leavingGate)
+        {
+            leavers++;
+            cancelling = leaving;
+        }
+        _ = cancelling.CancelAsync();
+    }
+
+    /// <summary>That request has the engine's lock: reads evaluate again once no other such waits.</summary>
+    internal void Left()
+    {
+        lock (leavingGate)
+        {
+            // Not disposed: a read may have taken its token a moment ago.
+            if (--leavers == 0 && leaving.IsCancellationRequested)
+            {
+                leaving = new CancellationTokenSource();
+            }
+        }
+    }
 }

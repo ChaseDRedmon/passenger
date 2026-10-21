@@ -237,10 +237,14 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
             PlaceAfter(editor, "\"bui");
             Ui.Run(window, AppActions.Rename);
             Ui.WaitFor(() => window.Assist.Renaming == "build", "the rename box on the script's name");
-            window.KeyTextInput("compile");
+            // As typed, a letter outside ASCII and a + included, both of which a JSON serializer's default encoder escapes.
+            window.KeyTextInput("compile+über");
             Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("\"compile\": \"tsc -p .\"", StringComparison.Ordinal), "the script renamed");
-            Assert.Contains("\"watch\": \"npm run compile -- --watch\"", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("\"tsc -p .\"", StringComparison.Ordinal) && !editor.Document.Snapshot.ToString().Contains("\"build\"", StringComparison.Ordinal),
+                "the script renamed");
+            string renamed = editor.Document.Snapshot.ToString();
+            Assert.True(renamed.Contains("\"compile+über\": \"tsc -p .\"", StringComparison.Ordinal) && renamed.Contains("\"watch\": \"npm run compile+über -- --watch\"", StringComparison.Ordinal),
+                $"The script and its npm run were not renamed as typed:\n{renamed}");
         }
         finally
         {

@@ -486,6 +486,24 @@ public sealed class OpenDocument : Observable
     public void ConvertTo(FileEncoding to) =>
         Change(EncodingChange.Lost(to.Encoding, Text.Snapshot.ToString()), Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: true);
 
+    /// <summary>Local History's revert: a version's bytes read as that version was written (UTF-8 before the encoding the
+    /// file has now, which a Convert since may have changed), its text and how it was stored taken as one undoable step
+    /// and written, as Convert writes, its undo and redo writing too. Nothing changes when the version is what it holds.</summary>
+    public void Revert(byte[] bytes)
+    {
+        FileEncoding now = FileEncoding.Of(Encoding, HasBom);
+        FileText version = FileText.FromBytes(bytes, null, () => now.IsUnicode ? Conventions.Charset : now) ?? new FileText(string.Empty, Encoding, HasBom);
+        string text = Text.Snapshot.ToString();
+        LineSeparator separator = version.Text.Contains('\n', StringComparison.Ordinal) ? SeparatorOf(version) : Separator;
+        // Bytes the encoding now writes as the version had them (ASCII in UTF-8 or Latin-1) keep it.
+        bool stored = version.IsStoredAs(Encoding, HasBom);
+        if (version.Text == text && stored && separator == Separator)
+        {
+            return;
+        }
+        Change(LineDiff.Edits(text, version.Text), stored ? Current with { Separator = separator } : Current with { Encoding = version.Encoding, Bom = version.HasBom, Separator = separator }, write: true);
+    }
+
     /// <summary>Rider's change and forget: an encoding that reads the file's bytes as the text it has and writes the text as
     /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step.</summary>
     public void TakeEncoding(FileEncoding to) =>
@@ -506,7 +524,7 @@ public sealed class OpenDocument : Observable
         TextEdit[] sorted = [.. edits.OrderBy(e => e.Start)];
         string changed = Text.Snapshot.Apply(sorted).ToString();
         // Written before anything changes, so a write that fails leaves the file and the editor as they were.
-        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR) : null;
+        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR, makeFolder: false) : null;
         Text.Perform(sorted, carets, TextEditing.MapThrough(carets, sorted).Clamp(changed.Length),
             () => Undoable(() => Settle(before, write)),
             () => Undoable(() => Settle(after, write)));
@@ -705,10 +723,15 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, the licence or notices the
     /// app carries, or an MSBuild file of the .NET SDK or a package that Go to Declaration went into.</summary>
-    public bool IsReadOnly => IsDecompiled || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+    public bool IsReadOnly => IsDecompiled || IsWorkbook || Product.Carries(Path) || MSBuild.MSBuildFiles.IsInstalled(Path);
+
+    /// <summary>Whether this is an Excel workbook, shown as its sheets' cells: its tab holds no text, and nothing is ever
+    /// written over it.</summary>
+    public bool IsWorkbook => Tables.Workbook.IsWorkbook(Path);
 
     /// <summary>What the bar over a read-only file says it came from.</summary>
-    public string Origin => Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
+    public string Origin => IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
+        : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
         : MSBuild.MSBuildFiles.IsInstalled(Path) ? "An MSBuild file of the .NET SDK or a package, as installed, read-only"
         : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
         ? "Source from the library's Source Link or PDB, read-only"
@@ -754,6 +777,20 @@ public sealed class OpenDocument : Observable
         return false;
     }
 
+    /// <summary>Whether a file holds the text this one was last loaded or saved with, read as this one is read: the same
+    /// file under another name, once its folder was moved.</summary>
+    public bool IsSavedAt(string path)
+    {
+        try
+        {
+            return File.Exists(path) && FileText.Load(path, Chosen)?.Text == Text.Saved.ToString();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
     private Encoding? Chosen => encodingChosen ? Encoding : null;
 
@@ -796,9 +833,15 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Writes the file, first doing to its text what its .editorconfig asks of a save (trailing whitespace off
     /// every line without one of <paramref name="carets"/>, a final line break, every break its <c>end_of_line</c>, as
-    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays.</summary>
-    public void Save(SelectionSet? carets = null)
+    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays. Its folder, once
+    /// another program moved or deleted it, is made again only when <paramref name="makeFolder"/> (the person's Save).</summary>
+    public void Save(SelectionSet? carets = null, bool makeFolder = false)
     {
+        if (IsWorkbook)
+        {
+            // Its tab's text is no workbook's: written, it would empty the file.
+            throw new IOException($"{Name} is a workbook, shown read-only.");
+        }
         ReadConventions();
         string text = Text.Snapshot.ToString();
         SelectionSet kept = carets ?? Selections;
@@ -814,12 +857,13 @@ public sealed class OpenDocument : Observable
             SetSeparator(separator);
         }
         FileEncoding? charset = encodingChosen ? null : Conventions.Charset;
-        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom);
+        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom, makeFolder);
     }
 
     /// <summary>Writes the text as it stands, in an encoding and the file's line separator, and takes that as how the
     /// file is stored.</summary>
-    private void Write(Encoding encoding, bool bom) => Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks));
+    private void Write(Encoding encoding, bool bom, bool makeFolder = false) =>
+        Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks, makeFolder));
 
     /// <summary>Takes how a write stored the file, which now holds the text.</summary>
     private void Wrote((FileText Written, string? Converted) write)

@@ -143,6 +143,50 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
         window.Close();
     }
 
+    /// <summary>A debugged run ends when Stop ends its test host's start under the debugger (held at its start here, by a
+    /// diagnostic port of the test's own that the project's launch profile names): no test, group or run icon is left
+    /// running, and the Unit Tests window and the status bar say why the run ended.</summary>
+    [AvaloniaFact]
+    public void Stop_as_a_debugged_runs_test_host_starts_leaves_no_test_running_and_says_why()
+    {
+        using Debugging.Helpers.StartHold hold = new();
+        Write(folder, "Properties/launchSettings.json",
+            $"{{ \"profiles\": {{ \"Sums\": {{ \"commandName\": \"Project\", \"environmentVariables\": {System.Text.Json.JsonSerializer.Serialize(hold.Environment)} }} }} }}");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(10, 8));
+        Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
+        int host = 0;
+        try
+        {
+            // Not settled: the start holds the window's background work while the debugger waits for the test host.
+            Assert.True(window.Perform(AppActions.DebugTests), $"Debug Tests did not start: {Ui.Said(window)}");
+            Ui.PumpUntil(() => held.IsCompleted, "the build, then the test host's runtime to come to the hold", TimeSpan.FromMinutes(3));
+            host = held.Result;
+            TestNode four = Method(window, "Two_and_two_make_four")!;
+            Assert.Equal(TestState.Running, four.State);
+
+            Assert.True(window.Perform(AppActions.Stop), $"Stop did not run while the debugger started the test host: {Ui.Said(window)}");
+            Ui.PumpUntil(() => !window.Tests.IsBusy, "the debugged run to end once Stop ended its test host's start", TimeSpan.FromSeconds(30));
+            Ui.Settle();
+            List<string> running = [.. Every(window.Tests.Tree.Roots).Where(n => n.State == TestState.Running).Select(n => n.Name)];
+            Assert.True(running.Count == 0, $"A run stopped as its test host started left these shown as running: {string.Join(", ", running)}");
+            Assert.Equal(TestState.NotRun, four.State);
+            Assert.DoesNotContain(editor.TestMarks, m => m.Kind == TestMarkKind.Running);
+            const string Why = "The tests could not run: Debugging Tests was stopped as it started";
+            Assert.Equal(Why, window.BottomPanel.Tests.Status);
+            Assert.Equal(Why, window.Status);
+            Assert.Null(window.Debugger.Session);
+        }
+        finally
+        {
+            Processes.Kill(host);
+        }
+        window.Close();
+
+        static IEnumerable<TestNode> Every(IEnumerable<TestNode> nodes) => nodes.SelectMany(n => Every(n.Children).Prepend(n));
+    }
+
     [AvaloniaFact]
     public void Stop_ends_a_run_on_the_platform_and_its_test_host_keeping_what_ran()
     {

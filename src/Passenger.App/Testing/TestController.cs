@@ -60,6 +60,13 @@ public sealed class TestController : IAsyncDisposable
 
     public TestTree Tree { get; }
 
+    /// <summary>The window's work under way, which a run shows itself in from its first moment to its end, Stop ending it
+    /// as the Unit Tests window's Stop does: null with no window to show it in.</summary>
+    public ActionWork? Work { get; init; }
+
+    /// <summary>The run under way as the window shows it.</summary>
+    private Working? working;
+
     /// <summary>The tests the code declares, which the tree shows before any build.</summary>
     public TestFinder Finder { get; } = new();
 
@@ -209,6 +216,8 @@ public sealed class TestController : IAsyncDisposable
         holdingWork = true;
         List<TestNode>? chosen = rows?.ToList();
         using CancellationTokenSource stop = Begin();
+        working = Work?.Begin(AppActions.RunTests, build ? "Building the test projects…" : "Finding the tests…");
+        using CancellationTokenRegistration stopped = working?.Stopping.Register(stop.Cancel) ?? default;
         try
         {
             // A run builds first, as Rider's does, and finds what is new.
@@ -224,35 +233,43 @@ public sealed class TestController : IAsyncDisposable
             }
             List<TestNode> methods = [.. tests.Select(Tree.Node).OfType<TestNode>().Select(n => n.Kind == TestNodeKind.Row ? n.Parent! : n).Distinct()];
             lastRun = chosen ?? [];
+            working?.Say($"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}…");
             Tree.Begin(tests);
-            Changed?.Invoke(this, EventArgs.Empty);
-            Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
-            HashSet<TestOutcome> applied = new(ReferenceEqualityComparer.Instance);
-            void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
             RunSummary? summary = null;
-            // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
-            Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
-                .ToDictionary(p => p, EnvironmentOf, StringComparer.Ordinal);
-            foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
-                .Select(t => (Test: t, Environment: environments[t.Project]))
-                .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
+            try
             {
-                if (summary is { Canceled: true })
+                Changed?.Invoke(this, EventArgs.Empty);
+                Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
+                HashSet<TestOutcome> applied = new(ReferenceEqualityComparer.Instance);
+                void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
+                // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
+                Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
+                    .ToDictionary(p => p, EnvironmentOf, StringComparer.Ordinal);
+                foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
+                    .Select(t => (Test: t, Environment: environments[t.Project]))
+                    .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
                 {
-                    break;
+                    if (summary is { Canceled: true })
+                    {
+                        break;
+                    }
+                    RunSummary part = await runner!.RunAsync(
+                        [.. group.Select(t => t.Test)],
+                        UiThread.Marshal<IReadOnlyList<TestOutcome>>(Apply),
+                        log: UiThread.Marshal(log),
+                        debugger: debug ? new DebugLauncher(this) : null,
+                        environment: group.First().Environment,
+                        cancel: stop.Token);
+                    summary = summary is null ? part : summary.And(part);
                 }
-                RunSummary part = await runner!.RunAsync(
-                    [.. group.Select(t => t.Test)],
-                    UiThread.Marshal<IReadOnlyList<TestOutcome>>(Apply),
-                    log: UiThread.Marshal(log),
-                    debugger: debug ? new DebugLauncher(this) : null,
-                    environment: group.First().Environment,
-                    cancel: stop.Token);
-                summary = summary is null ? part : summary.And(part);
+                // A runner may tell an outcome on another thread behind the run's end: every one is in before the end is.
+                Apply(summary!.Outcomes);
             }
-            // A runner may tell an outcome on another thread behind the run's end: every one is in before the end is.
-            Apply(summary!.Outcomes);
-            Tree.End();
+            finally
+            {
+                // However the run ends, a runner's failure included, what it began and never heard of is no longer running.
+                Tree.End();
+            }
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
             if (!summary.Canceled)
@@ -273,6 +290,8 @@ public sealed class TestController : IAsyncDisposable
         {
             stopping = null;
             IsBusy = false;
+            working?.Dispose();
+            working = null;
             ReleaseWork();
             Changed?.Invoke(this, EventArgs.Empty);
         }
@@ -389,6 +408,10 @@ public sealed class TestController : IAsyncDisposable
             return unbuilt.Message;
         }
         cancel.ThrowIfCancellationRequested();
+        if (build)
+        {
+            working?.Say("Finding the tests…");
+        }
         if (folder != workspace)
         {
             Forget(workspace);

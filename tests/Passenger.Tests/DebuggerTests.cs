@@ -108,6 +108,11 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.StepOver);
         Ui.WaitFor(() => editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line != 3), "the step");
         Ui.WaitFor(() => Value(window, "total") == "3", "the values after the step");
+        // How long the step's stop took to show is timed, and written to passenger.log, as it is what a person waits on.
+        Assert.True(window.Debugger.LastStopTimes is { Asked: "step over", ToStop: { } stepped, Frames: var framed, Locals: var listed }
+            && stepped + listed < TimeSpan.FromSeconds(1).Scaled() && framed <= listed,
+            $"The step's stop took too long to show, or was not timed: {window.Debugger.LastStopTimes}");
+        Assert.Contains("Debugging Sum: step over stopped", Ui.IdeLog(), StringComparison.Ordinal);
 
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
@@ -817,6 +822,42 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
+    /// <summary>An expression evaluated at a stop runs once, when it is asked: its result is that stop's, gone once the
+    /// program goes on, where it was evaluated again at every later stop, side effects and all, an increment adding at
+    /// every step.</summary>
+    [AvaloniaFact]
+    public void An_expression_evaluated_at_a_stop_runs_once_and_its_result_goes_with_the_stop()
+    {
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "total") == "0", "the first stop");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("total += 100");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Result && r.Name == "total += 100" && r.Value == "100"), "the expression's result");
+        Ui.WaitFor(() => Value(window, "total") == "100", "the value the expression set");
+
+        // Two steps: the loop's own add once (101), and then nothing, the expression never run again.
+        StepOver();
+        Assert.True(Value(window, "total") == "101", $"After a step total was {Value(window, "total")}: the expression evaluated at the stop before ran again");
+        Assert.DoesNotContain(view.Tree.Rows, r => r.Role == VariableRole.Result);
+        StepOver();
+        Assert.True(Value(window, "total") == "101", $"After a second step total was {Value(window, "total")}: the expression ran again");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+
+        void StepOver()
+        {
+            StopTimes? before = window.Debugger.LastStopTimes;
+            Ui.Run(window, AppActions.StepOver);
+            WaitDebugging(window, () => !ReferenceEquals(window.Debugger.LastStopTimes, before), "the step's stop and its locals");
+        }
+    }
+
     [AvaloniaFact]
     public void A_value_set_in_the_variables_view_is_the_one_the_program_goes_on_with()
     {
@@ -956,6 +997,60 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             return row.Children?.FirstOrDefault(c => c.Name == member)?.Value
                 ?? throw new InvalidOperationException($"{local} has no member {member}: {string.Join(", ", (row.Children ?? []).Select(c => c.Name))}");
         }
+    }
+
+    /// <summary>Continue pressed while a stop's values are still being read (a watch, a result and a ToString that each run
+    /// 1.5 s in the program) shows the program running at once and sets it going at once: the debugger took it in turn
+    /// behind every evaluation the stop had asked for, the window showing the stop meanwhile, so Continue seemed dead for
+    /// seconds. The program's other thread ticks again within 100 ms; the evaluation under way ends in the program, which
+    /// goes on from it to the next stop.</summary>
+    [AvaloniaFact]
+    public void Continue_pressed_while_a_stops_values_are_read_shows_the_program_running_at_once_and_sets_it_going()
+    {
+        string ticks = Path.Combine(Fresh(), "ticks.txt");
+        Write("Program.cs", "Slow slow = new();\n"
+            + $"new Thread(() =>\n{{\n    for (long n = 1; ; n++)\n    {{\n        try\n        {{\n            File.WriteAllText(@\"{ticks}\", n.ToString());\n        }}\n        catch (IOException)\n        {{\n        }}\n        Thread.Sleep(5);\n    }}\n}}) {{ IsBackground = true }}.Start();\n"
+            + "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n\n"
+            + "sealed class Slow\n{\n    public int Getter => Spin(1500);\n\n    public override string ToString() => $\"slow {Spin(1500)}\";\n\n"
+            + "    static int Spin(int ms)\n    {\n        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();\n"
+            + "        while (clock.ElapsedMilliseconds < ms)\n        {\n        }\n        return ms;\n    }\n}\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(18, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "i") == "1", "the first stop's locals");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("slow.Getter");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
+        Watched(view, "slow.Getter", "1500", "the slow watch");
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("slow.Getter + 1");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Result && r.Value == "1501"), "the slow result");
+
+        // The second stop's frames are shown, and the window has its slow values to read.
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => window.Debugger.Stop is not null, "the second stop's frames");
+        DebugSession session = window.Debugger.Session!;
+        long before = Ticks();
+        Stopwatch pressed = Stopwatch.StartNew();
+        Assert.True(window.Perform(AppActions.Resume), $"Resume was refused at the stop: {window.Status}");
+        Assert.True(session.State == DebugState.Running && !editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint)
+            && window.Status?.EndsWith(": running", StringComparison.Ordinal) == true,
+            $"Continue left the window showing the stop: the session was {session.State} and the status bar said \"{window.Status}\"");
+        Ui.PumpUntil(() => Ticks() > before, "the program to run on", TimeSpan.FromSeconds(30));
+        TimeSpan ran = pressed.Elapsed;
+        Assert.True(ran < TimeSpan.FromMilliseconds(100).Scaled(),
+            $"The program ran on {ran.TotalMilliseconds:0} ms after Continue was pressed: the debugger waited for the stop's evaluations");
+        WaitDebugging(window, () => Value(window, "i") == "3", "the third stop's locals, once the evaluation left running had ended");
+        Assert.Equal("3", Value(window, "total"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+
+        long Ticks() => long.TryParse(Ui.Shared(ticks), out long n) ? n : 0;
     }
 
     [AvaloniaFact]
@@ -1629,8 +1724,59 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.True(Processes.Gone(run.ProcessId), $"Stop left the program running: {Processes.Describe(run.ProcessId)}");
         Assert.True(Processes.Gone(child), $"Stop left the program's child running: {Processes.Describe(child)}");
         Assert.Contains("Process finished with exit code ", TerminalText(run), StringComparison.Ordinal);
-        Assert.False(window.FindControl<Avalonia.Controls.Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the session ended");
+        Assert.False(window.FindControl<Avalonia.Controls.Button>("StopButton")!.IsEnabled, "The toolbar's Stop could still be clicked once the session ended");
         window.Close();
+    }
+
+    /// <summary>A breakpoint set while the debugger still waits for the program's runtime (here held at its start, a
+    /// diagnostic port of the test's own), the first in a file of its own, reaches the program once it runs and stops it:
+    /// changes made while the session started were never sent, the breakpoint never bound.</summary>
+    [AvaloniaFact]
+    public void A_breakpoint_set_while_debugging_starts_reaches_the_program_and_stops_it()
+    {
+        Write("Program.cs", "Console.ReadLine();\nOther.Run();\n");
+        string other = Write("Other.cs", "static class Other\n{\n    public static void Run()\n    {\n        Console.WriteLine(\"other ran\");\n    }\n}\n");
+        using Debugging.Helpers.StartHold hold = new();
+        MainWindow window = Open();
+        window.SetConfigurations([new Passenger.App.Run.RunConfiguration
+        {
+            Name = "Sum held",
+            Project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj"),
+            Environment = new Dictionary<string, string>(hold.Environment),
+        }], "Sum held");
+        Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
+        int program = 0;
+        int adapter = 0;
+        try
+        {
+            // Not settled: the start holds the window's background work for as long as the debugger waits for the program.
+            Assert.True(window.Perform(AppActions.Debug), $"Debug did not start: {Ui.Said(window)}");
+            Ui.PumpUntil(() => held.IsCompleted, "the build, then the program's runtime to come to the hold", TimeSpan.FromMinutes(3));
+            program = held.Result;
+            DebugSession starting = window.Debugger.Session ?? throw new InvalidOperationException($"No session while the program was held: {window.Status}");
+            adapter = starting.AdapterProcessId;
+            Assert.Equal(DebugState.Starting, starting.State);
+            window.OpenFile(other);
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.GoTo(new TextPosition(4, 8));
+            Assert.True(window.Perform(AppActions.ToggleBreakpoint), $"Toggle Breakpoint was refused: {window.Status}");
+
+            Task letGo = hold.LetGo();
+            Ui.PumpUntil(() => letGo.IsCompleted && starting.State != DebugState.Starting, "the program to run", TimeSpan.FromSeconds(60));
+            WaitDebugging(window, () => editor.LineMarks.Contains(new LineMark(4, LineMarkKind.BreakpointBound)),
+                "the breakpoint set while the debugger started to be bound in the program");
+            _ = starting.InputAsync("go\n");
+            WaitDebugging(window, () => starting.State == DebugState.Paused && editor.LineMarks.Contains(new LineMark(4, LineMarkKind.ExecutionPoint)),
+                "the program to stop at the breakpoint set while it started");
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+            Processes.Kill(adapter);
+        }
     }
 
     /// <summary>A debug session is Stop's from its first moment, as Rider's is: one whose program's runtime is slow to start
@@ -1661,7 +1807,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             DebugSession starting = window.Debugger.Session!;
             adapter = starting.AdapterProcessId;
             Assert.Equal(DebugState.Starting, starting.State);
-            Assert.True(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar had no Stop while the debugger waited for the program to start");
+            Assert.True(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could not be clicked while the debugger waited for the program to start");
             Button stop = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
             Assert.True(stop.IsEnabled, "The Debug window's Stop was greyed while the debugger waited for the program to start");
 
@@ -1680,7 +1826,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Assert.True(Processes.Gone(adapter), $"Stop left the debugger running: {Processes.Describe(adapter)}");
             Assert.Equal("Debugging Sum held was stopped as it started", window.Status);
             Assert.Contains("Debugging Sum held was stopped as it started", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
-            Assert.False(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the session ended");
+            Assert.False(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could still be clicked once the session ended");
             Assert.False(stop.IsEnabled, "The Debug window's Stop stayed once the session ended");
             window.Close();
         }
@@ -1689,6 +1835,60 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Processes.Kill(program);
             Processes.Kill(adapter);
         }
+    }
+
+    /// <summary>The Run window's Rerun ends only what Run started: a program debugged meanwhile, paused at a breakpoint, stays
+    /// paused in its session while Run's program is stopped and run again.</summary>
+    [AvaloniaFact]
+    public void The_run_windows_rerun_runs_runs_program_again_and_leaves_a_debugged_program_paused()
+    {
+        string runs = Path.Combine(PathNames.Canonical(Fresh()), "runs.pids");
+        Write("Program.cs", "if (Environment.GetEnvironmentVariable(\"PASSENGER_PIDS\") is { } file)\n{\n" +
+            "    File.AppendAllText(file, $\"{Environment.ProcessId}\\n\");\n    Thread.Sleep(Timeout.Infinite);\n}\nConsole.WriteLine(\"debugged\");\n");
+        MainWindow window = Open();
+        string project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj");
+        List<Passenger.App.Run.RunConfiguration> configurations =
+        [
+            new() { Name = "Debugged", Project = project },
+            new() { Name = "Ran", Project = project, Environment = new Dictionary<string, string> { ["PASSENGER_PIDS"] = runs } },
+        ];
+        window.SetConfigurations(configurations, "Debugged");
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(5, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the debugged program to stop at the breakpoint");
+        DebugSession debugged = window.Debugger.Session!;
+        int program = debugged.ProcessStarted.Result;
+        try
+        {
+            window.SetConfigurations(configurations, "Ran");
+            Assert.True(window.Perform(AppActions.RunProgram), $"Run did not start: {Ui.Said(window)}");
+            Ui.WaitFor(() => Runs().Length == 1, "Run's program to start", TimeSpan.FromMinutes(2));
+            int first = Runs()[0];
+
+            Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
+            Click(window, rerun);
+            Ui.WaitFor(() => Runs().Length == 2, "Run's program to run again", TimeSpan.FromMinutes(2));
+            Assert.True(Processes.Gone(first), $"Rerun left Run's first program going: {Processes.Describe(first)}");
+            Assert.True(window.IsRunning, "The program Rerun started again is not running");
+            Assert.True(window.Debugger.Session == debugged && debugged.State == DebugState.Paused,
+                $"Rerun of Run's program ended the debug session beside it: {Debugged(window)}");
+            Assert.True(Processes.IsRunning(program), $"Rerun of Run's program ended the program being debugged ({program})");
+
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging && !window.IsRunning, "Stop to end the debugged program and Run's");
+        }
+        finally
+        {
+            Processes.Kill(program);
+            foreach (int ran in Runs())
+            {
+                Processes.Kill(ran);
+            }
+        }
+        window.Close();
+
+        int[] Runs() => File.Exists(runs) ? [.. Ui.Shared(runs).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse)] : [];
     }
 
     /// <summary>The window over the folder, its configuration "Sum in the terminal" debugging Sum in the terminal with these

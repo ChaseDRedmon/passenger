@@ -39,6 +39,11 @@ if (args is ["corelib"])
 	CoreLibCalls.Run();
 	return;
 }
+if (args is ["leaves"])
+{
+	Leaves.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -352,5 +357,32 @@ static class CoreLibCalls
 		{
 			Console.WriteLine($"called by CoreLib with {value}");
 		});
+	}
+}
+
+// A stop whose values are slow to read: a getter that says it runs and never returns, and one that counts its evaluations,
+// which a stop the program has left must never run.
+static class Leaves
+{
+	public static int Counted;
+
+	public static int Count => ++Counted;
+
+	public static int Endless
+	{
+		get
+		{
+			Console.WriteLine("evaluating");
+			while (true)
+			{
+			}
+		}
+	}
+
+	public static void Run()
+	{
+		int turn = 1;
+		Console.WriteLine($"turn {turn}");
+		Console.WriteLine($"counted {Counted}");
 	}
 }

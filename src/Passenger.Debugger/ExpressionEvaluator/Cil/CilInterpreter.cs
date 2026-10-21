@@ -26,7 +26,8 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         ICilLocation[] locals = CreateLocals(compiled, frame, body.LocalSignature, context.RootValue is not null, refind);
         EvaluationMetadataResolver resolver = CreateResolver(compiled, context, frame);
         await using DebuggeeDelegateAssemblyLoader delegateAssemblyLoader = new DebuggeeDelegateAssemblyLoader(debugger, compiled, resolver, context, handles, delegateMaterializer);
-        Interpretation run = new Interpretation(compiled, resolver, context, handles, delegateAssemblyLoader, Stopwatch.GetTimestamp() + (long)(Extensions.EvaluationTimeout.TotalSeconds * Stopwatch.Frequency));
+        Interpretation run = new Interpretation(compiled, resolver, context, handles, delegateAssemblyLoader, Stopwatch.GetTimestamp() + (long)(Extensions.EvaluationTimeout.TotalSeconds * Stopwatch.Frequency),
+            debugger.EvalStatus.Leaving);
         CilValue result = await InterpretAsync(run, decoded, arguments, locals);
         ICorDebugValue value = result.Value is EvaluationDelegate
             ? await MaterializeDelegateAsync(result, compiled, resolver, delegateAssemblyLoader, context, handles)
@@ -35,14 +36,16 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
     }
 
     /// <summary>One expression's interpretation, shared by the evaluation methods it calls: what it has made, and when it
-    /// is given up (a <see cref="Stopwatch"/> timestamp), so a loop it runs never holds the engine's lock for good.</summary>
+    /// is given up (a <see cref="Stopwatch"/> timestamp, or a request that leaves the stop), so a loop it runs never holds
+    /// the engine's lock for good.</summary>
     private sealed record Interpretation(
         CompiledEvaluationMethod Compiled,
         EvaluationMetadataResolver Resolver,
         CompiledExpressionEvaluationContext Context,
         EvaluationHandleScope Handles,
         DebuggeeDelegateAssemblyLoader Delegates,
-        long Deadline)
+        long Deadline,
+        CancellationToken Leaving)
     {
         public Dictionary<string, ICilLocation> SyntheticVariables { get; } = new(StringComparer.Ordinal);
         public Dictionary<FieldDefinitionHandle, ICilLocation> StaticFields { get; } = [];
@@ -158,6 +161,10 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             if (Stopwatch.GetTimestamp() > run.Deadline)
             {
                 throw new ManagedDebugger.EvalException($"{TookTooLong}: it was stopped after {Extensions.EvaluationTimeout.TotalSeconds:0.#} s");
+            }
+            if (run.Leaving.IsCancellationRequested)
+            {
+                throw new ManagedDebugger.EvalException(Extensions.NotEvaluated);
             }
             CilInstruction instruction = instructions[index++];
             try

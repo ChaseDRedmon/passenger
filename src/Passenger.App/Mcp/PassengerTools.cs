@@ -55,19 +55,26 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             string opening = Directory.Exists(full) ? PathNames.Canonical(full) : Path.GetDirectoryName(PathNames.Canonical(full))!;
             // The person's folder is theirs: an agent on their window replaces it only with their leave.
-            if (connection is { Attached: true } && !window.AgentsUnattended && Session.Folder is { } open && !PathNames.Same(open, opening)
-                && !await window.AllowAgentOpenAsync(connection.Agent, full, open, cancel))
+            if (connection is { Attached: true } && !window.AgentsUnattended && Session.Folder is { } open && !PathNames.Same(open, opening))
             {
+                AgentCall.Current?.Waits($"Waiting for the person at {AgentConnection.Where(window)} to let {connection.Agent} open {full} (at most {AgentConnection.Limit(window)})");
+                Admission said = await window.AllowAgentOpenAsync(connection.Agent, full, open, cancel);
+                AgentCall.Current?.Waited(said.ToString());
                 cancel.ThrowIfCancellationRequested();
-                throw new InvalidOperationException($"The person at this Passenger window did not let {connection.Agent} open {full} in place of {open}. Ask them, or work in {open}.");
+                if (said != Admission.Allowed)
+                {
+                    throw new InvalidOperationException(said == Admission.NotAllowed
+                        ? $"The person at this Passenger window did not let {connection.Agent} open {full} in place of {open}. Ask them, or work in {open}."
+                        : $"Nobody at {AgentConnection.Where(window)} answered within {AgentConnection.Limit(window)} whether {connection.Agent} may open {full} in place of {open}. A later call asks again.");
+                }
             }
-            await window.OpenFolder(full).WaitAsync(cancel);
+            await window.OpenFolder(full, connection).WaitAsync(cancel);
         }
         else if (File.Exists(full))
         {
             if (Session.Folder is null)
             {
-                await window.OpenFolder(Path.GetDirectoryName(full)!).WaitAsync(cancel);
+                await window.OpenFolder(Path.GetDirectoryName(full)!, connection).WaitAsync(cancel);
             }
             if (window.OpenFile(full) is { } problem)
             {
@@ -511,6 +518,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "(outputTail) when it did not succeed; build_output has them always.")]
     public Task<BuildResult> Build(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        AgentCall.Follow(window.Actions.Work, AppActions.Build);
         // The build goes on without an agent that gives up on it, shown in the Build window.
         BuildOutcome built = await Builds.BuildAsync(BuildCause.Explicit, CancellationToken.None).WaitAsync(cancel);
         IReadOnlyList<Finding> problems = [.. built.Problems.Select(p => new Finding(
@@ -534,11 +542,13 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         Choose(configuration);
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;
         BuildRunController builds = Builds;
+        AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
         if (await builds.RunAsync(arguments, hotReload).WaitAsync(cancel) is { } refused)
         {
             throw new InvalidOperationException(WithBuildErrors(refused));
         }
         Task<int> ended = builds.RunEnd;
+        AgentCall.Say($"Running {name}: waiting up to {Math.Max(0, waitSeconds)} s for it to end or its UI to be up");
         // An app with a window never ends by itself: the wait is over once its UI is up, which the app_ tools look at.
         LiveTree.LiveApp? app = Session.RunApp;
         await Until(() => ended.IsCompleted || app is { State: not LiveTree.LiveAppState.Waiting }, TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
@@ -590,6 +600,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException($"No test's name contains '{filter}'");
         }
+        AgentCall.Say(chosen is null ? "Building and running every test" : $"Building and running {chosen.Count} test{(chosen.Count == 1 ? string.Empty : "s")}");
+        AgentCall.Follow(window.Actions.Work, AppActions.Build);
         Task<string?> run = tests.RunAsync(folder, chosen, debug);
         if (debug)
         {
@@ -647,7 +659,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     // The debugger
 
-    [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint", Destructive = false), Description(
+    [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint", Destructive = true), Description(
         "Sets a breakpoint, or changes the one there: a line breakpoint at path and line; a CLR exception breakpoint on " +
         "exception, stopping in its scenarios (Rider's Suspend If; a new one on a type in all of them); XAML Binding Errors " +
         "with bindingErrors true, stopping a debugged Avalonia or WPF app as a binding fails, its condition and logMessage " +
@@ -838,6 +850,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         int waitSeconds = 60, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Choose(configuration);
+        AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
         if (await Builds.DebugAsync(arguments).WaitAsync(cancel) is { } problem)
         {
             throw new InvalidOperationException(WithBuildErrors(problem));
@@ -870,6 +883,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         LiveTree.LiveApp? app = Session.LiveApp;
         DateTime until = DateTime.UtcNow + limit;
+        AgentCall.Say($"Debugging: waiting up to {limit.TotalSeconds:0} s for a stop, the program's end or its UI");
         Func<bool> going = () => Session.Debug.Session is { State: DebugState.Running or DebugState.Starting };
         await Until(() => !going() || app is { State: not LiveTree.LiveAppState.Waiting }, limit, cancel);
         if (going() && app is { State: LiveTree.LiveAppState.Connected })
@@ -967,7 +981,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return await DebugSnapshotAsync();
     });
 
-    [McpServerTool(Name = "debug_input", Title = "Type into the program's console", Destructive = false), Description(
+    [McpServerTool(Name = "debug_input", Title = "Type into the program's console", Destructive = true), Description(
         "Sends a line to the debugged program's standard input, as the Debug window's console does, or types it into a " +
         "terminal configuration's tab, Enter for the newline.")]
     public Task<string> DebugInput(string text, bool newline = true, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -982,9 +996,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return "Sent";
     });
 
-    [McpServerTool(Name = "debug_evaluate", Title = "Evaluate an expression", ReadOnly = true), Description(
-        "Evaluates a C# expression in a frame of the stopped thread (0, the top, by default), as the Debug window's evaluate box does. " +
-        "A result with members has a reference debug_variables opens.")]
+    [McpServerTool(Name = "debug_evaluate", Title = "Evaluate an expression", Destructive = true), Description(
+        "Evaluates a C# expression, which may call the program's methods, in a frame of the stopped thread (0, the top, by " +
+        "default), as the Debug window's evaluate box does. A result with members has a reference debug_variables opens.")]
     public Task<VariableInfo> DebugEvaluate(string expression, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugSession session = Paused();
@@ -993,7 +1007,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return new VariableInfo(expression, value.Result, value.Type, value.VariablesReference);
     });
 
-    [McpServerTool(Name = "debug_set_value", Title = "Set a value", Destructive = false), Description(
+    [McpServerTool(Name = "debug_set_value", Title = "Set a value", Destructive = true), Description(
         "Assigns a C# expression's value to a local, member or element (\"order.Quantity\", \"list[2]\") in a frame of the " +
         "stopped thread, as Set Value does; the program goes on with it. Returns the value as it now is.")]
     public Task<VariableInfo> DebugSetValue(string expression, [Description("A C# expression: 42, \"text\", null, new List<int>()")] string value, int frame = 0, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -1071,8 +1085,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             return await UiThread.InvokeAsync(async () =>
             {
-                await Session.WorkspaceRead.WaitAsync(cancel);
-                await Session.Models.Idle.WaitAsync(cancel);
+                // Ended while it waited its turn (its agent shut out as the window left the folder): it does nothing in the next.
+                cancel.ThrowIfCancellationRequested();
+                if (!Session.WorkspaceRead.IsCompleted || !Session.Models.Idle.IsCompleted)
+                {
+                    AgentCall.Say($"Waiting for {Session.Folder ?? "the folder"}'s projects to be read");
+                    await Session.WorkspaceRead.WaitAsync(cancel);
+                    await Session.Models.Idle.WaitAsync(cancel);
+                    AgentCall.Say(null);
+                }
                 return await work();
             });
         }
@@ -1116,6 +1137,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     /// <summary>Waits for the program to stop or end after it was set going, then says where it is.</summary>
     private async Task<DebugSnapshot> AfterResume(TimeSpan limit, CancellationToken cancel)
     {
+        if (limit > TimeSpan.Zero)
+        {
+            AgentCall.Say($"The program runs: waiting up to {limit.TotalSeconds:0} s for it to stop or end");
+        }
         await Until(() => Session.Debug.Session is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
         // A stop is read (its frames, the exception it is on) a moment after the state says paused.
         await Until(() => Session.Debug.Session is not { State: DebugState.Paused } || Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
@@ -1326,7 +1351,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             throw new InvalidOperationException("No C# language server runs for this folder");
         }
         // The session's server, which starts again when its projects change: each look is at the one there is then.
-        await Until(() => Session.CSharp?.IsReady != false, ServerLimit, cancel);
+        if (Session.CSharp is { IsReady: false })
+        {
+            AgentCall.Say("Waiting for the C# language server to load the solution");
+            await Until(() => Session.CSharp?.IsReady != false, ServerLimit, cancel);
+            AgentCall.Say(null);
+        }
         return Session.CSharp is { IsReady: true, Session: { } server }
             ? server
             : throw new TimeoutException($"The language server has not loaded the workspace ({Session.CSharp?.State ?? "none"})");

@@ -9,14 +9,15 @@ namespace Passenger.Tests;
 /// <summary>A NuGet v3 feed on a loopback port, so no test reaches nuget.org: its service index, search and flat container,
 /// and once an advisory is given its VulnerabilityInfo resource, which restore's audit and the NuGet window read as they
 /// read nuget.org's. Made with a user and password, it answers only a request with those Basic credentials (401 and a
-/// challenge otherwise, as a private feed asks); every request is kept with whether it had them.</summary>
+/// challenge otherwise, as a private feed asks); every request is kept with whether it had them and the Authorization it
+/// carried.</summary>
 public sealed class StandInFeed : IDisposable
 {
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource end = new();
     private readonly Dictionary<string, Dictionary<string, byte[]>> packages = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> advisories = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<(string Path, bool Authorized)> requests = [];
+    private readonly List<(string Path, bool Authorized, string? Authorization)> requests = [];
     private readonly Task accepting;
     private string? accepted;
 
@@ -35,7 +36,7 @@ public sealed class StandInFeed : IDisposable
 
     public string? Password { get; }
 
-    public IReadOnlyList<(string Path, bool Authorized)> Requests
+    public IReadOnlyList<(string Path, bool Authorized, string? Authorization)> Requests
     {
         get
         {
@@ -45,6 +46,9 @@ public sealed class StandInFeed : IDisposable
             }
         }
     }
+
+    /// <summary>Where its service index says its search is: its own, unless another host's is given.</summary>
+    public Uri? SearchAt { get; set; }
 
     public void Add(string id, string version) => (packages.TryGetValue(id, out Dictionary<string, byte[]>? versions) ? versions : packages[id] = [])[version] = Package(id, version);
 
@@ -140,7 +144,7 @@ public sealed class StandInFeed : IDisposable
                 bool authorized = wanted is null || authorization == wanted;
                 lock (requests)
                 {
-                    requests.Add((path, authorized));
+                    requests.Add((path, authorized, authorization));
                 }
                 (int status, string type, byte[] body) = authorized ? Route(path) : (401, "text/plain", Encoding.UTF8.GetBytes("Who are you?"));
                 string reason = status switch { 200 => "OK", 401 => "Unauthorized", _ => "Not Found" };
@@ -167,12 +171,13 @@ public sealed class StandInFeed : IDisposable
         }
         if (path == "/v3/index.json")
         {
+            string search = SearchAt?.AbsoluteUri ?? $"{Root}/query";
             string vulnerabilities = advising ? $$""", { "@id": "{{Root}}/vulnerabilities/index.json", "@type": "VulnerabilityInfo/6.7.0" }""" : string.Empty;
             return (200, Json, Encoding.UTF8.GetBytes($$"""
                 {
                   "version": "3.0.0",
                   "resources": [
-                    { "@id": "{{Root}}/query", "@type": "SearchQueryService/3.5.0" },
+                    { "@id": "{{search}}", "@type": "SearchQueryService/3.5.0" },
                     { "@id": "{{Root}}/flat/", "@type": "PackageBaseAddress/3.0.0" }{{vulnerabilities}}
                   ]
                 }

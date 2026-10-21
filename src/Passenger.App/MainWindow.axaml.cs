@@ -58,7 +58,7 @@ public partial class MainWindow : Window
         UiThread.Own();
         InitializeComponent();
         session = ProjectSession.None(Setup());
-        status = new StatusBar(StatusMessage, StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
+        status = new StatusBar(StatusMessage, StatusText, StatusIcon, StatusWorking, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
         popups = new PopupHost(Overlay, OverlayHost, Editors, () => session.Debug.Breakpoints);
         navigator = new Navigation.Navigator(new Navigation.NavigatorParts(Editors, () => session, popups, status, path => OpenFile(path), TextOf));
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
@@ -69,6 +69,7 @@ public partial class MainWindow : Window
         AddWelcome();
         AddChords();
         AddToolWindows();
+        ShowActionWork();
         AddVcs();
         AddTerminal();
         AddSettings();
@@ -462,9 +463,14 @@ public partial class MainWindow : Window
         Bottom.Debug.ShowTab(console: false);
     }
 
+    /// <summary>Stop can be clicked while there is something to stop: a debug session, a program Run started, or a start or
+    /// build under way. It keeps its place on the toolbar, greyed, while there is not: one that came and went moved Run and
+    /// Debug from under the pointer the moment Run was clicked, so a second click landed on Debug.</summary>
+    private void ShowStop() => StopButton.IsEnabled = session.Debug.IsDebugging || buildRun.IsRunning || work.CanStop;
+
     private void OnDebugStateChanged()
     {
-        StopButton.IsVisible = session.Debug.IsDebugging || buildRun.IsRunning;
+        ShowStop();
         ShowHotReloadButtons();
     }
 
@@ -652,14 +658,6 @@ public partial class MainWindow : Window
     /// <summary>The tool windows' host, for the layout and the tests.</summary>
     public Docking.DockHost DockHost => Dock;
 
-    private void OnBuildClicked(object? sender, RoutedEventArgs e) => BuildSolution();
-
-    private void OnRunClicked(object? sender, RoutedEventArgs e) => Request(AppActions.RunProgram);
-
-    private void OnDebugClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Debug);
-
-    private void OnStopClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Stop);
-
     /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came from for Back.</summary>
     public void NavigateTo(string path, TextPosition position) => navigator.NavigateTo(path, position);
 
@@ -793,7 +791,7 @@ public partial class MainWindow : Window
         return language;
     }
 
-    private void UpdateCaret() => status.ShowCaret(Editors.Active is null ? null : Editors.CodeEditor);
+    private void UpdateCaret() => status.ShowCaret(Editors.Active is null or { IsWorkbook: true } ? null : Editors.CodeEditor);
 
     private void OnProjectClicked(object? sender, RoutedEventArgs e) => ShowProjectMenu();
 

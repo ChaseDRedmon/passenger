@@ -11,6 +11,26 @@ public sealed record SearchMatch(string Path, int Line, int Column, int Length, 
     public string Name => System.IO.Path.GetFileName(Path);
 }
 
+/// <summary>What Replace in Files did beyond the matches: the files written as UTF-8 since their encoding could not hold
+/// the replacement, and those left as they were since the system refused the write (read-only, access denied, held),
+/// each with why.</summary>
+public sealed record FilesReplaced(IReadOnlyList<string> Converted, IReadOnlyList<(string Path, string Why)> Refused)
+{
+    /// <summary>The matches in files that were replaced, the refused files' left out.</summary>
+    public IReadOnlyList<SearchMatch> Replaced(IEnumerable<SearchMatch> matches) => [.. matches.Where(m => !Refused.Any(r => r.Path == m.Path))];
+
+    /// <summary>How many matches in how many files, as the window and an agent are told.</summary>
+    public static string Count(IReadOnlyCollection<SearchMatch> matches)
+    {
+        int files = matches.Select(m => m.Path).Distinct().Count();
+        return $"{matches.Count} match{(matches.Count == 1 ? "" : "es")} in {files} file{(files == 1 ? "" : "s")}";
+    }
+
+    /// <summary>The refused files, each named as <paramref name="name"/> gives it with why; null when none was.</summary>
+    public string? NotReplaced(Func<string, string> name) =>
+        Refused.Count == 0 ? null : $"not replaced: {string.Join(", ", Refused.Select(r => $"{name(r.Path)} ({r.Why})"))}";
+}
+
 /// <summary>Find in Files over the open folder's files, matching as the editor's Find bar does (the same query and
 /// options): every text file the index has (build output and version control left out), or those a scope and a file
 /// mask leave, an open file as the editor has it, unsaved changes and all; binary and very large files passed over.

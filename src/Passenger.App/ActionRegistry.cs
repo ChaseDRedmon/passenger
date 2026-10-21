@@ -6,8 +6,9 @@ namespace Passenger.App;
 
 /// <summary>A window's actions, each added once by the feature it belongs to, and the keymap that binds them: what every
 /// list of actions reads (Find Action, the menus, Settings' keymap, an agent's ide_actions) and what every way of running
-/// one goes through (its keys, a menu item, Find Action, ide_action).</summary>
-public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> keymap)
+/// one goes through (its keys, a menu item, Find Action, ide_action). An action whose work is under way starts nothing
+/// more, however it is asked for, and says what is under way.</summary>
+public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> keymap, ActionWork work)
 {
     private readonly Dictionary<string, IdeAction> byId = new(StringComparer.Ordinal);
     private IReadOnlyList<IdeAction>? sorted;
@@ -23,6 +24,9 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
     }
 
     public IdeAction? this[string id] => byId.GetValueOrDefault(id);
+
+    /// <summary>What the window's actions are doing that takes a while.</summary>
+    public ActionWork Work => work;
 
     /// <summary>An action about to run, however it was asked for: Local History names what a refactoring writes by it.</summary>
     public event EventHandler<IdeAction>? Running;
@@ -85,10 +89,12 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
             .ThenBy(a => a.Title.Length)];
     }
 
-    /// <summary>Null when the action can run in this context, else why not: no action has the id, or what it needs is
-    /// not there.</summary>
+    /// <summary>Null when the action can run in this context, else why not: no action has the id, its work is under way
+    /// already, or what it needs is not there.</summary>
     public string? WhyNot(string id, ActionContext context) =>
-        byId.TryGetValue(id, out IdeAction? action) ? action.WhyNot(context) : $"No action is called {id}";
+        !byId.TryGetValue(id, out IdeAction? action) ? $"No action is called {id}"
+        : work.Of(action.WorkId) is { } under ? ActionWork.Busy(under)
+        : action.WhyNot(context);
 
     /// <summary>Runs an action where it is asked for now; null once it has run, else why it could not.</summary>
     public string? Run(string id) => Run(id, Context());

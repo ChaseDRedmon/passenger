@@ -1,7 +1,7 @@
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!-- Passenger's own theme, the default: every colour the IDE paints, once in Dark and once in Light, and the few shapes
-         a theme may draw its own way. A control names a token, never a colour. Harbour (Harbour.axaml) gives every token
+         a theme may draw its own way. A control names a token, never a colour. Every other theme (Harbour.axaml, and those tools/themes.py writes) gives every token
          again, laid over these when chosen, and Rider's colour scheme (RiderScheme.axaml) the code's over either (Themes).
          Passenger.Editor.*, Passenger.Syntax.* and Passenger.SyntaxStyle.* are read by the code editor by name; a syntax
          kind left out draws as plain text. A theme gives tokens alone: Fluent's own keys are FluentKeys.axaml's, named once
