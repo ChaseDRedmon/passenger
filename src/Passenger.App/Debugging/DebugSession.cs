@@ -30,7 +30,12 @@ public sealed class DebugSession
     private readonly DapConnection connection;
 
     /// <summary>How the IDE's paths are named where the program runs, and back, at the protocol's edge.</summary>
-    private readonly DebugPaths paths;
+    /// <summary>Where the adapter runs when not beside the app, whose path map paths cross at the protocol's edge.</summary>
+    private readonly AdapterPlace? place;
+
+    private string ToProgram(string path) => place?.ToProgram(path) ?? path;
+
+    private string ToIde(string path) => place?.ToIde(path) ?? path;
     private readonly BreakpointStore breakpoints;
     private readonly BuiltLines lines;
 
@@ -88,7 +93,7 @@ public sealed class DebugSession
         AdapterPlace? place)
     {
         Elsewhere = elsewhere || place is not null;
-        paths = place?.Paths ?? DebugPaths.Same;
+        this.place = place;
         this.breakpoints = breakpoints;
         this.lines = lines;
         this.columns = columns ?? (_ => null);
@@ -252,12 +257,11 @@ public sealed class DebugSession
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false,
         Action<DebugSession>? starting = null, bool elsewhere = false, AdapterPlace? place = null)
     {
-        DebugPaths paths = place?.Paths ?? DebugPaths.Same;
         return StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
-            Program = paths.ToProgram(plan.Program),
+            Program = place?.ToProgram(plan.Program) ?? plan.Program,
             Args = plan.Arguments,
-            Cwd = paths.ToProgram(plan.WorkingDirectory),
+            Cwd = place?.ToProgram(plan.WorkingDirectory) ?? plan.WorkingDirectory,
             Env = plan.Environment,
             Console = runInTerminal is null ? "internalConsole" : "integratedTerminal",
             JustMyCode = true,
@@ -597,7 +601,7 @@ public sealed class DebugSession
     /// stops would otherwise miss the open file.</summary>
     public async Task<IReadOnlyList<DapStackFrame>> StackTraceAsync(int threadId) =>
         [.. (await connection.RequestAsync<StackTraceResponse>("stackTrace", new StackTraceArguments(threadId))).StackFrames.Select(f =>
-            f.Source is { Path: { } named } source && paths.ToIde(named) is var path && Path.IsPathFullyQualified(path) && File.Exists(path)
+            f.Source is { Path: { } named } source && ToIde(named) is var path && Path.IsPathFullyQualified(path) && File.Exists(path)
                 ? f with { Source = source with { Path = PathNames.Canonical(path) } }
                 : f)];
 
@@ -617,7 +621,7 @@ public sealed class DebugSession
 
     /// <summary>Where the paused thread could go on from at a line of a file (from one), if the line is in its method.</summary>
     public async Task<GotoTarget?> GotoTargetAsync(string path, int line) =>
-        (await connection.RequestAsync<GotoTargetsResponse>("gotoTargets", new GotoTargetsArguments(new DapSource { Path = paths.ToProgram(path) }, line))).Targets.FirstOrDefault();
+        (await connection.RequestAsync<GotoTargetsResponse>("gotoTargets", new GotoTargetsArguments(new DapSource { Path = ToProgram(path) }, line))).Targets.FirstOrDefault();
 
     /// <summary>Set Next Statement: the paused thread goes on from a target; it stops there anew.</summary>
     public Task GotoAsync(int thread, GotoTarget target) => connection.RequestAsync<object>("goto", new GotoArguments(thread, target.Id));
@@ -632,14 +636,14 @@ public sealed class DebugSession
     public async Task<HotReloadStateResponse> HotReloadStateAsync()
     {
         HotReloadStateResponse state = await connection.RequestAsync<HotReloadStateResponse>("hotReloadState", new DapEmpty());
-        return state with { ActiveStatements = [.. state.ActiveStatements.Select(s => s.Document is { } document ? s with { Document = paths.ToIde(document) } : s)] };
+        return state with { ActiveStatements = [.. state.ActiveStatements.Select(s => s.Document is { } document ? s with { Document = ToIde(document) } : s)] };
     }
 
     /// <summary>Applies Edit and Continue's updates to the program, paused or running, each document's lines named as the
     /// program's PDB names it.</summary>
     public Task<ApplyChangesResponse> ApplyChangesAsync(IReadOnlyList<DapModuleUpdate> updates) =>
         connection.RequestAsync<ApplyChangesResponse>("applyChanges", new ApplyChangesArguments(
-            [.. updates.Select(u => u with { Lines = [.. u.Lines.Select(l => l with { Document = paths.ToProgram(l.Document) })] })]));
+            [.. updates.Select(u => u with { Lines = [.. u.Lines.Select(l => l with { Document = ToProgram(l.Document) })] })]));
 
     /// <summary>Sends files' breakpoints again, at their lines now, after an update the program took: the debugger binds
     /// each again in the code it runs now, as the files' built lines are now their lines.</summary>
@@ -702,7 +706,7 @@ public sealed class DebugSession
         }
         sent[path] = Signature(path);
         SetBreakpointsResponse response = await connection.RequestAsync<SetBreakpointsResponse>(
-            "setBreakpoints", new SetBreakpointsArguments(new DapSource { Path = paths.ToProgram(path), Name = Path.GetFileName(path) }, requests));
+            "setBreakpoints", new SetBreakpointsArguments(new DapSource { Path = ToProgram(path), Name = Path.GetFileName(path) }, requests));
         foreach (int id in byId.Where(p => p.Value.Path == path).Select(p => p.Key).ToList())
         {
             byId.Remove(id);

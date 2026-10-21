@@ -959,9 +959,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `AdapterPlace` (`DebugController.StartAsync`/`AttachAsync`'s `place`) runs its adapter there, a container's over
   `docker exec -i` (the protocol unchanged over its standard input and output; killing the CLI, Stop and Detach close the
   adapter's input there, which lets the program go and ends it), and crosses paths at the protocol's edge through the
-  place's `DebugPaths` (launch's program and folder, breakpoints, Run to Cursor, Set Next Statement, Hot Reload's line
-  updates and active statements, stack frames): the same path unless a run configuration's map (#343's `ContainerPaths`)
-  is given as `new DebugPaths(toContainer, toHost)`. The engine decides exception breakpoints (`ExceptionRule`)
+  place's `ContainerPaths` (launch's program and folder, breakpoints, Run to Cursor, Set Next Statement, Hot Reload's
+  line updates and active statements, stack frames): a path the map does not cover, or `ContainerPaths.None` (a build of
+  this machine's, fast mode), crosses as it is. The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is

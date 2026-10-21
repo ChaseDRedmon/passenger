@@ -164,8 +164,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             Assert.True(window.Perform(AppActions.Detach), "Detach could not run");
             Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugger to let go");
 
-            DebugPaths map = new(path => path.StartsWith(folder, StringComparison.Ordinal) ? "/src/Turns/" + path[folder.Length..].TrimStart('/') : path,
-                path => path.StartsWith("/src/Turns/", StringComparison.Ordinal) ? Path.Combine(folder, path["/src/Turns/".Length..]) : path);
+            ContainerPaths map = new([("/src/Turns/", folder)]);
             AttachThrough(window, container, map);
             StoppedAtBreakpoint(window, "the program attached to through a path map");
             ShownAt(window, Said);
@@ -189,8 +188,8 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
         MainWindow window = Open(turns.Source("windows"));
         try
         {
-            DebugPaths map = new(path => path.StartsWith(folder, StringComparison.Ordinal) ? @"c:\WORK\turns\" + path[folder.Length..].TrimStart('/') : path,
-                path => path.Replace('\\', '/').StartsWith("C:/work/Turns/", StringComparison.OrdinalIgnoreCase) ? Path.Combine(folder, path["C:/work/Turns/".Length..]) : path);
+            // The breakpoint's path goes in by the first pair, another letter case than the PDB's; the stop's comes back by the second.
+            ContainerPaths map = new([("c:/WORK/turns/", folder), ("C:/work/Turns/", folder)]);
             AttachThrough(window, container, map);
             StoppedAtBreakpoint(window, "the program whose PDB names a Windows machine's paths");
             ShownAt(window, Said);
@@ -312,7 +311,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
 
     /// <summary>Attaches to the program in a container through a path map, as a container run configuration's Debug does: the
     /// tools put in, the program found by its id there, the adapter started there over docker exec.</summary>
-    private static void AttachThrough(MainWindow window, string container, DebugPaths map)
+    private static void AttachThrough(MainWindow window, string container, ContainerPaths map)
     {
         (string tools, int id) = Task.Run(async () =>
         {

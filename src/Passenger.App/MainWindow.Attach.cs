@@ -166,7 +166,7 @@ public partial class MainWindow
             return (found with { Note = found.Note ?? process.Note }, tools);
         }, stop);
         AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(container, executable, arguments)), ContainerTools.SymbolCache,
-            DebugPaths.Same, container);
+            ContainerPaths.None, container);
         return (target, place);
     }
 
