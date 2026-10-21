@@ -86,17 +86,8 @@ public sealed class OpenDocument : Observable
             Selections = TextEditing.MapThrough(Selections, change.Edits).Clamp(change.After.Length);
             if (foldRegions.Count > 0)
             {
-                FoldRegion[] moved = new FoldRegion[foldRegions.Count];
-                for (int i = 0; i < moved.Length; i++)
-                {
-                    FoldRegion region = foldRegions[i];
-                    moved[i] = region with
-                    {
-                        Start = TextEditing.MapOffset(region.Start, change.Edits, afterInsertions: true),
-                        End = TextEditing.MapOffset(region.End, change.Edits, afterInsertions: true),
-                    };
-                }
-                FoldRegions = moved;
+                // Moved where the edit reaches them, the runs of regions past it shifted whole.
+                FoldRegions = FoldList.Of(foldRegions).Through(change.Edits);
             }
             FollowHeld(change.Edits);
             Raise(nameof(IsModified));

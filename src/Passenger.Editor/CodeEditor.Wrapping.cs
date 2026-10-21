@@ -137,7 +137,7 @@ public sealed partial class CodeEditor
     private bool LeansBack(int offset) => wrapLeaning.Contains(offset);
 
     /// <summary>A row of a line: its text's span, from a row of the line (from zero) as the wraps now have it.</summary>
-    private RowSpan RowSpanOf(TextSnapshot text, int line, int row) => RowSpan.Of(text.GetLine(line), Wraps?.Lines[line], row);
+    private RowSpan RowSpanOf(TextSnapshot text, int line, int row) => RowSpan.Of(text.GetLine(line), Wraps?[line], row);
 
     /// <summary>The row of the text an offset stands on, and the span of it: after a wrap there, or at the end of the row
     /// before it when <paramref name="beforeWrap"/>. An offset in folded lines is on its fold's first row.</summary>
@@ -145,7 +145,7 @@ public sealed partial class CodeEditor
     {
         int line = text.GetLineFromOffset(offset);
         LineSpan span = text.GetLine(line);
-        LineWrap? wrap = Wraps?.Lines[line];
+        LineWrap? wrap = Wraps?[line];
         int sub = SubRowOf(wrap, Math.Min(offset, span.End) - span.Start, beforeWrap);
         return (RowSpan.Of(span, wrap, sub), RowOf(line) + (IsHidden(line) ? 0 : sub));
     }
@@ -208,7 +208,7 @@ public sealed partial class CodeEditor
         LineSpan span = text.GetLine(line);
         for (int row = firstRow; row <= lastRow; row++)
         {
-            LineWrap? wrap = map.Wraps?.Lines[line];
+            LineWrap? wrap = map.Wraps?[line];
             shown.Add(RowSpan.Of(span, wrap, sub));
             if (wrap is not null && sub < wrap.Starts.Length)
             {
@@ -244,7 +244,7 @@ public sealed partial class CodeEditor
         {
             int caret = Math.Min(s.Caret, text.Length);
             int line = text.GetLineFromOffset(caret);
-            if (map.Lines[line] is { } wrap && Array.BinarySearch(wrap.Starts, caret - text.GetLineStart(line)) >= 0)
+            if (map[line] is { } wrap && Array.BinarySearch(wrap.Starts, caret - text.GetLineStart(line)) >= 0)
             {
                 (at ??= []).Add(caret);
             }
@@ -267,7 +267,7 @@ public sealed partial class CodeEditor
         {
             int line = text.GetLineFromOffset(s.Caret);
             LineSpan span = text.GetLine(line);
-            LineWrap? wrap = map.Lines[line];
+            LineWrap? wrap = map[line];
             int sub = SubRowOf(wrap, s.Caret - span.Start, LeansBack(s.Caret));
             if (wrap is null || sub == 0)
             {
@@ -298,7 +298,7 @@ public sealed partial class CodeEditor
         {
             int line = text.GetLineFromOffset(s.Caret);
             LineSpan span = text.GetLine(line);
-            LineWrap? wrap = map.Lines[line];
+            LineWrap? wrap = map[line];
             bool before = LeansBack(s.Caret);
             int sub = SubRowOf(wrap, s.Caret - span.Start, before);
             if (wrap is null)
@@ -346,7 +346,7 @@ public sealed partial class CodeEditor
         TextSnapshot text = document.Snapshot;
         int top = RowAtY(0);
         (int line, int sub) = before.LineOfRow(top);
-        int anchor = line >= text.LineCount ? text.Length : RowSpan.Of(text.GetLine(line), before.Wraps?.Lines[line], sub).Start;
+        int anchor = line >= text.LineCount ? text.Length : RowSpan.Of(text.GetLine(line), before.Wraps?[line], sub).Start;
         double within = scroll.Y - (top * metrics.LineHeight);
         change();
         int row = RowOfOffset(text, anchor, beforeWrap: false).Row;
@@ -378,10 +378,9 @@ public sealed partial class CodeEditor
         }
         TextSnapshot before = change.Before;
         TextSnapshot after = change.After;
-        LineWrap?[] lines = new LineWrap?[after.LineCount];
+        WrapBuilder made = new(map.Runs + 2);
         Advances measure = Measures();
         int copiedTo = 0;
-        int writtenTo = 0;
         int shift = 0;
         int i = 0;
         IReadOnlyList<TextEdit> edits = change.Edits;
@@ -399,20 +398,18 @@ public sealed partial class CodeEditor
                 last = Math.Max(last, end);
                 j++;
             }
-            Array.Copy(map.Lines, copiedTo, lines, writtenTo, first - copiedTo);
-            writtenTo += first - copiedTo;
+            made.AddRange(map, copiedTo, first - copiedTo);
             int lastAfter = last + shift + added;
             for (int line = first + shift; line <= lastAfter; line++)
             {
-                lines[line] = WrapLine(after, after.GetLine(line), map.Width, measure);
+                made.Add(WrapLine(after, after.GetLine(line), map.Width, measure));
             }
-            writtenTo = lastAfter + 1;
             copiedTo = last + 1;
             shift += added;
             i = j;
         }
-        Array.Copy(map.Lines, copiedTo, lines, writtenTo, map.Lines.Length - copiedTo);
-        wraps = new WrapMap(after, map.Width, map.Look, lines);
+        made.AddRange(map, copiedTo, map.LineCount - copiedTo);
+        wraps = made.Build(after, map.Width, map.Look);
     }
 
     /// <summary>The hints changed: the lines that had or have some are wrapped again, since a hint takes room on its row.</summary>
@@ -423,31 +420,35 @@ public sealed partial class CodeEditor
         {
             return;
         }
-        HashSet<int> touched = [];
+        SortedSet<int> touched = [];
         foreach (InlayHint hint in before.Concat(after))
         {
             touched.Add(text.GetLineFromOffset(Math.Clamp(hint.Offset, 0, text.Length)));
         }
-        LineWrap?[] lines = (LineWrap?[])map.Lines.Clone();
+        WrapBuilder made = new(map.Runs + touched.Count + 1);
         Advances measure = Measures();
+        int copiedTo = 0;
         foreach (int line in touched)
         {
-            lines[line] = WrapLine(text, text.GetLine(line), map.Width, measure);
+            made.AddRange(map, copiedTo, line - copiedTo);
+            made.Add(WrapLine(text, text.GetLine(line), map.Width, measure));
+            copiedTo = line + 1;
         }
-        wraps = new WrapMap(text, map.Width, map.Look, lines);
+        made.AddRange(map, copiedTo, map.LineCount - copiedTo);
+        wraps = made.Build(text, map.Width, map.Look);
     }
 
     private static int Breaks(string text) => text.AsSpan().Count('\n');
 
     private WrapMap WrapAll(TextSnapshot text, double width)
     {
-        LineWrap?[] lines = new LineWrap?[text.LineCount];
+        WrapBuilder made = new();
         Advances measure = Measures();
-        for (int line = 0; line < lines.Length; line++)
+        for (int line = 0; line < text.LineCount; line++)
         {
-            lines[line] = WrapLine(text, text.GetLine(line), width, measure);
+            made.Add(WrapLine(text, text.GetLine(line), width, measure));
         }
-        return new WrapMap(text, width, look, lines);
+        return made.Build(text, width, look);
     }
 
     /// <summary>The graphemes' widths in the editor's font now, measured once each.</summary>
@@ -652,97 +653,258 @@ public sealed partial class CodeEditor
     /// <summary>A wrapped line: the columns its rows after the first start at, rising, and how far in their text is drawn.</summary>
     private sealed record LineWrap(int[] Starts, double Indent);
 
-    /// <summary>Where every line of one text wraps at one width, null for a line that fits; replaced, never changed, so a row
-    /// map made from it stays true to it.</summary>
-    private sealed class WrapMap(TextSnapshot text, double width, int look, LineWrap?[] lines)
+    /// <summary>Where every line of one text wraps at one width, null for a line that fits, in runs of lines that the maps of
+    /// later texts share: an edit's map makes again the lines it touched and takes the runs around them as they were, so a
+    /// key costs the lines it changed and a few small arrays, whatever the length of the file. Replaced, never changed, so a
+    /// row map made from it stays true to it.</summary>
+    private sealed class WrapMap
     {
-        public TextSnapshot Text { get; } = text;
-        public double Width { get; } = width;
-        public int Look { get; } = look;
-        public LineWrap?[] Lines { get; } = lines;
+        private readonly WrapRun[] runs;
+
+        /// <summary>The line each run starts at.</summary>
+        private readonly int[] firstLines;
+
+        /// <summary>The rows the wraps of the runs before each add; one more than the runs, the last all of them.</summary>
+        private readonly int[] extraBefore;
+
+        public WrapMap(TextSnapshot text, double width, int look, WrapRun[] runs)
+        {
+            Text = text;
+            Width = width;
+            Look = look;
+            this.runs = runs;
+            firstLines = new int[runs.Length];
+            extraBefore = new int[runs.Length + 1];
+            int lines = 0;
+            for (int k = 0; k < runs.Length; k++)
+            {
+                firstLines[k] = lines;
+                lines += runs[k].Count;
+                extraBefore[k + 1] = extraBefore[k] + runs[k].ExtraRows;
+            }
+            LineCount = lines;
+        }
+
+        public TextSnapshot Text { get; }
+
+        public double Width { get; }
+
+        public int Look { get; }
+
+        public int LineCount { get; }
+
+        /// <summary>How many runs the lines are kept in.</summary>
+        public int Runs => runs.Length;
+
+        /// <summary>The rows every line's wraps add.</summary>
+        public int ExtraRows => extraBefore[^1];
+
+        public LineWrap? this[int line]
+        {
+            get
+            {
+                int k = RunOf(line);
+                return runs[k][line - firstLines[k]];
+            }
+        }
+
+        /// <summary>The rows the wraps of the lines before a line add.</summary>
+        public int ExtraBefore(int line)
+        {
+            if (line >= LineCount)
+            {
+                return ExtraRows;
+            }
+            int k = RunOf(line);
+            return extraBefore[k] + runs[k].ExtraBefore(line - firstLines[k]);
+        }
+
+        /// <summary>Lines [start, start + count) as they are, given to a map being made: the runs that hold them, the first
+        /// and last cut to fit.</summary>
+        public void CopyTo(WrapBuilder made, int start, int count)
+        {
+            if (count <= 0)
+            {
+                return;
+            }
+            int end = start + count;
+            for (int k = RunOf(start); k < runs.Length && firstLines[k] < end; k++)
+            {
+                int from = Math.Max(start, firstLines[k]) - firstLines[k];
+                int to = Math.Min(end, firstLines[k] + runs[k].Count) - firstLines[k];
+                made.Add(runs[k].Slice(from, to - from));
+            }
+        }
+
+        private int RunOf(int line)
+        {
+            int k = Array.BinarySearch(firstLines, line);
+            return k >= 0 ? k : ~k - 1;
+        }
+    }
+
+    /// <summary>Lines' wraps as a stretch of one array, with the rows the wraps before each line of the array add, so a
+    /// stretch of it is shared by every map that has those lines unchanged.</summary>
+    private readonly struct WrapRun(LineWrap?[] lines, int[] extra, int from, int count)
+    {
+        public int Count { get; } = count;
+
+        public int ExtraRows => extra[from + Count] - extra[from];
+
+        public LineWrap? this[int line] => lines[from + line];
+
+        public static WrapRun Of(LineWrap?[] lines)
+        {
+            int[] extra = new int[lines.Length + 1];
+            for (int i = 0; i < lines.Length; i++)
+            {
+                extra[i + 1] = extra[i] + (lines[i]?.Starts.Length ?? 0);
+            }
+            return new WrapRun(lines, extra, 0, lines.Length);
+        }
+
+        public int ExtraBefore(int line) => extra[from + line] - extra[from];
+
+        public WrapRun Slice(int start, int length) => new(lines, extra, from + start, length);
+    }
+
+    /// <summary>Makes a <see cref="WrapMap"/> line by line, taking an older map's runs whole where they are long enough to
+    /// share and copying the short ones, so the runs stay few however many edits a file has had.</summary>
+    private sealed class WrapBuilder(int runsAbout = 0)
+    {
+        private const int RunLength = 512;
+        private const int SharedAtLeast = 64;
+
+        private readonly List<WrapRun> runs = new(runsAbout);
+        private LineWrap?[]? pending;
+        private int filled;
+
+        public void Add(LineWrap? wrap)
+        {
+            if (filled == RunLength)
+            {
+                Flush();
+            }
+            pending ??= ArrayPool<LineWrap?>.Shared.Rent(RunLength);
+            pending[filled++] = wrap;
+        }
+
+        /// <summary>Lines [start, start + count) of an older map, as they are.</summary>
+        public void AddRange(WrapMap map, int start, int count) => map.CopyTo(this, start, count);
+
+        /// <summary>A stretch of an older map's run.</summary>
+        public void Add(WrapRun run)
+        {
+            if (run.Count >= SharedAtLeast)
+            {
+                Flush();
+                runs.Add(run);
+                return;
+            }
+            for (int i = 0; i < run.Count; i++)
+            {
+                Add(run[i]);
+            }
+        }
+
+        public WrapMap Build(TextSnapshot text, double width, int look)
+        {
+            Flush();
+            if (pending is not null)
+            {
+                ArrayPool<LineWrap?>.Shared.Return(pending, clearArray: true);
+                pending = null;
+            }
+            return new WrapMap(text, width, look, [.. runs]);
+        }
+
+        private void Flush()
+        {
+            if (filled > 0)
+            {
+                runs.Add(WrapRun.Of(pending.AsSpan(0, filled).ToArray()));
+                filled = 0;
+            }
+        }
     }
 
     /// <summary>Lines and rows, both ways: the lines the folds leave showing, each one row or, wrapped, as many as its wraps
-    /// make. The wrapped lines showing are kept in order with the rows before each, so a line's row or a row's line is found by
-    /// halving; with nothing wrapped it is the folds' own map.</summary>
+    /// make. A line's row is its row among the lines showing and the rows the wraps of the lines showing before it add, from
+    /// the wraps' runs less what the folded ranges before it hide; a row's line is found by halving the lines. With nothing
+    /// wrapped it is the folds' own map. Made for each text and set of folds, it reads only the folded ranges.</summary>
     private sealed class RowMap
     {
-        private readonly int[] wrapped = [];
-        private readonly int[] firstRows = [];
-        private readonly int[] extraBefore = [0];
+        private static readonly int[] NoneHidden = [0];
+
+        /// <summary>The rows the wraps add to the lines the folded ranges before each hide; one more than the ranges.</summary>
+        private readonly int[] hiddenExtra = NoneHidden;
 
         public RowMap(FoldLines folds, WrapMap? wraps)
         {
             Folds = folds;
             Wraps = wraps;
+            Count = folds.Text.LineCount - folds.HiddenCount;
             if (wraps is null)
             {
                 return;
             }
-            List<int> lines = [];
-            for (int line = 0; line < wraps.Lines.Length; line++)
+            if (folds.Hidden.Length > 0)
             {
-                if (wraps.Lines[line] is not null && !folds.IsHidden(line))
-                {
-                    lines.Add(line);
-                }
+                hiddenExtra = new int[folds.Hidden.Length + 1];
             }
-            wrapped = [.. lines];
-            firstRows = new int[wrapped.Length];
-            extraBefore = new int[wrapped.Length + 1];
-            for (int i = 0; i < wrapped.Length; i++)
+            for (int k = 0; k < folds.Hidden.Length; k++)
             {
-                firstRows[i] = folds.RowOf(wrapped[i]) + extraBefore[i];
-                extraBefore[i + 1] = extraBefore[i] + wraps.Lines[wrapped[i]]!.Starts.Length;
+                (int first, int last) = folds.Hidden[k];
+                hiddenExtra[k + 1] = hiddenExtra[k] + wraps.ExtraBefore(last + 1) - wraps.ExtraBefore(first);
             }
+            Count += wraps.ExtraRows - hiddenExtra[^1];
         }
 
         public FoldLines Folds { get; }
 
         public WrapMap? Wraps { get; }
 
-        public int Count => Folds.Text.LineCount - Folds.HiddenCount + extraBefore[^1];
+        public int Count { get; }
 
         /// <summary>A line's first row; a folded line's is its fold's first line's.</summary>
         public int RowOf(int line)
         {
             line = Folds.Shown(line);
-            int i = LowerBound(wrapped, line);
-            return Folds.RowOf(line) + extraBefore[i];
+            return Folds.RowOf(line) + (Wraps is null ? 0 : Wraps.ExtraBefore(line) - hiddenExtra[Folds.RangeAtOrBefore(line) + 1]);
         }
 
         /// <summary>How many rows a line takes: one for a folded one, which shares its fold's.</summary>
         public int RowsOf(int line) =>
-            Wraps is null || Folds.IsHidden(line) || line >= Wraps.Lines.Length ? 1 : 1 + (Wraps.Lines[line]?.Starts.Length ?? 0);
+            Wraps is null || Folds.IsHidden(line) || line >= Wraps.LineCount ? 1 : 1 + (Wraps[line]?.Starts.Length ?? 0);
 
         /// <summary>The line a row shows and which of its rows it is; past the last row, the lines past the end.</summary>
         public (int Line, int Row) LineOfRow(int row)
         {
-            int i = UpperBound(firstRows, row) - 1;
-            if (i >= 0 && row - firstRows[i] <= Wraps!.Lines[wrapped[i]]!.Starts.Length)
+            if (Wraps is null || row < 0)
             {
-                return (wrapped[i], row - firstRows[i]);
+                return (Folds.LineOfRow(row), 0);
             }
-            return (Folds.LineOfRow(row - extraBefore[i + 1]), 0);
-        }
-
-        private static int LowerBound(int[] values, int value)
-        {
+            if (row >= Count)
+            {
+                return (Folds.Text.LineCount + row - Count, 0);
+            }
+            // The last line whose first row is at most the row; a folded one is on its fold's first line's.
             int low = 0;
-            int high = values.Length;
+            int high = Folds.Text.LineCount - 1;
             while (low < high)
             {
-                int middle = (low + high) / 2;
-                if (values[middle] < value)
+                int middle = (int)((uint)(low + high + 1) >> 1);
+                if (RowOf(middle) <= row)
                 {
-                    low = middle + 1;
+                    low = middle;
                 }
                 else
                 {
-                    high = middle;
+                    high = middle - 1;
                 }
             }
-            return low;
+            int line = Folds.Shown(low);
+            return (line, row - RowOf(line));
         }
     }
 }

@@ -325,11 +325,11 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
-    /// <summary>Every key moves the regions below it, and the parse it makes brings them again: the window keeps one moved
-    /// copy of the list a key (24 bytes a region) and takes the parse's own when nothing is folded. A key typed above 2,000
-    /// doc comments allocates on the UI thread under 48 bytes for each more than above the same lines as plain comments,
-    /// where the regions were mapped, sorted and copied again by the editor, and copied twice more when each parse landed.
-    /// A region folded below keeps its fold through the keys.</summary>
+    /// <summary>Every key moves the regions below it, and the parse it makes brings them again: the window moves region by
+    /// region the run of them the key reaches and shifts the runs below whole, and keeps them when the parse finds the same.
+    /// A key typed above 2,000 doc comments allocates on the UI thread under 4 bytes for each more than above the same
+    /// lines as plain comments, where a moved copy of every region (24 bytes) was made each key, and before that mapped,
+    /// sorted and copied again by the editor, and twice more as each parse landed. A region folded below keeps its fold.</summary>
     [AvaloniaFact]
     public void Typing_above_two_thousand_regions_moves_them_on_the_UI_thread_without_copying_each_again_and_again()
     {
@@ -338,8 +338,9 @@ public sealed class FoldingTests : IDisposable
         int more = regions - plainRegions;
         Assert.True(more >= 2000, $"The doc comments made {more} regions more than the plain comments");
         long each = (folding - plain) / more;
-        Assert.True(each < 48,
-            $"A key allocated {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied again and again");
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key allocated {folding:N0} bytes on the UI thread above {regions} regions, {plain:N0} above {plainRegions}: {each} bytes a region.");
+        Assert.True(each < 4,
+            $"A key allocated {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied");
     }
 
     /// <summary>What a key typed in a method at the top of a file allocates on the UI thread, its parse landing included,
@@ -388,6 +389,60 @@ public sealed class FoldingTests : IDisposable
         int regions = document.FoldRegions.Count;
         window.Close();
         return (bytes / Keys, regions);
+    }
+
+    /// <summary>The open file carries its regions through a key in runs, moving region by region only those the key reaches
+    /// and shifting those past it whole: through keys typed in the names of methods above, among and below 300 folded ones,
+    /// Enter between two of them, a key typed at two carets far apart and its undo, the regions the file carried as each
+    /// key landed are those its parse then finds, and every method stays folded.</summary>
+    [AvaloniaFact]
+    public void Keys_among_three_hundred_folded_methods_carry_every_region_to_where_the_parse_finds_it()
+    {
+        StringBuilder text = new("class Many\n{\n");
+        for (int i = 0; i < 300; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    int Member{i}()\n    {{\n        return {i};\n    }}\n\n");
+        }
+        string source = text.Append("}\n").ToString();
+        string path = Path.Combine(folder, "Folded.cs");
+        File.WriteAllText(path, source);
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        CSharpHighlighter syntax = document.Syntax!;
+        Ui.WaitFor(() => document.FoldRegions.Count == 301, "the file's regions");
+        editor.Focus();
+        Ui.Run(window, EditorActions.FoldToDefinitions);
+        Assert.Equal(300, document.FoldRegions.Count(r => r.Folded));
+
+        static string Spans(IReadOnlyList<FoldRegion> regions) => string.Join(", ", regions.Select(r => $"{r.Start}-{r.End} {r.Placeholder}"));
+        int At(string after) => document.Text.Snapshot.ToString().IndexOf(after, StringComparison.Ordinal) + after.Length;
+        void Carried(string what, Action key)
+        {
+            key();
+            string carried = Spans(document.FoldRegions);
+            Ui.Settle();
+            string found = Spans(syntax.Folds);
+            Assert.True(carried == found, $"After {what} the regions the file carried are not those its parse finds:\nfound   {found}\ncarried {carried}");
+            int folded = document.FoldRegions.Count(r => r.Folded);
+            Assert.True(folded == 300, $"After {what} {folded} of the 300 methods are folded");
+        }
+
+        foreach (int member in new[] { 0, 150, 299, 62, 63, 127 })
+        {
+            editor.Selections = SelectionSet.Single(At($"int Member{member}"));
+            Carried($"a key in Member{member}'s name", () => window.KeyTextInput("x"));
+        }
+        editor.Selections = SelectionSet.Single(At("return 200;\n    }\n"));
+        Carried("Enter between two methods", () => Ui.Press(window, "ENTER"));
+        editor.Selections = SelectionSet.Create([Selection.At(At("int Member10")), Selection.At(At("int Member290"))], 0);
+        Carried("a key at two carets", () => window.KeyTextInput("y"));
+        Carried("its undo", () => Ui.Run(window, EditorActions.Undo));
+        window.Close();
     }
 
     [AvaloniaFact]

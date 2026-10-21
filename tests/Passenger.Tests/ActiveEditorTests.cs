@@ -304,7 +304,8 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.Equal(Token(window, "Passenger.Editor.BreakpointLine"), Ui.Pixel(window, tinted));
 
         // The method's chevron is on its signature's row, below the comment's rows: a click there folds the method, and
-        // the class's brace comes up to the row after the signature.
+        // the class's brace comes up to the row after the signature, where a click puts the caret. The rows are the six
+        // lines left showing and the comment's rows after its first; the folded sum's rows are none of them.
         Point chevron = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Folding, 3), window)!.Value;
         window.MouseDown(chevron, MouseButton.Left);
         window.MouseUp(chevron, MouseButton.Left);
@@ -312,6 +313,12 @@ public sealed class ActiveEditorTests : IDisposable
         FoldRegion folded = Assert.Single(editor.FoldRegions, r => r.Folded);
         Assert.Equal(3, text.GetLineFromOffset(folded.Start));
         Assert.Equal(At(editor, text.GetLine(3).Start).Y + editor.LineHeight, At(editor, text.GetLine(8).Start).Y, 1);
+        Assert.Equal(6 + commentRows - 1, editor.RowsShown);
+        Point brace = editor.TranslatePoint(editor.PointOf(text.GetLine(8).Start) + new Point(2, editor.LineHeight / 2), window)!.Value;
+        window.MouseDown(brace, MouseButton.Left);
+        window.MouseUp(brace, MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal(8, editor.CaretPosition.Line);
 
         // A click in the folding column beside a wrapped line's second row folds nothing.
         double secondRow = editor.PointOf(RowStarts(editor, comment)[0]).Y + (editor.LineHeight / 2);
@@ -463,8 +470,9 @@ public sealed class ActiveEditorTests : IDisposable
 
     /// <summary>An open C# file has folds, which the file carries through each key before the editor hears of the key: with
     /// soft wrap on, a key in a file of 2,000 members, a wrapped comment over each, wraps the line it changed and no more, as
-    /// in a file of 20, and allocates on the UI thread, beyond what a key there does, under a quarter of what wrapping the
-    /// file's lines takes; the rows asked for as the folds moved wrapped the whole file again, and the editor once more.</summary>
+    /// in a file of 20, and allocates on the UI thread what a key there does, give or take 16 KB: the rows asked for as the
+    /// folds moved wrapped the whole file again, and the editor once more; then each key still copied the wraps of every
+    /// line, made the rows of every wrapped line again and moved every region.</summary>
     [AvaloniaFact]
     public void A_key_in_an_open_soft_wrapped_file_with_folds_wraps_only_its_line_however_long_the_file()
     {
@@ -473,8 +481,8 @@ public sealed class ActiveEditorTests : IDisposable
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"A key wrapped {smallWrapped} characters in 20 members and {largeWrapped} in 2,000, allocating {smallBytes / 1024:N0} KB and {largeBytes / 1024:N0} KB on the UI thread; wrapping the larger file's lines allocates {wrapAll / 1024:N0} KB.");
         Assert.True(largeWrapped <= smallWrapped, $"A key in 2,000 members wrapped {largeWrapped} characters, more than the {smallWrapped} it wraps in 20: it wrapped the file again");
-        Assert.True(largeBytes - smallBytes < wrapAll / 4,
-            $"A key in 2,000 members allocated {largeBytes / 1024:N0} KB on the UI thread, {(largeBytes - smallBytes) / 1024:N0} KB more than in 20, a quarter or more of the {wrapAll / 1024:N0} KB wrapping the file's lines takes");
+        Assert.True(largeBytes <= smallBytes + (16 * 1024),
+            $"A key in 2,000 members allocated {largeBytes / 1024:N0} KB on the UI thread, {(largeBytes - smallBytes) / 1024:N0} KB more than in 20: it copied what every line or region has");
     }
 
     /// <summary>What a key typed at the top of an open C# file of members, each under a comment that wraps, costs with soft

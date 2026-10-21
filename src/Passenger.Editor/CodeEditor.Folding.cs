@@ -35,7 +35,7 @@ public sealed partial class CodeEditor
             return;
         }
         HideFoldPreview();
-        folds = InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
+        folds = regions is FoldList || InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
         InvalidateVisual();
         UpdateScrollBars();
         ScrollWithinRows();
@@ -470,7 +470,8 @@ public sealed partial class CodeEditor
 
     /// <summary>The folded regions of one text in its lines: the folded lines as ranges in order with the lines folded
     /// before each, and the widest folded region starting on each line, whose placeholder ends it. Made for each change
-    /// to the text, so it reads only the folded regions; the others' lines are found when one is drawn or asked for.</summary>
+    /// to the text, so it reads only the folded regions (of a <see cref="FoldList"/>, passing over its runs with none); the
+    /// others' lines are found when one is drawn or asked for.</summary>
     private sealed class FoldLines
     {
         public FoldLines(TextSnapshot text, IReadOnlyList<FoldRegion> folds)
@@ -478,7 +479,8 @@ public sealed partial class CodeEditor
             Text = text;
             Folds = folds;
             List<(int First, int Last)> ranges = [];
-            for (int i = 0; i < folds.Count; i++)
+            FoldList? runs = folds as FoldList;
+            for (int i = runs?.NextFolded(0) ?? 0; i < folds.Count; i = runs?.NextFolded(i + 1) ?? i + 1)
             {
                 FoldRegion region = folds[i];
                 if (!region.Folded)

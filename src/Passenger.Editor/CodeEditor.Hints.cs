@@ -239,7 +239,7 @@ public sealed partial class CodeEditor
             return false;
         }
         int line = text.GetLineFromOffset(offset);
-        return map.Lines[line] is { } wrap && Array.BinarySearch(wrap.Starts, offset - text.GetLineStart(line)) >= 0;
+        return map[line] is { } wrap && Array.BinarySearch(wrap.Starts, offset - text.GetLineStart(line)) >= 0;
     }
 
     /// <summary>Whether a point on the text is past the middle of the hints at the offset it falls at, where a click
