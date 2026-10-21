@@ -34,9 +34,6 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// theme (its Dark or Light as the theme is; the editor keeps the theme's ground, so the areas stay told apart).</summary>
     public ColourScheme ColourScheme { get; init; } = ColourScheme.Theme;
 
-    /// <summary>The icons files and folders are drawn with: Passenger's own, or the file-icons package's.</summary>
-    public Explorer.FileIconTheme FileIcons { get; init; } = Explorer.FileIconTheme.Default;
-
     /// <summary>Rider's "Merge main menu with window title", which Linux alone offers: the toolbar is the window's title bar
     /// (its window buttons at its right) rather than a strip under the system's. On at first, as Rider's is: its frame,
     /// Avalonia's drawn decorations for X11, moves, resizes and maximizes as the window manager's own does on GNOME.</summary>
@@ -307,7 +304,6 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             Theme = Enum.IsDefined(Theme) ? Theme : defaults.Theme,
             Look = Enum.IsDefined(Look) ? Look : defaults.Look,
             ColourScheme = Enum.IsDefined(ColourScheme) ? ColourScheme : defaults.ColourScheme,
-            FileIcons = Enum.IsDefined(FileIcons) ? FileIcons : defaults.FileIcons,
             ShowBuildResults = Enum.IsDefined(ShowBuildResults) ? ShowBuildResults : defaults.ShowBuildResults,
             DiffHighlighting = Enum.IsDefined(DiffHighlighting) ? DiffHighlighting : defaults.DiffHighlighting,
             DiscordShows = Enum.IsDefined(DiscordShows) ? DiscordShows : defaults.DiscordShows,

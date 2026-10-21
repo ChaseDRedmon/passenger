@@ -487,7 +487,14 @@ public sealed class GitLogView : DockPanel
 
     private Control FileRow(FileChange change)
     {
-        PathIcon icon = Explorer.FileIcons.Show(new PathIcon { Width = 14, Height = 14, Margin = new Thickness(8, 0, 6, 0) }, change.Path);
+        PathIcon icon = new()
+        {
+            Data = Explorer.FileIcons.ForFile(change.Path),
+            Foreground = Explorer.FileIcons.BrushForFile(change.Path),
+            Width = 14,
+            Height = 14,
+            Margin = new Thickness(8, 0, 6, 0),
+        };
         TextBlock name = new() { Text = change.Name, VerticalAlignment = VerticalAlignment.Center };
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable(CommitView.KindToken(change.Kind)));
         string where = vcs.Repository is { } repository ? Path.GetDirectoryName(repository.Relative(change.Path))?.Replace('\\', '/') ?? string.Empty : string.Empty;

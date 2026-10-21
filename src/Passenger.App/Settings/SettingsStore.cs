@@ -129,9 +129,8 @@ public sealed class SettingsStore : IDisposable
         Changed?.Invoke(this, new SettingsChange(before, after));
     }
 
-    /// <summary>What belongs to the process, put in force once for every window: the theme, its dark or light, the
-    /// code's colours and the file icons only when their settings change, so one named on the command line stands until
-    /// then.</summary>
+    /// <summary>What belongs to the process, put in force once for every window: the theme, its dark or light and the
+    /// code's colours only when their settings change, so one named on the command line stands until then.</summary>
     private static void InForce(AppSettings? before, AppSettings after)
     {
         if (Avalonia.Application.Current is { } app && (before is null || before.Theme != after.Theme))
@@ -145,10 +144,6 @@ public sealed class SettingsStore : IDisposable
         if (before is null || !SameShortcuts(before.Shortcuts, after.Shortcuts))
         {
             AppActions.UserShortcuts = after.Shortcuts;
-        }
-        if (before is null || before.FileIcons != after.FileIcons)
-        {
-            Explorer.FileIcons.Theme = after.FileIcons;
         }
         IdeLog.Traces = after.TraceProtocols;
         IdeLog.Programs = after.LogEveryProgram;

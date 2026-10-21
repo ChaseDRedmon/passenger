@@ -556,7 +556,14 @@ public sealed class CommitView : DockPanel
     /// deleted) and its folder from the repository's top.</summary>
     private static DockPanel FileLine(FileChange change, Git? repository)
     {
-        PathIcon icon = Explorer.FileIcons.Show(new PathIcon { Width = 14, Height = 14, Margin = new Thickness(0, 0, 6, 0) }, change.Path);
+        PathIcon icon = new()
+        {
+            Data = Explorer.FileIcons.ForFile(change.Path),
+            Foreground = Explorer.FileIcons.BrushForFile(change.Path),
+            Width = 14,
+            Height = 14,
+            Margin = new Thickness(0, 0, 6, 0),
+        };
         TextBlock name = new() { Text = change.Name, VerticalAlignment = VerticalAlignment.Center };
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable(KindToken(change.Kind)));
         if (change.Kind is ChangeKind.Deleted)

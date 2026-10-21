@@ -1,10 +1,10 @@
 namespace Passenger.App.Explorer;
 
-/// <summary>A shape of the File Icons set (<c>FileIcon.*</c>, Theme/FileIconSet.axaml) in one of its colours
+/// <summary>A shape of Passenger's file icons (<c>FileIcon.*</c>, Theme/FileIconSet.axaml) in one of their colours
 /// (<c>Passenger.FileIcon.*</c>), or null for the colour plain files take.</summary>
 public readonly record struct FileIconLook(string Shape, string? Colour);
 
-/// <summary>The File Icons set: which shape and colour a file or folder takes by its name, as the file-icons package
+/// <summary>Passenger's file icons: which shape and colour a file or folder takes by its name, as the file-icons package
 /// (https://github.com/file-icons, MIT) matches them, in its colours' families, kept to the files a .NET developer
 /// meets. A whole name wins over a name's start (up to a word's end), which wins over its extensions, the longest first
 /// (".test.ts" before ".ts").</summary>
@@ -15,6 +15,9 @@ public static class FileIconSet
 
     /// <summary>A file the set has nothing for.</summary>
     public static readonly FileIconLook Plain = new("File", null);
+
+    /// <summary>A project's dependencies and its packages, NuGet's.</summary>
+    public static readonly FileIconLook Packages = new("NuGet", Blue);
 
     private static readonly Dictionary<string, FileIconLook> Names = new(StringComparer.OrdinalIgnoreCase)
     {

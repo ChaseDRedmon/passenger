@@ -48,7 +48,7 @@ public sealed class CommandLineTests : IDisposable
     [InlineData("--screenshot out.png --caret 3:1", "--caret needs a file to put the caret in, the PATH or a --file")]
     [InlineData(". notes.txt --screenshot out.png", "'notes.txt' would be a second folder or file after '.'; Passenger opens one, and more files with --file")]
     [InlineData("--screenshot out.png --theme dark --theme light", "--theme is given twice")]
-    [InlineData("--screenshot out.png --file-icons seti", "--file-icons takes default or file-icons, not 'seti'")]
+    [InlineData("--screenshot out.png --file-icons default", "unknown flag '--file-icons'")]
     [InlineData("--no-mcp --screenshot out.png", "--no-mcp stops a window listening for agents, and --screenshot's lets in only its own --agent")]
     [InlineData("--screenshot out.png --agent no-agent-by-this-name", "--agent's program 'no-agent-by-this-name' is neither a file nor on the PATH")]
     [InlineData(". --agent ./notes.txt", "--agent is for a --screenshot, and none is asked for")]

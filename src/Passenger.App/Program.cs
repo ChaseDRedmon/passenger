@@ -108,10 +108,6 @@ internal static class Program
     {
         ApplyTheme(app, options.Theme);
         Themes.Apply(app, options.Look, options.Scheme);
-        if (options.FileIcons is { } icons)
-        {
-            Explorer.FileIcons.Theme = icons;
-        }
     }
 
     public static void ApplyTheme(Application app, ThemeChoice? theme)

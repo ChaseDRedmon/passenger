@@ -7,7 +7,7 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T] [--look L] [--scheme S] [--file-icons I]</c>, PATH a folder, a file, or a
+/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T] [--look L] [--scheme S]</c>, PATH a folder, a file, or a
 /// solution or project opened as the workspace; a screenshot with the steps before it; or the Model Context Protocol
 /// server: <c>--mcp [PATH]</c> (an IDE with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c>
 /// (the agent's server, joining the window over the folder at its first call), and <c>--no-mcp</c> (a window that never
@@ -49,9 +49,6 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     /// <summary>The code's colours <c>--scheme</c> names over the ones kept, or null for those.</summary>
     public ColourScheme? Scheme { get; init; }
 
-    /// <summary>The icon set <c>--file-icons</c> names over the one kept, or null for that one.</summary>
-    public Explorer.FileIconTheme? FileIcons { get; init; }
-
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);
 
     /// <summary>The options the arguments ask for, the files among them full paths that exist; anything malformed,
@@ -67,7 +64,6 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         ThemeChoice? theme = null;
         global::Passenger.App.Look? look = null;
         ColourScheme? scheme = null;
-        Explorer.FileIconTheme? fileIcons = null;
         string? shot = null;
         LogicalSize size = new(1600, 1000);
         double scale = 2;
@@ -140,15 +136,6 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                         "theme" => ColourScheme.Theme,
                         "rider" => ColourScheme.Rider,
                         _ => throw new FormatException($"--scheme takes theme or rider, not '{schemeText}'"),
-                    };
-                    break;
-                case "--file-icons":
-                    string iconsText = Value(args, ref i, flag);
-                    fileIcons = iconsText switch
-                    {
-                        "default" => Explorer.FileIconTheme.Default,
-                        "file-icons" => Explorer.FileIconTheme.FileIcons,
-                        _ => throw new FormatException($"--file-icons takes default or file-icons, not '{iconsText}'"),
                     };
                     break;
                 case "--screenshot":
@@ -245,7 +232,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
         ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop) { WindowButtons = windowButtons }, cropText, points);
-        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen, Headless = headless, Look = look, Scheme = scheme, FileIcons = fileIcons };
+        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen, Headless = headless, Look = look, Scheme = scheme };
     }
 
     /// <summary>Refuses the first flag the chosen mode does not take: a window takes all but a screenshot's, a screenshot

@@ -43,9 +43,6 @@ public sealed partial class SettingsDialog : Window
     /// <summary>The themes, in the order Settings offers them.</summary>
     public static readonly (Look Look, string Name)[] LookChoices = [.. Enum.GetValues<Look>().Select(l => (l, l.ToString()))];
 
-    /// <summary>The file icon sets, in the order Settings offers them.</summary>
-    public static readonly (Explorer.FileIconTheme Theme, string Name)[] FileIconChoices = [(Explorer.FileIconTheme.Default, "Default"), (Explorer.FileIconTheme.FileIcons, "File Icons")];
-
     /// <summary>The code's colour schemes, in the order Settings offers them.</summary>
     public static readonly (ColourScheme Scheme, string Name)[] ColourSchemeChoices = [(ColourScheme.Theme, "Same as theme"), (ColourScheme.Rider, "Rider")];
 
@@ -223,10 +220,6 @@ public sealed partial class SettingsDialog : Window
         ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Classes = { "form" } };
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
         Add(Appearance, "Dark or light", theme, "colour color theme dark light system sync os appearance mode");
-        // Passenger's own icons, or the file-icons package's, a shape and colour for each language and tool.
-        ComboBox fileIcons = new() { ItemsSource = FileIconChoices.Select(c => c.Name).ToArray(), SelectedIndex = Array.FindIndex(FileIconChoices, c => c.Theme == Working.FileIcons), Classes = { "form" } };
-        fileIcons.SelectionChanged += (_, _) => Change(s => s with { FileIcons = FileIconChoices[Math.Max(0, fileIcons.SelectedIndex)].Theme });
-        Add(Appearance, "File icons", fileIcons, "file icons icon theme set file-icons explorer tabs language seti material");
         if (TitleBars.Offered)
         {
             // Rider's UI Options checkbox; where this desktop keeps the system's title bar it says why, greyed, as Rider's.

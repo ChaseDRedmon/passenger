@@ -446,7 +446,14 @@ public sealed class HistoryTab : DockPanel
 
     private Control FileRow(HistoryDifference file)
     {
-        PathIcon icon = Explorer.FileIcons.Show(new PathIcon { Width = 14, Height = 14, Margin = new Thickness(4, 0, 6, 0) }, file.Path);
+        PathIcon icon = new()
+        {
+            Data = Explorer.FileIcons.ForFile(file.Path),
+            Foreground = Explorer.FileIcons.BrushForFile(file.Path),
+            Width = 14,
+            Height = 14,
+            Margin = new Thickness(4, 0, 6, 0),
+        };
         TextBlock name = new() { Text = file.Name, VerticalAlignment = VerticalAlignment.Center };
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable(CommitView.KindToken(file.Kind)));
         if (file.Kind is ChangeKind.Deleted)
