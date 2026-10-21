@@ -63,7 +63,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         ChildResult? self = alone?.Result;
         List<Finding> found = [];
         List<InlayHint> hints = [];
-        if (!model.Succeeded)
+        if (!model.Succeeded && !Error(model).Contains(RemoteRefused, StringComparison.Ordinal))
         {
             string said = Error(model);
             (string? named, string message) = Named(said);
@@ -81,11 +81,12 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             found.Add(Place($"Compose: {message}", owner, own, message, own ? snapshot : Disk(owner)));
         }
         IReadOnlyDictionary<string, string> resolved = values.Result;
-        foreach ((int _, int end, string expression) in interpolations)
+        foreach ((int start, int end, string expression) in interpolations)
         {
             if (resolved.TryGetValue(expression, out string? value))
             {
-                hints.Add(new InlayHint(end, $"= {(Names(expression).Any(Secret) ? Masked : Label(value))}", PadLeft: true, Kind: InlayHintKind.Value));
+                bool secret = Names(expression).Any(Secret) || NamesBefore(read, text, start).Any(Secret) || InPassword(text, start, end);
+                hints.Add(new InlayHint(end, $"= {Shown(value, secret)}", PadLeft: true, Kind: InlayHintKind.Value));
             }
         }
         if (isBase && partner is not null && model.Succeeded && self is { Succeeded: true })
@@ -108,8 +109,21 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             words.AddRange(["-f", file]);
         }
         words.AddRange(["config", "--format", "json", "--no-path-resolution"]);
-        return engine.RunAsync(words, Limit, cancel, folder, files.Contains("-") ? text : null, answers: [1]);
+        return Offline(engine, words, folder, files.Contains("-") ? text : null, cancel);
     }
+
+    /// <summary>A Compose command that reaches no network: an <c>include</c> of a Git repository or an OCI artifact, which
+    /// Compose fetches by default, is refused (<see cref="RemoteRefused"/>), so a file is checked on this computer alone.</summary>
+    private static Task<ChildResult> Offline(ContainerEngine engine, IEnumerable<string> words, string folder, string? input, CancellationToken cancel)
+    {
+        System.Diagnostics.ProcessStartInfo start = engine.Command(words, folder);
+        start.Environment["COMPOSE_EXPERIMENTAL_GIT_REMOTE"] = "false";
+        start.Environment["COMPOSE_EXPERIMENTAL_OCI_REMOTE"] = "false";
+        return ChildProcesses.RunAsync(start, input, Limit, cancel, answers: [1]);
+    }
+
+    /// <summary>What Compose says of a remote include it was told not to fetch: no problem of the file's, so nothing is marked.</summary>
+    private const string RemoteRefused = "remote resource is disabled";
 
     /// <summary>What Compose's own interpolation makes of each expression, asked of it with the folder's .env as the
     /// project's: an extension's list it interpolates as it does every value. A required variable that is unset fails it
@@ -134,8 +148,8 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
                 return true;
             }
             JsonObject probe = new() { ["services"] = new JsonObject(), [Probe] = new JsonArray([.. asked.Select(e => (JsonNode?)JsonValue.Create(e))]) };
-            ChildResult said = await engine.RunAsync(["compose", "--project-directory", folder, "-f", "-", "config", "--format", "json", "--no-path-resolution"],
-                Limit, cancel, folder, probe.ToJsonString(), answers: [1]);
+            ChildResult said = await Offline(engine, ["compose", "--project-directory", folder, "-f", "-", "config", "--format", "json", "--no-path-resolution"],
+                folder, probe.ToJsonString(), cancel);
             if (!said.Succeeded)
             {
                 return false;
@@ -188,7 +202,8 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
                 }
                 if (At(after.RootElement, entry.Path) is { } now && Scalar(now) is { } ends && ends != value)
                 {
-                    hints.Add(new InlayHint(entry.ValueEnd, $"{overrideName}: {(entry.Path.Any(Secret) ? Masked : Label(ends))}", PadLeft: true, Kind: InlayHintKind.Value));
+                    bool secret = entry.Path.Any(Secret) || (ItemName().Match(written) is { Success: true } item && Secret(item.Groups["name"].Value));
+                    hints.Add(new InlayHint(entry.ValueEnd, $"{overrideName}: {Shown(ends, secret)}", PadLeft: true, Kind: InlayHintKind.Value));
                 }
             }
         }
@@ -232,36 +247,100 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     /// <summary>What a hint shows of a secret's value: the same dots whatever its length, so a shared screen never shows it.</summary>
     private const string Masked = "••••••";
 
-    /// <summary>The words that make a variable's or key's value a secret, as a word of its name.</summary>
-    private static readonly HashSet<string> Secrets = new(StringComparer.Ordinal) { "PASSWORD", "PASSWD", "PWD", "SECRET", "TOKEN", "KEY", "CREDENTIAL", "CONNECTIONSTRING" };
+    /// <summary>What makes a name a secret's anywhere in it, its case, underscores, dashes and dots aside (DBPASSWORD,
+    /// SECRETKEY, ConnectionStrings__Shop).</summary>
+    private static readonly string[] Anywhere = ["PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL", "CONNECTIONSTRING"];
+
+    /// <summary>What makes a name a secret's as a word of it (DB_PASS, MYSQL_PW, DB_PWD, API_KEY), or its plural.</summary>
+    private static readonly HashSet<string> Whole = new(StringComparer.Ordinal) { "PASS", "PW", "PWD", "KEY" };
+
+    /// <summary>The words that end in KEY and name no key (a word ending in KEY otherwise is one: APIKEY, ACCESSKEY).</summary>
+    private static readonly HashSet<string> Ordinary = new(StringComparer.Ordinal)
+    {
+        "MONKEY", "DONKEY", "TURKEY", "JOCKEY", "HOCKEY", "WHISKEY", "LACKEY", "FLUNKEY", "MALARKEY", "HOTKEY", "TURNKEY",
+    };
 
     /// <summary>The shell's working folders, paths a compose file's volumes are written with, whose PWD is no password's.</summary>
     private static readonly HashSet<string> Folders = new(StringComparer.Ordinal) { "PWD", "OLDPWD" };
 
-    /// <summary>Whether a name's value is a secret: a word of it (between underscores, dashes or dots, or where its case
-    /// turns, as apiKey's Key) is one of <see cref="Secrets"/> or its plural, or two words make one (CONNECTION_STRING), so
-    /// API_KEY, dbPassword and DB_PWD are and MONKEY, PWD and OLDPWD (<see cref="Folders"/>) are not.</summary>
+    /// <summary>Whether a name's value is a secret: it holds one of <see cref="Anywhere"/>, or a word of it (between
+    /// underscores, dashes or dots, or where its case turns, as apiKey's Key) is one of <see cref="Whole"/> or its plural,
+    /// or ends in KEY but for <see cref="Ordinary"/>'s words; so DBPASSWORD, APIKEY and DB_PASS are and MONKEY is not,
+    /// nor the shell's own PWD and OLDPWD (<see cref="Folders"/>).</summary>
     internal static bool Secret(string name)
     {
         if (Folders.Contains(name))
         {
             return false;
         }
-        string[] words = [.. Words().Split(name).Where(w => w.Length > 0).Select(w => w.ToUpperInvariant())];
-        for (int i = 0; i < words.Length; i++)
+        string squeezed = name.Replace("_", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(".", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
+        if (Anywhere.Any(s => squeezed.Contains(s, StringComparison.Ordinal)))
         {
-            if (IsSecret(words[i]) || (i + 1 < words.Length && IsSecret(words[i] + words[i + 1])))
+            return true;
+        }
+        foreach (string word in Words().Split(name).Where(w => w.Length > 0).Select(w => w.ToUpperInvariant()))
+        {
+            string single = word.Length > 1 && word[^1] == 'S' ? word[..^1] : word;
+            if (Whole.Contains(word) || Whole.Contains(single)
+                || (word.EndsWith("KEY", StringComparison.Ordinal) && !Ordinary.Contains(word))
+                || (single.EndsWith("KEY", StringComparison.Ordinal) && !Ordinary.Contains(single)))
             {
                 return true;
             }
         }
         return false;
-
-        static bool IsSecret(string word) => Secrets.Contains(word) || (word.Length > 1 && word[^1] == 'S' && Secrets.Contains(word[..^1]));
     }
 
     /// <summary>Every variable an expression reads, its default's included (<c>${A:-${DB_PASSWORD}}</c>).</summary>
     private static IEnumerable<string> Names(string expression) => VariableName().Matches(expression).Select(m => m.Groups[1].Value);
+
+    /// <summary>The names a value at an offset is given: the key it is written under, a list item's <c>KEY=</c>
+    /// (environment's list form, a flow sequence's item), and a name just before it (a connection string's
+    /// <c>Password=</c>, an option's <c>--password=</c>).</summary>
+    private static IEnumerable<string> NamesBefore(ComposeText read, string text, int offset)
+    {
+        if (read.Entries.LastOrDefault(e => e.KeyStart <= offset) is { Path: [.., string key] } && !key.All(char.IsAsciiDigit))
+        {
+            yield return key;
+        }
+        int lineStart = text.LastIndexOf('\n', Math.Max(0, offset - 1)) + 1;
+        int item = offset;
+        while (item > lineStart && text[item - 1] is not ('[' or ','))
+        {
+            item--;
+        }
+        if (ItemName().Match(text[item..offset]) is { Success: true } named)
+        {
+            yield return named.Groups["name"].Value;
+        }
+        if (NameJustBefore().Match(text[lineStart..offset]) is { Success: true } just)
+        {
+            yield return just.Groups["name"].Value;
+        }
+    }
+
+    /// <summary>Whether an expression stands where a URL's password does (<c>postgres://user:${PGPASS}@db</c>).</summary>
+    private static bool InPassword(string text, int start, int end)
+    {
+        int lineStart = text.LastIndexOf('\n', Math.Max(0, start - 1)) + 1;
+        int lineEnd = text.IndexOf('\n', end) is int next and >= 0 ? next : text.Length;
+        return UserBefore().IsMatch(text[lineStart..start]) && HostAfter().IsMatch(text[end..lineEnd]);
+    }
+
+    /// <summary>A value as a hint shows it: a secret's as <see cref="Masked"/>; else with any URL's password masked, its
+    /// first line, cut at <see cref="Longest"/>, an empty one as "".</summary>
+    private static string Shown(string value, bool secret)
+    {
+        if (secret)
+        {
+            return Masked;
+        }
+        string bare = UrlPassword().Replace(value, $"${{head}}{Masked}@");
+        int line = bare.IndexOfAny(['\r', '\n']);
+        string shown = line < 0 ? bare : bare[..line] + "…";
+        return shown.Length == 0 ? "\"\"" : shown.Length > Longest ? shown[..(Longest - 1)] + "…" : shown;
+    }
 
     [GeneratedRegex(@"[_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")]
     private static partial Regex Words();
@@ -269,13 +348,20 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     [GeneratedRegex(@"\$\{?([A-Za-z_][A-Za-z0-9_]*)")]
     private static partial Regex VariableName();
 
-    /// <summary>A value as a hint shows it: its first line, cut at <see cref="Longest"/>; an empty one as "".</summary>
-    private static string Label(string value)
-    {
-        int line = value.IndexOfAny(['\r', '\n']);
-        string shown = line < 0 ? value : value[..line] + "…";
-        return shown.Length == 0 ? "\"\"" : shown.Length > Longest ? shown[..(Longest - 1)] + "…" : shown;
-    }
+    [GeneratedRegex(@"^\s*(?:-\s+)?[""']?(?<name>[A-Za-z_][A-Za-z0-9_.\-]*)\s*=")]
+    private static partial Regex ItemName();
+
+    [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_.\-]*)\s*[=:]\s*[""']?$")]
+    private static partial Regex NameJustBefore();
+
+    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9+.\-]*://[^\s/@]*:[^\s/@]*$")]
+    private static partial Regex UserBefore();
+
+    [GeneratedRegex(@"^[^\s/@]*@")]
+    private static partial Regex HostAfter();
+
+    [GeneratedRegex(@"(?<head>[A-Za-z][A-Za-z0-9+.\-]*://[^\s/@:]*:)[^\s@]*@")]
+    private static partial Regex UrlPassword();
 
     /// <summary>What Compose said of the failure: its last line that is not one of its log's warnings.</summary>
     private static string Error(ChildResult result) =>

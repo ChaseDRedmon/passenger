@@ -516,7 +516,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   JSON directive not checked at all; a rule's warning linked to its page, a build error but for a parse error,
   which the server marks, or a registry out of reach), while Settings' Check Dockerfiles with BuildKit (its Docker page,
   `AppSettings.BuildKitChecks`) is on, since BuildKit reads each base image's metadata from its registry; and Compose's
-  model of a compose file as typed, which needs no network (`ComposeCheck`,
+  model of a compose file as typed, which reaches no network (`ComposeCheck`, its commands run with
+  `COMPOSE_EXPERIMENTAL_GIT_REMOTE` and `COMPOSE_EXPERIMENTAL_OCI_REMOTE` false, so an `include` of a Git repository or an
+  OCI artifact is refused, not fetched, and Compose's word that it was is nothing marked;
   for the files Compose reads unasked: the first of compose.yaml, compose.yml, docker-compose.yml and
   docker-compose.yaml in a folder and the first override beside it; `docker compose --project-directory … -f - [-f
   override] config --format json --no-path-resolution`, the text typed as `-`, again as the other or the .env changes).
@@ -524,10 +526,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   reading of block YAML, finds), else on the first line, or listed as the other file's; each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
-  scalar written (a value it normalizes gets none). A secret's value (a word of its variable's or key's name, split at
-  `_`, `-`, `.` and case turns, is PASSWORD, PASSWD, PWD, SECRET, TOKEN, KEY or CREDENTIAL, or its plural, or two make
-  CONNECTIONSTRING, but for the shell's own `PWD` and `OLDPWD`: `ComposeCheck.Secret`) shows as the same dots whatever
-  its length. Their problems are Problems'
+  scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
+  whose variable, the key or list item's `KEY=` it is given to, or the name just before it (`Password=`) is a secret's
+  (`ComposeCheck.Secret`: PASSWORD, PASSWD, SECRET, TOKEN, CREDENTIAL or CONNECTIONSTRING anywhere in it, `_`, `-`, `.`
+  and case aside; or a word of it, split there and at case turns, PASS, PW, PWD or KEY, or its plural, or ending in KEY
+  but for an ordinary word's, as MONKEY's; never the shell's own `PWD` and `OLDPWD`), or that stands as a URL's password
+  (`postgres://u:${PGPASS}@db`); a value holding such a URL shows it with its password as the dots. Their problems are Problems'
   Containers tab by file
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a

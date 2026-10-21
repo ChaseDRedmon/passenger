@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -109,8 +111,7 @@ public sealed class EngineChecksTests
             OpenDocument document = window.EditorArea.Active!;
             // A secret's value (a password's, as a word of its variable's or key's name says) is masked, the same dots whatever its
             // length; MONKEY has no word KEY, and PWD is the compose file's folder, which Compose runs in, never where the IDE was started.
-            string pwd = PathNames.Canonical(folder);
-            string folderHint = $"$PWD|= {(pwd.Length > 48 ? pwd[..47] + "…" : pwd)}";
+            string folderHint = FolderHint(folder);
             string[] expected = ["${TAG:-1.36}|= 1.36", "${PORT:-8080}|= 9090", "$NAME|= world", "$MONKEY|= banana", folderHint, "postgres:16|compose.override.yaml: postgres:17",
                 "${DB_PASSWORD:-hunter2}|= ••••••", "${DB_PASSWORD:-hunter2}|compose.override.yaml: ••••••"];
             Ui.WaitFor(() => Hints(document, expected).SequenceEqual(expected), $"Compose's values after the text, not [{string.Join(", ", Hints(document, expected))}]");
@@ -128,6 +129,105 @@ public sealed class EngineChecksTests
         finally
         {
             window.Close();
+        }
+    }
+
+    /// <summary>A secret is known by its variable's name (a word PASS, PW, PWD or KEY, PASSWORD or SECRET anywhere in it, a
+    /// name ending in KEY but an ordinary word's), by the key or list item's KEY= it is given to, or by its place as a URL's
+    /// password; a value holding such a URL shows it with the password masked.</summary>
+    [AvaloniaFact]
+    public void A_compose_files_hints_mask_a_secret_by_its_variables_name_the_key_it_is_given_to_and_a_urls_password()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        const string Compose = "services:\n  db:\n    image: postgres:17\n    environment:\n      POSTGRES_PASSWORD: ${DB_PASS}\n      OPENAI: ${APIKEY}\n"
+            + "      ADMIN: ${DBPASSWORD}\n      DATABASE_URL: postgres://u:${PGPASS}@db/x\n      CACHE_PASSWORD: ${CACHE_VALUE}\n      BROKER: ${BROKER_URL}\n"
+            + "      ZOO: $MONKEY\n  api:\n    image: busybox:1.37\n    environment:\n      - SIGNING_KEY=${SIGNER}\n    volumes:\n      - $PWD/data:/data\n";
+        string[] secrets = ["pass-one", "key-two", "pass-three", "pass-four", "value-five", "hunter-six", "signer-seven"];
+        string folder = Folder(("compose.yaml", Compose), (".env", $"DB_PASS={secrets[0]}\nAPIKEY={secrets[1]}\nDBPASSWORD={secrets[2]}\nPGPASS={secrets[3]}\n"
+            + $"CACHE_VALUE={secrets[4]}\nBROKER_URL=amqp://app:{secrets[5]}@rabbit:5672\nSIGNER={secrets[6]}\nMONKEY=banana\n"));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            string[] expected = ["${DB_PASS}|= ••••••", "${APIKEY}|= ••••••", "${DBPASSWORD}|= ••••••", "${PGPASS}|= ••••••", "${CACHE_VALUE}|= ••••••",
+                "${BROKER_URL}|= amqp://app:••••••@rabbit:5672", "$MONKEY|= banana", "${SIGNER}|= ••••••", FolderHint(folder)];
+            Ui.WaitFor(() => Hints(document, expected).SequenceEqual(expected), $"each secret masked, not [{string.Join(", ", Hints(document, expected))}]");
+            string leaked = string.Join(", ", document.InlayHints.Where(h => secrets.Any(s => h.Label.Contains(s, StringComparison.Ordinal))).Select(h => h.Label));
+            Assert.True(leaked.Length == 0, $"A compose file's hints showed secrets: {leaked}");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Compose fetches a Git repository's or an OCI artifact's compose file that an <c>include</c> names, unless
+    /// told not to: the check, which reads the file on this computer alone, asks nothing of either's host (a listener on
+    /// loopback here, which no connection reaches) and marks nothing for it.</summary>
+    [AvaloniaFact]
+    public void A_compose_files_remote_includes_are_never_fetched_and_mark_nothing()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        using Listener host = new();
+        string folder = Folder(("git/compose.yaml", $"include:\n  - https://127.0.0.1:{host.Port}/shop.git\nservices:\n  web:\n    image: busybox:${{TAG:-1.37}}\n"),
+            ("oci/compose.yaml", $"include:\n  - oci://127.0.0.1:{host.Port}/shop/compose:1\nservices:\n  web:\n    image: busybox:${{TAG:-1.37}}\n"));
+        MainWindow window = Open(folder, "git/compose.yaml");
+        try
+        {
+            OpenDocument git = window.EditorArea.Active!;
+            window.OpenFile(PathOf(folder, "oci/compose.yaml"));
+            Ui.Settle();
+            OpenDocument oci = window.EditorArea.Active!;
+            // Each checked: its variable's value, which Compose made in the same check, is shown.
+            string[] expected = ["${TAG:-1.37}|= 1.37"];
+            Ui.WaitFor(() => Hints(git, expected).SequenceEqual(expected) && Hints(oci, expected).SequenceEqual(expected), "both files checked");
+            Assert.True(host.Connections == 0, $"Checking a compose file reached an included repository's host {host.Connections} times");
+            string marked = string.Join(", ", git.Markers.Concat(oci.Markers).Where(m => m.Message.StartsWith("Compose:", StringComparison.Ordinal)).Select(m => m.Message));
+            Assert.True(marked.Length == 0, $"A remote include not fetched was marked: {marked}");
+            Assert.Empty(window.BottomPanel.Problems.ContainerProblems);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A port on loopback that counts the connections made to it.</summary>
+    private sealed class Listener : IDisposable
+    {
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly Task accepting;
+        private int connections;
+
+        public Listener()
+        {
+            listener.Start();
+            Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            accepting = Task.Run(async () =>
+            {
+                try
+                {
+                    while (true)
+                    {
+                        using TcpClient client = await listener.AcceptTcpClientAsync();
+                        Interlocked.Increment(ref connections);
+                    }
+                }
+                catch (Exception stopped) when (stopped is SocketException or ObjectDisposedException or InvalidOperationException)
+                {
+                    // Disposed.
+                }
+            });
+        }
+
+        public int Port { get; }
+
+        public int Connections => Volatile.Read(ref connections) + (listener.Pending() ? 1 : 0);
+
+        public void Dispose()
+        {
+            listener.Stop();
+            accepting.Wait(TimeSpan.FromSeconds(10));
         }
     }
 
@@ -186,6 +286,13 @@ public sealed class EngineChecksTests
         }
     }
 
+    /// <summary>The hint after <c>$PWD</c>: the compose file's folder, which Compose runs in, never where the IDE was started.</summary>
+    private static string FolderHint(string folder)
+    {
+        string pwd = PathNames.Canonical(folder);
+        return $"$PWD|= {(pwd.Length > 48 ? pwd[..47] + "…" : pwd)}";
+    }
+
     /// <summary>Each value hint as the stretch of text it follows (the expected one it ends, else its line up to it) and its
     /// label, in order.</summary>
     private static string[] Hints(OpenDocument document, string[] expected)
@@ -212,7 +319,9 @@ public sealed class EngineChecksTests
         string folder = TestFolders.Create("engine-checks-");
         foreach ((string name, string text) in files)
         {
-            File.WriteAllText(Path.Combine(folder, name), text);
+            string path = Path.Combine(folder, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
         }
         return folder;
     }
