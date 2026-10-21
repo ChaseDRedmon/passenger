@@ -149,6 +149,32 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
         }
     }
 
+    /// <summary>A program held at its start in its container, as a container run's Profile will start each service: Attach
+    /// Profiler lets it go once it records, so the run has it from its first turn.</summary>
+    [AvaloniaFact]
+    public void A_program_held_at_its_start_in_a_container_is_let_go_by_Attach_Profiler_and_recorded_from_its_first_turn()
+    {
+        Assert.SkipWhen(spins.WhyNot is not null, spins.WhyNot ?? string.Empty);
+        string container = spins.Start("held", held: true);
+        MainWindow window = Open();
+        try
+        {
+            Assert.Equal(0, Spins.Kept(container));
+            DotnetProcess program = Assert.Single(Ui.Await(window.AttachableAsync(), "the containers' programs to be listed"), p => p.Container == container);
+            Ui.Launched(window, window.AttachProfilerAsync(program), "the profiler to attach to the held program in the container");
+            Recording(window, container);
+            Ui.WaitFor(() => Spins.Kept(container) > 0, "the held program to be let go once the profiler records it");
+            Ui.Hold(TimeSpan.FromSeconds(1), "the profiler in the container to sample the program let go");
+            SnapshotRead read = Ui.Await(window.SnapshotAsync(), "the snapshot of the program let go", TimeSpan.FromMinutes(2));
+            Snapshot snapshot = read.Snapshot ?? throw new Xunit.Sdk.XunitException($"No snapshot of the program let go: {read.Message}");
+            Assert.Contains(snapshot.HotSpots, h => h.Name.StartsWith("Hot.Spin", StringComparison.Ordinal));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A window on the program's folder.</summary>
     private MainWindow Open()
     {
@@ -284,12 +310,14 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
         public static int SpinLine => Array.FindIndex(Program.Split('\n'), l => l.Contains("public static double Spin()", StringComparison.Ordinal)) + 2;
 
         /// <summary>A container of the image, started as a person would start one (not by Passenger), labelled as the run's,
-        /// once its program says what it keeps.</summary>
-        public string Start(string name)
+        /// once its program says what it keeps; <paramref name="held"/>, its runtime held at its start
+        /// (DOTNET_DefaultDiagnosticPortSuspend=1), as a container run's Profile will start each service.</summary>
+        public string Start(string name, bool held = false)
         {
             string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}spins{name}";
-            Docker.Run(["run", "-d", "--name", named, "--label", Docker.RunLabel, Image]);
-            Assert.True(Waiting.Until(() => Kept(named) > 0, TimeSpan.FromMinutes(1)), $"The program in {named} never said what it keeps: {Docker.Ask(["logs", "--tail", "5", named])}");
+            Docker.Run(["run", "-d", "--name", named, "--label", Docker.RunLabel, .. held ? (string[])["-e", "DOTNET_DefaultDiagnosticPortSuspend=1"] : [], Image]);
+            Assert.True(held || Waiting.Until(() => Kept(named) > 0, TimeSpan.FromMinutes(1)),
+                $"The program in {named} never said what it keeps: {Docker.Ask(["logs", "--tail", "5", named])}");
             return named;
         }
 

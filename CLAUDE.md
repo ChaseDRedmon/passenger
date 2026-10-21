@@ -1446,8 +1446,9 @@ will), and with tools downloaded from `UpdatesTests.StandIn`; the fixture publis
 into `artifacts/container-tools` (seconds when up to date, a minute or two the first time); `ContainerPrograms` builds,
 images and publishes for both. `ContainerProfilingTests` (Alone, skipped the same way) profile `Spins` (a program that
 spins in `Hot.Spin` and keeps `Keepsake`s, saying how many, made once a run, `Spins.Shared`) in containers they start:
-chosen in Attach Profiler's dialog, debugged there first, and memory snapshots compared; `McpTests.ContainerProfile.cs`
-has an agent profile it with `attach` and `container`. `WpfPreviewTests` (Windows only)
+chosen in Attach Profiler's dialog, debugged there first, held at its start (let go once recording), and memory
+snapshots compared; `McpTests.ContainerProfile.cs` has an agent profile it with `attach` and `container`.
+`WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
