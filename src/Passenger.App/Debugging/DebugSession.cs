@@ -675,7 +675,7 @@ public sealed class DebugSession
             return;
         }
         breakpoints.Report(path,
-            [.. response.Breakpoints.Take(built.Count).Select(Status), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
+            [.. response.Breakpoints.Take(built.Count).Select(b => Status(path, b)), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
             [.. built.Take(response.Breakpoints.Count), .. unbuilt]);
     }
 
@@ -975,7 +975,7 @@ public sealed class DebugSession
                 BreakpointEvent changed = body.Read<BreakpointEvent>();
                 if (changed.Breakpoint.Id is int id && byId.TryGetValue(id, out LineBreakpoint? breakpoint))
                 {
-                    breakpoints.Report(breakpoint.Path, [Status(changed.Breakpoint)], [breakpoint]);
+                    breakpoints.Report(breakpoint.Path, [Status(breakpoint.Path, changed.Breakpoint)], [breakpoint]);
                 }
                 else if (changed.Breakpoint.Id is int functionId && propertyById.TryGetValue(functionId, out PropertyBreakpoint? property))
                 {
@@ -1011,6 +1011,14 @@ public sealed class DebugSession
 
     private static (BreakpointStatus, string?, int?) Status(DapBreakpoint breakpoint) =>
         (breakpoint.Verified ? BreakpointStatus.Bound : breakpoint.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown, breakpoint.Message, breakpoint.Line - 1);
+
+    /// <summary>What the debugger said of a file's breakpoint, the line it bound to (the compiler's, in the build) where that
+    /// line's code is now, as the editor counts lines.</summary>
+    private (BreakpointStatus, string?, int?) Status(string path, DapBreakpoint breakpoint)
+    {
+        (BreakpointStatus status, string? message, int? line) = Status(breakpoint);
+        return (status, message, line is int bound and >= 0 ? lines.ToCurrent(path, bound) : null);
+    }
 
     private void SetState(DebugState state)
     {

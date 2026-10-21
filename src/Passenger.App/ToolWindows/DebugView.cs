@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Passenger.App.Debugging;
 using Passenger.Dap;
 using Passenger.Editor;
+using Passenger.Text;
 
 namespace Passenger.App.ToolWindows;
 
@@ -200,6 +201,10 @@ public sealed class DebugView : DockPanel
 
     /// <summary>What Set Data Breakpoint offers on a row, the debugger asked: the menu's item says so once it answers.</summary>
     public Func<VariableNode, Task<DataWatchOffer>>? DataWatch { get; set; }
+
+    /// <summary>Where a frame is in its file now, from zero, as the editor counts lines (the debugger's are its build's
+    /// compiler's), the debugger asked: the line a frame's row and Copy Stack name.</summary>
+    public Func<DapStackFrame, TextPosition?>? PlaceOf { get; set; }
 
     /// <summary>Starts typing over the selected row's value, as F2 does: Rider's Set Value.</summary>
     public bool EditSelectedValue()
@@ -417,7 +422,7 @@ public sealed class DebugView : DockPanel
         DapStackFrame? chosen = frames.SelectedItem as DapStackFrame;
         return
         [
-            ListMenus.Item("Copy Stack", null, () => _ = ListMenus.CopyAsync(this, string.Join('\n', Frames.Select(f => f.Source?.Path is { } path ? $"{f.Name} in {path}:{f.Line}" : f.Name)))),
+            ListMenus.Item("Copy Stack", null, () => _ = ListMenus.CopyAsync(this, string.Join('\n', Frames.Select(f => f.Source?.Path is { } path ? $"{f.Name} in {path}:{LineOf(f)}" : f.Name)))),
             ListMenus.Item("Go to Source", "F4", () => FrameChosen?.Invoke(this, chosen!), chosen?.Source is not null),
         ];
     }
@@ -455,7 +460,10 @@ public sealed class DebugView : DockPanel
     private static string ThreadLabel(DapThread thread) =>
         string.IsNullOrEmpty(thread.Name) || thread.Name == "<No Name>" ? $"Thread {thread.Id}" : $"{thread.Name} ({thread.Id})";
 
-    private static Control FrameRow(DapStackFrame? frame)
+    /// <summary>The line (from one) a frame's row names: where its code is in the editor's lines.</summary>
+    private int LineOf(DapStackFrame frame) => PlaceOf?.Invoke(frame) is { } place ? place.Line + 1 : frame.Line;
+
+    private Control FrameRow(DapStackFrame? frame)
     {
         if (frame is null)
         {
@@ -472,7 +480,7 @@ public sealed class DebugView : DockPanel
         }
         TextBlock where = new()
         {
-            Text = frame.Source?.Name is { } file ? $"{file}:{frame.Line}" : module,
+            Text = frame.Source?.Name is { } file ? $"{file}:{LineOf(frame)}" : module,
             FontSize = 12,
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,

@@ -199,10 +199,11 @@ public partial class MainWindow
         string said = $"Restarted in {took.Elapsed.TotalSeconds:0.0} s to apply changes: {outcome.Said}";
         IdeLog.Write(IdeLog.Debugger, said);
         Bottom.Debug.Console.Append($"Hot Reload: {said}\n");
-        // Each edit that needed it, in a compiler message's shape, which the console links to its line.
+        // Each edit that needed it, in a compiler message's shape, at the compiler's line, which the console links to its line.
         foreach (Run.Problem rude in outcome.Problems.Where(p => p.Path is not null))
         {
-            Bottom.Debug.Console.Append($"{rude.Path}({rude.Position.Line + 1},{rude.Position.Column + 1}): {(rude.Severity == Run.ProblemSeverity.Error ? "error" : "warning")} {rude.Code}: {rude.Message}\n");
+            Lsp.LspPosition at = CSharp.ServerPlaces.ServerPositionOf(CSharp.ServerPlaces.TextOf(Editors, rude.Path!), rude.Position);
+            Bottom.Debug.Console.Append($"{rude.Path}({at.Line + 1},{at.Character + 1}): {(rude.Severity == Run.ProblemSeverity.Error ? "error" : "warning")} {rude.Code}: {rude.Message}\n");
         }
         Say(said, outcome.Problems.Count > 0 ? HotReloadPlace : null);
         return true;

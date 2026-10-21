@@ -241,6 +241,66 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
+    /// <summary>Roslyn's compiler ends a line at each break in the comment that the editor does not, so the PDB's lines run four
+    /// ahead of the editor's below it: a breakpoint stops at its own line, the arrow, the frame's row and an agent's place say
+    /// it, a line typed above while paused moves them with their code, and Run to Cursor and Set Next Statement go to the
+    /// lines asked.</summary>
+    [AvaloniaFact]
+    public void Below_line_breaks_only_the_compiler_counts_a_breakpoint_its_stop_run_to_cursor_and_set_next_statement_keep_to_the_editors_lines()
+    {
+        Write("Program.cs", $"int total = 0;\n/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\nfor (int i = 1; i <= 3; i++)\n{{\n    total += i;\n}}\n"
+            + "total *= 2;\nConsole.WriteLine($\"total {total}\");\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(4, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "i") == "1", "the stop at the breakpoint on total += i");
+        Assert.Equal("0", Value(window, "total"));
+        Assert.Contains(new LineMark(4, LineMarkKind.BreakpointBound), editor.LineMarks);
+        Assert.Contains(new LineMark(4, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineAnnotation(4, "total: 0", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        // The debugger names the compiler's line 9; the frame's row, and the stack copied from it, the editor's 5.
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Assert.Equal(9, view.Frames[0].Line);
+        ListBox frames = view.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        Ui.ChooseFromMenu(frames, "Copy Stack");
+        Ui.WaitFor(() => Ui.Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
+        Assert.Contains("Program.cs:5", Ui.Clipboard(window), StringComparison.Ordinal);
+        Passenger.App.Mcp.DebugSnapshot told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).GetDebugState(), "the stop as an agent is told it");
+        Assert.StartsWith("Program.cs:5:", told.Location, StringComparison.Ordinal);
+        Assert.EndsWith("at Program.cs:5", told.Frames[0], StringComparison.Ordinal);
+
+        // A line broken at the top while paused: the breakpoint and the arrow go down a line with their code, and the program,
+        // given the moved lines as it goes on, stops there again on the loop's next turn.
+        editor.GoTo(new TextPosition(0, 0));
+        editor.Focus();
+        Ui.Press(window, "Enter");
+        Assert.Contains(new LineMark(5, LineMarkKind.BreakpointBound), editor.LineMarks);
+        Assert.Contains(new LineMark(5, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => Value(window, "i") == "2", "the loop's next turn at the breakpoint's statement");
+        Assert.Equal(10, view.Frames[0].Line);
+        Assert.Contains(new LineMark(5, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineMark(5, LineMarkKind.BreakpointBound), editor.LineMarks);
+
+        // Run to Cursor on total *= 2 stops there once the loop is done.
+        editor.GoTo(new TextPosition(5, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        editor.GoTo(new TextPosition(7, 0));
+        Ui.Run(window, AppActions.RunToCursor);
+        WaitDebugging(window, () => Value(window, "total") == "6" && editor.LineMarks.Contains(new LineMark(7, LineMarkKind.ExecutionPoint)), "Run to Cursor's stop at total *= 2");
+
+        // Set Next Statement on the WriteLine skips the doubling.
+        editor.GoTo(new TextPosition(8, 0));
+        Ui.Run(window, AppActions.SetNextStatement);
+        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(8, LineMarkKind.ExecutionPoint)), "the arrow at the WriteLine Set Next Statement chose");
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => view.Console.Document.Snapshot.ToString().Contains("total 6", StringComparison.Ordinal), "the program to print the total it had, not doubled");
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the program's end");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_hit_count_the_debugger_cannot_read_is_said_as_it_is_typed_and_the_breakpoint_refused()
     {

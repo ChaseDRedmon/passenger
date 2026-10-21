@@ -42,6 +42,10 @@ public static class ServerPlaces
     /// <summary>A server's position in a file as the editor's line and column there.</summary>
     public static TextPosition PositionOf(EditorArea editors, string path, LspPosition at) => PositionOf(TextOf(editors, path), at);
 
+    /// <summary>The editor's line and column in a text as the server's; as they are in a file that cannot be read.</summary>
+    public static LspPosition ServerPositionOf(TextSnapshot? text, TextPosition at) =>
+        text is null ? new LspPosition(at.Line, at.Column) : ServerLines.Of(text).PositionOf(text.GetOffset(at));
+
     /// <summary>A text's lines as the server counts them where they are not the editor's, else null (as for a text that
     /// could not be read): what a long list of places keeps of each file it read, since few hold such a break.</summary>
     public static ServerLines? Differing(TextSnapshot? text) =>

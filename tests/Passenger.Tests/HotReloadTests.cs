@@ -195,10 +195,13 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
         }
     }
 
+    /// <summary>The comment above the field holds breaks Roslyn counts and the editor does not: the edit is named at the editor's
+    /// line 4, not the compiler's 8, which only the console's message in a compiler's shape names, as a compiler would.</summary>
     [AvaloniaFact]
     public void A_rude_edit_is_named_at_its_line_nothing_is_applied_and_the_program_restarts_with_it()
     {
-        File.WriteAllText(GreeterPath, "static class Greeter\n{\n    static int count;\n\n    public static void Greet(int i)\n    {\n        count++;\n        Console.WriteLine($\"Hello {i} ({count})\");\n    }\n}\n");
+        File.WriteAllText(GreeterPath, $"static class Greeter\n{{\n    /* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\n    static int count;\n\n"
+            + "    public static void Greet(int i)\n    {\n        count++;\n        Console.WriteLine($\"Hello {i} ({count})\");\n    }\n}\n");
         MainWindow window = Open();
         try
         {
@@ -219,13 +222,16 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.True(outcome.Result == HotReloadResult.RestartNeeded, $"Changing a field's type needs a restart: {outcome.Said}");
             Passenger.App.Run.Problem rude = Assert.Single(outcome.Problems, p => p.Severity == Passenger.App.Run.ProblemSeverity.Error);
             Assert.Equal(GreeterPath, rude.Path);
-            Assert.Equal(2, rude.Position.Line);
+            Assert.Equal(3, rude.Position.Line);
             Assert.StartsWith("ENC", rude.Code, StringComparison.Ordinal);
             Assert.Contains(rude, window.BottomPanel.Problems.HotReloadProblems!);
-            Assert.Contains("Greeter.cs:3", outcome.Said, StringComparison.Ordinal);
+            Assert.Contains("Greeter.cs:4", outcome.Said, StringComparison.Ordinal);
 
             // Restarted with its edits built and its breakpoint: a new session, stopped at the breakpoint again.
             Ui.WaitFor(() => window.Debugger.Session is { } next && next != first && next.State == DebugState.Paused, "the restarted program to stop at the breakpoint");
+            string message = $"{GreeterPath}(8,{rude.Position.Column + 1}): error {rude.Code}";
+            Ui.WaitFor(() => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains(message, StringComparison.Ordinal),
+                "the console's message for the edit, in a compiler's shape at the compiler's line 8");
             Assert.DoesNotContain("Howdy", Output(window), StringComparison.Ordinal);
             Ui.Run(window, AppActions.Resume);
             Ui.WaitFor(() => Output(window).Contains("Howdy 1 (1)", StringComparison.Ordinal), $"the restarted program to run the edits ({Output(window)})");

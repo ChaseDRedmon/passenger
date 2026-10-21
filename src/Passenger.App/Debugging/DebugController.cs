@@ -107,6 +107,7 @@ public sealed class DebugController : IDisposable
         view.EvaluateRequested += evaluated;
         view.SetValueRequested += set;
         view.DataWatch = DataWatchAsync;
+        view.PlaceOf = PlaceOf;
         view.DataBreakpointRequested += watchData;
         Breakpoints.DataChanged += (_, _) => TellRefusedData();
         view.WatchRemoved += unwatched;
@@ -266,13 +267,14 @@ public sealed class DebugController : IDisposable
             {
                 List<string> files = [.. outcome.Files.Select(PathNames.Canonical)];
                 // The stop shown keeps its place in the text, then the files' lines are the program's.
-                if (executionPoint is { } point && files.Contains(point.Path))
-                {
-                    executionPoint = (point.Path, Current(point.Path, point.Line));
-                }
+                (string Path, int Line)? shownAt = executionPoint is { } point && files.Contains(point.Path) ? (point.Path, Current(point.Path, point.Line)) : null;
                 foreach (string path in files)
                 {
                     lines?.Reset(path);
+                }
+                if (shownAt is { } now)
+                {
+                    executionPoint = (now.Path, Built(now.Path, now.Line));
                 }
                 await session.SendBreakpointsAgainAsync(files);
                 if (outcome.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread)
@@ -358,7 +360,7 @@ public sealed class DebugController : IDisposable
         bindingStop = null;
         bindingFrame = null;
         lastResult = null;
-        BuiltLines built = new();
+        BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
         lines = built;
         view.SetState(DebugState.Starting);
         view.ShowDetachable(false);
@@ -397,7 +399,7 @@ public sealed class DebugController : IDisposable
                 StateChanged?.Invoke(this, EventArgs.Empty);
             });
             Session = session;
-            hotReload = hotReloadOn ? new HotReload(session, Server) : null;
+            hotReload = hotReloadOn ? new HotReload(session, Server, editors) : null;
             view.Tree.Load = reference => session.VariablesAsync(reference);
             if (launched && !inTerminal)
             {
@@ -648,7 +650,7 @@ public sealed class DebugController : IDisposable
             return;
         }
         string path = PathNames.Canonical(source);
-        Navigate?.Invoke(this, (path, new TextPosition(Current(path, Math.Max(0, top.Line - 1)), Math.Max(0, top.Column - 1))));
+        Navigate?.Invoke(this, (path, Current(path, top)));
         CodeEditor editor = editors.CodeEditor;
         List<(StepInTarget Target, TextRange Range)> placed = editors.Active?.Path == path ? Placed(targets, path, editor.Document.Snapshot) : [];
         if (placed.Count <= 1)
@@ -674,23 +676,22 @@ public sealed class DebugController : IDisposable
         List<(StepInTarget, TextRange)> placed = [];
         foreach (StepInTarget target in targets)
         {
-            if (target is not { Line: int line, Column: int column, EndLine: int endLine, EndColumn: int endColumn } || line != endLine)
+            if (target is not { Line: int line, Column: int column, EndLine: int endLine, EndColumn: int endColumn })
             {
                 continue;
             }
-            int now = Current(path, line - 1);
-            if (now < 0 || now >= text.LineCount)
+            TextPosition from = lines?.ToCurrent(path, line - 1, column - 1) ?? new TextPosition(line - 1, column - 1);
+            TextPosition to = lines?.ToCurrent(path, endLine - 1, endColumn - 1) ?? new TextPosition(endLine - 1, endColumn - 1);
+            if (from.Line != to.Line || from.Line < 0 || from.Line >= text.LineCount)
             {
                 continue;
             }
-            LineSpan row = text.GetLine(now);
-            int start = row.Start;
-            int length = row.Length;
-            if (column - 1 > length || endColumn - 1 > length || endColumn <= column)
+            LineSpan row = text.GetLine(from.Line);
+            if (from.Column > row.Length || to.Column > row.Length || to.Column <= from.Column)
             {
                 continue;
             }
-            placed.Add((target, TextRange.FromBounds(start + column - 1, start + endColumn - 1)));
+            placed.Add((target, TextRange.FromBounds(row.Start + from.Column, row.Start + to.Column)));
         }
         return placed;
     }
@@ -1099,7 +1100,7 @@ public sealed class DebugController : IDisposable
         frame = chosen;
         if (navigate && chosen.Source?.Path is { } path && File.Exists(path))
         {
-            Navigate?.Invoke(this, (path, new TextPosition(Current(path, Math.Max(0, chosen.Line - 1)), Math.Max(0, chosen.Column - 1))));
+            Navigate?.Invoke(this, (path, Current(path, chosen)));
         }
         await ShowVariables();
     }
@@ -1453,8 +1454,20 @@ public sealed class DebugController : IDisposable
     /// <summary>Whether a line (from zero) of a file is the build's, rather than written since the session began.</summary>
     public bool IsBuiltLine(string path, int line) => lines?.IsBuilt(path, line) ?? true;
 
+    /// <summary>Where a stack frame is in its file now, line and column from zero as the editor counts them (the debugger's are
+    /// the compiler's, from one, in the build); null for a frame without a file.</summary>
+    public TextPosition? PlaceOf(DapStackFrame frame) => frame.Source?.Path is { } path ? Current(PathNames.Canonical(path), frame) : null;
+
     /// <summary>Where a built line of a file is now, while a session runs.</summary>
     private int Current(string path, int line) => lines?.ToCurrent(path, line) ?? line;
+
+    /// <summary>Where a frame's built line and column in a file are now, while a session runs.</summary>
+    private TextPosition Current(string path, DapStackFrame frame)
+    {
+        int line = Math.Max(0, frame.Line - 1);
+        int column = Math.Max(0, frame.Column - 1);
+        return lines?.ToCurrent(path, line, column) ?? new TextPosition(line, column);
+    }
 
     /// <summary>The built line a line of a file has, while a session runs.</summary>
     private int Built(string path, int line) => lines?.ToBuilt(path, line) ?? line;

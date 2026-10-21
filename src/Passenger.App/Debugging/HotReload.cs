@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Passenger.App.CSharp;
+using Passenger.App.Editors;
 using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Dap;
@@ -54,6 +56,7 @@ public sealed class HotReload
 {
     private readonly DebugSession debug;
     private readonly Func<RoslynSession?> server;
+    private readonly EditorArea editors;
     private int? id;
     private Task<string?>? starting;
     private RoslynSession? startedOn;
@@ -67,10 +70,11 @@ public sealed class HotReload
 
     /// <summary>Hot Reload for a session just launched. Roslyn's session begins at the first edit (most sessions have none,
     /// and its start reads every document), given each edited file's text from before its edits, the build's.</summary>
-    public HotReload(DebugSession debug, Func<RoslynSession?> server)
+    public HotReload(DebugSession debug, Func<RoslynSession?> server, EditorArea editors)
     {
         this.debug = debug;
         this.server = server;
+        this.editors = editors;
     }
 
     /// <summary>Whether the files have been edited since the launch or the last update applied.</summary>
@@ -182,7 +186,8 @@ public sealed class HotReload
         {
             return new HotReloadOutcome(HotReloadResult.Failed, $"Hot Reload failed: {problem}");
         }
-        List<Problem> problems = [.. emitted.Problems.Select(ToProblem)];
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(editors);
+        List<Problem> problems = [.. emitted.Problems.Select(p => ToProblem(p, texts))];
         switch (emitted.Status)
         {
             case "none":
@@ -272,12 +277,18 @@ public sealed class HotReload
         return named.Count > 2 ? $"{first}; and {named.Count - 2} more" : first;
     }
 
-    /// <summary>An edit Roslyn could not take, as Problems lists it: its id (ENC0020) the code, its place from zero.</summary>
-    private static Problem ToProblem(HotReloadProblem problem) => new(
-        problem.Error ? ProblemSeverity.Error : ProblemSeverity.Warning,
-        problem.Message,
-        problem.Id,
-        problem.Path is { } path ? PathNames.Canonical(path) : null,
-        new TextPosition(problem.StartLine, problem.StartColumn),
-        problem.Project);
+    /// <summary>An edit Roslyn could not take, as Problems lists it: its id (ENC0020) the code, its place from zero as the
+    /// editor counts its file's lines (Roslyn's are the server's, <see cref="ServerPlaces"/>).</summary>
+    private static Problem ToProblem(HotReloadProblem problem, Func<string, TextSnapshot?> texts)
+    {
+        string? path = problem.Path is { } named ? PathNames.Canonical(named) : null;
+        LspPosition at = new(problem.StartLine, problem.StartColumn);
+        return new Problem(
+            problem.Error ? ProblemSeverity.Error : ProblemSeverity.Warning,
+            problem.Message,
+            problem.Id,
+            path,
+            path is not null ? ServerPlaces.PositionOf(texts(path), at) : new TextPosition(at.Line, at.Character),
+            problem.Project);
+    }
 }

@@ -1213,7 +1213,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return new DebugSnapshot(
             "paused",
             session.StopReason,
-            top?.Source?.Path is { } path ? $"{Relative(path)}:{top.Line}:{top.Column}" : null,
+            top?.Source?.Path is { } path && debugger.PlaceOf(top) is { } at ? $"{Relative(path)}:{at.Line + 1}:{at.Column + 1}" : null,
             Frames(frames),
             locals,
             null,
@@ -1236,7 +1236,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             if (Own(frames[i]))
             {
-                lines.Add($"{i}: {frames[i].Name} at {Relative(frames[i].Source!.Path!)}:{frames[i].Line}");
+                lines.Add($"{i}: {frames[i].Name} at {Relative(frames[i].Source!.Path!)}:{(Session.Debug.PlaceOf(frames[i])?.Line ?? frames[i].Line - 1) + 1}");
                 continue;
             }
             int last = i;
