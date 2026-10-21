@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 
@@ -22,8 +23,19 @@ internal static class HeapWire
 
     private const int HeaderLength = 10;
 
-    /// <summary>The largest body read, past which the stream is taken for something other than the wire.</summary>
-    private const long LargestBody = int.MaxValue - 64;
+    /// <summary>The largest body read, past which the stream is taken for something other than the wire: the tools'
+    /// deflated graph of a heap of tens of millions of objects.</summary>
+    private const long LargestBody = 1L << 30;
+
+    /// <summary>The largest failure read: a line of why.</summary>
+    private const long LargestFailure = 64 * 1024;
+
+    /// <summary>The most a snapshot's body inflates to. With every count held to the bytes left, no frame makes Passenger
+    /// allocate more than the largest snapshot it takes would.</summary>
+    private const int LargestInflated = 1 << 30;
+
+    /// <summary>How much of a body is taken at once as it comes, so a length that promises more than comes allocates no more.</summary>
+    private const int Chunk = 1 << 20;
 
     public static void WriteFailure(Stream output, string why) => WriteFrame(output, Failure, Encoding.UTF8.GetBytes(why));
 
@@ -67,50 +79,131 @@ internal static class HeapWire
             throw new InvalidDataException($"The container tools answer in version {header[1]} of the heap's wire, and the IDE reads version {Version}");
         }
         long length = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(2));
-        if (length is < 0 or > LargestBody || header[0] is not (Snapshot or Failure))
+        if (header[0] is not (Snapshot or Failure) || length < 0)
         {
             throw new InvalidDataException("The container tools' answer is not a heap snapshot");
         }
-        byte[] body = new byte[length];
-        try
+        long largest = header[0] == Snapshot ? LargestBody : LargestFailure;
+        if (length > largest)
         {
-            await input.ReadExactlyAsync(body).ConfigureAwait(false);
+            throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture,
+                $"The container tools' answer is {length} bytes long, more than the {largest} the IDE reads of one"));
         }
-        catch (EndOfStreamException ended)
+        byte[] body = new byte[Math.Min(length, Chunk)];
+        int filled = 0;
+        while (filled < length)
         {
-            throw new InvalidDataException("The container tools' answer ended inside a frame", ended);
+            if (filled == body.Length)
+            {
+                Array.Resize(ref body, (int)Math.Min(length, (long)body.Length * 2));
+            }
+            int came = await input.ReadAsync(body.AsMemory(filled)).ConfigureAwait(false);
+            if (came == 0)
+            {
+                throw new InvalidDataException("The container tools' answer ended inside a frame");
+            }
+            filled += came;
         }
         return (header[0], body);
     }
 
     /// <summary>A snapshot's body read back, of a run of this side's (<paramref name="run"/>, what snapshots are compared
     /// within), <paramref name="asked"/> the time from asking for it to its coming, the rest of which its sending took; its
-    /// number, and those of the earlier ones it follows, after the run's <paramref name="before"/> (tools started again).</summary>
+    /// number, and those of the earlier ones it follows, after the run's <paramref name="before"/> (tools started again).
+    /// What the container sent is never trusted: each count is held to the bytes left and each index to what it indexes, and
+    /// a body that does not hold together is an <see cref="InvalidDataException"/>.</summary>
     public static MemorySnapshot ReadSnapshot(byte[] body, object run, TimeSpan asked, int before = 0)
     {
-        using MemoryStream packed = new(body, writable: false);
-        using DeflateStream inflated = new(packed, CompressionMode.Decompress);
+        using MemoryStream inflated = Inflate(body);
         using BinaryReader reader = new(inflated, Encoding.UTF8);
-        int number = before + reader.ReadInt32();
+        int sentNumber = reader.ReadInt32();
+        if (sentNumber < 1)
+        {
+            throw Unread();
+        }
+        int number = checked(before + sentNumber);
         DateTime taken = DateTime.FromBinary(reader.ReadInt64()).ToLocalTime();
         TimeSpan took = TimeSpan.FromTicks(reader.ReadInt64());
         string phases = reader.ReadString();
-        HeapGraph graph = ReadGraph(reader);
-        int earlierCount = reader.Read7BitEncodedInt();
+        HeapGraph graph = ReadGraph(reader, inflated);
+        int earlierCount = Count(reader, inflated, 3);
         Dictionary<int, Identity> earlier = new(earlierCount);
         for (int i = 0; i < earlierCount; i++)
         {
             int older = reader.Read7BitEncodedInt();
-            string? inexact = reader.ReadBoolean() ? reader.ReadString() : null;
-            int[] later = new int[reader.Read7BitEncodedInt()];
-            for (int o = 0; o < later.Length; o++)
+            if (older < 1 || older >= sentNumber)
             {
-                later[o] = reader.Read7BitEncodedInt() - 1;
+                throw Unread();
             }
-            earlier[before + older] = new Identity(later, inexact);
+            string? inexact = reader.ReadBoolean() ? reader.ReadString() : null;
+            earlier[before + older] = new Identity(Column(reader, inflated, 1, -1, graph.Count), inexact);
         }
         TimeSpan sent = asked > took ? asked - took : TimeSpan.Zero;
         return new MemorySnapshot(run, number, taken, graph, took + sent, $"{phases}, sent out of the container {sent.TotalSeconds:0.0} s", earlier);
+    }
+
+    /// <summary>A body inflated whole, refused past <see cref="LargestInflated"/>, so what is left of it is known.</summary>
+    private static MemoryStream Inflate(byte[] body)
+    {
+        using MemoryStream packed = new(body, writable: false);
+        using DeflateStream inflating = new(packed, CompressionMode.Decompress);
+        MemoryStream inflated = new(Math.Min(body.Length, Chunk));
+        byte[] buffer = new byte[81920];
+        int read;
+        while ((read = inflating.Read(buffer)) > 0)
+        {
+            if (inflated.Length + read > LargestInflated)
+            {
+                inflated.Dispose();
+                throw new InvalidDataException(string.Create(CultureInfo.InvariantCulture,
+                    $"The container tools' heap snapshot inflates to more than the {LargestInflated} bytes the IDE reads of one"));
+            }
+            inflated.Write(buffer, 0, read);
+        }
+        inflated.Position = 0;
+        return inflated;
+    }
+
+    private static InvalidDataException Unread() => new("The container tools' heap graph does not hold together");
+
+    /// <summary>A count of things each written in at least <paramref name="least"/> bytes, refused when what is left of the
+    /// body could not hold them.</summary>
+    private static int Count(BinaryReader reader, MemoryStream inflated, int least)
+    {
+        int count = reader.Read7BitEncodedInt();
+        return count >= 0 && count <= (inflated.Length - inflated.Position) / least ? count : throw Unread();
+    }
+
+    /// <summary>A column of numbers, each shifted back by what kept it from going below 0 and refused outside
+    /// [<paramref name="lowest"/>, <paramref name="above"/>); of <paramref name="length"/> numbers, unless that is -1.</summary>
+    private static int[] Column(BinaryReader reader, MemoryStream inflated, int shift, int lowest, int above, int length = -1)
+    {
+        int[] values = new int[Count(reader, inflated, 1)];
+        if (length >= 0 && values.Length != length)
+        {
+            throw Unread();
+        }
+        for (int i = 0; i < values.Length; i++)
+        {
+            long value = (long)reader.Read7BitEncodedInt() - shift;
+            values[i] = value >= lowest && value < above ? (int)value : throw Unread();
+        }
+        return values;
+    }
+
+    /// <summary>A column of wide numbers (sizes), <paramref name="length"/> of them.</summary>
+    private static long[] Wide(BinaryReader reader, MemoryStream inflated, int length)
+    {
+        long[] values = new long[Count(reader, inflated, 1)];
+        if (values.Length != length)
+        {
+            throw Unread();
+        }
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = reader.Read7BitEncodedInt64();
+        }
+        return values;
     }
 
     private static void Write(BinaryWriter writer, MemorySnapshot taken)
@@ -205,16 +298,21 @@ internal static class HeapWire
         }
     }
 
-    private static HeapGraph ReadGraph(BinaryReader reader)
+    private static HeapGraph ReadGraph(BinaryReader reader, MemoryStream inflated)
     {
         int pointerSize = reader.ReadInt32();
+        if (pointerSize is not (4 or 8))
+        {
+            throw Unread();
+        }
         TimeSpan walked = TimeSpan.FromTicks(reader.ReadInt64());
         TimeSpan analysed = TimeSpan.FromTicks(reader.ReadInt64());
-        HeapTypeInfo[] types = new HeapTypeInfo[reader.Read7BitEncodedInt()];
+        // A type is at least its name's length, its method table, component size, whether it is a vector and its fields' count.
+        HeapTypeInfo[] types = new HeapTypeInfo[Count(reader, inflated, 12)];
         for (int t = 0; t < types.Length; t++)
         {
             HeapTypeInfo type = new(reader.ReadString(), reader.ReadUInt64(), reader.Read7BitEncodedInt(), reader.ReadBoolean());
-            int fields = reader.Read7BitEncodedInt();
+            int fields = Count(reader, inflated, 2);
             for (int f = 0; f < fields; f++)
             {
                 int offset = ReadSigned(reader);
@@ -222,48 +320,58 @@ internal static class HeapWire
             }
             types[t] = type;
         }
-        GcRoot[] roots = new GcRoot[reader.Read7BitEncodedInt()];
+        GcRoot[] roots = new GcRoot[Count(reader, inflated, 2)];
         for (int r = 0; r < roots.Length; r++)
         {
-            roots[r] = new GcRoot((RootKind)reader.ReadByte(), reader.ReadString());
+            RootKind kind = (RootKind)reader.ReadByte();
+            roots[r] = Enum.IsDefined(kind) ? new GcRoot(kind, reader.ReadString()) : throw Unread();
         }
-        int count = reader.Read7BitEncodedInt();
+        // An object is at least a byte in each of its columns: its address, type, size, root, parent, the field that holds it,
+        // its depth, retained size, places in the dominator tree's walk and references' count.
+        int count = Count(reader, inflated, 11);
         ulong[] address = new ulong[count];
         ulong previous = 0;
         for (int i = 0; i < count; i++)
         {
-            previous += (ulong)reader.Read7BitEncodedInt64();
+            // Each after the one before, as the lookup by address needs them.
+            long step = reader.Read7BitEncodedInt64();
+            if (step < 0 || (step == 0 && i > 0) || (ulong)step > ulong.MaxValue - previous)
+            {
+                throw Unread();
+            }
+            previous += (ulong)step;
             address[i] = previous;
         }
-        int[] objectTypes = Column(reader, 0);
-        long[] size = Wide(reader);
-        int[] root = Column(reader, 1);
-        int[] parent = Column(reader, 1);
+        int[] objectTypes = Column(reader, inflated, 0, 0, types.Length, count);
+        long[] size = Wide(reader, inflated, count);
+        int[] root = Column(reader, inflated, 1, 0, roots.Length, count);
+        int[] parent = Column(reader, inflated, 1, -1, count, count);
         int[] parentOffset = new int[count];
         for (int i = 0; i < count; i++)
         {
             parentOffset[i] = ReadSigned(reader);
         }
-        int[] depth = Column(reader, 0);
-        long[] retained = Wide(reader);
-        int[] enter = Column(reader, 0);
-        int[] leave = Column(reader, 0);
+        int[] depth = Column(reader, inflated, 0, 0, int.MaxValue, count);
+        long[] retained = Wide(reader, inflated, count);
+        int[] enter = Column(reader, inflated, 0, int.MinValue, int.MaxValue, count);
+        int[] leave = Column(reader, inflated, 0, int.MinValue, int.MaxValue, count);
         int[] edgeStart = new int[count + 1];
         for (int i = 0; i < count; i++)
         {
-            edgeStart[i + 1] = edgeStart[i] + reader.Read7BitEncodedInt();
+            int references = reader.Read7BitEncodedInt();
+            if (references < 0 || references > int.MaxValue - edgeStart[i])
+            {
+                throw Unread();
+            }
+            edgeStart[i + 1] = edgeStart[i] + references;
         }
-        int[] edgeTarget = Column(reader, 0);
+        int[] edgeTarget = Column(reader, inflated, 0, 0, count, edgeStart[count]);
         int[] edgeOffset = new int[edgeTarget.Length];
         for (int e = 0; e < edgeOffset.Length; e++)
         {
             edgeOffset[e] = ReadSigned(reader);
         }
-        long[] typeRetained = Wide(reader);
-        if (objectTypes.Length != count || size.Length != count || edgeTarget.Length != edgeStart[count] || typeRetained.Length != types.Length)
-        {
-            throw new InvalidDataException("The container tools' heap graph does not hold together");
-        }
+        long[] typeRetained = Wide(reader, inflated, types.Length);
         return new HeapGraph
         {
             Address = address,
@@ -286,26 +394,6 @@ internal static class HeapWire
             Walked = walked,
             Analysed = analysed,
         };
-
-        static int[] Column(BinaryReader reader, int shift)
-        {
-            int[] values = new int[reader.Read7BitEncodedInt()];
-            for (int i = 0; i < values.Length; i++)
-            {
-                values[i] = reader.Read7BitEncodedInt() - shift;
-            }
-            return values;
-        }
-
-        static long[] Wide(BinaryReader reader)
-        {
-            long[] values = new long[reader.Read7BitEncodedInt()];
-            for (int i = 0; i < values.Length; i++)
-            {
-                values[i] = reader.Read7BitEncodedInt64();
-            }
-            return values;
-        }
     }
 
     /// <summary>A number that may be below 0 (a dependent handle's offset), zigzagged so a small one stays small.</summary>

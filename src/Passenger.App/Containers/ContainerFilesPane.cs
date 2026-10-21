@@ -131,11 +131,12 @@ public sealed class ContainerFilesPane : DockPanel
                 }
                 int depth = folder == "/" ? 0 : folder.Count(c => c == '/');
                 return ((IReadOnlyList<ContainerFile>?)[.. result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Where(name => name is not ("./" or "../"))
+                    .Where(IsName)
                     .Select(name => new ContainerFile($"{folder.TrimEnd('/')}/{name.TrimEnd('/')}", name.TrimEnd('/'), name.EndsWith('/'), depth))
                     .OrderBy(f => !f.IsFolder).ThenBy(f => f.Name, StringComparer.Ordinal)], (string?)null);
             }
-            catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
+            catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception or IOException
+                or InvalidOperationException)
             {
                 return (null, failed.Message);
             }
@@ -194,75 +195,148 @@ public sealed class ContainerFilesPane : DockPanel
             return "No container is chosen";
         }
         ContainerEngine docker = engine();
-        string copy = System.IO.Path.Combine([stateFolder(), "cache", "containers", Safe(from.Name), .. path.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Safe)]);
-        string? problem = await BackgroundWork.Run(() => CopyAsync(docker, from.Id, path, copy));
+        string cache = System.IO.Path.Combine(stateFolder(), "cache", "containers");
+        string? copy = CopyPlace(cache, from.Name, path);
+        string? problem = copy is null ? $"{path} is no file of the container's that Passenger copies out"
+            : await BackgroundWork.Run(() => CopyAsync(docker, from.Id, path, copy, cache));
         if (problem is not null)
         {
             Problem?.Invoke(this, problem);
             return problem;
         }
-        Opened?.Invoke(this, copy);
+        Opened?.Invoke(this, copy!);
         return null;
     }
 
-    private static async Task<string?> CopyAsync(ContainerEngine docker, string id, string path, string copy)
+    /// <summary>Whether a line of <c>ls -1Ap</c> is a name in the folder listed: never one with a slash but a folder's last
+    /// one, nor the folder itself or the one above it; a name that is not is a listing the container made up.</summary>
+    private static bool IsName(string listed)
     {
-        ProcessStartInfo start;
+        string name = listed.EndsWith('/') ? listed[..^1] : listed;
+        return name.Length > 0 && name is not ("." or "..") && !name.Contains('/', StringComparison.Ordinal) && !name.Contains('\0', StringComparison.Ordinal);
+    }
+
+    /// <summary>Where a container's file is copied: under the container's own folder of the cache, each of its path's names
+    /// made a file name here, or null for a path that names no file under it (an empty one, a <c>..</c>).</summary>
+    private static string? CopyPlace(string cache, string container, string path)
+    {
+        string[] names = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (names.Length == 0 || names.Any(n => n is "." or ".."))
+        {
+            return null;
+        }
+        string folder = System.IO.Path.GetFullPath(System.IO.Path.Combine(cache, Safe(container)));
+        string copy = System.IO.Path.GetFullPath(System.IO.Path.Combine([folder, .. names.Select(Safe)]));
+        return PathNames.IsUnder(copy, folder) ? copy : null;
+    }
+
+    /// <summary>Copies a file out of the container into <paramref name="copy"/>: the tar <c>docker cp</c> writes read as it
+    /// comes, a file over <see cref="Largest"/> refused at its header with the copy ended there, and the file written beside
+    /// its place, then renamed over it, only once its folder is found under <paramref name="cache"/> with no link leading out.
+    /// Null once copied, else why not.</summary>
+    private static async Task<string?> CopyAsync(ContainerEngine docker, string id, string path, string copy, string cache)
+    {
+        Process process;
         try
         {
-            start = docker.Command(["cp", $"{id}:{path}", "-"]);
+            // -L: the file ls -L listed, which a link names, rather than the link.
+            ProcessStartInfo start = docker.Command(["cp", "-L", $"{id}:{path}", "-"]);
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            process = ChildProcesses.Start(start);
         }
-        catch (FileNotFoundException missing)
+        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return missing.Message;
+            return failed.Message;
         }
-        start.RedirectStandardOutput = true;
-        start.RedirectStandardError = true;
-        using Process process = ChildProcesses.Start(start);
-        Task<string> errors = process.StandardError.ReadToEndAsync();
-        using MemoryStream archive = new();
-        using CancellationTokenSource limit = new(ContainerEngine.AskLimit);
+        using (process)
+        {
+            Task<string> errors = process.StandardError.ReadToEndAsync(CancellationToken.None);
+            using CancellationTokenSource limit = new(ContainerEngine.AskLimit);
+            try
+            {
+                string? written = await ReadAsync(process.StandardOutput.BaseStream, path, copy, cache, limit.Token);
+                if (written is null or NotAFile)
+                {
+                    // The archive's end, which docker cp waits to write before it ends.
+                    await process.StandardOutput.BaseStream.CopyToAsync(Stream.Null, limit.Token);
+                    await process.WaitForExitAsync(limit.Token);
+                    return process.ExitCode != 0 ? Said(await errors) : written is null ? null : $"{path} is not a file";
+                }
+                // Refused at its header: nothing more of it is read.
+                ChildProcesses.Kill(process);
+                return written;
+            }
+            catch (OperationCanceledException)
+            {
+                ChildProcesses.Kill(process);
+                return $"Copying {path} out of the container took too long";
+            }
+            catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or InvalidDataException or FormatException
+                or ArgumentException or InvalidOperationException)
+            {
+                ChildProcesses.Kill(process);
+                // A copy that ended inside the archive says why in its errors.
+                return process.HasExited && process.ExitCode != 0 ? Said(await errors) : $"{path} could not be copied out of the container: {failed.Message}";
+            }
+        }
+
+        static string Said(string errors) => errors.Trim() is { Length: > 0 } said ? said : "docker cp failed";
+    }
+
+    private const string NotAFile = "not a file";
+
+    /// <summary>The first entry of the archive written to the copy's place: null once written, else why not.</summary>
+    private static async Task<string?> ReadAsync(Stream archive, string path, string copy, string cache, CancellationToken cancel)
+    {
+        using TarReader reader = new(archive, leaveOpen: true);
+        if (await reader.GetNextEntryAsync(copyData: false, cancel) is not { } entry)
+        {
+            return NotAFile;
+        }
+        if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile))
+        {
+            return entry.EntryType == TarEntryType.Directory ? $"{path} is a folder" : $"{path} is not a file";
+        }
+        if (entry.Length > Largest)
+        {
+            return $"{path} is larger than 16 MB";
+        }
+        string folder = System.IO.Path.GetDirectoryName(copy)!;
+        Directory.CreateDirectory(folder);
+        // Only Passenger writes there; a link that would lead the copy out of the cache is refused all the same.
+        if (!PathNames.IsUnder(PathNames.Canonical(folder), PathNames.Canonical(cache)))
+        {
+            return $"{path} could not be copied: its place in Passenger's cache leads out of it";
+        }
+        string partial = System.IO.Path.Combine(folder, $".{System.IO.Path.GetFileName(copy)}.{Guid.NewGuid():N}");
         try
         {
-            await process.StandardOutput.BaseStream.CopyToAsync(archive, limit.Token);
-            await process.WaitForExitAsync(limit.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            ChildProcesses.Kill(process);
-            return $"Copying {path} out of the container took too long";
-        }
-        if (process.ExitCode != 0)
-        {
-            return (await errors).Trim();
-        }
-        archive.Position = 0;
-        using TarReader reader = new(archive);
-        while (await reader.GetNextEntryAsync() is { } entry)
-        {
-            if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile))
-            {
-                continue;
-            }
-            if (entry.Length > Largest)
-            {
-                return $"{path} is larger than 16 MB";
-            }
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(copy)!);
             // The state's own copy, never a workspace file: FileText's writes are for what a person edits.
-            await using (FileStream written = File.Create(copy))
+            await using (FileStream written = new(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 if (entry.DataStream is { } data)
                 {
-                    await data.CopyToAsync(written);
+                    await data.CopyToAsync(written, cancel);
                 }
             }
+            // A rename puts the file where a link may stand, never through it.
+            File.Move(partial, copy, overwrite: true);
             return null;
         }
-        return $"{path} is not a file";
+        finally
+        {
+            File.Delete(partial);
+        }
     }
 
-    private static string Safe(string name) => string.Concat(name.Select(c => System.IO.Path.GetInvalidFileNameChars().Contains(c) || c == ':' ? '_' : c));
+    /// <summary>A name as a file name here: what this system refuses in one replaced, and one of dots and spaces alone, which
+    /// Windows would read as a folder above, given a letter first.</summary>
+    private static string Safe(string name)
+    {
+        string safe = string.Concat(name.Select(c => System.IO.Path.GetInvalidFileNameChars().Contains(c) || c is ':' or '\\' or '/' ? '_' : c));
+        return safe.TrimEnd('.', ' ').Length == 0 ? $"_{safe}" : safe;
+    }
 
     private Control Row(ContainerFile file)
     {

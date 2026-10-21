@@ -332,6 +332,171 @@ public sealed class ContainersTests
     }
 
     [AvaloniaFact]
+    public void A_container_can_never_have_its_files_tab_write_outside_passengers_cache_nor_copy_a_huge_file_and_a_file_opened_again_shows_its_new_text()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The escape is written as a path of this machine's from its root, which a Windows path is not");
+        // Where a made-up name leads from the cache, should its ..s be followed: the test's own folder, never written to.
+        string outside = TestFolders.Create("ctr-escape-");
+        string escaped = Path.Combine(outside, "escaped.txt");
+        string made = "x/" + string.Join('/', Enumerable.Repeat("..", 64)) + outside.TrimStart('/') + "/escaped.txt";
+        // The image's ls is its own: it lists names no folder can hold, beside two real files.
+        string ls = string.Join(' ', new[] { "#!/bin/sh", "echo note.txt", "echo big", $"echo \"{made}\"", "echo ..", "echo ./", "echo \"a/b\"" }.Select(l => $"'{l}'"));
+        string name = Docker.Container("escape",
+            $"echo first > /note.txt; dd if=/dev/zero of=/big bs=1048576 count=20 2>/dev/null; mkdir -p '/{outside.TrimStart('/')}'; " +
+            $"echo inside > '/{outside.TrimStart('/')}/escaped.txt'; rm /bin/ls; printf '%s\\n' {ls} > /bin/ls; chmod +x /bin/ls; sleep 600");
+        MainWindow window = Open(TestFolders.Create("ctr-escape-window-"));
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+        view.ShowTab("Files");
+        Ui.WaitFor(() => view.Files.Entries.Count > 0, "the container's root listed");
+        Assert.Equal(["/big", "/note.txt"], view.Files.Entries.Select(f => f.Path).Order(StringComparer.Ordinal));
+
+        // Asked for by its path all the same (as a test or a stale row could), it is refused and nothing is written.
+        Task<string?> refused = view.Files.OpenAsync("/" + made);
+        Ui.WaitFor(() => refused.IsCompleted, "the made-up path's answer");
+        Assert.NotNull(refused.Result);
+        Assert.False(File.Exists(escaped), $"A container's made-up file name had Passenger write {escaped}, outside its cache");
+
+        // A file larger than 16 MB is refused at its header.
+        Task<string?> big = view.Files.OpenAsync("/big");
+        Ui.WaitFor(() => big.IsCompleted, "the large file's answer");
+        Assert.Equal("/big is larger than 16 MB", big.Result);
+        string cache = Path.Combine(window.StateFolder, "cache", "containers");
+        Assert.Empty(Directory.Exists(cache) ? Directory.EnumerateFiles(cache, "*big*", SearchOption.AllDirectories) : []);
+
+        // A file opened again once it changed shows what it holds now, in the tab it has.
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/note.txt"));
+        Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith("note.txt", StringComparison.Ordinal) == true, "note.txt open in the editor");
+        Passenger.App.Workspace.OpenDocument note = window.EditorArea.Active!;
+        Assert.Equal("first\n", note.Text.Snapshot.ToString());
+        Docker.Run("exec", name, "sh", "-c", "echo second > /note.txt");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/note.txt"));
+        Ui.WaitFor(() => note.Text.Snapshot.ToString() == "second\n", $"note.txt's new text in its tab, not {note.Text.Snapshot}");
+        Assert.Same(note, window.EditorArea.Active);
+        Assert.True(note.IsReadOnly, "A container's file opened again became editable");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_memory_snapshot_a_containers_tools_send_that_does_not_hold_together_is_refused_saying_so()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        // Stand-in tools of this version: one program, a recording begun at once, and each heap mode started sends a frame.
+        string tools = TestFolders.Create("ctr-heap-tools-");
+        string script = Path.Combine(tools, ContainerTools.Executable);
+        File.WriteAllText(script, string.Join('\n',
+            "#!/bin/sh",
+            "case \"$1\" in",
+            $"  version) echo {Passenger.App.Product.Version} ;;",
+            "  processes) echo '[{\"id\":7,\"name\":\"Spins\",\"commandLine\":\"dotnet /app/Spins.dll\",\"user\":\"root\"}]' ;;",
+            "  trace) echo recording >&2; cat > /dev/null ;;",
+            "  heap) n=$(cat /tmp/heaps 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/heaps; read line; cat /tmp/frames/$n; cat > /dev/null ;;",
+            "esac",
+            string.Empty));
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+        string frames = TestFolders.Create("ctr-heap-frames-");
+        // A frame that says it is 1.5 GB long, and sends nothing of it.
+        File.WriteAllBytes(Path.Combine(frames, "1"), Frame((byte)'S', 3L << 29, []));
+        // A graph whose one object is of a type it does not have.
+        File.WriteAllBytes(Path.Combine(frames, "2"), Snapshot(objectType: 99));
+        // A graph that says it has hundreds of millions of types in a few bytes.
+        File.WriteAllBytes(Path.Combine(frames, "3"), Snapshot(objectType: 0, types: 1 << 28));
+        string name = Docker.Container("heap", "sleep 600");
+        Docker.Run("cp", Path.Combine(tools, "."), $"{name}:{ContainerTools.Copied}");
+        Docker.Run("cp", Path.Combine(frames, "."), $"{name}:/tmp/frames");
+        MainWindow window = Open(TestFolders.Create("ctr-heap-window-"));
+        try
+        {
+            DotnetProcess program = new(7, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = name };
+            Ui.Launched(window, window.AttachProfilerAsync(program), "the profiler to attach to the stand-in tools' program");
+            foreach (string said in (string[])["more than the 1073741824 the IDE reads of one", "does not hold together", "does not hold together"])
+            {
+                Assert.Null(Ui.Await(window.MemorySnapshotAsync(), "the memory snapshot's answer"));
+                Assert.StartsWith("No memory snapshot: ", window.Status, StringComparison.Ordinal);
+                Assert.Contains(said, window.Status, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static byte[] Frame(byte kind, long length, byte[] body)
+        {
+            byte[] frame = new byte[10 + body.Length];
+            frame[0] = kind;
+            frame[1] = 1;
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(frame.AsSpan(2), length);
+            body.CopyTo(frame, 10);
+            return frame;
+        }
+
+        // The heap wire's version 1, deflated: a snapshot of one object of one type kept by one static.
+        static byte[] Snapshot(int objectType, int types = 1)
+        {
+            using MemoryStream body = new();
+            using (System.IO.Compression.DeflateStream deflated = new(body, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+            using (BinaryWriter w = new(deflated, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(1);
+                w.Write(DateTime.UtcNow.ToBinary());
+                w.Write(0L);
+                w.Write("dumped");
+                w.Write(8);
+                w.Write(0L);
+                w.Write(0L);
+                w.Write7BitEncodedInt(types);
+                w.Write("Keepsake");
+                w.Write(1UL);
+                w.Write7BitEncodedInt(0);
+                w.Write(false);
+                w.Write7BitEncodedInt(0);
+                w.Write7BitEncodedInt(1);
+                w.Write((byte)0);
+                w.Write("Program.Kept");
+                w.Write7BitEncodedInt(1);
+                w.Write7BitEncodedInt64(4096);
+                foreach ((int value, bool wide) in (ReadOnlySpan<(int, bool)>)[(objectType, false), (24, true), (1, false), (0, false)])
+                {
+                    w.Write7BitEncodedInt(1);
+                    if (wide)
+                    {
+                        w.Write7BitEncodedInt64(value);
+                    }
+                    else
+                    {
+                        w.Write7BitEncodedInt(value);
+                    }
+                }
+                w.Write7BitEncodedInt(0);
+                foreach ((int value, bool wide) in (ReadOnlySpan<(int, bool)>)[(0, false), (24, true), (0, false), (1, false)])
+                {
+                    w.Write7BitEncodedInt(1);
+                    if (wide)
+                    {
+                        w.Write7BitEncodedInt64(value);
+                    }
+                    else
+                    {
+                        w.Write7BitEncodedInt(value);
+                    }
+                }
+                w.Write7BitEncodedInt(0);
+                w.Write7BitEncodedInt(0);
+                w.Write7BitEncodedInt(1);
+                w.Write7BitEncodedInt64(24);
+                w.Write7BitEncodedInt(0);
+            }
+            return Frame((byte)'S', body.Length, body.ToArray());
+        }
+    }
+
+    [AvaloniaFact]
     public void Open_shell_runs_a_command_in_the_container_in_a_terminal_tab()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);

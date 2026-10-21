@@ -488,8 +488,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   consoles'), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
   streamed only while its tab shows) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
-  …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
-  there). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
+  -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
+  there; what a container says is never trusted: a listed name with a slash, `.` or `..` is no file's and is dropped, a
+  copy's place is refused unless it is under the container's folder of the cache (links resolved), the tar is read as it
+  comes and a file over 16 MB refused at its header, the copy written beside its place and renamed over it, and a copy
+  opened again, as Inspect's is, takes its new text in the tab it has, `MainWindow.OpenCopy`). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
   Remove ask first; a project's Remove is `down`, its volumes kept, and `container_action` reaches no volume or image.
   The status bar and Problems' Containers tab say the engine's problem, the link starting Docker Desktop where it is
   installed; a test run of a project referencing a `Testcontainers*` package asks the engine first
@@ -676,7 +679,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   with the container's own DAC, a line `snapshot` a snapshot), each sent whole (`HeapWire`: a kind, its version, its
   length, then the graph's arrays and the earlier snapshots' identities, deflated, 7-bit numbers, addresses as their
   steps) and read back into the same `MemorySnapshot`, so the Memory page and comparisons know no difference; a frame of
-  another version is refused. ClrMD 4 finds statics itself and reads .NET 11;
+  another version is refused, and nothing in one is trusted: a snapshot's frame over 1 GB (a failure's over 64 KB) is
+  refused at its header, its body taken as it comes, inflated to 1 GB at most, each count held to the bytes left and each
+  index to what it indexes, and whatever fails to read is said as the snapshot's refusal, the tools ended and started
+  again for the next; of the tools' errors only their last line is kept, cut at 2,048 characters (`ErrorLines`). ClrMD 4 finds statics itself and reads .NET 11;
   `HeapGraph` loads the program's own runtime folder's DAC and gives ClrMD a locator that finds nothing (no symbol
   server, no cache in the person's app data). ClrMD's Azure packages stay carried: its `FileLocator` getter loads
   Azure.Core when the DAC reads memory a dump lacks, and pruning them hung snapshots on Linux and left types unnamed on

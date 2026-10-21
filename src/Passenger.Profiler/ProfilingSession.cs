@@ -324,28 +324,19 @@ public sealed class ProfilingSession : IAsyncDisposable
             throw new ProfilingException($"Could not start Passenger's tools in {place.Where} to profile {name}: {error.Message}", error);
         }
         TaskCompletionSource recording = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        List<string> said = [];
-        Task reading = Task.Run(async () =>
+        // The last line the tools said, all that is kept of what a container writes there.
+        string? said = null;
+        Task reading = Task.Run(() => ErrorLines.ReadAsync(tools.StandardError, line =>
         {
-            try
+            if (line.Trim() == InContainer.Recording)
             {
-                while (await tools.StandardError.ReadLineAsync().ConfigureAwait(false) is { } line)
-                {
-                    if (line.Trim() == InContainer.Recording)
-                    {
-                        recording.TrySetResult();
-                        continue;
-                    }
-                    lock (said)
-                    {
-                        said.Add(line.Trim());
-                    }
-                }
+                recording.TrySetResult();
             }
-            catch (Exception gone) when (gone is IOException or ObjectDisposedException)
+            else if (line.Trim() is { Length: > 0 } words)
             {
+                Volatile.Write(ref said, words);
             }
-        }, CancellationToken.None);
+        }), CancellationToken.None);
         FileStream file = new(trace, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         Task copying = Task.Run(async () =>
         {
@@ -381,11 +372,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         {
         }
         cancellation.ThrowIfCancellationRequested();
-        string? why;
-        lock (said)
-        {
-            why = said.LastOrDefault(l => l.Length > 0);
-        }
+        string? why = Volatile.Read(ref said);
         throw new ProfilingException(ended
             ? why ?? $"Passenger's tools in {place.Where} could not profile {name}"
             : $"Passenger's tools in {place.Where} did not begin recording {name} in 30 s");

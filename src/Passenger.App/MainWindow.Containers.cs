@@ -28,7 +28,7 @@ public partial class MainWindow
         view.ActionRequested += (_, action) => Request(action);
         view.LinkClicked += (_, link) => OpenLink(link);
         view.StateRead += (_, state) => ShowEngine(state);
-        view.Files.Opened += (_, copy) => OpenFile(copy);
+        view.Files.Opened += (_, copy) => OpenCopy(copy);
         view.Files.Problem += (_, problem) => status.Text = problem;
         Dock.Add(new Docking.ToolWindow("containers", "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
         {
@@ -246,7 +246,19 @@ public partial class MainWindow
             status.Text = $"{row.Name} could not be inspected: {problem}";
             return;
         }
-        OpenFile(copy);
+        OpenCopy(copy);
+    }
+
+    /// <summary>Opens a copy Passenger wrote under its cache (a container's file, Inspect's JSON), read-only as every such
+    /// copy is: a tab that shows it already takes the copy's new text, which no watcher reports outside the folder.</summary>
+    private void OpenCopy(string copy)
+    {
+        string full = PathNames.Canonical(copy);
+        if (Editors.Documents.FirstOrDefault(d => d.Path == full) is { } open && open.ChangedOnDisk())
+        {
+            open.Reload(overUnsaved: true);
+        }
+        OpenFile(full);
     }
 
     /// <summary>Open Shell: <c>docker exec -it … sh</c> in a Terminal tab of the container's name; an image with no shell

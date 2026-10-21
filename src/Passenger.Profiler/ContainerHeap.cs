@@ -14,7 +14,9 @@ namespace Passenger.Profiler;
 internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncDisposable
 {
     private readonly SemaphoreSlim taking = new(1, 1);
-    private readonly StringBuilder errors = new();
+
+    /// <summary>The last line the tools wrote to their errors: all that is kept of them, whatever they write.</summary>
+    private string? lastError;
     private Process? tools;
     private Task errorsRead = Task.CompletedTask;
     private int disposed;
@@ -61,12 +63,23 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
             }
             if (answer.Kind == HeapWire.Failure)
             {
-                throw new InvalidOperationException(Encoding.UTF8.GetString(answer.Body));
+                throw new InvalidOperationException(ErrorLines.Last(Encoding.UTF8.GetString(answer.Body)) ?? $"Passenger's tools in {place.Where} took no snapshot");
             }
             TimeSpan asked = clock.Elapsed;
-            // Off the caller's thread: a heap of millions of objects takes a while to read back.
             int numberedAfter = before;
-            MemorySnapshot taken = await Task.Run(() => HeapWire.ReadSnapshot(answer.Body, this, asked, numberedAfter), CancellationToken.None).ConfigureAwait(false);
+            MemorySnapshot taken;
+            try
+            {
+                // Off the caller's thread: a heap of millions of objects takes a while to read back.
+                taken = await Task.Run(() => HeapWire.ReadSnapshot(answer.Body, this, asked, numberedAfter), CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception unreadable) when (unreadable is InvalidDataException or IOException or FormatException or OverflowException or ArgumentException
+                or IndexOutOfRangeException or OutOfMemoryException)
+            {
+                // A container's answer that does not hold together: nothing after it is trusted either.
+                End(running);
+                throw new InvalidOperationException($"The snapshot Passenger's tools in {place.Where} sent could not be read: {unreadable.Message}", unreadable);
+            }
             last = taken.Number;
             return taken;
         }
@@ -86,10 +99,7 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
         tools?.Dispose();
         // A snapshot of the tools started again follows none of those before: numbered after them, compared with none.
         before = last;
-        lock (errors)
-        {
-            errors.Clear();
-        }
+        Volatile.Write(ref lastError, null);
         ProcessStartInfo start = place.Tools(["heap", "--pid", processId.ToString(CultureInfo.InvariantCulture)]);
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
@@ -103,38 +113,25 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
             throw new InvalidOperationException($"Could not start Passenger's tools in {place.Where} for a memory snapshot: {error.Message}", error);
         }
         Process started = tools;
-        errorsRead = Task.Run(async () =>
+        errorsRead = Task.Run(() => ErrorLines.ReadAsync(started.StandardError, line =>
         {
-            try
+            if (line.Trim() is { Length: > 0 } said)
             {
-                while (await started.StandardError.ReadLineAsync().ConfigureAwait(false) is { } line)
-                {
-                    lock (errors)
-                    {
-                        errors.AppendLine(line);
-                    }
-                }
+                Volatile.Write(ref lastError, said);
             }
-            catch (Exception gone) when (gone is IOException or ObjectDisposedException)
-            {
-            }
-        });
+        }));
         return started;
     }
 
-    /// <summary>Why the tools gave no snapshot: what they said as they ended, else that they ended.</summary>
+    /// <summary>Why the tools gave no snapshot: the last thing they said as they ended, else that they ended.</summary>
     private async Task<string> GoneAsync()
     {
         await Task.WhenAny(errorsRead, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
-        string said;
-        lock (errors)
-        {
-            said = errors.ToString().Trim();
-        }
-        return said.Length > 0 ? said.Split('\n')[^1].Trim() : $"Passenger's tools in {place.Where} ended before the snapshot was taken";
+        return Volatile.Read(ref lastError) ?? $"Passenger's tools in {place.Where} ended before the snapshot was taken";
     }
 
-    private static void End(Process running)
+    /// <summary>Ends the tools whose answer could not be trusted, so the next snapshot starts them again, never asks them.</summary>
+    private void End(Process running)
     {
         try
         {
@@ -144,6 +141,11 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
         {
         }
         ChildProcesses.Kill(running);
+        if (tools == running)
+        {
+            tools = null;
+            running.Dispose();
+        }
     }
 
     /// <summary>Ends the tools there: their input closed, which ends their wait for the next snapshot, then, should they
@@ -172,4 +174,50 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
         }
         running.Dispose();
     }
+}
+
+/// <summary>What Passenger's tools in a container write to their errors, read line by line as it comes, each line cut at
+/// <see cref="Longest"/> characters: a container writes there what it likes, and the IDE keeps a line of it at most.</summary>
+internal static class ErrorLines
+{
+    public const int Longest = 2048;
+
+    /// <summary>Reads every line to the end, giving each to <paramref name="line"/>, its line break taken off.</summary>
+    public static async Task ReadAsync(TextReader errors, Action<string> line)
+    {
+        char[] buffer = new char[4096];
+        StringBuilder current = new();
+        try
+        {
+            int read;
+            while ((read = await errors.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+            {
+                for (int i = 0; i < read; i++)
+                {
+                    char c = buffer[i];
+                    if (c == '\n')
+                    {
+                        line(current.ToString().TrimEnd('\r'));
+                        current.Clear();
+                    }
+                    else if (current.Length < Longest)
+                    {
+                        current.Append(c);
+                    }
+                }
+            }
+        }
+        catch (Exception gone) when (gone is IOException or ObjectDisposedException)
+        {
+            // The tools were ended under the read.
+        }
+        if (current.Length > 0)
+        {
+            line(current.ToString().TrimEnd('\r'));
+        }
+    }
+
+    /// <summary>The last line of a text that says something, cut at <see cref="Longest"/>; null for none.</summary>
+    public static string? Last(string text) =>
+        text.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.Length > 0) is { } last ? last.Length > Longest ? last[..Longest] : last : null;
 }
