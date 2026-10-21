@@ -113,6 +113,17 @@ public sealed class DebugSession : IDisposable
         }
     }
 
+    /// <summary>Closes the client's end of the protocol with no disconnect, as an IDE that crashed or was ended leaves it, and
+    /// waits for the adapter to see it and end of itself.</summary>
+    public void GoWithoutDisconnecting()
+    {
+        adapter.StandardInput.Close();
+        if (!adapter.WaitForExit(EventLimit))
+        {
+            throw new TimeoutException($"The adapter (process {adapter.Id}) was still running {EventLimit.TotalSeconds:0} s after its client went. {Heard()}");
+        }
+    }
+
     /// <summary>A debuggee launched with a breakpoint on one line of its Program.cs and the exception
     /// filters given, running.</summary>
     public static async Task<DebugSession> LaunchToBreakpoint(ITestOutputHelper output, string debuggee, int line, IReadOnlyList<string> exceptionFilters)

@@ -30,6 +30,36 @@ public class AttachTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_program_attached_to_runs_on_when_the_client_goes_without_disconnecting_and_can_be_attached_to_again()
+    {
+        string counted = Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs");
+        using DebugSession first = DebugSession.ForAttach(testOutputHelper, startSuspended: true, out Process debuggee);
+        await first
+            .WithInitializeRequest()
+            .WithAttachRequest(debuggee.Id)
+            .WaitForInitializedEvent();
+        first.WithBreakpointsRequest(10, counted).WithConfigurationDoneRequest();
+        StoppedEvent stopped = await first.WaitForStoppedEvent();
+        first.WithEvaluateRequest(first.GetTopStackFrame(stopped.ThreadId!.Value).Id, "_count", out EvaluateResponse before);
+
+        // Held at its breakpoint as the IDE crashes or is ended, before any disconnect.
+        first.GoWithoutDisconnecting();
+        Assert.False(debuggee.HasExited, "The adapter ended the program it had only attached to when its client went without disconnecting");
+
+        // Let go whole: it runs on, and another debugger can take hold of it.
+        using DebugSession second = DebugSession.ForAttach(testOutputHelper, Process.GetProcessById(debuggee.Id));
+        await second
+            .WithInitializeRequest()
+            .WithAttachRequest(debuggee.Id)
+            .WaitForInitializedEvent();
+        second.WithBreakpointsRequest(10, counted).WithConfigurationDoneRequest();
+        StoppedEvent again = await second.WaitForStoppedEvent();
+        second.WithEvaluateRequest(second.GetTopStackFrame(again.ThreadId!.Value).Id, "_count", out EvaluateResponse after);
+        Assert.True(int.Parse(after.Result, System.Globalization.CultureInfo.InvariantCulture) > int.Parse(before.Result, System.Globalization.CultureInfo.InvariantCulture),
+            $"The program let go at pass {before.Result} had not run on when attached to again (pass {after.Result})");
+    }
+
+    [Fact]
     public async Task A_running_program_is_the_debuggers_once_configurationDone_answers_so_a_pause_at_once_stops_it()
     {
         using DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended: false, out Process debuggee);

@@ -66,6 +66,7 @@ public partial class ManagedDebugger
         _stopAtEntry = launchInfo.StopAtEntry;
         _hotReload = launchInfo.HotReload;
         _pendingLaunchInfo = launchInfo;
+        _launched = true;
     }
 
     /// <summary>A program named without a folder, found on the PATH as a shell would find it.</summary>
@@ -223,6 +224,7 @@ public partial class ManagedDebugger
         _justMyCode = justMyCode;
         _stopAtEntry = false;
         _pendingAttachProcessId = processId;
+        _launched = false;
     }
 
     /// <summary>The client's breakpoints are set: the launch or attach asked for is made.</summary>
@@ -1065,6 +1067,10 @@ public partial class ManagedDebugger
             Dispose(letGo: true);
         }
     }
+
+    /// <summary>The client went without disconnecting (crashed, or was ended): a program the session launched ends with it,
+    /// and one it attached to is let go to run on, as a detach lets it go.</summary>
+    public void Abandon() => Disconnect(terminateDebuggee: _launched);
 
     public async Task<ExceptionInfo> ExceptionInfo(ThreadId threadId)
     {

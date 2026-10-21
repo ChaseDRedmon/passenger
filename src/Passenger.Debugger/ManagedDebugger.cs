@@ -44,6 +44,10 @@ public partial class ManagedDebugger
     internal int ModuleSet_Version { get; private set; }
     private bool _isAttached;
     private int? _pendingAttachProcessId;
+
+    /// <summary>Whether the session's program was launched for it (by the adapter, or in the client's terminal) rather than
+    /// attached to: only such a program ends with a client that goes without disconnecting (<see cref="Abandon"/>).</summary>
+    private bool _launched;
     private bool _justMyCode;
     private bool _stopAtEntry;
     private EntryBreakpoint? _entryBreakpoint;

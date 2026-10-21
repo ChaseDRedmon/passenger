@@ -742,7 +742,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
   on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows), and `Under` those a process
   started, through each one's parent (on Windows only a parent that began first). An attached session is
-  let go by Detach, by leaving its folder and by the window's close, never ended by them. On macOS the debugger needs no entitlement and no
+  let go by Detach, by leaving its folder, by the window's close and by the adapter when the IDE goes without disconnecting
+  (`ManagedDebugger.Abandon`), never ended by them. On macOS the debugger needs no entitlement and no
   get-task-allow on its target: the adapter runs under the machine's dotnet and talks to the runtime through its
   pipes, so the package carries no com.apple.security.cs.debugger.
 - Return values and Smart Step Into: a step over sets a breakpoint after each call in its statement

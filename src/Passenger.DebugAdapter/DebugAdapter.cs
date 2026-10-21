@@ -49,8 +49,9 @@ public sealed class DebugAdapter
     public event Action? ShutdownRequested;
 
     /// <summary>Lets the debuggee go when the client went away without disconnecting, under the engine's lock as a disconnect
-    /// is, so the event loop is not amid one of the program's events. Does nothing after a disconnect, which let it go
-    /// already. A request still holding the lock after 10 s (one that never ends) is not waited for longer.</summary>
+    /// is, so the event loop is not amid one of the program's events: a program the adapter launched ends, one it attached to
+    /// runs on. Does nothing after a disconnect, which let it go already. A request still holding the lock after 10 s (one
+    /// that never ends) is not waited for longer.</summary>
     public async Task AbortAsync()
     {
         // The client that went may have gone before configurationDone's answer could be written.
@@ -72,7 +73,7 @@ public sealed class DebugAdapter
             }
             using (held)
             {
-                debugger.Disconnect(true);
+                debugger.Abandon();
             }
         }
         catch (Exception error)
