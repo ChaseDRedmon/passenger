@@ -423,6 +423,16 @@ public sealed class ProfilerTests : IDisposable
             Assert.Equal("Nothing is running", window.Actions.WhyNot(AppActions.Stop, window.Actions.Context()));
             Assert.Null(window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
             Assert.Null(window.Profiling);
+
+            // Profiled again and snapshotted, it ends with its folder.
+            File.Delete(written);
+            Ui.Launched(window, window.ProfileAsync(), "the second start", TimeSpan.FromMinutes(2));
+            program = Processes.WrittenId(written, "the program profiled again to start");
+            Passenger.App.Profiling.SnapshotRead again = Ui.Await(window.SnapshotAsync(), "the second snapshot", TimeSpan.FromMinutes(2));
+            Assert.True(again.Snapshot is not null, again.Message);
+            Assert.True(Processes.IsRunning(program), "The program profiled again ended with its snapshot");
+            Assert.Null(window.CloseSolution());
+            Assert.True(Processes.Gone(program), $"Closing the folder left the program Profile started running after its snapshot: {Processes.Describe(program)}");
             window.Close();
         }
         finally
