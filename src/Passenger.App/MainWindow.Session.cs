@@ -208,6 +208,7 @@ public partial class MainWindow
         overlays?.Bind(next);
         BindVcs(next);
         BindBookmarks(next);
+        BindEndpoints(next);
         // Files open as it binds (a file opened with no folder) are its too.
         foreach (Workspace.OpenDocument document in Editors.Documents)
         {

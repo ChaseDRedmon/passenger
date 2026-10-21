@@ -124,6 +124,8 @@ ICONS = [
     ("HotReload", "Fire", "20_regular"),
     # The Hierarchy window's stripe button: a type over the types it derives from or that derive from it.
     ("Hierarchy", "Diagram", "20_regular"),
+    # The Endpoints window's stripe button: the requests of the folder's .http files, sent over the web.
+    ("Endpoints", "Globe", "20_regular"),
 ]
 
 
