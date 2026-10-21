@@ -45,6 +45,9 @@ public static class PassengerApp
     /// handed on as it closes; it installs what was made ready as the process ends.</summary>
     private static MainWindow? updates;
 
+    /// <summary>What a quit a window's question holds tells if the person keeps that window open (<see cref="Quit"/>).</summary>
+    private static Action? quitGivenUp;
+
     /// <summary>The project windows open, in the order they opened: the Window menu's list, which Next and Previous
     /// Solution Window step through.</summary>
     public static IReadOnlyList<MainWindow> Windows => Open;
@@ -166,8 +169,10 @@ public static class PassengerApp
 
     /// <summary>File, Exit (the application menu's Quit on macOS): every window closes as the person closing it would,
     /// saving its files, the last opened first, and each one's solution is reopened by the next start. A window that
-    /// cannot close (a file it could not save) keeps itself and those not yet closed open; false then.</summary>
-    public static bool Quit()
+    /// cannot close (a file it could not save) keeps itself and those not yet closed open; false then, and
+    /// <paramref name="givenUp"/> is told. One that asks the person first holds the quit until they answer, when it
+    /// carries on or is given up (<see cref="Answered"/>).</summary>
+    public static bool Quit(Action? givenUp = null)
     {
         UiThread.Check();
         Quitting = true;
@@ -178,6 +183,14 @@ public static class PassengerApp
                 window.Close();
                 if (window.IsVisible)
                 {
+                    if (window.AsksBeforeClosing)
+                    {
+                        quitGivenUp += givenUp;
+                    }
+                    else
+                    {
+                        givenUp?.Invoke();
+                    }
                     return false;
                 }
             }
@@ -186,6 +199,24 @@ public static class PassengerApp
         finally
         {
             Quitting = false;
+        }
+    }
+
+    /// <summary>A window closed as Passenger quit (by <see cref="Quit"/> or the system's) asked what to do with changes it
+    /// could not save, and the person answered: the quit carries on, every window still open closing and keeping its
+    /// solution, or, kept open, it is given up.</summary>
+    internal static void Answered(bool carryOn)
+    {
+        UiThread.Check();
+        Action? givenUp = quitGivenUp;
+        quitGivenUp = null;
+        if (carryOn)
+        {
+            Quit(givenUp);
+        }
+        else
+        {
+            givenUp?.Invoke();
         }
     }
 

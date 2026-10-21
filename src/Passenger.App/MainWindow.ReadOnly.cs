@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
 using Passenger.App.Workspace;
 
 namespace Passenger.App;
@@ -15,8 +14,8 @@ public partial class MainWindow
 
     private bool askingWritable;
 
-    /// <summary>Whether the window, closed with changes it could not save, was being quit with the application.</summary>
-    private bool quitWhenDecided;
+    /// <summary>Whether the window, closed with changes it could not save, is asking the person what to do with them.</summary>
+    internal bool AsksBeforeClosing { get; private set; }
 
     private void AddReadOnly() => Editors.Opened += (_, document) =>
     {
@@ -95,7 +94,8 @@ public partial class MainWindow
 
     /// <summary>The window was closed with changes it could not save (read-only, or refused by the system): rather than
     /// staying open with no way to close, it asks once, Make Writable for read-only ones, else Close Without Saving them,
-    /// or Cancel to keep it open with their changes; then it closes again, saving what it now can.</summary>
+    /// or Cancel to keep it open with their changes; then it closes again, saving what it now can, and a quit it held
+    /// carries on (<see cref="PassengerApp.Answered"/>).</summary>
     private async Task CloseUnsavedAsync(bool quit)
     {
         List<OpenDocument> unsaved = [.. Editors.Documents.Where(d => d.IsModified && !conflicted.Contains(d) && !leftUnsaved.Contains(d))];
@@ -104,6 +104,7 @@ public partial class MainWindow
             return;
         }
         askingWritable = true;
+        AsksBeforeClosing = true;
         string? answer;
         List<OpenDocument> locked = [.. unsaved.Where(d => FileText.IsReadOnly(d.Path))];
         try
@@ -116,28 +117,18 @@ public partial class MainWindow
         finally
         {
             askingWritable = false;
+            AsksBeforeClosing = false;
         }
-        if (answer == "Make Writable")
-        {
-            if (!MakeWritable(locked))
-            {
-                return;
-            }
-        }
-        else if (answer == "Close Without Saving")
+        bool closes = answer == "Close Without Saving" || (answer == "Make Writable" && MakeWritable(locked));
+        if (answer == "Close Without Saving")
         {
             leftUnsaved.UnionWith(unsaved);
         }
-        else
+        if (quit)
         {
-            return;
+            PassengerApp.Answered(carryOn: closes);
         }
-        quitWhenDecided = quit;
-        if (quit && Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            desktop.TryShutdown();
-        }
-        else
+        else if (closes)
         {
             Close();
         }

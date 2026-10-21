@@ -8,8 +8,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Settings;
 using Passenger.App.Updates;
@@ -418,6 +420,74 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         Assert.True(Ui.Shared(copy.Started) == $"started {newer}\n", "Closing Passenger started the version it installed, which only Restart to Update does");
     }
 
+    /// <summary>Restart to Update with a read-only file's changes unsaved: the window asks what to do with them. Kept open,
+    /// the restart is given up, so closing it later installs the update and starts nothing; Close Without Saving carries
+    /// the restart on, installing the update and starting it.</summary>
+    [AvaloniaFact]
+    [SupportedOSPlatform("macos")]
+    public void Restart_to_Update_held_by_a_read_only_files_question_restarts_once_answered_Close_Without_Saving()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(),
+            "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
+        using IDisposable theme = TestsTheme();
+        AppBundle copy = new(images, TestFolders.Create("installed-"));
+        string folder = TestFolders.Create("restart-locked-");
+        string locked = Path.Combine(folder, "Locked.cs");
+        File.WriteAllText(locked, "class Locked { }\n");
+        File.SetAttributes(locked, FileAttributes.ReadOnly);
+        try
+        {
+            // Cancel: the window stays open, and closed later it installs the update without starting it.
+            string newer = Bumped(1, 0);
+            MainWindow window = ReadyWithLockedChanges(newer);
+            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Press(Unsaved(window), "Cancel");
+            Assert.True(window.IsVisible, "Cancel closed the window, and the read-only file's changes with it");
+            window.Close();
+            Press(Unsaved(window), "Close Without Saving");
+            Ui.WaitFor(() => !window.IsVisible, "the window to close without the read-only file's changes");
+            window.Ended?.Wait();
+            window.InstallUpdate();
+            Assert.True(copy.InstalledVersion == newer, $"Passenger closed with v{newer} ready left {copy.Bundle} at {copy.InstalledVersion}");
+            Assert.True(Ui.Shared(copy.Started) == string.Empty, $"Restart to Update, given up, still started the new version: '{Ui.Shared(copy.Started)}'");
+
+            // Close Without Saving: Passenger quits, installs the update and starts it.
+            string later = Bumped(1, 1);
+            window = ReadyWithLockedChanges(later);
+            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Press(Unsaved(window), "Close Without Saving");
+            Ui.WaitFor(() => !window.IsVisible, "Restart to Update to close the window once the read-only file's question was answered");
+            window.Ended?.Wait();
+            window.InstallUpdate();
+            Assert.True(copy.InstalledVersion == later, $"Restart to Update left {copy.Bundle} at {copy.InstalledVersion}, not {later}");
+            Assert.True(Ui.Shared(copy.Started) == $"started {later}\n",
+                $"Restart to Update, answered Close Without Saving, did not start the new version once: what started says '{Ui.Shared(copy.Started)}'");
+            Assert.Equal("class Locked { }\n", File.ReadAllText(locked));
+        }
+        finally
+        {
+            File.SetAttributes(locked, FileAttributes.Normal);
+            TestFolders.Delete(folder);
+        }
+
+        // A window over the folder whose read-only file has changes it cannot save, offering Restart to Update to a version.
+        MainWindow ReadyWithLockedChanges(string version)
+        {
+            github.Answer = Release($"v{version}", files: copy.Update(version));
+            MainWindow window = Started(copy.Updater());
+            window.WatchForUpdates();
+            window.Confirm = (_, _, _) => Task.FromResult(false);
+            window.OpenFolder(folder);
+            window.OpenFile("Locked.cs");
+            Ui.Settle();
+            window.EditorArea.CodeEditor.Selections = Passenger.Text.SelectionSet.Single(0);
+            window.KeyTextInput("public ");
+            Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {version}", $"the status bar to offer Restart to Update to v{version}");
+            Assert.True(window.EditorArea.Active is { IsModified: true, Name: "Locked.cs" }, "The read-only file was not left changed and unsaved");
+            return window;
+        }
+    }
+
     [AvaloniaFact]
     [SupportedOSPlatform("macos")]
     public void An_update_that_could_not_take_the_apps_place_is_said_at_the_next_start_and_is_still_ready()
@@ -585,6 +655,22 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
             item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
         }
         item.Command!.Execute(null);
+        Ui.Settle();
+    }
+
+    /// <summary>The question a window closed with a read-only file's changes asks, held to the dialogs' rules.</summary>
+    private static ChoiceDialog Unsaved(MainWindow window)
+    {
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), "the window to ask about the changes it cannot save");
+        ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
+        Assert.Equal("Clear Read-Only Status", asked.Title);
+        return asked;
+    }
+
+    private static void Press(Window dialog, string button)
+    {
+        Button pressed = dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button);
+        pressed.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Ui.Settle();
     }
 

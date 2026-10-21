@@ -108,7 +108,7 @@ public partial class MainWindow
     /// <summary>Whether the window closing hands its watch for updates to another window open, rather than installing
     /// what it made ready as Passenger ends: it closes alone, not as Passenger quits.</summary>
     internal bool HandsOnUpdates() =>
-        !quitting && !PassengerApp.Quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible);
+        !quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible);
 
     /// <summary>The process's one watch for updates, taken from the window that had it as that one closed with this one
     /// open: its way of installing and the update it made ready, which this window offers and installs as Passenger ends,
@@ -304,7 +304,7 @@ public partial class MainWindow
     }
 
     /// <summary>Quits Passenger, every window closing, to install the update and start it, as the person chose; a window
-    /// that does not close (a file it could not save) installs nothing yet.</summary>
+    /// that does not close (a file it could not save) installs nothing yet, and one that asks first restarts once answered.</summary>
     private void RestartToUpdate()
     {
         if (readyRelease is null || SelfUpdate is not { } updater)
@@ -316,12 +316,9 @@ public partial class MainWindow
             status.Text = $"Another Passenger is open from {updater.Installed}: close it, then restart to update";
             return;
         }
-        // Every window closes, as Passenger restarts; one that will not keeps the update for the next end.
+        // A window kept open keeps the update for the next end, which starts nothing.
         restartToUpdate = true;
-        if (!PassengerApp.Quit())
-        {
-            restartToUpdate = false;
-        }
+        PassengerApp.Quit(givenUp: () => restartToUpdate = false);
     }
 
     /// <summary>Stops a download and drops what was downloaded, the notice going back to a link to the release.</summary>

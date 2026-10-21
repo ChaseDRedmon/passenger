@@ -136,7 +136,7 @@ public partial class MainWindow
     /// quitting, or the last window, it stays open for the next start to reopen, as Rider's do.</summary>
     private void LeaveRecentOpen()
     {
-        if (!quitting && !PassengerApp.Quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible))
+        if (!quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible))
         {
             ForgetOpen();
         }

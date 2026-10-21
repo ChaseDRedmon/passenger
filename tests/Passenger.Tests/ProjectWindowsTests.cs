@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
 using Passenger.App;
@@ -310,6 +311,72 @@ public sealed class ProjectWindowsTests : IDisposable
         PassengerApp.Quit();
     }
 
+    /// <summary>Quitting, a window holding a read-only file's changes asks what to do with them: Cancel keeps every window
+    /// open, and Close Without Saving carries the quit on, closing every window and keeping each one's solution, whether
+    /// Passenger quits (File, Exit; Restart to Update) or the system asks it to (the application menu's Quit on macOS).</summary>
+    [AvaloniaFact]
+    public void A_quit_that_asks_about_a_read_only_files_changes_carries_on_once_answered_and_a_start_reopens_every_window()
+    {
+        string locked = Path.Combine(beta, "Locked.cs");
+        File.WriteAllText(locked, "class Locked { }\n");
+        File.SetAttributes(locked, FileAttributes.ReadOnly);
+        try
+        {
+            MainWindow first = Started(LaunchOptions.Empty with { Folder = alpha });
+            MainWindow second = InNewWindow(first, beta);
+            EditLocked(second);
+
+            // File, Exit closes the last opened first, which asks; kept open, the quit is given up and both stay.
+            Assert.True(first.Perform(AppActions.Exit));
+            Press(Unsaved(second), "Cancel");
+            Assert.True(first.IsVisible && second.IsVisible, "Cancel kept the window with the read-only file open, but not every other");
+            Assert.True(first.Perform(AppActions.Exit));
+            Press(Unsaved(second), "Close Without Saving");
+            Ui.WaitFor(() => !first.IsVisible && !second.IsVisible, "Exit to close every window once the read-only file's question was answered");
+            Assert.Empty(PassengerApp.Windows);
+            Assert.Equal("class Locked { }\n", File.ReadAllText(locked));
+            (MainWindow again, MainWindow other) = Reopened();
+
+            // The application menu's Quit: the system closes each window in the order they opened, as Avalonia's lifetime does.
+            EditLocked(other);
+            System.Reflection.MethodInfo close = typeof(Window).GetMethod("CloseCore", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("Avalonia no longer closes a window for the system's shutdown through Window.CloseCore");
+            foreach (MainWindow window in PassengerApp.Windows.ToList())
+            {
+                close.Invoke(window, [WindowCloseReason.ApplicationShutdown, false, false]);
+            }
+            Press(Unsaved(other), "Close Without Saving");
+            Ui.WaitFor(() => !again.IsVisible && !other.IsVisible, "the system's quit to close every window once the read-only file's question was answered");
+            Assert.Empty(PassengerApp.Windows);
+            Reopened();
+            PassengerApp.Quit();
+        }
+        finally
+        {
+            File.SetAttributes(locked, FileAttributes.Normal);
+        }
+
+        void EditLocked(MainWindow window)
+        {
+            window.Confirm = (_, _, _) => Task.FromResult(false);
+            window.OpenFile("Locked.cs");
+            Ui.Settle();
+            window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
+            window.KeyTextInput("public ");
+            Ui.Settle();
+            Assert.True(window.EditorArea.Active is { IsModified: true, Name: "Locked.cs" }, "The read-only file was not left changed and unsaved");
+        }
+
+        (MainWindow, MainWindow) Reopened()
+        {
+            MainWindow reopened = Started(LaunchOptions.Empty);
+            MainWindow beside = Assert.Single(PassengerApp.Windows, w => w != reopened);
+            Assert.True((reopened.Folder, beside.Folder) == (PathNames.Canonical(alpha), PathNames.Canonical(beta)),
+                $"A start after the quit reopened {reopened.Folder} and {beside.Folder}, not both solutions");
+            return (reopened, beside);
+        }
+    }
+
     [AvaloniaFact]
     public void A_setting_changed_in_one_window_shows_in_the_other_and_both_changes_are_kept_in_settings_json()
     {
@@ -391,6 +458,15 @@ public sealed class ProjectWindowsTests : IDisposable
     {
         Ui.Settle();
         return window.Asking ?? throw new InvalidOperationException($"Opening a folder over {window.Folder} did not ask where");
+    }
+
+    /// <summary>The question a window closed with a read-only file's changes asks, held to the dialogs' rules.</summary>
+    private static ChoiceDialog Unsaved(MainWindow window)
+    {
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), $"the window over {window.Folder} to ask about the changes it cannot save");
+        ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
+        Assert.Equal("Clear Read-Only Status", asked.Title);
+        return asked;
     }
 
     private static Button[] Buttons(Window dialog) => [.. dialog.GetVisualDescendants().OfType<Button>().Where(b => b is not Avalonia.Controls.Primitives.ToggleButton)];

@@ -79,14 +79,14 @@ public partial class MainWindow
     /// it writable or close without it (<see cref="CloseUnsavedAsync"/>).</summary>
     protected override void OnClosing(WindowClosingEventArgs e)
     {
-        bool quit = quitWhenDecided || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
+        // Passenger's quit (File, Exit; Restart to Update) and the system's (the application menu's Quit) keep each solution.
+        bool quit = PassengerApp.Quitting || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
         if (Autosaves && !(Editors.SaveAll(new HashSet<OpenDocument>(conflicted.Concat(leftUnsaved))) && conflicted.Count == 0))
         {
             e.Cancel = true;
             _ = CloseUnsavedAsync(quit);
             return;
         }
-        // The application menu's Quit and the system's shutdown close every window, each keeping its solution to reopen.
         quitting = quit;
         base.OnClosing(e);
     }
