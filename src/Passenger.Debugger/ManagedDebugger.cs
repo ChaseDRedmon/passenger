@@ -601,6 +601,10 @@ public partial class ManagedDebugger
     /// evaluation can run: their threads stay suspended where they were until each is handled, in order.</summary>
     private readonly Queue<CorDebugManagedCallbackEventArgs> _deferredEvents = new();
 
+    /// <summary>Other threads' breakpoints handed over just as a step completed, which wait for the step's end to come before
+    /// they join <see cref="_deferredEvents"/>: their threads stay where they stopped meanwhile.</summary>
+    private readonly Queue<CorDebugManagedCallbackEventArgs> _behindStep = new();
+
     /// <summary>An exception that may stop the program: a filter's stop (<see cref="Stops"/>), or its exception breakpoints'
     /// once their hit counts and conditions are tried. Put off as one on another thread when found while an evaluation ran.</summary>
     private sealed class DeferredExceptionStop(ICorDebugThread thread, ExceptionBreakMode breakMode, StackRange? handler, string exceptionType, bool stops,
@@ -662,8 +666,9 @@ public partial class ManagedDebugger
     /// handler outside that code which caught it, until the program runs on: a step from the stop steps out of it.</summary>
     private (int ThreadId, StackRange Handler)? _unhandledByUser;
 
-    /// <summary>The thread the step in progress steps, and the stack range of the frame it steps from.</summary>
-    private (int ThreadId, StackRange Frame)? _stepping;
+    /// <summary>The thread the step in progress steps, and the stack range of the frame it steps from (none for a thread
+    /// stepped out to managed code).</summary>
+    private (int ThreadId, StackRange? Frame)? _stepping;
 
     /// <summary>Where a frame lies on its thread's stack: its identity while it lives, as the stack's memory does not move.</summary>
     private readonly record struct StackRange(CORDB_ADDRESS Start, CORDB_ADDRESS End);
@@ -687,7 +692,7 @@ public partial class ManagedDebugger
         }
         step(stepper);
         _stepper = stepper;
-        _stepping = from is not null && RangeOf(from) is { } range ? (thread.Id, range) : null;
+        _stepping = (thread.Id, from is null ? null : RangeOf(from));
         return stepper;
     }
 
@@ -1046,7 +1051,7 @@ public partial class ManagedDebugger
         // A process that has exited is the runtime's to tear down: nothing below may call into it.
         bool exited = _exited.IsSet;
         // The threads the runtime holds inside its handling of a breakpoint or a step's end, run off it before the detach.
-        List<int> inDispatch = [.. _deferredEvents.Select(DispatchThread).OfType<int>()];
+        List<int> inDispatch = [.. _deferredEvents.Concat(_behindStep).Select(DispatchThread).OfType<int>()];
         if (_stopShown && _stoppedInDispatch is int stopped)
         {
             inDispatch.Insert(0, stopped);
@@ -1117,6 +1122,7 @@ public partial class ManagedDebugger
         EvalStatus.ImplicitOff = null;
         _threads.Clear();
         _deferredEvents.Clear();
+        _behindStep.Clear();
         _mainThreadId = null;
         _initialThreadId = null;
         _exceptionStates.Clear();

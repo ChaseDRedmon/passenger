@@ -299,6 +299,65 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         }
     }
 
+    [Fact]
+    public async Task A_step_on_one_thread_and_another_threads_breakpoint_hit_as_it_ends_both_stop()
+    {
+        // Each turn the stepping thread lets the racing one go in the call it steps over, and the racing one passes its
+        // breakpoint at once: the step's end and the hit come together, either first. The hit is never passed over, and the
+        // step that had ended stops first; a hit that comes before the step has ended ends it, as any stop does.
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        (int letGo, int stepped, int passed) = RaceLines;
+        StoppedEvent stop = await LaunchRace(host, [new DapSourceBreakpoint(letGo), new DapSourceBreakpoint(passed)]);
+        int stepping = stop.ThreadId!.Value;
+        int both = 0;
+        for (int turn = 1; turn <= RaceTurns; turn++)
+        {
+            Assert.Equal(("breakpoint", letGo, stepping), (stop.Reason, stop.Line, stop.ThreadId));
+            List<StoppedEvent> stops = [await host.WithStepOverRequest(stepping).WaitForStoppedEvent()];
+            while ((stop = await host.WithContinueRequest().WaitForStoppedEvent()).Line != letGo)
+            {
+                stops.Add(stop);
+            }
+            string seen = string.Join(", ", stops.Select(s => $"{s.Reason} at line {s.Line} on thread {s.ThreadId}"));
+            Assert.True(stops.Count(s => (s.Reason, s.Line) == ("breakpoint", passed)) == 1,
+                $"Turn {turn}: the racing thread's breakpoint was passed over as the step ended on the other thread; the stops were {seen}");
+            bool stepStopped = stops.Any(s => (s.Reason, s.Line, s.ThreadId) == ("step", stepped, stepping));
+            Assert.True(stops[0].Line == passed || stepStopped,
+                $"Turn {turn}: the step was lost to the racing thread's breakpoint that stopped after it ended; the stops were {seen}");
+            Assert.True(!stepStopped || stops[0].Reason == "step",
+                $"Turn {turn}: the racing thread's breakpoint stopped before the step that had already ended; the stops were {seen}");
+            both += stepStopped ? 1 : 0;
+        }
+        testOutputHelper.WriteLine($"Both stops were seen in {both} of {RaceTurns} turns");
+    }
+
+    /// <summary>How many times a race between a step's end and another thread's breakpoint is run: each turn goes either way.</summary>
+    private const int RaceTurns = 30;
+
+    /// <summary>LoopingConsoleApp's lines in its race: where the stepping thread lets the racing one go, where the step over
+    /// that ends, and the line the racing thread passes once let go.</summary>
+    private static (int LetGo, int Stepped, int Passed) RaceLines => (Debuggees.Line(Looping, "step over the call that lets the racing thread go"),
+        Debuggees.Line(Looping, "the step over the call that lets it go ends here"), Debuggees.Line(Looping, "passed by the racing thread"));
+
+    /// <summary>LoopingConsoleApp launched racing with the breakpoints given; its first stop, the stepping thread at the line
+    /// where it lets the racing thread go.</summary>
+    private static async Task<StoppedEvent> LaunchRace(DebugSession host, List<DapSourceBreakpoint> breakpoints)
+    {
+        string program = Debuggees.Program(Looping);
+        host.WithInitializeRequest().Request("launch", new LaunchArguments
+        {
+            Program = program,
+            Args = ["race"],
+            Cwd = Path.GetDirectoryName(program),
+            Console = "internalConsole",
+            JustMyCode = true,
+            StopAtEntry = false,
+        });
+        await host.WaitForInitializedEvent();
+        host.WithBreakpointsRequest(Debuggees.Source(Looping, "Program.cs"), breakpoints).WithConfigurationDoneRequest();
+        return await host.WaitForStoppedEvent();
+    }
+
     /// <summary>DebuggableConsoleApp attached to as it starts, with a breakpoint on a line of MyClass.cs.</summary>
     private async Task<DebugSession> AttachToBreakpoint(int line)
     {

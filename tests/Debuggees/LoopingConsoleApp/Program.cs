@@ -5,7 +5,9 @@
 // or "await" the first thread waits, in a call or an await, for a second to pass a line five times; with "waiting" it
 // awaits so in a method whose builder tells a debugger which run it is only once that second thread has passed again,
 // asked where the method goes on after the await ("waiting first": where it leaves at the await too); with "elsewhere"
-// its await goes on on a third thread, where a call takes what the await gave.
+// its await goes on on a third thread, where a call takes what the await gave. With "race" the first thread lets a second
+// go in a call it steps over, and the second passes a line at once, so a step's end and another thread's breakpoint come
+// together, either first.
 if (args is ["count"])
 {
     Thread counting = new(() =>
@@ -70,6 +72,15 @@ if (args is ["step" or "await" or "waiting" or "elsewhere"] or ["waiting", "firs
     Console.WriteLine("stepped"); // the call's step ends here
     Console.WriteLine("ran on"); // a step lost runs on to here
     return;
+}
+if (args is ["race"])
+{
+    new Thread(Race.Run) { IsBackground = true, Name = "Racing" }.Start();
+    while (true)
+    {
+        Race.LetGo(); // step over the call that lets the racing thread go
+        Race.WaitForPass(); // the step over the call that lets it go ends here
+    }
 }
 long turns = 0;
 bool sleeps = args is ["sleep"];
@@ -156,6 +167,33 @@ static class Passes
     }
 
     private static string Say(string text) => $"said {text}";
+}
+
+static class Race
+{
+    public static long Passes;
+    private static int go;
+
+    public static void LetGo() => Volatile.Write(ref go, 1);
+
+    public static void WaitForPass()
+    {
+        while (Volatile.Read(ref go) == 1)
+        {
+        }
+    }
+
+    public static void Run()
+    {
+        while (true)
+        {
+            while (Volatile.Read(ref go) == 0)
+            {
+            }
+            Passes++; // passed by the racing thread
+            Volatile.Write(ref go, 0);
+        }
+    }
 }
 
 // What an await waits for, done on a thread of its own, which goes on with the awaiting method there.

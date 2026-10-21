@@ -257,10 +257,16 @@ public partial class ManagedDebugger
             return;
         }
 
-        if (_stepper is { IsActive: false })
+        ICorDebugThread corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
+        if (_stepper is { IsActive: false } && _stepping is (int stepping, _))
         {
-            // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
-            Continue(clearVariables: true);
+            if (stepping == corThread.Id)
+            {
+                // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
+                Continue(clearVariables: true);
+                return;
+            }
+            PutOffBehindStep(breakpointCorDebugManagedCallbackEventArgs, corThread.Id, stepping);
             return;
         }
         // A step still going is ended only once this breakpoint stops (EndStepForStop), never by one that tests false or logs.
@@ -272,7 +278,6 @@ public partial class ManagedDebugger
             return;
         }
 
-        ICorDebugThread corThread = breakpointCorDebugManagedCallbackEventArgs.Thread;
         if (_entryBreakpoint is { } entryBreakpoint && entryBreakpoint.CorBreakpoint == functionBreakpoint)
         {
             // Remove the one-shot breakpoint unless a user breakpoint shares the same CLR breakpoint.
@@ -439,10 +444,18 @@ public partial class ManagedDebugger
     private async Task HandleStepComplete(object? sender, StepCompleteCorDebugManagedCallbackEventArgs stepCompleteEventArgs)
     {
         ICorDebugThread corThread = stepCompleteEventArgs.Thread;
+        TakeBehindStep();
+        if (stepCompleteEventArgs.Stepper != _stepper)
+        {
+            // A step that had completed when a stop (another thread's, a pause) ended it: its end, queued behind, stops nothing.
+            _logger?.Invoke($"The end of a step on thread {corThread.Id} that a stop ended meanwhile is let go");
+            Continue(clearVariables: false);
+            return;
+        }
         ICorDebugILFrame ilFrame = (ICorDebugILFrame)corThread.ActiveFrame;
         // An async step's breakpoint at an await, which the step ran to, was not hit: the async step is over.
         _asyncStepper?.ClearActiveAsyncStep();
-        ICorDebugStepper stepper = _stepper ?? throw new InvalidOperationException("No stepper found for step complete");
+        ICorDebugStepper stepper = stepCompleteEventArgs.Stepper;
         stepper.Deactivate();
         _stepper = null;
         EndReturnWatch();
@@ -515,6 +528,27 @@ public partial class ManagedDebugger
         {
             _stepper.Deactivate();
             _stepper = null;
+        }
+    }
+
+    /// <summary>Another thread's breakpoint the runtime handed over just as a step completed, the step's StepComplete queued
+    /// behind it: put off, its thread held at the breakpoint, until the step's end has been handled; then it waits with the
+    /// events put off during an evaluation, and is handled as a hit once the program goes on from the step's stop. So both
+    /// stop, the step that had completed first, rather than the breakpoint ending a step no longer in progress.</summary>
+    private void PutOffBehindStep(CorDebugManagedCallbackEventArgs callbackEvent, int thread, int stepping)
+    {
+        _logger?.Invoke($"Put off: {callbackEvent.GetType().Name} on thread {thread}, behind the step completed on thread {stepping}");
+        _behindStep.Enqueue(callbackEvent);
+        Continue(clearVariables: false);
+    }
+
+    /// <summary>The events put off behind a step's end (<see cref="PutOffBehindStep"/>), which has come: they wait with those put
+    /// off during an evaluation, handed back in order once the program goes on.</summary>
+    private void TakeBehindStep()
+    {
+        while (_behindStep.TryDequeue(out CorDebugManagedCallbackEventArgs? behind))
+        {
+            _deferredEvents.Enqueue(behind);
         }
     }
 
