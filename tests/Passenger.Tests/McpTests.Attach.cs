@@ -215,7 +215,8 @@ public sealed partial class McpTests
     /// <summary>A live socket for this process and folder, ranked before the real window, which never answers initialize.</summary>
     private sealed class WithheldWindow : IDisposable
     {
-        public string Path { get; } = System.IO.Path.Combine(McpHost.SocketFolder, $"{ProcessId}-{Guid.NewGuid():N}.sock");
+        // Named as a window's socket is, short: macOS takes a socket path of at most 104 bytes, and its temporary folder is long.
+        public string Path { get; } = System.IO.Path.Combine(McpHost.SocketFolder, $"{ProcessId}-held{Guid.NewGuid().ToString("N")[..6]}.sock");
         public Socket Listener { get; } = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
 
         public WithheldWindow(MainWindow window)
