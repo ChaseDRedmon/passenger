@@ -111,23 +111,45 @@ public static partial class HttpVariables
         return environments;
     }
 
+    /// <summary>The most a request's variables may fill in, in characters, so a file whose variables name each other
+    /// over and over (each twice, ten deep) cannot hold the UI thread up as it is sent.</summary>
+    public const int MostFilledIn = 1024 * 1024;
+
+    /// <summary>One request's filling in: the names no value was found for, and how much is left to fill in.</summary>
+    public sealed class Filling
+    {
+        public HashSet<string> Unresolved { get; } = new(StringComparer.Ordinal);
+
+        public int Left { get; set; } = MostFilledIn;
+
+        /// <summary>Whether the variables came to more than <see cref="MostFilledIn"/>, the rest left as written.</summary>
+        public bool Overflowed => Left < 0;
+    }
+
     /// <summary>Text with its <c>{{name}}</c> replaced, variables that name others followed, and Rider's dynamic ones
     /// made anew each time ($uuid, $timestamp, $isoTimestamp, $randomInt, $processEnv NAME); the names it could not
-    /// resolve are added to <paramref name="unresolved"/> and left as written.</summary>
-    public static string Resolve(string text, IReadOnlyDictionary<string, string> variables, ISet<string> unresolved, int depth = 0) =>
+    /// resolve are added to the filling's <see cref="Filling.Unresolved"/> and left as written.</summary>
+    public static string Resolve(string text, IReadOnlyDictionary<string, string> variables, Filling filling, int depth = 0) =>
         Reference().Replace(text, match =>
         {
+            if (filling.Overflowed)
+            {
+                return match.Value;
+            }
             string name = match.Groups[1].Value.Trim();
-            if (Dynamic(name) is { } made)
+            string? filled = Dynamic(name);
+            if (filled is null && depth < 10 && variables.TryGetValue(name, out string? value))
             {
-                return made;
+                filled = Resolve(value, variables, filling, depth + 1);
             }
-            if (depth < 10 && variables.TryGetValue(name, out string? value))
+            if (filled is null)
             {
-                return Resolve(value, variables, unresolved, depth + 1);
+                filling.Unresolved.Add(name);
+                return match.Value;
             }
-            unresolved.Add(name);
-            return match.Value;
+            // Every reference costs at least one, so a thousand empty ones cost as much as a thousand characters.
+            filling.Left -= Math.Max(1, filled.Length);
+            return filling.Overflowed ? match.Value : filled;
         });
 
     private static string? Dynamic(string name)

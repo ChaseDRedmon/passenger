@@ -26,16 +26,28 @@ public sealed record EndpointResponse
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; } = [];
     public string Body { get; init; } = string.Empty;
     public long Size { get; init; }
+
+    /// <summary>Whether the body is only the first <see cref="EndpointClient.MostRead"/> bytes of a longer answer.</summary>
+    public bool Cut { get; init; }
+
     public TimeSpan Elapsed { get; init; }
     public string? Error { get; init; }
 
     public string? ContentType => Headers.FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
 
-    /// <summary>The body as it reads best: JSON indented, anything else as it came.</summary>
+    /// <summary>The most of a body shown, in characters: a text box laid out over more holds the UI thread up.</summary>
+    public const int MostShown = 256 * 1024;
+
+    /// <summary>The body as it reads best: JSON indented, anything else as it came; a longer one's first
+    /// <see cref="MostShown"/> characters as they came, saying how much more there is.</summary>
     public string Pretty
     {
         get
         {
+            if (Body.Length > MostShown)
+            {
+                return $"{Body[..MostShown]}\n… {Body.Length - MostShown:N0} more characters not shown";
+            }
             string trimmed = Body.TrimStart();
             if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
             {
@@ -60,6 +72,10 @@ public sealed record EndpointResponse
 /// the test and one test never sees another's state.</summary>
 public static class EndpointClient
 {
+    /// <summary>The most of an answer's body read, decompressed: the rest is left unread, so a huge, endless or
+    /// highly compressed answer neither fills memory nor holds the test.</summary>
+    public const int MostRead = 16 * 1024 * 1024;
+
     /// <summary>The headers .NET keeps on a request's content rather than on the request.</summary>
     private static readonly HashSet<string> ContentHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -71,11 +87,16 @@ public static class EndpointClient
     public static (EndpointCall? Call, string? Problem) Prepare(EndpointRequest request, string method, string url,
         IEnumerable<KeyValuePair<string, string>> headers, string body, IReadOnlyDictionary<string, string> variables)
     {
-        HashSet<string> unresolved = new(StringComparer.Ordinal);
-        string resolvedUrl = HttpVariables.Resolve(url, variables, unresolved).Trim();
+        HttpVariables.Filling filling = new();
+        string resolvedUrl = HttpVariables.Resolve(url, variables, filling).Trim();
         List<KeyValuePair<string, string>> resolvedHeaders = [.. headers.Select(h => new KeyValuePair<string, string>(
-            HttpVariables.Resolve(h.Key, variables, unresolved), HttpVariables.Resolve(h.Value, variables, unresolved)))];
-        string resolvedBody = HttpVariables.Resolve(body, variables, unresolved);
+            HttpVariables.Resolve(h.Key, variables, filling), HttpVariables.Resolve(h.Value, variables, filling)))];
+        string resolvedBody = HttpVariables.Resolve(body, variables, filling);
+        if (filling.Overflowed)
+        {
+            return (null, $"The request's variables fill in more than {HttpVariables.MostFilledIn:N0} characters: does one name another over and over?");
+        }
+        HashSet<string> unresolved = filling.Unresolved;
         if (unresolved.Count > 0)
         {
             return (null, $"No value for {string.Join(", ", unresolved.Select(u => "{{" + u + "}}"))}: set it in the file (@{unresolved.First()} = …) or in {HttpVariables.PublicFile}");
@@ -107,6 +128,10 @@ public static class EndpointClient
     public static async Task<EndpointResponse> SendAsync(EndpointCall call, SendOptions options, CancellationToken cancel)
     {
         Stopwatch clock = Stopwatch.StartNew();
+        // The timeout holds the whole exchange, the body's reading included, which HttpClient's own leaves out once the
+        // headers are in.
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        limit.CancelAfter(options.Timeout);
         try
         {
             using SocketsHttpHandler handler = new()
@@ -120,7 +145,7 @@ public static class EndpointClient
             {
                 handler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
             }
-            using HttpClient client = new(handler, disposeHandler: false) { Timeout = options.Timeout };
+            using HttpClient client = new(handler, disposeHandler: false) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
             using HttpRequestMessage message = new(new HttpMethod(call.Method), call.Url);
             if (call.Body.Length > 0 || call.Headers.Any(h => ContentHeaders.Contains(h.Key)))
             {
@@ -136,8 +161,8 @@ public static class EndpointClient
                     return new EndpointResponse { Error = $"The header {name} could not be sent as \"{value}\"", Elapsed = clock.Elapsed };
                 }
             }
-            using HttpResponseMessage response = await client.SendAsync(message, HttpCompletionOption.ResponseContentRead, cancel).ConfigureAwait(false);
-            byte[] bytes = await response.Content.ReadAsByteArrayAsync(cancel).ConfigureAwait(false);
+            using HttpResponseMessage response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, limit.Token).ConfigureAwait(false);
+            (byte[] bytes, bool cut) = await ReadAtMostAsync(response.Content, limit.Token).ConfigureAwait(false);
             TimeSpan elapsed = clock.Elapsed;
             return new EndpointResponse
             {
@@ -147,6 +172,7 @@ public static class EndpointClient
                 Headers = [.. Flatten(response.Headers), .. Flatten(response.Content.Headers)],
                 Body = Decode(bytes, response.Content.Headers.ContentType),
                 Size = bytes.LongLength,
+                Cut = cut,
                 Elapsed = elapsed,
             };
         }
@@ -162,6 +188,23 @@ public static class EndpointClient
         {
             return new EndpointResponse { Error = error.Message, Elapsed = clock.Elapsed };
         }
+    }
+
+    private static async Task<(byte[] Bytes, bool Cut)> ReadAtMostAsync(HttpContent content, CancellationToken cancel)
+    {
+        await using Stream stream = await content.ReadAsStreamAsync(cancel).ConfigureAwait(false);
+        using MemoryStream read = new();
+        byte[] buffer = new byte[81920];
+        while (read.Length <= MostRead)
+        {
+            int count = await stream.ReadAsync(buffer, cancel).ConfigureAwait(false);
+            if (count == 0)
+            {
+                return (read.ToArray(), false);
+            }
+            read.Write(buffer, 0, count);
+        }
+        return (read.GetBuffer()[..MostRead], true);
     }
 
     private static IEnumerable<KeyValuePair<string, string>> Flatten(HttpHeaders headers) =>

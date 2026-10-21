@@ -24,6 +24,8 @@ public sealed class EndpointsView : DockPanel
     private IReadOnlyList<HttpFile> files = [];
     private string? root;
     private int reads;
+    private bool shown;
+    private bool stale;
     private CancellationTokenSource? sending;
 
     public EndpointsView()
@@ -117,7 +119,9 @@ public sealed class EndpointsView : DockPanel
         return HttpVariables.For(file, Environment, root);
     }
 
-    /// <summary>Reads the folder's .http and .rest files again off the UI thread; another folder's list goes at once.</summary>
+    /// <summary>Reads the folder's .http and .rest files again off the UI thread, or as the window is next shown while it
+    /// is hidden, so a folder opened with it closed is walked once, by its file index alone; another folder's list goes
+    /// at once.</summary>
     public void Reload(string? folder)
     {
         UiThread.Check();
@@ -130,11 +134,28 @@ public sealed class EndpointsView : DockPanel
         }
         root = folder;
         int read = ++reads;
-        if (folder is null)
+        stale = folder is not null && !shown;
+        if (folder is null || !shown)
         {
             return;
         }
         _ = ReadAsync(folder, read);
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        shown = true;
+        if (stale)
+        {
+            Reload(root);
+        }
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        shown = false;
     }
 
     private async Task ReadAsync(string folder, int read)

@@ -94,7 +94,7 @@ public sealed class ResponseView : DockPanel
         bool passed = Passed;
         summary.Text = response.Error is { } error
             ? $"Failed: {error} ({Milliseconds(response.Elapsed)})"
-            : $"{response.Status} {response.Reason}   {Milliseconds(response.Elapsed)}   {Size(response.Size)}";
+            : $"{response.Status} {response.Reason}   {Milliseconds(response.Elapsed)}   {Size(response.Size)}{(response.Cut ? ", the rest unread" : string.Empty)}";
         Paint(summary, passed ? "Passenger.Test.Passed" : "Passenger.Test.Failed");
         criteria.Children.Clear();
         foreach (ExpectationResult result in results)

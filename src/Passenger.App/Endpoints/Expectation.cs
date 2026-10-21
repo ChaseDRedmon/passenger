@@ -120,6 +120,17 @@ public sealed record Expectation(string Kind, string Subject, string Op, string 
 
     private ExpectationResult Text(string? actual)
     {
+        if (Op == "matches" && actual is not null)
+        {
+            try
+            {
+                return new ExpectationResult(this, Regex.IsMatch(actual, Value, RegexOptions.None, TimeSpan.FromSeconds(1)), Shortened(actual));
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return new ExpectationResult(this, false, "no match within 1 s, the pattern given up on");
+            }
+        }
         bool passed = Op switch
         {
             "exists" => actual is not null,
@@ -129,7 +140,8 @@ public sealed record Expectation(string Kind, string Subject, string Op, string 
             "not-equals" => actual != Value,
             "contains" => actual?.Contains(Value, StringComparison.Ordinal) == true,
             "not-contains" => actual?.Contains(Value, StringComparison.Ordinal) != true,
-            _ => actual is not null && Regex.IsMatch(actual, Value, RegexOptions.None, TimeSpan.FromSeconds(1)),
+            // matches, with nothing to match.
+            _ => false,
         };
         return new ExpectationResult(this, passed, actual is null ? "none" : Shortened(actual));
     }

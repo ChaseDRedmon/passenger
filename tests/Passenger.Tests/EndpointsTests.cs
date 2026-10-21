@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -204,6 +205,56 @@ public sealed class EndpointsTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "more.rest"), "DELETE {{base}}/items/1\n");
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the new file's request");
         Assert.Contains(window.Endpoints.Requests, r => r.Method == "DELETE");
+
+        // A file written while the window is closed is there as it is shown again.
+        window.DockHost.Hide("endpoints");
+        Ui.Settle();
+        File.WriteAllText(Path.Combine(folder, "later.http"), "PATCH {{base}}/items/1\n");
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the request of the file written while the window was closed");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_answer_longer_than_passenger_reads_is_cut_there_and_says_so()
+    {
+        string folder = Folder();
+        File.WriteAllText(Path.Combine(folder, "huge.http"), "GET {{base}}/huge\n");
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Url.EndsWith("/huge", StringComparison.Ordinal)), "endpointTest"));
+        Ui.WaitFor(() => window.Endpoints.Response.Response is not null, "the huge answer");
+
+        EndpointResponse answer = window.Endpoints.Response.Response!;
+        Assert.True(answer.Error is null, $"The huge answer failed: {answer.Error}");
+        Assert.True(answer.Cut, "An answer longer than Passenger reads was read whole");
+        Assert.Equal(EndpointClient.MostRead, answer.Size);
+        Assert.Contains("the rest unread", window.Endpoints.Response.Summary);
+        Assert.EndsWith("more characters not shown", window.Endpoints.Response.Shown);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_request_whose_variables_name_each_other_over_and_over_sends_nothing_and_says_why()
+    {
+        string folder = Folder();
+        // Each variable names the next ten times, ten deep: ten billion references filled in, were nothing to stop it.
+        StringBuilder file = new();
+        for (int i = 0; i < 10; i++)
+        {
+            string next = "{{v" + (i + 1).ToString(CultureInfo.InvariantCulture) + "}}";
+            file.Append(CultureInfo.InvariantCulture, $"@v{i} = {string.Concat(Enumerable.Repeat(next, 10))}\n");
+        }
+        file.Append("@v10 = x\n\nGET {{base}}/items?q={{v0}}\n");
+        File.WriteAllText(Path.Combine(folder, "laughs.http"), file.ToString());
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.File.EndsWith("laughs.http", StringComparison.Ordinal)), "endpointTest"));
+        Assert.Contains("over and over", window.Endpoints.Response.Summary);
+        Assert.Empty(api.Received);
         window.Close();
     }
 
@@ -360,6 +411,7 @@ public sealed class EndpointsTests : IDisposable
         private static (int, string, string) Answer(Request request) => request.Line switch
         {
             "GET /items" => (200, "OK", """{"items":[{"id":1,"name":"Ada"}]}"""),
+            "GET /huge" => (200, "OK", string.Concat(Enumerable.Repeat(new string('a', 99) + "\n", (EndpointClient.MostRead / 100) + 10_000))),
             "POST /items" or "PUT /items" => (201, "Created", request.Body),
             _ => (404, "Not Found", """{"error":"not found"}"""),
         };
