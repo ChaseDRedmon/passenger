@@ -58,7 +58,7 @@ public sealed class ProfilerCommands
         });
         parts.Actions.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
         {
-            WhyNot = _ => Busy(Session) ?? GoesOn(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
+            WhyNot = _ => WhyNotProfile(Session) ?? (Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null),
             Menus = [new MenuPlace("Run", 0, 2)],
         });
         parts.Actions.Add(new IdeAction(AppActions.AttachProfiler, "Attach Profiler to Running Program", "Run", context => _ = AttachReportingAsync())
@@ -136,7 +136,7 @@ public sealed class ProfilerCommands
     public async Task<string?> ProfileAsync(string? arguments = null)
     {
         ProjectSession profiled = Session;
-        if ((Busy(profiled) ?? GoesOn(profiled)) is { } busy)
+        if (WhyNotProfile(profiled) is { } busy)
         {
             return busy;
         }
@@ -171,6 +171,16 @@ public sealed class ProfilerCommands
     /// and the folder's end reach one such program at a time.</summary>
     private static string? GoesOn(ProjectSession folder) =>
         folder.Profiled is { } program ? $"{program.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again" : null;
+
+    /// <summary>Why Profile cannot start a program now: the Run console it writes to is Run's program's, running or about
+    /// to, whose output it would clear and whose typing it would take.</summary>
+    private string? RunConsoleTaken(ProjectSession folder) =>
+        parts.Actions.Work.Of(AppActions.RunProgram) is { } running ? ActionWork.Busy(running)
+        : folder.Runner.IsRunning ? "Run's program uses the Run console: stop it first, or Attach Profiler to profile it"
+        : null;
+
+    /// <summary>Why Profile cannot start now, or null when it can.</summary>
+    private string? WhyNotProfile(ProjectSession folder) => Busy(folder) ?? GoesOn(folder) ?? RunConsoleTaken(folder);
 
     private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments, Working work)
     {
@@ -292,7 +302,8 @@ public sealed class ProfilerCommands
             console.End(ConsoleStream.Output);
             console.End(ConsoleStream.Error);
             OutputView run = parts.RunConsole;
-            if (!profiled.Runner.IsRunning)
+            // Typing goes on to whatever has had the Run console since.
+            if (run.Input == input)
             {
                 run.Input = null;
             }

@@ -380,7 +380,7 @@ public sealed class BuildRunController
     /// after its build, its output and input in the Run window, or in a tab of the Terminal window when the configuration
     /// uses the terminal; under dotnet watch as Settings' Hot Reload says, or as <paramref name="hotReload"/> does (an agent's
     /// run, whose headless IDE keeps the default settings). Null once it runs (<see cref="RunEnd"/> is its end), else why it
-    /// could not, which the status bar says too.</summary>
+    /// could not (a program Profile started has the Run console, say), which the status bar says too.</summary>
     public async Task<string?> RunAsync(string? arguments = null, bool? hotReload = null)
     {
         if (session.Configurations.Chosen is not { } chosen)
@@ -390,6 +390,15 @@ public sealed class BuildRunController
         if (IsRunning)
         {
             return Said("Already running");
+        }
+        // The Run console is one program's: Profile's writes there too, from its start to its end.
+        if (parts.Work.Of(AppActions.Profile) is { } profiling)
+        {
+            return Said(ActionWork.Busy(profiling));
+        }
+        if (session.Profiled is { } profiled)
+        {
+            return Said($"{profiled.Name}, which Profile started, uses the Run console: Kill it first");
         }
         if (parts.Work.Begin(AppActions.RunProgram, $"Working out how to run {chosen.Name}…") is not { } work)
         {

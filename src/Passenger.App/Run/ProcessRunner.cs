@@ -172,9 +172,10 @@ public sealed class ProcessRunner : IDisposable
         process = started;
         running = true;
         TaskCompletionSource<int> ending = waited ?? (ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
-        if (takesInput)
+        ConsoleInput? input = takesInput ? ProgramInput.Of(started.StandardInput) : null;
+        if (input is not null)
         {
-            console.Input = ProgramInput.Of(started.StandardInput);
+            console.Input = input;
         }
         ConsoleSink sink = console.Sink;
         Landing landing = new();
@@ -192,7 +193,11 @@ public sealed class ProcessRunner : IDisposable
             {
                 try
                 {
-                    console.Input = null;
+                    // Typing goes on to whatever has had the console since.
+                    if (console.Input == input)
+                    {
+                        console.Input = null;
+                    }
                     console.Flush();
                     if (partialLine.Length > 0)
                     {

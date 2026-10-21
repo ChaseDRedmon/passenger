@@ -430,6 +430,55 @@ public sealed class ProfilerTests : IDisposable
         }
     }
 
+    /// <summary>The Run console is one program's at a time: Profile is refused while Run's program runs there, its output
+    /// and typing left to it, and Run while Profile's does, until that ends, after which typing reaches Run's program.</summary>
+    [AvaloniaFact]
+    public void Profile_and_Run_each_wait_for_the_Run_console_while_the_other_s_program_has_it()
+    {
+        string project = Project("Echo", "Console.WriteLine(\"waiting\");\nwhile (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
+        string name = window.Configuration!.Name;
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "the run", TimeSpan.FromMinutes(3));
+            Ui.WaitFor(() => Shows(run, "waiting"), "Run's program to wait on its input");
+            string taken = "Run's program uses the Run console: stop it first, or Attach Profiler to profile it";
+            Assert.Equal(taken, window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+            Assert.Equal(taken, Ui.Await(window.ProfileAsync(), "Profile's refusal"));
+            Assert.True(Shows(run, "waiting"), "Profile cleared the Run console of Run's program");
+            Type(window, run, "to the run");
+            Ui.WaitFor(() => Shows(run, "read to the run"), "Run's program to read what was typed once Profile was refused");
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "Run's program to stop");
+
+            Ui.Launched(window, window.ProfileAsync(), "the profiled run", TimeSpan.FromMinutes(3));
+            Ui.WaitFor(() => Shows(run, "waiting"), "the profiled program to wait on its input");
+            Assert.Equal($"{name}, which Profile started, uses the Run console: Kill it first", Ui.Await(window.RunAsync(), "Run's refusal"));
+            Assert.False(window.Runner.IsRunning, "Run started a program in the Run console the profiled one writes to");
+            Type(window, run, "to the profile");
+            Ui.WaitFor(() => Shows(run, "read to the profile"), "the profiled program to read what was typed");
+            Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProfilerView).OfType<Avalonia.Controls.Button>()
+                .Single(b => b.Content as string == "Kill");
+            kill.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the killed program's snapshot", TimeSpan.FromMinutes(2));
+
+            Ui.Launched(window, window.RunAsync(), "the run after the profile", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => Shows(run, "waiting"), "Run's program to wait on its input after the profile");
+            Type(window, run, "after the profile");
+            Ui.WaitFor(() => Shows(run, "read after the profile"), "Run's program to read what was typed after a profile");
+        }
+        finally
+        {
+            Ui.Run(window, AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning && window.Profiling is null, "what ran to stop");
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void Profiling_a_configuration_whose_working_folder_is_gone_says_why_in_the_profiler_window()
     {

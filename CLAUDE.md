@@ -449,7 +449,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   over, which the folder's end cancels; `ProjectSession.Profiled` is the program it handed over, until its end has landed
   (`ProfiledProgram.Landed`): Get Snapshot ends the run and lets go of its port (`StopAsync`), but the program goes on,
   Kill, Stop and the folder's end ending it, and is put away (`DisposeAsync`, after which its end is never heard) only
-  once it has ended. The folder's end lets go of every run (`LetGoAsync`: its port and listener), the leave waits for
+  once it has ended. It writes to the Run console, which is one program's at a time: Profile is refused while Run's
+  program has it, and Run while Profile's does. The folder's end lets go of every run (`LetGoAsync`: its port and listener), the leave waits for
   the program's end to land, and the window's next session clears the profiler window's run (`ProfilerCommands.Rebind`).
   `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port (Run > Attach
   Profiler to Running Program: the debugged one, else Profile's going on, else Run's); an `Attached` one is never killed.
