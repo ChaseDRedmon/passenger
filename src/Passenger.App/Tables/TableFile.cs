@@ -16,9 +16,15 @@ public sealed class TableFile
 
     private readonly OpenDocument document;
     private readonly Debounce typing;
+    private readonly Queue<Task> holds = [];
     private Workbook? book;
     private DateTime readAt;
+
+    /// <summary>Reads begun, which numbers each, never going back: only the newest one's answer stands.</summary>
     private int reads;
+
+    /// <summary>Reads begun that have not landed yet, the newest or not.</summary>
+    private int reading;
     private bool stale = true;
     private bool header = true;
     private int sheet;
@@ -58,7 +64,7 @@ public sealed class TableFile
     /// <summary>Why the file could not be read as a table, or null.</summary>
     public string? Problem { get; private set; }
 
-    public bool IsReading => reads > 0;
+    public bool IsReading => reading > 0;
 
     /// <summary>A workbook's sheets' names; none for a CSV.</summary>
     public IReadOnlyList<string> Sheets => book?.Sheets.Select(s => s.Name).ToList() ?? [];
@@ -121,6 +127,17 @@ public sealed class TableFile
         }
     }
 
+    /// <summary>Holds each of the next reads back until its task ends, as a long sheet holds its answer back: for a test of
+    /// reads that land out of order, which it cannot time. A held read is no background work yet, so the window settles
+    /// around it; a read past them waits for nothing.</summary>
+    public void HoldNext(params Task[] until)
+    {
+        foreach (Task hold in until)
+        {
+            holds.Enqueue(hold);
+        }
+    }
+
     private DateTime WrittenAt()
     {
         try
@@ -137,6 +154,7 @@ public sealed class TableFile
     {
         stale = false;
         int read = ++reads;
+        reading++;
         Changed?.Invoke(this, EventArgs.Empty);
         string path = document.Path;
         Workbook? known = book;
@@ -145,6 +163,10 @@ public sealed class TableFile
         Passenger.Text.TextSnapshot text = document.Text.Snapshot;
         try
         {
+            if (holds.TryDequeue(out Task? hold))
+            {
+                await hold;
+            }
             (Workbook? opened, Table table, DateTime at) = await BackgroundWork.Run(() =>
             {
                 if (!IsWorkbook)
@@ -158,27 +180,31 @@ public sealed class TableFile
                 Table sheetTable = workbook.Sheets.Count == 0 ? CsvTable.Parse(string.Empty, ',', false) : workbook.ReadSheet(index);
                 return (workbook, sheetTable, written);
             });
-            if (read != reads)
+            // An older read landing after a later one is dropped: the later one's answer is the one that stands.
+            if (read == reads)
             {
-                // A later read is on its way, and its answer is the one that stands.
-                return;
+                book = opened ?? book;
+                readAt = at;
+                Table = table;
+                Problem = null;
             }
-            book = opened ?? book;
-            readAt = at;
-            Table = table;
-            Problem = null;
         }
         // A file that is no workbook (or a damaged one) says why in the table's place, whatever the reader threw.
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            if (read != reads)
+            if (read == reads)
             {
-                return;
+                Table = null;
+                Problem = $"{document.Name} could not be read as a table: {error.Message}";
             }
-            Table = null;
-            Problem = $"{document.Name} could not be read as a table: {error.Message}";
         }
-        reads = 0;
-        Changed?.Invoke(this, EventArgs.Empty);
+        finally
+        {
+            reading--;
+        }
+        if (read == reads || reading == 0)
+        {
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
     }
 }

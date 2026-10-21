@@ -103,6 +103,33 @@ public sealed class TablesTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Sheets chosen faster than they are read: South's read is slow, landing after East's has and once West has
+    /// been chosen, yet the table shows West, chosen last, rather than South.</summary>
+    [AvaloniaFact]
+    public void A_sheets_read_that_lands_after_a_later_sheet_was_chosen_never_replaces_the_sheet_chosen_last()
+    {
+        string path = Path.Combine(folder, "regions.xlsx");
+        WriteSheets(path, "North", "South", "East", "West");
+        MainWindow window = Open(path);
+        Assert.Equal("1", Grid(window).Table!.Cell(0, 0));
+        TaskCompletionSource south = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource west = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TableFile.For(window.EditorArea.Active!)!.HoldNext(south.Task, Task.CompletedTask, west.Task);
+
+        Click(window, Sheet(window, "South"));
+        Click(window, Sheet(window, "East"));
+        Assert.True(Grid(window).Table?.Cell(0, 0) == "3", $"East's read did not land while South's was held: the table shows {Grid(window).Table?.Cell(0, 0)}");
+        Click(window, Sheet(window, "West"));
+        south.SetResult();
+        Ui.Settle();
+        west.SetResult();
+        Ui.Settle();
+        Assert.True(Grid(window).Table?.Cell(0, 0) == "4",
+            $"West was chosen last, but the table shows {Grid(window).Table?.Cell(0, 0)}: a read of a sheet chosen before it landed in its place");
+        Assert.True(Sheet(window, "West").IsChecked == true, "West, chosen last, is not the sheet checked");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Keys_choose_a_range_of_cells_and_Copy_writes_them_as_tab_separated_lines()
     {
@@ -169,6 +196,29 @@ public sealed class TablesTests : IDisposable
 
     private static Control Named(MainWindow window, string name) =>
         window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<Control>().First(c => c.Name == name);
+
+    /// <summary>A workbook's sheet's segment above its table.</summary>
+    private static ToggleButton Sheet(MainWindow window, string name) =>
+        window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().First(b => (string?)b.Content == name);
+
+    /// <summary>A workbook of sheets of these names, each holding its place among them, from 1, in A1.</summary>
+    private static void WriteSheets(string path, params string[] names)
+    {
+        const string Ns = "xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+        using ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        void Part(string name, string xml)
+        {
+            using StreamWriter writer = new(zip.CreateEntry(name).Open());
+            writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" + xml);
+        }
+        Part("xl/workbook.xml", $"<workbook {Ns}><sheets>{string.Concat(names.Select((n, i) => $"<sheet name=\"{n}\" sheetId=\"{i + 1}\" r:id=\"rId{i + 1}\"/>"))}</sheets></workbook>");
+        Part("xl/_rels/workbook.xml.rels", "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            + string.Concat(names.Select((_, i) => $"<Relationship Id=\"rId{i + 1}\" Type=\"ws\" Target=\"worksheets/sheet{i + 1}.xml\"/>")) + "</Relationships>");
+        for (int i = 0; i < names.Length; i++)
+        {
+            Part($"xl/worksheets/sheet{i + 1}.xml", $"<worksheet {Ns}><sheetData><row r=\"1\"><c r=\"A1\"><v>{i + 1}</v></c></row></sheetData></worksheet>");
+        }
+    }
 
     private static void Click(MainWindow window, Control control)
     {
