@@ -140,13 +140,17 @@
             <SolidColorBrush x:Key="Passenger.Terminal.Ansi15" Color="#CBD2DD" />
             <SolidColorBrush x:Key="Passenger.File.Folder" Color="#9BA2AD" />
             <SolidColorBrush x:Key="Passenger.File.SolutionFolder" Color="#C47BDB" />
-            <SolidColorBrush x:Key="Passenger.File.CSharp" Color="#C47BDB" />
-            <SolidColorBrush x:Key="Passenger.File.Project" Color="#97C17A" />
-            <SolidColorBrush x:Key="Passenger.File.Xml" Color="#D29B6A" />
-            <SolidColorBrush x:Key="Passenger.File.Json" Color="#E3BF7E" />
-            <SolidColorBrush x:Key="Passenger.File.Markdown" Color="#62ADED" />
-            <SolidColorBrush x:Key="Passenger.File.Code" Color="#58B4C0" />
             <SolidColorBrush x:Key="Passenger.File.Plain" Color="#9BA2AD" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Red" Color="#DF6E78" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Orange" Color="#D29B6A" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Yellow" Color="#E3BF7E" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Green" Color="#97C17A" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Cyan" Color="#58B4C0" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Blue" Color="#62ADED" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Purple" Color="#C47BDB" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Pink" Color="#D87DB8" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Maroon" Color="#BF6B5B" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Grey" Color="#939AA6" />
             <SolidColorBrush x:Key="Passenger.Editor.Background" Color="#262A31" />
             <SolidColorBrush x:Key="Passenger.Editor.Gutter" Color="#262A31" />
             <SolidColorBrush x:Key="Passenger.Editor.PopupBorder" Color="#474B53" />
@@ -355,13 +359,17 @@
             <SolidColorBrush x:Key="Passenger.Terminal.Ansi15" Color="#B7B8BB" />
             <SolidColorBrush x:Key="Passenger.File.Folder" Color="#4D5059" />
             <SolidColorBrush x:Key="Passenger.File.SolutionFolder" Color="#A429A2" />
-            <SolidColorBrush x:Key="Passenger.File.CSharp" Color="#A429A2" />
-            <SolidColorBrush x:Key="Passenger.File.Project" Color="#468F45" />
-            <SolidColorBrush x:Key="Passenger.File.Xml" Color="#966707" />
-            <SolidColorBrush x:Key="Passenger.File.Json" Color="#A67200" />
-            <SolidColorBrush x:Key="Passenger.File.Markdown" Color="#3A6FE0" />
-            <SolidColorBrush x:Key="Passenger.File.Code" Color="#0B78AB" />
             <SolidColorBrush x:Key="Passenger.File.Plain" Color="#4D5059" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Red" Color="#C9483D" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Orange" Color="#966707" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Yellow" Color="#A67200" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Green" Color="#468F45" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Cyan" Color="#0B78AB" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Blue" Color="#3A6FE0" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Purple" Color="#A429A2" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Pink" Color="#B03A8A" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Maroon" Color="#99410E" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Grey" Color="#555761" />
             <SolidColorBrush x:Key="Passenger.Editor.Background" Color="#FAFAFA" />
             <SolidColorBrush x:Key="Passenger.Editor.Gutter" Color="#FAFAFA" />
             <SolidColorBrush x:Key="Passenger.Editor.PopupBorder" Color="#C8C8CA" />

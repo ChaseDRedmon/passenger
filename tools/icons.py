@@ -30,9 +30,7 @@ ICONS = [
     ("Settings", "Settings", "20_regular"),
     ("ChevronDown", "Chevron Down", "16_regular"),
     ("ChevronRight", "Chevron Right", "16_regular"),
-    ("Document", "Document", "20_regular"),
     ("DocumentText", "Document Text", "20_regular"),
-    ("Code", "Code", "20_regular"),
     ("Close", "Dismiss", "16_regular"),
     ("ArrowUp", "Arrow Up", "16_regular"),
     ("ArrowDown", "Arrow Down", "16_regular"),
@@ -47,7 +45,6 @@ ICONS = [
     # A solution folder is the solution's, in no folder on disk: the folder filled, where a disk folder's is an outline.
     ("SolutionFolder", "Folder", "20_filled"),
     ("SolutionFolderOpen", "Folder Open", "20_filled"),
-    ("Project", "Box", "20_regular"),
     ("Package", "Box Multiple", "20_regular"),
     ("Reference", "Link", "20_regular"),
     ("Error", "Error Circle", "20_regular"),

@@ -198,13 +198,19 @@
             <!-- A file's icon by its kind, in the Explorer, the tabs and the Go to popups. -->
             <SolidColorBrush x:Key="Passenger.File.Folder" Color="#AEB4BF" />
             <SolidColorBrush x:Key="Passenger.File.SolutionFolder" Color="#9F92DB" />
-            <SolidColorBrush x:Key="Passenger.File.CSharp" Color="#B48BFF" />
-            <SolidColorBrush x:Key="Passenger.File.Project" Color="#6FBF73" />
-            <SolidColorBrush x:Key="Passenger.File.Xml" Color="#E8975A" />
-            <SolidColorBrush x:Key="Passenger.File.Json" Color="#D9BC5F" />
-            <SolidColorBrush x:Key="Passenger.File.Markdown" Color="#6FA3EB" />
-            <SolidColorBrush x:Key="Passenger.File.Code" Color="#5FB7C2" />
             <SolidColorBrush x:Key="Passenger.File.Plain" Color="#AEB4BF" />
+            <!-- The file icons' colours: this theme's own hues (its red the editor's error, its pink between its
+                 red and purple) through tools/themes.py's file_icons(), as the generated themes take theirs. -->
+            <SolidColorBrush x:Key="Passenger.FileIcon.Red" Color="#FF6B7A" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Orange" Color="#E8975A" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Yellow" Color="#D9BC5F" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Green" Color="#6FBF73" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Cyan" Color="#5FB7C2" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Blue" Color="#6FA3EB" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Purple" Color="#B48BFF" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Pink" Color="#DB81BF" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Maroon" Color="#D96855" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Grey" Color="#A8B2C5" />
 
             <!-- The editor's page and gutter (the theme's whatever the colour scheme), and the edge of a card the editor
                  draws over its code (a folded region's preview). -->
@@ -442,13 +448,17 @@
 
             <SolidColorBrush x:Key="Passenger.File.Folder" Color="#7A8091" />
             <SolidColorBrush x:Key="Passenger.File.SolutionFolder" Color="#6656B8" />
-            <SolidColorBrush x:Key="Passenger.File.CSharp" Color="#8250DF" />
-            <SolidColorBrush x:Key="Passenger.File.Project" Color="#2F8F3A" />
-            <SolidColorBrush x:Key="Passenger.File.Xml" Color="#C75F12" />
-            <SolidColorBrush x:Key="Passenger.File.Json" Color="#A07E0E" />
-            <SolidColorBrush x:Key="Passenger.File.Markdown" Color="#2F6FD1" />
-            <SolidColorBrush x:Key="Passenger.File.Code" Color="#16808C" />
             <SolidColorBrush x:Key="Passenger.File.Plain" Color="#7A8091" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Red" Color="#D12F45" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Orange" Color="#C75F12" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Yellow" Color="#A07E0E" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Green" Color="#2F8F3A" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Cyan" Color="#16808C" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Blue" Color="#2F6FD1" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Purple" Color="#8250DF" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Pink" Color="#AA4E97" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Maroon" Color="#B12C1B" />
+            <SolidColorBrush x:Key="Passenger.FileIcon.Grey" Color="#475165" />
 
             <SolidColorBrush x:Key="Passenger.Editor.Background" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.Editor.Gutter" Color="#FFFFFF" />
