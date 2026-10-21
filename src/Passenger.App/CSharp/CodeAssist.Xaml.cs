@@ -337,7 +337,7 @@ public sealed partial class CodeAssist
     /// <summary>A range of a file as a place for the Find window, which reads it in the server's lines as the server's are.</summary>
     private LspLocation Location(string path, int start, int end)
     {
-        TextSnapshot text = ServerPlaces.TextOf(editors, path);
+        TextSnapshot text = ServerPlaces.TextOf(editors, path) ?? TextSnapshot.Empty;
         return new LspLocation(DocumentUris.FromPath(path), ServerLines.Of(text).RangeOf(TextRange.FromBounds(Math.Min(start, text.Length), Math.Min(end, text.Length))));
     }
 

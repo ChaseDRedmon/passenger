@@ -1444,7 +1444,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                     texts[path] = text = open.GetValueOrDefault(path) ?? ServerPlaces.Read(path);
                 }
                 // Gone or refused since the language server read it: its places are still places, without their text.
-                TextPosition at = text is null || !place.Server ? new TextPosition(place.At.Line, place.At.Character) : ServerPlaces.PositionOf(text, place.At);
+                TextPosition at = place.Server ? ServerPlaces.PositionOf(text, place.At) : new TextPosition(place.At.Line, place.At.Character);
                 string line = text is not null && at.Line < text.LineCount ? text.GetLineText(at.Line).Trim() : string.Empty;
                 return new Place(Relative(folder, path), at.Line + 1, at.Column + 1, line);
             })];

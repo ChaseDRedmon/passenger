@@ -2051,12 +2051,12 @@ public sealed partial class CodeAssist
     /// the list, not once a place, since it is read on the UI thread; an open file's from its text.</summary>
     private Func<string, LspPosition, (int Line, string Code)> LinePreviews()
     {
-        Func<string, TextSnapshot> texts = ServerPlaces.Texts(editors);
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(editors);
         return (path, at) =>
         {
-            TextSnapshot text = texts(path);
+            TextSnapshot? text = texts(path);
             TextPosition place = ServerPlaces.PositionOf(text, at);
-            return (place.Line, text.GetLineText(place.Line).Trim());
+            return (place.Line, text is not null && place.Line < text.LineCount ? text.GetLineText(place.Line).Trim() : string.Empty);
         };
     }
 

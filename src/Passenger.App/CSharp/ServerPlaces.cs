@@ -10,9 +10,9 @@ namespace Passenger.App.CSharp;
 /// (<see cref="WorkspaceEdits"/>), whose lone '\r's become '\n's one for one, so the server's lines are the same.</summary>
 public static class ServerPlaces
 {
-    /// <summary>A file's text as the editor has it, else as read from disk; empty when it cannot be read.</summary>
-    public static TextSnapshot TextOf(EditorArea editors, string path) =>
-        editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot ?? Read(path) ?? TextSnapshot.Empty;
+    /// <summary>A file's text as the editor has it, else as read from disk; null when it cannot be read.</summary>
+    public static TextSnapshot? TextOf(EditorArea editors, string path) =>
+        editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot ?? Read(path);
 
     /// <summary>A file's text as its edits read it from disk; null when it cannot be read. Safe from any thread.</summary>
     public static TextSnapshot? Read(string path)
@@ -28,14 +28,16 @@ public static class ServerPlaces
     }
 
     /// <summary>Files' texts for a list of places, each read once for it (<see cref="TextOf"/>).</summary>
-    public static Func<string, TextSnapshot> Texts(EditorArea editors)
+    public static Func<string, TextSnapshot?> Texts(EditorArea editors)
     {
-        Dictionary<string, TextSnapshot> read = new(StringComparer.Ordinal);
+        Dictionary<string, TextSnapshot?> read = new(StringComparer.Ordinal);
         return path => read.TryGetValue(path, out TextSnapshot? text) ? text : read[path] = TextOf(editors, path);
     }
 
-    /// <summary>A server's position as the editor's line and column in a text.</summary>
-    public static TextPosition PositionOf(TextSnapshot text, LspPosition at) => text.GetPosition(ServerLines.Of(text).OffsetOf(at));
+    /// <summary>A server's position as the editor's line and column in a text; as the server's in a file that cannot be
+    /// read, the best there is to say of it.</summary>
+    public static TextPosition PositionOf(TextSnapshot? text, LspPosition at) =>
+        text is null ? new TextPosition(at.Line, at.Character) : text.GetPosition(ServerLines.Of(text).OffsetOf(at));
 
     /// <summary>A server's position in a file as the editor's line and column there.</summary>
     public static TextPosition PositionOf(EditorArea editors, string path, LspPosition at) => PositionOf(TextOf(editors, path), at);

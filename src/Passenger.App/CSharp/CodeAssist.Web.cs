@@ -118,7 +118,8 @@ public sealed partial class CodeAssist
         if (path is [{ Name: "scripts" } scripts, _] && RunAt(text, offset) is { } script
             && scripts.Children?.FirstOrDefault(s => s.Name == script) is { } declared)
         {
-            return ((document.Path, new TextPosition(declared.SelectionRange.Start.Line, declared.SelectionRange.Start.Character + 1)), $"The script {script}");
+            TextPosition name = ServerPlaces.PositionOf(text, declared.SelectionRange.Start);
+            return ((document.Path, new TextPosition(name.Line, name.Column + 1)), $"The script {script}");
         }
         return (null, NoDeclaration);
     }

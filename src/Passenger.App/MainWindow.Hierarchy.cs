@@ -97,14 +97,14 @@ public partial class MainWindow
     }
 
     /// <summary>A level's rows, each file read once for it.</summary>
-    private IReadOnlyList<HierarchyNode> Nodes<T>(IEnumerable<T> found, Func<T, Func<string, TextSnapshot>, HierarchyNode> node)
+    private IReadOnlyList<HierarchyNode> Nodes<T>(IEnumerable<T> found, Func<T, Func<string, TextSnapshot?>, HierarchyNode> node)
     {
-        Func<string, TextSnapshot> texts = ServerPlaces.Texts(Editors);
+        Func<string, TextSnapshot?> texts = ServerPlaces.Texts(Editors);
         return [.. found.Select(f => node(f, texts))];
     }
 
     /// <summary>An item as a row, landing at a place in it (a call) or at its name, in the editor's lines of its file.</summary>
-    private static HierarchyNode Node(HierarchyItem item, Func<string, TextSnapshot> texts, LspRange? at = null)
+    private static HierarchyNode Node(HierarchyItem item, Func<string, TextSnapshot?> texts, LspRange? at = null)
     {
         string path = DocumentUris.ToPath(item.Uri);
         return new HierarchyNode(item, path, ServerPlaces.PositionOf(texts(path), (at ?? item.SelectionRange).Start));
