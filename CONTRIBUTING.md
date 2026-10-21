@@ -46,6 +46,10 @@ DevTools, Hot Reload and the rest), and takes no contribution that adds any. A l
 Avalonia's or any other vendor's, is between you and that vendor: nothing here asks you to use one, so if its terms
 could cover work on another IDE, work on Passenger without it.
 
+**If you hold a commercial Avalonia licence** (Accelerate or another of Avalonia's paid products), read its terms before
+contributing, in particular what they say about competing products. Don't use any of Avalonia's commercial tools for
+work on Passenger. Passenger can't tell you how those terms apply to you, so if you're unsure, ask Avalonia or leave it.
+
 ## Making a change
 
 - **Branch from the release in progress** (a branch named after it, such as `0.2.0`) and open your pull request against
