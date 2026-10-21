@@ -534,15 +534,23 @@ window or takes the focus; it shows everything but the system's own window chrom
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
   read-only, its static web assets' folders mounted and its manifest rewritten (`ASPNETCORE_STATICWEBASSETS`); in images
   mode BUILD_CONFIGURATION=Debug where the Dockerfile declares it; the dev certificate (`DevelopmentCertificate`) for a
-  service that serves HTTPS and user secrets in Development. `ContainerRun` (`ProjectSession.ContainerRun`) is `up
+  service that serves HTTPS and user secrets in Development; a fast .NET service's ports the file leaves to the engine
+  chosen free once (`FreePort`) and put in the file's place (`!override` on JSON's flow list, Compose 2.24 on), since a
+  restart otherwise publishes another. An SDK container as deployed is the SDK's own image (`dotnet publish
+  -t:PublishContainer` into the engine, `ContainerRun.PublishAsync`, named `passenger-<config>-<folder>:passenger`, which
+  carries no label of Passenger's). `ContainerRun` (`ProjectSession.ContainerRun`) is `up
   --detach --wait` streamed into the Run console, then `logs --follow` through the session's `Runner` (so Run's Stop,
   `IsRunning` and its end are the log's), Compose's own watch for other services that declare one, Rerun's restart of the
-  services whose build changed (`Changed`, by the output's stamps; a restarted container may publish another port), and
+  services whose build changed (`Changed`, by the output's stamps), and
   `StopAsync` (`down`, or `rm --stop` of the .NET services when backing services are kept, which then go with the folder).
   `ContainerPaths` maps an image's paths (its Dockerfile's COPY of the context into WORKDIR, and `/_/`) to the workspace's
   and back, for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
   #344's debugger takes it at the protocol's edge. Debug and Profile of a container configuration are refused
-  (`LaunchPlan.InContainers`). `ContainerRunsTests` run them against the engine on aspnet:10.0 and busybox.
+  (`LaunchPlan.InContainers`). Edit Configurations' Compose page lists the services from Compose's model
+  (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
+  the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
+  Dockerfile's final FROM, their menu running that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
+  run them against the engine on aspnet:10.0 and busybox.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
   image's processor, musl when docker cp finds `/lib/ld-musl-*`, read once per image; an image never run is read from a

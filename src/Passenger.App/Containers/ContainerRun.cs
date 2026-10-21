@@ -40,6 +40,9 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
 
     /// <summary>Writes Passenger's override into the state, which <see cref="Compose"/> names: after the host's build.</summary>
     public Func<CancellationToken, Task> WriteOverride { get; init; } = _ => Task.CompletedTask;
+
+    /// <summary>The <c>dotnet publish -t:PublishContainer</c> words that make an SDK container's image as deployed, or null.</summary>
+    public IReadOnlyList<string>? Publish { get; init; }
 }
 
 /// <summary>Works out a container configuration's <see cref="ContainerPlan"/>: Compose's model of its files (a Dockerfile
@@ -66,6 +69,7 @@ public static class ContainerPlans
         IReadOnlyDictionary<string, string> properties = new Dictionary<string, string>();
         ProjectModel? single = null;
         ContainerMode mode = configuration.Mode;
+        IReadOnlyList<string>? publish = null;
         if (configuration.Kind == RunKind.Compose)
         {
             files = [.. configuration.ComposeFiles];
@@ -91,10 +95,13 @@ public static class ContainerPlans
             {
                 mode = ContainerMode.Images;
             }
-            // The SDK's own image (dotnet publish's PublishContainer) is not made yet: its base image runs Passenger's build.
-            if (configuration.Kind == RunKind.SdkContainer)
+            // As deployed, the SDK makes the image itself (PublishContainer, into the engine), named for the run alone.
+            if (configuration.Kind == RunKind.SdkContainer && mode == ContainerMode.Images)
             {
-                mode = ContainerMode.Fast;
+                string repository = $"passenger-{Slug(configuration.Name)}-{ContainerLabels.FolderValue(workspace.Folder)[..8]}";
+                properties = new Dictionary<string, string>(properties, StringComparer.OrdinalIgnoreCase) { ["PassengerImage"] = $"{repository}:{SdkImageTag}" };
+                publish = ["publish", single.Path, "-t:PublishContainer", "-c", "Debug", $"-p:ContainerRepository={repository}", $"-p:ContainerImageTag={SdkImageTag}",
+                    "-nologo"];
             }
             string service = DockerFiles.ServiceName(single.Name.Split(' ')[0]);
             fixedProjects[service] = single.Path;
@@ -178,8 +185,12 @@ public static class ContainerPlans
             configuration.LaunchBrowser && configuration.BrowserUrl.Length > 0 ? configuration.BrowserUrl : null, launchService, launchPort, all)
         {
             WriteOverride = WriteOverride,
+            Publish = publish,
         };
     }
+
+    /// <summary>The tag of an SDK container's image Passenger has the SDK make, as deployed.</summary>
+    public const string SdkImageTag = "passenger";
 
     /// <summary>The <c>compose -f … --env-file … --profile … --project-directory …</c> words of files and a configuration.</summary>
     private static List<string> Words(IReadOnlyList<string> files, RunConfiguration configuration, string runsIn)
@@ -284,7 +295,8 @@ public static class ContainerPlans
         }
         else
         {
-            string image = properties.GetValueOrDefault("ContainerBaseImage") is { Length: > 0 } basis ? basis
+            string image = properties.GetValueOrDefault("PassengerImage") is { Length: > 0 } published ? published
+                : properties.GetValueOrDefault("ContainerBaseImage") is { Length: > 0 } basis ? basis
                 : $"mcr.microsoft.com/dotnet/{(ContainerConfigurations.IsWeb(project) ? "aspnet" : "runtime")}:{FrameworkTag(project)}";
             service["image"] = image;
             exposed.AddRange((properties.GetValueOrDefault("ContainerPort") ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries)
@@ -862,9 +874,28 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     }
 
     /// <summary>Runs a docker command to its end, its output streamed into the console, its words first.</summary>
-    private async Task<ChildResult> StreamAsync(IReadOnlyList<string> words, CancellationToken cancel)
+    private Task<ChildResult> StreamAsync(IReadOnlyList<string> words, CancellationToken cancel) => StreamAsync(engine.Command(words, Plan.Folder), cancel);
+
+    /// <summary>The SDK's image made, as deployed: <c>dotnet publish -t:PublishContainer</c> into the engine, its words in the
+    /// console; null once the image is there, else why not.</summary>
+    public async Task<string?> PublishAsync(CancellationToken cancel)
     {
-        ProcessStartInfo start = engine.Command(words, Plan.Folder);
+        if (Plan.Publish is not { } words)
+        {
+            return null;
+        }
+        ProcessStartInfo start = ChildProcesses.DotnetCommand(words, Plan.Folder);
+        // The SDK loads the image through the engine's CLI, the one Passenger asks.
+        if (engine.Cli is { } cli && Path.GetDirectoryName(cli) is { } bin)
+        {
+            start.Environment["PATH"] = start.Environment.TryGetValue("PATH", out string? path) ? $"{bin}{Path.PathSeparator}{path}" : bin;
+        }
+        ChildResult published = await StreamAsync(start, cancel);
+        return published.Succeeded ? null : $"{Plan.Name} could not be made as deployed: dotnet publish ended with exit code {published.ExitCode}; the Run window has what it said";
+    }
+
+    private async Task<ChildResult> StreamAsync(ProcessStartInfo start, CancellationToken cancel)
+    {
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         console.Write($"{ChildProcesses.Display(start)}\n");

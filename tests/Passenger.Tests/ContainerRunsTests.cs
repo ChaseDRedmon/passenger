@@ -162,6 +162,47 @@ public sealed class ContainerRunsTests
     }
 
     [AvaloniaFact]
+    public void An_SDK_container_project_as_deployed_runs_the_image_the_SDK_makes()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string folder = TestFolders.Create("ctr-sdkimage-");
+        Write(folder, "Tool/Tool.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            + "    <ImplicitUsings>enable</ImplicitUsings>\n    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>\n  </PropertyGroup>\n</Project>\n");
+        Write(folder, "Tool/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/\", () => \"tool as deployed\");\napp.Run();\n");
+        MainWindow window = Open(PathNames.Canonical(folder));
+        Ui.WaitFor(() => window.Configurations.Any(c => c.Kind == RunKind.SdkContainer), "the SDK container project's configuration");
+        RunConfiguration deployed = window.Configurations.First(c => c.Kind == RunKind.SdkContainer).Copied() with { Name = "Tool deployed", Mode = ContainerMode.Images, Generated = false };
+        window.SetConfigurations([deployed], deployed.Name);
+        string? project = null;
+        string? image = null;
+        try
+        {
+            Launched(window, "the SDK's image to be made and run");
+            project = window.Builds.Containers!.Plan.ProjectName;
+            string container = Container(project, "tool");
+            image = Docker.Run("inspect", "-f", "{{.Config.Image}}", container);
+            Assert.EndsWith($":{ContainerPlans.SdkImageTag}", image, StringComparison.Ordinal);
+            // The image's own program, as the SDK made it: no build of Passenger's mounted.
+            Assert.DoesNotContain("/passenger/app", Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", container), StringComparison.Ordinal);
+            Assert.Equal("tool as deployed", Page(Published(project, "tool")));
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            if (project is not null)
+            {
+                Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take the tool down", TimeSpan.FromMinutes(2));
+            }
+            window.Close();
+            if (image is not null)
+            {
+                // The SDK's image carries no label of the run's to be removed by: this test's own goes now.
+                Docker.Run("rmi", "-f", image);
+            }
+        }
+    }
+
+    [AvaloniaFact]
     public void A_Docker_Compose_projects_properties_and_launch_profiles_are_its_configurations_and_it_is_never_built_as_a_project()
     {
         (string folder, string project) = Shop("dcproj");

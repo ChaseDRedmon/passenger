@@ -162,7 +162,7 @@ public sealed class RunConfigurationsDialog : Window
             (Row("Context", ContextBox), [RunKind.Dockerfile]),
             (Row("Build arguments", BuildArgumentsBox), [RunKind.Dockerfile]),
             (Row("Run arguments", RunArgumentsBox), [RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row("Mode", ModeBox), [RunKind.Compose, RunKind.Dockerfile]),
+            (Row("Mode", ModeBox), [RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row(string.Empty, KeepBackingBox), [RunKind.Compose]),
             (environmentRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row(string.Empty, ConsoleBox), [RunKind.Project]),

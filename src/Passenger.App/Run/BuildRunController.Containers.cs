@@ -143,7 +143,7 @@ public sealed partial class BuildRunController
         string? failed;
         try
         {
-            failed = await run.UpAsync(work.Stopping);
+            failed = await run.PublishAsync(work.Stopping) ?? await run.UpAsync(work.Stopping);
         }
         catch (OperationCanceledException)
         {
