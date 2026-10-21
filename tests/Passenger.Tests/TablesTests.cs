@@ -184,7 +184,10 @@ public sealed class TablesTests : IDisposable
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(path);
-        Ui.WaitFor(() => window.EditorArea.ActiveGroup.Table?.Table is not null, $"{Path.GetFileName(path)}'s table to be read");
+        // Laid out as the frame that shows it draws it, the bar's segments and the grid, so a look or a click finds them.
+        Ui.WaitFor(() => window.EditorArea.ActiveGroup.Table is { Table: not null, Bounds.Height: > 0 }
+            && window.EditorArea.ActiveGroup.GetVisualDescendants().OfType<ToggleButton>().Any(b => b.Classes.Contains("segment") && b.Bounds.Width > 0),
+            $"{Path.GetFileName(path)}'s table to be read and laid out");
         return window;
     }
 
