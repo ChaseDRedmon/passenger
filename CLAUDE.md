@@ -550,7 +550,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
   Dockerfile's final FROM, their menu running that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
-  run them against the engine on aspnet:10.0 and busybox.
+  run them against the engine on aspnet:10.0 and busybox; their HTTPS test exports the machine's development certificate
+  first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
+  which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`), and their SDK container image
+  (unlabelled, the SDK's) is removed by the test that made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
   image's processor, musl when docker cp finds `/lib/ld-musl-*`, read once per image; an image never run is read from a
