@@ -1,8 +1,10 @@
 using System.Windows.Input;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using Passenger.App.Settings;
 using Passenger.Editor;
 
 namespace Passenger.App;
@@ -22,7 +24,88 @@ public partial class MainWindow
     private void AddMainMenu()
     {
         BuildMenuBar();
-        MenuButton.IsVisible = !OperatingSystem.IsMacOS();
+        MainMenuPlace.IsVisible = !OperatingSystem.IsMacOS();
+    }
+
+    /// <summary>The main menu as a bar on the toolbar or behind its button, as Settings says; its titles made once.</summary>
+    private void FollowMainMenu(AppSettings next)
+    {
+        MainMenuPlace.ShowsBar = next.MainMenuBar && !OperatingSystem.IsMacOS();
+        if (MainMenuPlace.ShowsBar && MainMenuPlace.Children.Count == 1)
+        {
+            foreach (MenuEntry menu in MainMenu.Build(actions!.All))
+            {
+                Button title = new() { Content = menu.Title, Tag = menu, Classes = { "widget", "menuBarItem" } };
+                title.Click += (_, _) => OpenBarMenu(title, menu);
+                MainMenuPlace.Children.Add(title);
+            }
+        }
+    }
+
+    /// <summary>While one of the bar's menus is open, the pointer moving over another title opens that one, as a menu bar
+    /// does. The open menu holds the pointer, so its moves are followed from the menu's own popup as well as the window,
+    /// each turned into the window's place through the screen.</summary>
+    private void FollowBarPointer(object? sender, PointerEventArgs e)
+    {
+        if (barMenu is not { IsOpen: true } || sender is not Visual root)
+        {
+            return;
+        }
+        Point at = this.PointToClient(root.PointToScreen(e.GetPosition(root)));
+        Button? over = MainMenuPlace.Children.OfType<Button>().FirstOrDefault(t => t.Tag is MenuEntry && t.IsHitTestVisible
+            && t.TranslatePoint(default, this) is { } corner && new Rect(corner, t.Bounds.Size).Contains(at));
+        if (over is not null && over != barMenuFrom)
+        {
+            // Not inside the event of the popup the switch closes.
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (barMenu is { IsOpen: true } && barMenuFrom != over)
+                {
+                    OpenBarMenu(over, (MenuEntry)over.Tag!);
+                }
+            });
+        }
+    }
+
+    private MenuFlyout? barMenu;
+    private Button? barMenuFrom;
+    private ActionContext? barMenuContext;
+
+    /// <summary>One of the bar's menus opened under its title, built as it opens, in the context the first of them opened in
+    /// (the focus is the menu's once one is open).</summary>
+    private void OpenBarMenu(Button title, MenuEntry entry)
+    {
+        ActionContext context = barMenu is { IsOpen: true } && barMenuContext is { } kept ? kept : actions!.Context();
+        barMenu?.Hide();
+        MenuFlyout flyout = new() { Placement = PlacementMode.BottomEdgeAlignedLeft, OverlayDismissEventPassThrough = true };
+        if (FlyoutEntry(entry, context) is MenuItem built)
+        {
+            foreach (object? item in built.Items.ToList())
+            {
+                built.Items.Remove(item);
+                flyout.Items.Add(item);
+            }
+        }
+        (barMenu, barMenuFrom, barMenuContext) = (flyout, title, context);
+        Action release = KeepKeys(title, () => flyout.IsOpen ? flyout.Items.OfType<Control>().FirstOrDefault()?.FindLogicalAncestorOfType<MenuBase>() : null);
+        AddHandler(PointerMovedEvent, FollowBarPointer, RoutingStrategies.Tunnel, handledEventsToo: true);
+        flyout.ShowAt(title);
+        // A popup of its own where the platform gives one; headless, the menu stands in the window's own tree.
+        TopLevel? popup = flyout.Items.OfType<Control>().FirstOrDefault() is { } first ? TopLevel.GetTopLevel(first) : null;
+        if (popup is not null && popup != this)
+        {
+            popup.AddHandler(PointerMovedEvent, FollowBarPointer, RoutingStrategies.Tunnel, handledEventsToo: true);
+        }
+        flyout.Closed += (_, _) =>
+        {
+            release();
+            popup?.RemoveHandler(PointerMovedEvent, FollowBarPointer);
+            if (barMenu == flyout)
+            {
+                RemoveHandler(PointerMovedEvent, FollowBarPointer);
+                (barMenu, barMenuFrom, barMenuContext) = (null, null, null);
+            }
+        };
     }
 
     /// <summary>The menus again, with the shortcuts in force now (after Settings changed the keymap). The window keeps the
@@ -114,12 +197,13 @@ public partial class MainWindow
         return actionItem;
     }
 
-    /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens.</summary>
+    /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens: those the bar
+    /// has no room for while it shows.</summary>
     private void OnMenuClicked(object? sender, RoutedEventArgs e)
     {
         ActionContext context = actions!.Context();
         MenuFlyout flyout = new();
-        foreach (MenuEntry menu in MainMenu.Build(actions.All))
+        foreach (MenuEntry menu in MainMenu.Build(actions.All).Skip(MainMenuPlace.ShowsBar ? MainMenuPlace.MenusShown : 0))
         {
             flyout.Items.Add(FlyoutEntry(menu, context));
         }

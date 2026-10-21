@@ -39,6 +39,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// Avalonia's drawn decorations for X11, moves, resizes and maximizes as the window manager's own does on GNOME.</summary>
     public bool MergeMainMenuWithWindowTitle { get; init; } = true;
 
+    /// <summary>Rider's Main menu as a bar of its menus on the toolbar (File, Edit, View…) rather than behind its button,
+    /// where the system has no menu bar of its own; those the toolbar has no room for behind the button after them.</summary>
+    public bool MainMenuBar { get; init; }
+
     public double EditorFontSize { get; init; } = 13;
     public double EditorLineSpacing { get; init; } = 1.2;
     public bool Ligatures { get; init; }
