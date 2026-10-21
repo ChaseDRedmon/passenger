@@ -203,14 +203,7 @@ public sealed class ConflictsDialog : Window
 
     private static Control Row(ConflictRow row)
     {
-        PathIcon icon = new()
-        {
-            Data = Explorer.FileIcons.ForFile(row.Conflict.Path),
-            Foreground = Explorer.FileIcons.BrushForFile(row.Conflict.Path),
-            Width = 14,
-            Height = 14,
-            Margin = new Thickness(0, 0, 6, 0),
-        };
+        PathIcon icon = Explorer.FileIcons.Show(new PathIcon { Width = 14, Height = 14, Margin = new Thickness(0, 0, 6, 0) }, row.Conflict.Path);
         TextBlock name = new() { Text = row.Conflict.Name, VerticalAlignment = VerticalAlignment.Center };
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable("Passenger.Vcs.File.Conflicted"));
         TextBlock folder = new() { Text = row.Folder, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };

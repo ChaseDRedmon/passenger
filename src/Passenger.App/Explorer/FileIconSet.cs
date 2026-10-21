@@ -6,8 +6,8 @@ public readonly record struct FileIconLook(string Shape, string? Colour);
 
 /// <summary>The File Icons set: which shape and colour a file or folder takes by its name, as the file-icons package
 /// (https://github.com/file-icons, MIT) matches them, in its colours' families, kept to the files a .NET developer
-/// meets. A whole name wins over a name's start, which wins over its extensions, the longest first (".test.ts" before
-/// ".ts").</summary>
+/// meets. A whole name wins over a name's start (up to a word's end), which wins over its extensions, the longest first
+/// (".test.ts" before ".ts").</summary>
 public static class FileIconSet
 {
     private const string Red = "Red", Orange = "Orange", Yellow = "Yellow", Green = "Green", Cyan = "Cyan", Blue = "Blue",
@@ -399,7 +399,7 @@ public static class FileIconSet
         }
         foreach ((string start, FileIconLook look) in Starts)
         {
-            if (name.StartsWith(start, StringComparison.OrdinalIgnoreCase))
+            if (name.StartsWith(start, StringComparison.OrdinalIgnoreCase) && EndsWord(name, start.Length))
             {
                 return look;
             }
@@ -414,6 +414,11 @@ public static class FileIconSet
         }
         return Plain;
     }
+
+    /// <summary>Whether a name's start ends a word there, so README.md and LICENSE-MIT take their look and the code in
+    /// ReadmeView.cs or LicenseChecker.cs keeps its language's.</summary>
+    private static bool EndsWord(string name, int at) =>
+        at == name.Length || !char.IsLetterOrDigit(name[at]) || !char.IsLetterOrDigit(name[at - 1]);
 
     /// <summary>The look of a folder the set draws apart (.git, .github, node_modules), or null for a plain folder.</summary>
     public static FileIconLook? ForFolder(string name) => Folders.TryGetValue(name, out FileIconLook look) ? look : null;

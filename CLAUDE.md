@@ -23,6 +23,8 @@ just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dm
                            # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc;
                            # its window's background is tools/dmg-background.svg, drawn by sips at 1x and 2x into one TIFF
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
+just file-icons            # rewrite Theme/FileIconSet.axaml, Settings' File Icons set, from the list in tools/file-icons.py
+                           # (SVGs from fixed commits, kept in artifacts/file-icons; Explorer/FileIconSet.cs picks each file's)
 just themes                # rewrite the generated themes (Theme/Sorbet.axaml and the rest) from tools/themes.py's
                            # palettes, every token worked out and nudged until UiRulesTests' contrast holds
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails

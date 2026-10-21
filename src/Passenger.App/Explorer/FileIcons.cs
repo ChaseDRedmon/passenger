@@ -20,8 +20,50 @@ public enum FileIconTheme
 /// either, as Rider's does, so it never passes for a folder on disk.</summary>
 public static class FileIcons
 {
-    /// <summary>The set in force for the process, put there by the settings (<c>SettingsStore.InForce</c>).</summary>
-    public static FileIconTheme Theme { get; set; }
+    private static FileIconTheme theme;
+
+    /// <summary>The set in force for the process, put there by the settings (<c>SettingsStore.InForce</c>) or the command
+    /// line; a change draws again every list's icon <see cref="Show"/> drew (the Explorer and tabs follow the window's
+    /// settings).</summary>
+    public static FileIconTheme Theme
+    {
+        get => theme;
+        set
+        {
+            if (theme != value)
+            {
+                theme = value;
+                Changed?.Invoke(null, EventArgs.Empty);
+            }
+        }
+    }
+
+    private static event EventHandler? Changed;
+
+    /// <summary>A file's icon in a list (Commit, Git, Find, Local History, Conflicts), drawn in the set in force and
+    /// again when it changes while the list shows.</summary>
+    public static PathIcon Show(PathIcon icon, string path)
+    {
+        FileIconTheme drawn = Theme;
+        void Paint()
+        {
+            drawn = Theme;
+            icon.Data = ForFile(path);
+            icon.Foreground = BrushForFile(path);
+        }
+        void OnChanged(object? sender, EventArgs e) => Paint();
+        Paint();
+        icon.AttachedToVisualTree += (_, _) =>
+        {
+            if (drawn != Theme)
+            {
+                Paint();
+            }
+            Changed += OnChanged;
+        };
+        icon.DetachedFromVisualTree += (_, _) => Changed -= OnChanged;
+        return icon;
+    }
 
     public static Geometry For(ExplorerNode node)
     {

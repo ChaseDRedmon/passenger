@@ -77,14 +77,7 @@ public sealed class ChangesWindow : Window
 
     private static Control Row(FileChange change, Git repository)
     {
-        PathIcon icon = new()
-        {
-            Data = Explorer.FileIcons.ForFile(change.Path),
-            Foreground = Explorer.FileIcons.BrushForFile(change.Path),
-            Width = 14,
-            Height = 14,
-            Margin = new Thickness(8, 0, 6, 0),
-        };
+        PathIcon icon = Explorer.FileIcons.Show(new PathIcon { Width = 14, Height = 14, Margin = new Thickness(8, 0, 6, 0) }, change.Path);
         TextBlock name = new() { Text = change.Name, VerticalAlignment = VerticalAlignment.Center };
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable(ToolWindows.CommitView.KindToken(change.Kind)));
         TextBlock folder = new()

@@ -370,7 +370,7 @@ public sealed class FindView : DockPanel
         panel.Children.Add(chevron);
         if (row.Depth == 2 && row.Children.FirstOrDefault()?.Usage is { } first)
         {
-            panel.Children.Add(new PathIcon { Data = Explorer.FileIcons.ForFile(first.Path), Foreground = Explorer.FileIcons.BrushForFile(first.Path), Margin = new Thickness(0, 0, 6, 0) });
+            panel.Children.Add(Explorer.FileIcons.Show(new PathIcon { Margin = new Thickness(0, 0, 6, 0) }, first.Path));
         }
         panel.Children.Add(new TextBlock { Text = row.Label, VerticalAlignment = VerticalAlignment.Center, FontWeight = row.Depth == 0 ? FontWeight.SemiBold : FontWeight.Normal });
         TextBlock count = new() { Text = row.Detail, FontSize = 12, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };

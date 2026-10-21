@@ -9,7 +9,8 @@ using Passenger.App.Settings;
 namespace Passenger.Tests;
 
 /// <summary>Settings' File icons: Passenger's own icons by default, or the file-icons package's, a shape and colour of
-/// its own for each language and tool, in the Explorer and the editor's tabs as the setting changes, and back.</summary>
+/// its own for each language and tool, in the Explorer, the editor's tabs and the Commit window as the setting changes,
+/// and back.</summary>
 public sealed class FileIconsTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("file-icons-");
@@ -17,11 +18,14 @@ public sealed class FileIconsTests : IDisposable
     public FileIconsTests()
     {
         Write("Program.cs", "System.Console.WriteLine(\"Shop\");\n");
+        Write("LicenseChecker.cs", "class LicenseChecker;\n");
+        Write("ReadmeView.cs", "class ReadmeView;\n");
         Write("Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
         Write("package.json", "{}\n");
         Write("Dockerfile", "FROM scratch\n");
         Write(".gitignore", "bin/\n");
         Write("README.md", "# Shop\n");
+        Write("LICENSE-MIT", "MIT\n");
         Write("appsettings.json", "{}\n");
         Write("build.ps1", "Write-Host build\n");
         Write("logo.png", "");
@@ -29,6 +33,9 @@ public sealed class FileIconsTests : IDisposable
         Write("notes.unknown", "");
         Write(".github/dependabot.yml", "version: 2\n");
         Write("src/Order.cs", "class Order;\n");
+        TestGit.Init(folder);
+        // A change the Commit window lists.
+        Write("package.json", "{ \"name\": \"shop\" }\n");
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -42,20 +49,28 @@ public sealed class FileIconsTests : IDisposable
         {
             window.OpenFolder(folder);
             window.OpenFile(Path.Combine(folder, "Program.cs"));
+            Ui.Landed(() => window.Vcs is { } vcs && vcs.Changes.Any(c => c.Name == "package.json"), "package.json listed as changed");
+            // The Commit window shares the Explorer's place: its rows are drawn now, under Passenger's own icons.
+            window.DockHost.Show("commit");
+            Ui.Landed(() => Icons(window.CommitView).Any(i => ReferenceEquals(i.Data, Resource("Icon.Document"))), "the Commit window's row for package.json drawn");
+            window.DockHost.Show("explorer");
             Ui.Settle();
-            Assert.Same(Resource("Icon.Code"), Row(window, "Program.cs").Icon);
-            Assert.Same(Resource("Icon.Document"), Row(window, "package.json").Icon);
+            Assert.True(ReferenceEquals(Resource("Icon.Code"), Drawn(window, "Program.cs").Data), "By default C# is not drawn with Passenger's own code icon");
+            Assert.True(ReferenceEquals(Resource("Icon.Document"), Drawn(window, "package.json").Data), "By default a JSON file is not drawn with Passenger's own document icon");
 
             window.ApplySettings(window.Settings with { FileIcons = FileIconTheme.FileIcons });
             Ui.Settle();
             (string Name, string Shape, string? Colour)[] expected =
             [
                 ("Program.cs", "CSharp", "Blue"),
+                ("LicenseChecker.cs", "CSharp", "Blue"),
+                ("ReadmeView.cs", "CSharp", "Blue"),
                 ("Shop.csproj", "Stack", "Blue"),
                 ("package.json", "Npm", "Red"),
                 ("Dockerfile", "Docker", "Blue"),
                 (".gitignore", "Git", "Red"),
                 ("README.md", "Book", "Blue"),
+                ("LICENSE-MIT", "Law", "Blue"),
                 ("appsettings.json", "Json", "Cyan"),
                 ("build.ps1", "PowerShell", "Blue"),
                 ("logo.png", "Image", "Orange"),
@@ -65,20 +80,29 @@ public sealed class FileIconsTests : IDisposable
             ];
             foreach ((string name, string shape, string? colour) in expected)
             {
-                ExplorerNode row = Row(window, name);
-                Assert.True(ReferenceEquals(Resource($"FileIcon.{shape}"), row.Icon), $"Under File Icons {name} is not drawn as file-icons draws it, its {shape}");
-                Assert.True(ReferenceEquals(Resource(colour is null ? "Passenger.File.Plain" : $"Passenger.FileIcon.{colour}"), row.IconBrush),
-                    $"Under File Icons {name} is not in file-icons' {colour ?? "plain"} colour");
+                PathIcon icon = Drawn(window, name);
+                Assert.True(ReferenceEquals(Resource($"FileIcon.{shape}"), icon.Data), $"Under File Icons the Explorer does not draw {name} as file-icons draws it, its {shape}");
+                Assert.True(ReferenceEquals(Resource(colour is null ? "Passenger.File.Plain" : $"Passenger.FileIcon.{colour}"), icon.Foreground),
+                    $"Under File Icons the Explorer does not draw {name} in file-icons' {colour ?? "plain"} colour");
             }
-            Assert.True(ReferenceEquals(Resource("Icon.Explorer"), Row(window, "src").Icon), "Under File Icons a plain folder lost the folder icon");
-            Assert.True(TabIcons(window).Any(i => ReferenceEquals(i.Data, Resource("FileIcon.CSharp")) && ReferenceEquals(i.Foreground, Resource("Passenger.FileIcon.Blue"))),
+            Assert.True(ReferenceEquals(Resource("Icon.Explorer"), Drawn(window, "src").Data), "Under File Icons a plain folder lost the folder icon");
+            Assert.True(Icons(window.EditorArea).Any(i => ReferenceEquals(i.Data, Resource("FileIcon.CSharp")) && ReferenceEquals(i.Foreground, Resource("Passenger.FileIcon.Blue"))),
                 "The open C# file's tab kept Passenger's own icon after File Icons was chosen");
+            window.DockHost.Show("commit");
+            Ui.Settle();
+            Assert.True(Icons(window.CommitView).Any(i => ReferenceEquals(i.Data, Resource("FileIcon.Npm")) && ReferenceEquals(i.Foreground, Resource("Passenger.FileIcon.Red"))),
+                "The Commit window, shown again, kept Passenger's own icon for package.json, drawn before File Icons was chosen");
 
+            // Chosen while the Commit window shows, Default draws its rows again at once.
             window.ApplySettings(window.Settings with { FileIcons = FileIconTheme.Default });
             Ui.Settle();
-            Assert.True(ReferenceEquals(Resource("Icon.Code"), Row(window, "Program.cs").Icon), "Default did not bring back Passenger's own icon for C#");
-            Assert.True(ReferenceEquals(Resource("Icon.Document"), Row(window, "package.json").Icon), "Default did not bring back Passenger's own icon for a JSON file");
-            Assert.True(TabIcons(window).Any(i => ReferenceEquals(i.Data, Resource("Icon.Code"))), "The open C# file's tab kept file-icons' icon after Default was chosen");
+            Assert.True(Icons(window.CommitView).Any(i => ReferenceEquals(i.Data, Resource("Icon.Document")))
+                && !Icons(window.CommitView).Any(i => ReferenceEquals(i.Data, Resource("FileIcon.Npm"))), "The Commit window kept file-icons' icon after Default was chosen");
+            Assert.True(Icons(window.EditorArea).Any(i => ReferenceEquals(i.Data, Resource("Icon.Code"))), "The open C# file's tab kept file-icons' icon after Default was chosen");
+            window.DockHost.Show("explorer");
+            Ui.Settle();
+            Assert.True(ReferenceEquals(Resource("Icon.Code"), Drawn(window, "Program.cs").Data), "Default did not bring back Passenger's own icon for C#");
+            Assert.True(ReferenceEquals(Resource("Icon.Document"), Drawn(window, "package.json").Data), "Default did not bring back Passenger's own icon for a JSON file");
         }
         finally
         {
@@ -88,11 +112,16 @@ public sealed class FileIconsTests : IDisposable
         }
     }
 
-    private static IEnumerable<PathIcon> TabIcons(MainWindow window) => window.EditorArea.GetVisualDescendants().OfType<PathIcon>();
+    private static IEnumerable<PathIcon> Icons(Visual area) => area.GetVisualDescendants().OfType<PathIcon>();
 
-    private static ExplorerNode Row(MainWindow window, string name) =>
-        window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Name == name)
-        ?? throw new InvalidOperationException($"The Explorer shows no {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
+    /// <summary>The icon the Explorer draws on a row.</summary>
+    private static PathIcon Drawn(MainWindow window, string name)
+    {
+        ExplorerNode row = window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Name == name)
+            ?? throw new InvalidOperationException($"The Explorer shows no {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
+        return Icons(window.ExplorerView).FirstOrDefault(i => ReferenceEquals(i.DataContext, row) && !i.Classes.Contains("chevron"))
+            ?? throw new InvalidOperationException($"The Explorer draws no icon on {name}'s row");
+    }
 
     private static object Resource(string key)
     {

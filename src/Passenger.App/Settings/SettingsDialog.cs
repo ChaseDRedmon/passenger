@@ -43,8 +43,10 @@ public sealed partial class SettingsDialog : Window
     /// <summary>The themes, in the order Settings offers them.</summary>
     public static readonly (Look Look, string Name)[] LookChoices = [.. Enum.GetValues<Look>().Select(l => (l, l.ToString()))];
 
-    /// <summary>The code's colour schemes, in the order Settings offers them.</summary>
+    /// <summary>The file icon sets, in the order Settings offers them.</summary>
     public static readonly (Explorer.FileIconTheme Theme, string Name)[] FileIconChoices = [(Explorer.FileIconTheme.Default, "Default"), (Explorer.FileIconTheme.FileIcons, "File Icons")];
+
+    /// <summary>The code's colour schemes, in the order Settings offers them.</summary>
     public static readonly (ColourScheme Scheme, string Name)[] ColourSchemeChoices = [(ColourScheme.Theme, "Same as theme"), (ColourScheme.Rider, "Rider")];
 
     /// <summary>The names of <see cref="DiscordShown"/>'s choices, in its order.</summary>
