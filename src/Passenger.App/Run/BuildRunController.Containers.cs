@@ -176,6 +176,7 @@ public sealed partial class BuildRunController
         parts.Reveal?.Invoke(plan.ProjectName);
         if (plan.BrowserUrl is not null && await run.BrowserUrlAsync(CancellationToken.None) is { } url)
         {
+            run.Address = url;
             parts.OpenBrowser(new LaunchPlan { Name = chosen.Name, Program = engine.Cli!, WorkingDirectory = plan.Folder, BrowserUrl = url }, session.Runner.Ended);
         }
         return null;
@@ -231,8 +232,11 @@ public sealed partial class BuildRunController
             {
                 failed = $"{run.Plan.Name}'s restart was stopped";
             }
+            // Passenger pins the ports it can; with an older Compose the engine may have chosen another at the restart.
+            string moved = failed is null && changed.Count > 0 && run.Address is { } before && await run.BrowserUrlAsync(CancellationToken.None) is { } now && now != before
+                ? $"; it now answers at {run.Address = now}" : string.Empty;
             return Said(failed ?? (changed.Count == 0 ? $"{run.Plan.Name}: no service's build changed, nothing restarted"
-                : $"{run.Plan.Name}: restarted {string.Join(", ", changed.Select(c => c.Service))} with the new build"));
+                : $"{run.Plan.Name}: restarted {string.Join(", ", changed.Select(c => c.Service))} with the new build{moved}"));
         }
     }
 

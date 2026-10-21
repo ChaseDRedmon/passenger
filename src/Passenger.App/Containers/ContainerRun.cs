@@ -159,7 +159,8 @@ public static class ContainerPlans
         string overrideFile = Path.Combine(state, $"{file}.override.yaml");
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
         // Written once the host's build is done: what fast mode mounts (its static web assets' folders) is that build's.
-        async Task WriteOverride(CancellationToken stop) => WriteJson(overrideFile, await OverrideAsync(model, dotnet, mode, labels, projects, state, stop));
+        bool pin = Overrides((await engine.StateAsync(cancel: cancel)).ComposeVersion);
+        async Task WriteOverride(CancellationToken stop) => WriteJson(overrideFile, await OverrideAsync(model, dotnet, mode, labels, projects, state, pin, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
             await WriteOverride(cancel);
@@ -370,7 +371,7 @@ public static class ContainerPlans
     /// images mode a Debug build where its Dockerfile takes BUILD_CONFIGURATION; HTTPS's development certificate and the
     /// project's user secrets where they serve. JSON, which Compose reads as YAML.</summary>
     private static async Task<JsonObject> OverrideAsync(ComposeModel model, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
-        IReadOnlyList<ProjectModel> projects, string state, CancellationToken cancel)
+        IReadOnlyList<ProjectModel> projects, string state, bool pinPorts, CancellationToken cancel)
     {
         JsonObject services = [];
         foreach (ComposeService service in model.Services)
@@ -402,6 +403,13 @@ public static class ContainerPlans
                     entry["entrypoint"] = new JsonArray("dotnet", $"{AppFolder}/{built.Assembly}.dll");
                     entry["working_dir"] = AppFolder;
                     entry["init"] = true;
+                    // Rerun restarts the container, and the engine gives a port of its own choosing a new one at each start:
+                    // chosen here once, so a browser open on it stays right.
+                    if (pinPorts && service.Ports.Any(p => ComposeModel.HostPort(p.Published) is null))
+                    {
+                        entry["ports"] = new JsonArray([.. service.Ports.Select(p =>
+                            (JsonNode)$"{ComposeModel.HostPort(p.Published) ?? FreePort()}:{p.Target}{(p.Protocol == "tcp" ? string.Empty : $"/{p.Protocol}")}")]);
+                    }
                     // Linux's engine keeps the host's permissions on a mount: the app runs as the person, who can read the build.
                     if (OperatingSystem.IsLinux() && DotnetProcesses.UserAndGroup is { } owner)
                     {
@@ -537,9 +545,25 @@ public static class ContainerPlans
         return labels;
     }
 
-    private static void WriteJson(string path, JsonObject json)
+    /// <summary>A port nothing on this machine listens on now, for a service's published port Passenger chooses.</summary>
+    private static int FreePort()
     {
+        using System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    /// <summary>Whether Compose takes YAML's <c>!override</c> tag (2.24 and later), which puts a list in place of the file's
+    /// rather than beside it.</summary>
+    private static bool Overrides(string? composeVersion) =>
+        composeVersion is { } said && Version.TryParse(new string([.. said.TrimStart('v').TakeWhile(c => char.IsAsciiDigit(c) || c == '.')]), out Version? version)
+        && version >= new Version(2, 24);
+
+    private static void WriteJson(string path, JsonObject json, bool overriding = false)
+    {
+        // A service's ports Passenger chose replace the file's (YAML's tag, on JSON's flow, which YAML reads alike).
         string text = json.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        text = overriding ? text.Replace("\"ports\": [", "\"ports\": !override [", StringComparison.Ordinal) : text;
         string temporary = path + ".tmp";
         File.WriteAllText(temporary, text);
         File.Move(temporary, path, overwrite: true);
@@ -630,6 +654,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     private Task? stopping;
 
     public ContainerPlan Plan { get; private set; } = plan;
+
+    /// <summary>The address the browser was opened at, which a restart on an engine that chose another port changes.</summary>
+    public string? Address { get; set; }
 
     public ContainerEngine Engine => engine;
 

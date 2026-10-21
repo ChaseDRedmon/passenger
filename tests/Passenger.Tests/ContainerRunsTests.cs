@@ -63,9 +63,9 @@ public sealed class ContainerRunsTests
             Assert.NotEqual(webStarted, Started(project, "web"));
             Assert.Equal(apiStarted, Started(project, "api"));
             Assert.Equal(image, Docker.Run("inspect", "-f", "{{.Image}}", Container(project, "web")));
-            // A port the engine chose may be another once its container has restarted.
-            Assert.True(Waiting.Until(() => Answer(Published(project, "web")) == "web 2", TimeSpan.FromMinutes(1)),
-                $"web did not answer with its new build: {Answer(Published(project, "web"))}");
+            // On the port it had, so a browser open there stays right.
+            Assert.Equal(webPort, Published(project, "web"));
+            Assert.True(Waiting.Until(() => Answer(webPort) == "web 2", TimeSpan.FromMinutes(1)), $"web did not answer with its new build: {Answer(webPort)}");
             Assert.True(window.IsRunning, "The run's log stopped being followed through the restart");
         }
         finally
