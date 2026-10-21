@@ -431,6 +431,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   nuget.org for a package or an advisory. A stand-in credential provider is a `nuget-plugin-*` program on PATH that
   sends its own Handshake request: restore runs `NUGET_NETCORE_PLUGIN_PATHS` entries with dotnet (which builds a script as
   a C# file) and waits for a provider's handshake, either way retrying the feed's 401s for about 45 s on CI.
+- `src/Passenger.App/Endpoints`: the Endpoints window (`EndpointsView`, `MainWindow.Endpoints.cs`) over the open folder's
+  .http and .rest files (`HttpFile`, read off the UI thread while the window is shown, again as one or an env file
+  changes), their `{{variables}}` from the file and the environment chosen in http-client.env.json and its private one
+  (`HttpVariables`), and their `# @expect` criteria (`Expectation`). Nothing goes over the network but on Test or the
+  Interactive Test dialog's Send (`InteractiveTestDialog`), each on a handler and HttpClient of its own (`EndpointClient`),
+  disposed before it answers; `$processEnv`, `$env.` and a `< file` body are read only then. A body is read to
+  `MostRead` and shown to `MostShown`, a request's variables filled in to `MostFilledIn`. Tests send only to
+  `EndpointsTests`' stand-in on loopback.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
