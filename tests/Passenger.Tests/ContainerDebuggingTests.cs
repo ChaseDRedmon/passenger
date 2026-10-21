@@ -81,7 +81,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
     }
 
     [AvaloniaFact]
-    public void On_alpine_the_debugger_runs_in_the_container_on_musl_and_stops_at_a_breakpoint()
+    public void On_alpine_the_debugger_runs_in_the_container_on_musl_and_stops_at_a_breakpoint_and_a_program_with_diagnostics_off_says_why()
     {
         Assert.SkipWhen(turns.WhyNot is not null, turns.WhyNot ?? string.Empty);
         string container = Start("alpine", turns.Alpine);
@@ -97,6 +97,15 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             Assert.True(window.Perform(AppActions.Detach), "Detach could not run on the program in the Alpine container");
             Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugger to let go of the program in the Alpine container");
             Assert.Equal("running", Docker.State(container));
+
+            // A program whose runtime has diagnostics off is listed from outside, but once the tools are in they say why
+            // nothing can attach to it, and the status bar says so.
+            string off = Start("alpineoff", turns.Alpine, "-e", "DOTNET_EnableDiagnostics=0");
+            dialog = OpenAttachToProcess(window);
+            dialog.Choose(off, "Turns.dll");
+            dialog.Attach();
+            Ui.WaitFor(() => window.Status?.Contains("DOTNET_EnableDiagnostics=0", StringComparison.Ordinal) == true, "the status bar to say why the program cannot be attached to");
+            Assert.False(window.Debugger.IsDebugging, "A session started on a program whose runtime has its debugger off");
         }
         finally
         {
@@ -219,10 +228,10 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
     }
 
     /// <summary>A container of the image, started as a person would start one (not by Passenger), labelled as the run's.</summary>
-    private static string Start(string name, string image)
+    private static string Start(string name, string image, params string[] options)
     {
         string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}turns{name}";
-        Docker.Run("run", "-d", "--name", named, "--label", Docker.RunLabel, image);
+        Docker.Run(["run", "-d", "--name", named, "--label", Docker.RunLabel, .. options, image]);
         Ui.WaitFor(() => Turned(named) > 0, "the program in the container to start counting");
         return named;
     }
