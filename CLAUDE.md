@@ -1052,7 +1052,8 @@ exception.
 A test waits for what it checks, however slow the machine (#237). `Ui.Settle`, and every wait built on it (`Ui.Press`,
 `Ui.Landed`, `Ui.WaitFor`), waits until the IDE is quiet: `BackgroundWork` landed, nothing in `Passenger.Core.InFlight`
 (each language server request unanswered, all but Roslyn's `workspace/diagnostic` pull, which it holds open until the
-next change) and every dispatcher timer come due fired. A program `ProcessRunner` ran that has ended holds
+next change), every dispatcher timer come due fired and the last layout drawn (`Ui.Draw`; hit tests read the last frame
+drawn, so a test reads bounds or clicks right after a wait). A program `ProcessRunner` ran that has ended holds
 `BackgroundWork` until its console has its last output and exit code; the folder watcher's gathering and delivery,
 Local History's queue and a console's batches were background work already. Left out by design: a program still
 running and its output, the state store's half-second write delay (a test that reads a state file flushes it), the

@@ -706,7 +706,9 @@ public static class Ui
 
     /// <summary>Runs queued UI work and waits until the IDE is quiet: its background work landed (<see cref="BackgroundWork"/>),
     /// nothing in flight that no frame waits for (<see cref="Passenger.Core.InFlight"/>: a language server's request
-    /// unanswered), and every dispatcher timer that has come due fired. Fails naming what was still busy, and since when.</summary>
+    /// unanswered), every dispatcher timer that has come due fired, and the frame its last work laid out drawn
+    /// (<see cref="Drawn"/>), so a look at bounds or a click finds what that work showed. Fails naming what was still busy,
+    /// and since when.</summary>
     public static void Settle()
     {
         TimeSpan limit = SettleLimit.Scaled();
@@ -722,8 +724,51 @@ public static class Ui
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
         PromoteTimers(Dispatcher.UIThread);
         Dispatcher.UIThread.RunJobs();
+        if (BackgroundWork.Pending != 0 || Passenger.Core.InFlight.Count != 0)
+        {
+            return false;
+        }
+        Draw();
         return BackgroundWork.Pending == 0 && Passenger.Core.InFlight.Count == 0;
     }, limit - DateTime.UtcNow, every: TimeSpan.FromMilliseconds(2), scaled: false);
+
+    /// <summary>Runs what the window has queued (its layout among it) and draws until what that laid out is drawn
+    /// (<see cref="Drawn"/>): at most three frames, since an animation always has a next one, and three always do.</summary>
+    private static void Draw()
+    {
+        Dispatcher.UIThread.RunJobs();
+        for (int frame = 0; frame < 3 && !Drawn(); frame++)
+        {
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>Whether Avalonia has laid out and drawn every window as its last work left it: no render or layout pass
+    /// queued, no frame held back until the one before it was drawn, and none handed to the compositor but not yet drawn.
+    /// Hit testing reads the last frame drawn, so until then a click lands on what the window showed before.</summary>
+    private static bool Drawn()
+    {
+        object media = MediaContext.GetValue(null) ?? throw new InvalidOperationException("Avalonia has no media context");
+        return NextRender.GetValue(media) is null
+            && ((IReadOnlyCollection<Avalonia.Rendering.Composition.Compositor>)RequestedCommits.GetValue(media)!).Count == 0
+            && ((System.Collections.ICollection)PendingBatches.GetValue(media)!).Count == 0;
+    }
+
+    private static readonly Type MediaContextType = typeof(Visual).Assembly.GetType("Avalonia.Media.MediaContext")
+        ?? throw new MissingMemberException("Avalonia no longer has its MediaContext, by which a settle sees its frames drawn");
+
+    private static readonly PropertyInfo MediaContext = MediaContextType.GetProperty("Instance", BindingFlags.Static | BindingFlags.Public)
+        ?? throw new MissingMemberException("Avalonia's MediaContext no longer has its Instance");
+
+    private static readonly FieldInfo NextRender = MediaContextField("_nextRenderOp");
+
+    private static readonly FieldInfo RequestedCommits = MediaContextField("_requestedCommits");
+
+    private static readonly FieldInfo PendingBatches = MediaContextField("_pendingCompositionBatches");
+
+    private static FieldInfo MediaContextField(string name) => MediaContextType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new MissingFieldException($"Avalonia's MediaContext no longer has {name}, by which a settle sees its frames drawn");
 
     /// <summary>What the IDE was busy with as a wait gave up: each hold of background work by where it was taken, and each
     /// piece of work in flight, with how long it had been under way.</summary>
@@ -762,7 +807,7 @@ public static class Ui
     }
 
     /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)
-    /// meanwhile; fails naming what never happened. What it waits for may hold background work all along (a build, a test
+    /// meanwhile, and ends with the window laid out and drawn as it then stands; fails naming what never happened. What it waits for may hold background work all along (a build, a test
     /// run), which it then waits out for as long as it waits, not for <see cref="Settle"/>'s own limit alone.</summary>
     public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
     {
@@ -781,6 +826,8 @@ public static class Ui
                 throw new TimeoutException($"The IDE was not quiet while waiting {within.TotalSeconds} s for {what}. Still busy:\n{Busy()}{IdeLogTail()}{ServerLogTail()}");
             }
         }
+        // What it waited for may have landed with none of the window's jobs run since (a read that ended at once).
+        Draw();
     }
 
     /// <summary>Waits for a task the window started (a run, a debug session's start) as <see cref="WaitFor"/> waits, and
