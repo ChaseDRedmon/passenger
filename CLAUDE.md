@@ -106,8 +106,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   group per child, which a watchdog shell kills once Passenger's pipe to it closes). A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
-  only with Log every program. `RunAsync`'s limit covers reading its output to the end, which a job the child left
-  running holds open. `DotnetCommand` builds without
+  only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the
+  limit, its output is read for a 2 s grace (`OutputGrace`), then a job it left holding the output open (a git hook's
+  `daemon &`) is ended with its group and the output let go. `DotnetCommand` builds without
   MSBuild's server (which Stop could not reach) and in nodes salted to this IDE, which end with it. `Dotnet`,
   `Programs` and `ShellEnvironment` find the tools as the login shell would (the shell writes its environment to a file,
   its output to /dev/null, so a job its profile leaves running holds nothing up, and `Ready` waits out a slow profile

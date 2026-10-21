@@ -1126,6 +1126,41 @@ public sealed class VcsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_commit_whose_hook_leaves_a_job_holding_gits_output_is_done_within_seconds()
+    {
+        // A post-commit hook that starts something and leaves it running, as a hook's `daemon &` does: the job has the
+        // hook's output, which is git's errors, for as long as it lives (its folder elsewhere, so the test's can go).
+        string job = Path.Combine(folder, ".git", "job");
+        string hook = Path.Combine(folder, ".git", "hooks", "post-commit");
+        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
+        File.WriteAllText(hook, "#!/bin/sh\necho 'watching the build'\n(cd / && exec sleep 300) &\necho $! > .git/job\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        MainWindow window = Open();
+        File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// more\n");
+        window.Perform(AppActions.ShowCommit);
+        CommitView commit = window.CommitView;
+        _ = window.Vcs.RefreshAsync();
+        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
+        commit.Message = "More";
+        Task<bool> committed = commit.CommitAsync(push: false);
+        Ui.WaitFor(() => committed.IsCompleted, "the commit to be done once git had exited, its hook's job still holding git's errors", TimeSpan.FromSeconds(20));
+        Assert.True(committed.Result, window.Status);
+        Assert.Equal("More", Git("log", "-1", "--format=%s").Trim());
+        Ui.Landed(() => !window.Vcs.IsBusy && window.Vcs.Changes.Count == 0, $"the commit's end, with nothing left to commit ({window.Status})");
+        // Ended with git's process group, as a child that outran its limit is; Windows' git hooks run under MSYS, whose ids are its own.
+        int left = Processes.ReadId(job);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.True(left > 0, "The hook never ran: it wrote no job's id");
+            Assert.True(Processes.Gone(left), $"The job the hook left ({Processes.Describe(left)}) outlived the commit that ran it");
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void The_divider_under_a_commits_files_drags_from_anywhere_along_it_giving_its_details_the_room_they_give_up()
     {
         MainWindow window = Open();

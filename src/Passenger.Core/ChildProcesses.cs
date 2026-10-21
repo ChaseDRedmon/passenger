@@ -36,6 +36,10 @@ public static class ChildProcesses
     /// <summary>The children the IDE is ending, by process id, until their end is told.</summary>
     private static readonly ConcurrentDictionary<int, byte> EndedHere = new();
 
+    /// <summary>How long a child that has exited has its output read before what it left holding it is ended: what is in the
+    /// pipes is read at once, and only a job it left running, which holds them for as long as it lives, takes longer.</summary>
+    private static readonly TimeSpan OutputGrace = TimeSpan.FromSeconds(2);
+
     /// <summary>A program and its arguments, to run in a folder (the IDE's own when none is given).</summary>
     public static ProcessStartInfo Command(string program, IEnumerable<string> arguments, string? folder = null)
     {
@@ -155,8 +159,9 @@ public static class ChildProcesses
 
     /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first; an
     /// exit code among <paramref name="answers"/> is its answer (git's "no such file"), not a failure to log. Canceled, or
-    /// not done after <paramref name="limit"/> (still running, or ended with a job it left holding its output open), it is
-    /// killed with all it started, its output let go, and the task is canceled or fails with a <see cref="TimeoutException"/>.</summary>
+    /// still running after <paramref name="limit"/>, it is killed with all it started, its output let go, and the task is
+    /// canceled or fails with a <see cref="TimeoutException"/>. Once it has exited it is done, whatever the limit: a job it
+    /// left holding its output open (a hook's <c>daemon &amp;</c>) is given <see cref="OutputGrace"/>, then ended with its group.</summary>
     public static async Task<ChildResult> RunAsync(ProcessStartInfo start, string? input = null, TimeSpan? limit = null, CancellationToken cancel = default,
         IReadOnlyCollection<int>? answers = null)
     {
@@ -164,8 +169,9 @@ public static class ChildProcesses
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         using Process process = Start(start, answers);
-        Task<string> output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-        Task<string> errors = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        Reading output = new(process.StandardOutput);
+        Reading errors = new(process.StandardError);
+        Task read = Task.WhenAll(output.Done, errors.Done);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         if (limit is { } most)
         {
@@ -186,12 +192,15 @@ public static class ChildProcesses
                 // It ended, or closed its input, before reading all it was given: its exit says how it went.
             }
             await process.WaitForExitAsync(ending.Token);
-            // A job it left running in the background (a shell profile's) holds its output open for as long as it lives.
-            await Task.WhenAll(output, errors).WaitAsync(ending.Token);
+            if (!await EndsWithin(read, cancel))
+            {
+                // A job left running in the background holds the output open for as long as it lives; it is in the child's group.
+                KillTree(process);
+                await EndsWithin(read, cancel);
+            }
         }
         catch (OperationCanceledException) when (ending.IsCancellationRequested)
         {
-            bool ended = process.HasExited;
             // One given up on was ended, not failed; one that outran its limit hung, and its end says so.
             if (cancel.IsCancellationRequested)
             {
@@ -202,14 +211,61 @@ public static class ChildProcesses
                 KillTree(process);
             }
             // Disposing the process ends the reads; their ends are nobody's to report.
-            Forget(output);
-            Forget(errors);
+            Forget(read);
             cancel.ThrowIfCancellationRequested();
-            throw new TimeoutException(ended
-                ? $"{Display(start)} ended, but what it left running still held its output after {limit.GetValueOrDefault().TotalSeconds:0} s"
-                : $"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
+            throw new TimeoutException($"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
         }
-        return new ChildResult(process.ExitCode, await output, await errors);
+        // What a job out of the kill's reach still holds (on Windows, which ends a tree, one whose parent has gone) is let go.
+        Forget(read);
+        return new ChildResult(process.ExitCode, output.Text, errors.Text);
+    }
+
+    /// <summary>Whether a child's reads, the child exited, end within <see cref="OutputGrace"/>.</summary>
+    private static async Task<bool> EndsWithin(Task read, CancellationToken cancel)
+    {
+        try
+        {
+            await read.WaitAsync(OutputGrace, cancel);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>A child's output or errors read to their end, and what was read so far once the reading is let go.</summary>
+    private sealed class Reading
+    {
+        private readonly StringBuilder text = new();
+
+        public Reading(StreamReader reader) => Done = ReadAsync(reader);
+
+        public Task Done { get; }
+
+        public string Text
+        {
+            get
+            {
+                lock (text)
+                {
+                    return text.ToString();
+                }
+            }
+        }
+
+        private async Task ReadAsync(StreamReader reader)
+        {
+            char[] buffer = new char[16 * 1024];
+            int read;
+            while ((read = await reader.ReadAsync(buffer.AsMemory(), CancellationToken.None)) > 0)
+            {
+                lock (text)
+                {
+                    text.Append(buffer, 0, read);
+                }
+            }
+        }
     }
 
     /// <summary>Ends a child and everything it started, now, passing over what has ended: its tree on Windows, but for a
