@@ -135,7 +135,7 @@ public partial class MainWindow
                 }
             }
         }
-        if (FollowInProjects(moved) is { } unfollowed)
+        if (FollowMoved(moved) is { } unfollowed)
         {
             refused.Add(unfollowed);
         }
@@ -174,30 +174,57 @@ public partial class MainWindow
     private IReadOnlyList<string> DependentsOf(string path) =>
         File.Exists(path) && ProjectOf(PathNames.Canonical(path)) is { } project ? FileNesting.DependentsOf(PathNames.Canonical(path), project, settings.NestFiles) : [];
 
-    /// <summary>The projects' items follow the files moved (an Update naming one, a DependentUpon naming its parent), as
-    /// Rider's project model does, each project file watched first when a command is recording, for its undo. Null once
-    /// they do, else why a project could not.</summary>
-    private string? FollowInProjects(IReadOnlyList<(string From, string To)> moved, CommandHistory.Recording? recording = null)
+    /// <summary>What names the files moved follows them, as Rider's project model does: the solution's projects and files,
+    /// and every project's items naming one (an Update or Remove, a DependentUpon, a reference to a project moved), each
+    /// file watched first when a command is recording, for its undo. A project moved is read again at its new path. Null
+    /// once they follow, else why one could not.</summary>
+    private string? FollowMoved(IReadOnlyList<(string From, string To)> moved, CommandHistory.Recording? recording = null)
     {
-        foreach (ProjectModel project in Projects.Where(p => p.Exists && moved.Any(m => PathNames.IsUnder(m.From, p.Folder))).ToList())
+        string Now(string path) => moved.FirstOrDefault(m => PathNames.Within(path, m.From)) is { From: not null } move ? PathNames.Moved(path, move.From, move.To) : path;
+        // A file naming one moved names it, or the folder it was in, by name: those that cannot are never read further.
+        bool Names(string path) => (Editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot.ToString() ?? FileText.Load(path)?.Text) is { } text
+            && moved.Any(m => text.Contains(Path.GetFileName(m.From), StringComparison.OrdinalIgnoreCase));
+        // The solution, then every project at its path now, those moved themselves among them (read again once followed).
+        List<(string Path, bool Moved, Func<string, bool> Follow)> naming = [];
+        if (Solution is { } solution)
         {
-            recording?.Watch(project.Path);
+            naming.Add((Now(solution.Path), false, path => SolutionEdits.Move(path, moved)));
+        }
+        foreach (ProjectModel project in session.Workspace?.Projects ?? [])
+        {
+            string now = Now(project.Path);
+            naming.Add((now, now != project.Path, path => ProjectEdits.MoveItems(path, moved)));
+        }
+        bool reread = naming.Any(n => n.Moved);
+        foreach ((string path, bool itself, Func<string, bool> follow) in naming)
+        {
             try
             {
-                if (SaveBeforeWriting([project.Path]) is { } unsaved)
+                if (!File.Exists(path) || !itself && !Names(path))
                 {
-                    return $"{Path.GetFileName(project.Path)} could not follow the files moved: {unsaved}";
+                    continue;
                 }
-                if (ProjectEdits.MoveItems(project.Path, moved))
+                recording?.Watch(path);
+                if (SaveBeforeWriting([path]) is { } unsaved)
+                {
+                    return $"{Path.GetFileName(path)} could not follow the files moved: {unsaved}";
+                }
+                if (follow(path))
                 {
                     // Open, it takes the text now, inside the command, so the command's undo takes it back too.
-                    FollowWritten([project.Path]);
+                    FollowWritten([path]);
+                    reread |= WorkspaceModel.IsSolution(path);
                 }
             }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Xml.XmlException)
             {
-                return $"{Path.GetFileName(project.Path)} could not follow the files moved: {error.Message}";
+                return $"{Path.GetFileName(path)} could not follow the files moved: {error.Message}";
             }
+        }
+        if (reread)
+        {
+            // At once, not when the folder watcher hears of it, so the Solution view shows a project renamed under its new name.
+            ReloadSolution();
         }
         return null;
     }

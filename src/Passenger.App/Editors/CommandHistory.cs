@@ -293,13 +293,15 @@ public sealed class CommandHistory
             editors.Moved += OnMoved;
         }
 
-        /// <summary>A file not open the command is about to write: its text now, for the undo to put back; or one not there
-        /// yet that it is about to make, for the undo to take away.</summary>
+        /// <summary>A file not open the command is about to write, at its path now: its text now, for the undo to put back;
+        /// or one not there yet that it is about to make, for the undo to take away. One the command moved is kept by the
+        /// path it had as the command began, where its undo moves it back before putting its text there.</summary>
         public void Watch(string path)
         {
-            if (!editors.Documents.Any(d => d.Path == path) && !closed.ContainsKey(path))
+            string began = Enumerable.Reverse(moves).Aggregate(path, (at, move) => PathNames.Moved(at, move.To, move.From));
+            if (!editors.Documents.Any(d => d.Path == path) && !closed.ContainsKey(began))
             {
-                closed[path] = File.Exists(path) && FileText.Load(path) is { } file ? TextSnapshot.From(file.Text) : null;
+                closed[began] = File.Exists(path) && FileText.Load(path) is { } file ? TextSnapshot.From(file.Text) : null;
             }
         }
 

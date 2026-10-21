@@ -525,13 +525,17 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
   `ProjectViewNestingRulesProvider`s, chained as IntelliJ's `FileNestingBuilder` does), the project's `DependentUpon`,
   and `appsettings.*.json`; File Nesting… in the Explorer's options turns the rules off (`AppSettings.NestFiles`). A
-  rename, move or copy takes a file's dependents along, and `ProjectEdits.MoveItems` makes the project's `Include`,
-  `DependentUpon` and `LastGenOutput` follow. A tool window's own header ⋮ items are `ToolWindow.Options`.
+  rename, move or copy takes a file's dependents along, and what names a file moved follows it (`MainWindow.FollowMoved`,
+  inside the move's command): every project's items through `ProjectEdits.MoveItems` (an `Include`, `Update`, `Remove`
+  or `Exclude`, a glob by the folder it begins in, `DependentUpon`, `LastGenOutput`, a `ProjectReference`) and the
+  solution's projects and files through `SolutionEdits.Move`. A tool window's own header ⋮ items are `ToolWindow.Options`.
 - `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
-  `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
-  .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
-  as it was; never `dotnet sln`, which rewrites a whole .sln. `MainWindow.Solution.cs` is the Solution view's New
-  Solution Folder, Existing Project, Existing Item, Rename and Remove. `ProjectEdits` puts a project's
+  `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out, paths
+  following moves): a .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file
+  stays byte for byte as it was; never `dotnet sln`, which rewrites a whole .sln. `MainWindow.Solution.cs` is the
+  Solution view's New Solution Folder, Existing Project, Existing Item, Rename and Remove; a project's Rename
+  (`MainWindow.RenameProject`) renames its file, its solution entry (a .sln's name too) and every reference to it
+  following, one command Undo and Redo take whole. `ProjectEdits` puts a project's
   `ProjectReference`s in and takes them out as text, the rest kept byte for byte (never `dotnet add reference`), for
   Add > Reference (`MainWindow.References.cs`). `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.

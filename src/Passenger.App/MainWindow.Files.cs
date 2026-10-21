@@ -110,6 +110,9 @@ public partial class MainWindow
             case ExplorerAction.OpenInTerminal when path is not null:
                 _ = OpenTerminalAt(node.Kind == NodeKind.Folder ? path : Path.GetDirectoryName(path)!);
                 break;
+            case ExplorerAction.Rename when node.Kind == NodeKind.Project && path is not null:
+                AskName("Rename Project", Path.GetFileNameWithoutExtension(path), name => RenameProject(path, name));
+                break;
             case ExplorerAction.Rename when path is not null:
                 AskRename(path);
                 break;
@@ -363,7 +366,7 @@ public partial class MainWindow
             moves.AddRange(WithDependents(path, name).Where(d => !moves.Any(m => m.From == d.From)));
             List<string> dropped = [];
             int files = TypeRename.Apply(Editors, made, moves, $"Rename {type.Name} to {renamed}", asked, dropped,
-                recording => FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
+                recording => FollowMoved([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
             FilesChanged();
             Explorer.Reveal(PathNames.Canonical(target));
             status.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
@@ -385,10 +388,18 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Rider's Rename on a project: its file takes the name, its extension kept, and the solution and the projects
+    /// referencing it follow (<see cref="Rename"/>). Null once renamed, else why not.</summary>
+    public string? RenameProject(string project, string name)
+    {
+        string extension = Path.GetExtension(project);
+        return Invalid(name) ?? Rename(project, name.EndsWith(extension, StringComparison.OrdinalIgnoreCase) ? name : name + extension);
+    }
+
     /// <summary>Renames a file or folder in place, and the files nested under a file with it, as Rider's rename of a
     /// project item renames its dependents (Counter.razor.cs going with Counter.razor). Its open files keep their tabs,
-    /// splits and undo, saved first, its bookmarks and breakpoints go with it, and its project's items follow it. Undo in
-    /// the Solution view renames it back, as Rider's does.</summary>
+    /// splits and undo, saved first, its bookmarks and breakpoints go with it, and what names it follows (projects' items,
+    /// the solution, references to a project). Undo in the Solution view renames it all back, as Rider's does.</summary>
     public string? Rename(string path, string name)
     {
         if (Invalid(name) is { } problem)
@@ -414,7 +425,7 @@ public partial class MainWindow
                     return failed;
                 }
             }
-            if (FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording) is { } unfollowed)
+            if (FollowMoved([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording) is { } unfollowed)
             {
                 status.Text = unfollowed;
             }

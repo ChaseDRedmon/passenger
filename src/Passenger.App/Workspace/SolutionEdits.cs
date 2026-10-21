@@ -7,11 +7,10 @@ using Passenger.Core;
 namespace Passenger.App.Workspace;
 
 /// <summary>Rider's Solution view edits to a solution's file, a .sln or a .slnx: solution folders added, renamed and
-/// removed with all they hold, projects and files put in a folder (or a project in the solution), and taken out again.
-/// Each changes only the lines or elements it is about and writes the file back in its own encoding, line endings and
-/// indentation, so the rest stays as it was: <c>dotnet sln</c> rewrites a whole .sln, its line endings included. A folder
-/// is named by its path in the solution ("/src/tools/", <see cref="SolutionFolder.Path"/>). Each returns null when it was
-/// done, else why not; a file that cannot be read or written throws.</summary>
+/// removed with all they hold, projects and files put in a folder, taken out again and followed where they moved. Each
+/// changes only the lines or elements it is about, the rest kept in its encoding, line endings and indentation (dotnet sln
+/// rewrites a whole .sln). A folder is named by its path in the solution, <see cref="SolutionFolder.Path"/>. An edit
+/// returns null when done, else why not; a file that cannot be read or written throws.</summary>
 public static class SolutionEdits
 {
     public static string? AddFolder(string solution, string? parent, string name) =>
@@ -34,6 +33,19 @@ public static class SolutionEdits
 
     public static string? RemoveFile(string solution, string folder, string path) => Edit(solution, file => file.RemoveFile(folder, path));
 
+    /// <summary>The solution following files and folders that moved or were renamed: each project and file it names
+    /// names where it went, and a .sln's project named after its file takes the file's new name. Whether it changed.</summary>
+    public static bool Move(string solution, IReadOnlyList<(string From, string To)> moves)
+    {
+        SolutionText file = Open(solution);
+        if (!file.Move(path => moves.FirstOrDefault(m => PathNames.Within(path, m.From)) is { From: not null } move ? PathNames.Moved(path, move.From, move.To) : path))
+        {
+            return false;
+        }
+        file.Write();
+        return true;
+    }
+
     /// <summary>Why a name cannot be a solution folder's (Visual Studio refuses the same characters), or null.</summary>
     public static string? InvalidFolderName(string name) =>
         name.Trim().Length == 0 ? "A name is needed"
@@ -42,7 +54,7 @@ public static class SolutionEdits
 
     private static string? Edit(string solution, Func<SolutionText, string?> change)
     {
-        SolutionText file = Path.GetExtension(solution).Equals(".slnx", StringComparison.OrdinalIgnoreCase) ? new SlnxText(solution) : new SlnText(solution);
+        SolutionText file = Open(solution);
         if (change(file) is { } problem)
         {
             return problem;
@@ -50,6 +62,9 @@ public static class SolutionEdits
         file.Write();
         return null;
     }
+
+    private static SolutionText Open(string solution) =>
+        Path.GetExtension(solution).Equals(".slnx", StringComparison.OrdinalIgnoreCase) ? new SlnxText(solution) : new SlnText(solution);
 
     /// <summary>A solution's file read for one change as a save reads a file: its encoding, byte order mark and line
     /// breaks, which go back as they came.</summary>
@@ -80,6 +95,9 @@ public static class SolutionEdits
         public abstract string? AddFile(string folder, string path);
         public abstract string? RemoveFile(string folder, string path);
 
+        /// <summary>Each path it names as <paramref name="moved"/> gives where that is now; whether one changed.</summary>
+        public abstract bool Move(Func<string, string> moved);
+
         protected abstract string Written();
 
         /// <summary>Writes the solution back as an editor's save does (<see cref="FileText.Save"/>): through a temporary
@@ -91,6 +109,14 @@ public static class SolutionEdits
         protected string Resolve(string relative) => PathNames.Canonical(Path.Combine(Root, relative.Replace('\\', '/')));
 
         protected string Relative(string path) => Path.GetRelativePath(Root, path);
+
+        /// <summary>Where a path the solution names went, relative to it, with the separators the path it replaces was
+        /// written with (the file's own for a bare name).</summary>
+        protected string Followed(string written, string to, char separator)
+        {
+            char used = written.Contains('\\') ? '\\' : written.Contains('/') ? '/' : separator;
+            return Relative(to).Replace('\\', used).Replace('/', used);
+        }
 
         protected static string NameOf(string project) => Path.GetFileNameWithoutExtension(project);
 
@@ -220,12 +246,51 @@ public static class SolutionEdits
             {
                 return $"{name} is already there";
             }
-            string line = lines[renamed.Start];
+            Respell(renamed, name, name);
+            return null;
+        }
+
+        /// <summary>An entry's Project line with a new name and path, the rest of it as it was.</summary>
+        private void Respell(Entry entry, string name, string path)
+        {
+            string line = lines[entry.Start];
             Match m = ProjectLine.Match(line);
             Group oldName = m.Groups["name"];
             Group oldPath = m.Groups["path"];
-            lines[renamed.Start] = $"{line[..oldName.Index]}{name}{line[(oldName.Index + oldName.Length)..oldPath.Index]}{name}{line[(oldPath.Index + oldPath.Length)..]}";
-            return null;
+            lines[entry.Start] = $"{line[..oldName.Index]}{name}{line[(oldName.Index + oldName.Length)..oldPath.Index]}{path}{line[(oldPath.Index + oldPath.Length)..]}";
+        }
+
+        public override bool Move(Func<string, string> moved)
+        {
+            bool changed = false;
+            foreach (Entry entry in Entries())
+            {
+                if (entry.IsFolder)
+                {
+                    // Its files ("path = path"), each line replaced by one, so the entries found stay where they are.
+                    (int Start, int End) items = Items(entry) ?? (0, 0);
+                    for (int i = items.Start + 1; i < items.End; i++)
+                    {
+                        if (ItemLine.Match(lines[i]) is { Success: true } item && Resolve(item.Groups["path"].Value) is var path && moved(path) is var to && to != path)
+                        {
+                            string written = Followed(item.Groups["path"].Value, to, '\\');
+                            lines[i] = $"{lines[i][..(lines[i].Length - lines[i].TrimStart().Length)]}{written} = {written}{cr}";
+                            changed = true;
+                        }
+                    }
+                    continue;
+                }
+                string was = Resolve(entry.RelativePath);
+                if (moved(was) is var now && now == was)
+                {
+                    continue;
+                }
+                // Visual Studio names a project after its file, so one that was takes its file's new name.
+                bool named = entry.Name.Equals(Path.GetFileNameWithoutExtension(entry.RelativePath.Replace('\\', '/')), StringComparison.OrdinalIgnoreCase);
+                Respell(entry, named ? NameOf(now) : entry.Name, Followed(entry.RelativePath, now, '\\'));
+                changed = true;
+            }
+            return changed;
         }
 
         public override string? RemoveFolder(string folder)
@@ -547,6 +612,23 @@ public static class SolutionEdits
             XElement added = new("Project", new XAttribute("Path", Relative(project).Replace('\\', '/')));
             Insert(into, added, into.Elements().LastOrDefault(e => e.Name.LocalName == "Project")?.NextNode);
             return null;
+        }
+
+        public override bool Move(Func<string, string> moved)
+        {
+            bool changed = false;
+            // A project's or file's Path, and a build dependency's Project.
+            foreach (XAttribute attribute in Solution.Descendants().SelectMany(e => e.Attributes()).Where(a =>
+                a.Parent!.Name.LocalName is "Project" or "File" && a.Name.LocalName == "Path" || a.Parent.Name.LocalName == "BuildDependency" && a.Name.LocalName == "Project").ToList())
+            {
+                string was = Resolve(attribute.Value);
+                if (moved(was) is var now && now != was)
+                {
+                    attribute.Value = Followed(attribute.Value, now, '/');
+                    changed = true;
+                }
+            }
+            return changed;
         }
 
         public override string? RemoveProject(string project)

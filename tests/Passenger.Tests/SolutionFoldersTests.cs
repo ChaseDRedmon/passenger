@@ -8,13 +8,15 @@ using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Explorer;
+using Passenger.App.Workspace;
 using Passenger.Core;
 
 namespace Passenger.Tests;
 
 /// <summary>Solution folders as Rider's Solution view shows and edits them: an icon of their own, the files they list,
 /// folders before projects by name at every level, and New Solution Folder, Rename, Existing Project, Existing Item and
-/// Remove from their menus and keys, each changing the .sln or .slnx on disk and nothing else in it, which still builds.</summary>
+/// Remove from their menus and keys, and a project's Rename, each changing the .sln or .slnx on disk and nothing else in
+/// it, which still builds.</summary>
 public sealed class SolutionFoldersTests : IDisposable
 {
     private const string FolderType = "{2150E333-8FDC-42A3-9474-1A3956D46DE8}";
@@ -45,7 +47,7 @@ public sealed class SolutionFoldersTests : IDisposable
         + "  <Folder Name=\"/Solution Items/\">\n    <File Path=\"README.md\" />\n    <File Path=\".editorconfig\" />\n  </Folder>\n"
         + "  <Folder Name=\"/src/\">\n    <Project Path=\"src/Shop.Core/Shop.Core.csproj\" />\n  </Folder>\n</Solution>\n";
 
-    private readonly string folder = TestFolders.Create("solution-folders-");
+    private readonly string folder = PathNames.Canonical(TestFolders.Create("solution-folders-"));
 
     public SolutionFoldersTests()
     {
@@ -224,6 +226,78 @@ public sealed class SolutionFoldersTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaTheory]
+    [InlineData("sln")]
+    [InlineData("slnx")]
+    public void A_project_renamed_takes_its_solution_entry_and_the_references_to_it_along_so_the_solution_builds_and_undo_and_redo_take_it_all(string format)
+    {
+        // Shop.Web uses Shop.Core's Order through a reference.
+        string web = Path.Combine(folder, "src", "Shop.Web", "Shop.Web.csproj");
+        Write("src/Shop.Web/Shop.Web.csproj", Executable.Replace("</Project>", "  <ItemGroup>\n    <ProjectReference Include=\"..\\Shop.Core\\Shop.Core.csproj\" />\n  </ItemGroup>\n</Project>", StringComparison.Ordinal));
+        Write("src/Shop.Web/Program.cs", "System.Console.WriteLine(new Shop.Core.Order());\n");
+        string solution = WriteSolution(format);
+        byte[] original = File.ReadAllBytes(solution);
+        string referencing = File.ReadAllText(web);
+        string projects = Path.Combine(folder, "src", "Shop.Core");
+        MainWindow window = Open();
+        List<string> asked = Answer(window);
+        int heard = 0;
+        window.FolderWatcher!.Changed += (_, changes) => heard += changes.Paths.Contains(PathNames.Canonical(solution)) ? 1 : 0;
+        void Edit(Action edit)
+        {
+            int before = heard;
+            edit();
+            Ui.WaitFor(() => heard > before, "the folder watcher to hear of the change to the solution");
+            Ui.Settle();
+        }
+        IEnumerable<string> ProjectFiles() => Directory.EnumerateFiles(projects, "*.csproj").Select(Path.GetFileName).Order(StringComparer.Ordinal)!;
+
+        // F2 on the project in its solution folder: the name box holds its name, and a new one renames its file.
+        Choose(window, Row(window, NodeKind.SolutionFolder, "src"));
+        Ui.Press(window, "RIGHT");
+        Choose(window, Row(window, NodeKind.Project, "Shop.Core"));
+        Ui.Press(window, "F2");
+        Passenger.App.Vcs.NamePopup popup = Assert.IsType<Passenger.App.Vcs.NamePopup>(window.Popup);
+        Assert.Equal("Shop.Core", popup.Text);
+        popup.Text = string.Empty;
+        Edit(() => Name(window, "Shop.Domain"));
+        Assert.Equal(["Shop.Domain.csproj"], ProjectFiles());
+        string renamed = Read(solution, "a project was renamed");
+        Assert.Equal(format == "slnx"
+            ? Slnx.Replace("src/Shop.Core/Shop.Core.csproj", "src/Shop.Core/Shop.Domain.csproj", StringComparison.Ordinal)
+            : Sln[1..].Replace("\"Shop.Core\", \"src\\Shop.Core\\Shop.Core.csproj\"", "\"Shop.Domain\", \"src\\Shop.Core\\Shop.Domain.csproj\"", StringComparison.Ordinal),
+            renamed);
+        Assert.Equal(referencing.Replace("Shop.Core.csproj", "Shop.Domain.csproj", StringComparison.Ordinal), File.ReadAllText(web));
+        Assert.Contains(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Shop.Domain");
+        BuildsApart(solution, "a project was renamed");
+        // The language server's restore of the project renamed has the solution read again, its rows made anew.
+        Quiet(window);
+
+        // Undo in the Solution view takes all of it back, asked first.
+        Choose(window, Row(window, NodeKind.Project, "Shop.Domain"));
+        Edit(() => Ui.Run(window, Passenger.Editor.EditorActions.Undo));
+        Assert.Equal(["Undo"], asked);
+        Assert.True(ProjectFiles().SequenceEqual(["Shop.Core.csproj"]), $"Undo left [{string.Join(", ", ProjectFiles())}]: {window.Status}");
+        Assert.True(original.AsSpan().SequenceEqual(File.ReadAllBytes(solution)), $"Undo did not put the solution back as it was:\n{Read(solution, "the rename was undone")}");
+        Assert.Equal(referencing, File.ReadAllText(web));
+        Quiet(window);
+
+        // Redo makes all of it again: one project file, the solution and the reference naming it, and a build.
+        Choose(window, Row(window, NodeKind.Project, "Shop.Core"));
+        Edit(() => Ui.Run(window, Passenger.Editor.EditorActions.Redo));
+        Assert.Equal(["Undo", "Redo"], asked);
+        Assert.True(ProjectFiles().SequenceEqual(["Shop.Domain.csproj"]), $"Redo left [{string.Join(", ", ProjectFiles())}]: {window.Status}");
+        Assert.Equal(renamed, Read(solution, "the rename was redone"));
+        Assert.Equal(referencing.Replace("Shop.Core.csproj", "Shop.Domain.csproj", StringComparison.Ordinal), File.ReadAllText(web));
+        BuildsApart(solution, "the project's rename was redone");
+
+        // A file a solution folder lists, renamed where the folder shows it on disk, is listed under its new name.
+        Edit(() => Assert.Null(window.Rename(PathNames.Canonical(Path.Combine(folder, "README.md")), "Shop.md")));
+        Assert.Equal(renamed.Replace(format == "slnx" ? "<File Path=\"README.md\" />" : "\t\tREADME.md = README.md", format == "slnx" ? "<File Path=\"Shop.md\" />" : "\t\tShop.md = Shop.md", StringComparison.Ordinal),
+            Read(solution, "a file it lists was renamed"));
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_solution_folder_added_to_a_Windows_1252_sln_keeps_every_other_byte_and_Local_History_keeps_the_sln_as_it_was()
     {
@@ -314,6 +388,47 @@ public sealed class SolutionFoldersTests : IDisposable
     {
         ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", solution]), limit: Restore.Limit)).GetAwaiter().GetResult();
         Assert.True(built.Succeeded, $"Once {after}, dotnet build no longer builds the solution:\n{built.Output}{built.Error}");
+    }
+
+    /// <summary>Waits until the folder watcher has heard nothing for a while and what it heard has landed.</summary>
+    private static void Quiet(MainWindow window)
+    {
+        DateTime last = DateTime.UtcNow;
+        void Seen(object? sender, FolderChanges changes) => last = DateTime.UtcNow;
+        window.FolderWatcher!.Changed += Seen;
+        try
+        {
+            Ui.WaitFor(() => DateTime.UtcNow - last > TimeSpan.FromSeconds(1.5), "the folder watcher to hear the last of what was written");
+        }
+        finally
+        {
+            window.FolderWatcher!.Changed -= Seen;
+        }
+    }
+
+    /// <summary>dotnet build of a copy of the folder as it is on disk now, its build output left out: a project renamed is
+    /// restored anew, which the window's language server does in the folder itself meanwhile, and two restores of one
+    /// project at once fail.</summary>
+    private void BuildsApart(string solution, string after)
+    {
+        string copy = PathNames.Canonical(TestFolders.Create("solution-copy-"));
+        foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+        {
+            string relative = Path.GetRelativePath(folder, file);
+            if (!relative.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj"))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(copy, relative))!);
+                File.Copy(file, Path.Combine(copy, relative));
+            }
+        }
+        try
+        {
+            Builds(Path.Combine(copy, Path.GetFileName(solution)), after);
+        }
+        finally
+        {
+            TestFolders.Delete(copy);
+        }
     }
 
     /// <summary>The solution file's text, which must keep its byte order mark and line endings whatever was changed.</summary>

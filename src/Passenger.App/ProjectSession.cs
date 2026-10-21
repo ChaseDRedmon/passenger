@@ -456,10 +456,14 @@ public sealed class ProjectSession : IAsyncDisposable
         Vcs.Detach(document);
     }
 
-    /// <summary>A file or folder moved: its bookmarks and breakpoints, Git, the recent files, the places and Local History
-    /// follow it, and the language server knows an open file at its new path.</summary>
+    /// <summary>A file or folder moved: its bookmarks and breakpoints, Git, the recent files, the places, Local History and
+    /// the solution or project opened by name follow it, and the language server knows an open file at its new path.</summary>
     public void Moved(FileMove move)
     {
+        if (NamedSolution is { } named)
+        {
+            NamedSolution = PathNames.Moved(named, move.From, move.To);
+        }
         Vcs.Moved(move.From, move.To);
         LocalHistory?.Moved(move.From, move.To);
         Followed(move);
