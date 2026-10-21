@@ -207,6 +207,52 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Avalonia_binding_errors_hit_count_counts_on_past_a_property_breakpoint_set_between_its_hits_and_stops_on_the_third()
+    {
+        MainWindow window = Opened();
+        BreakpointStore store = window.Debugger.Breakpoints;
+        string program = Path.Combine(folder, "Program.cs");
+        // The third failure stops: the caption's as the app starts, then one at each rebind.
+        store.Update(store.BindingErrors, enabled: true, suspend: true, condition: null, hitCondition: "3", logMessage: null);
+
+        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
+        Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Caption"),
+            $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
+        Say(window, "rebind");
+        Ui.WaitFor(() => Console(window).Contains("Bound again", StringComparison.Ordinal), "the app's second failed binding, which the hit count lets go by");
+        Assert.True(window.Debugger.Session?.State == DebugState.Running, $"XAML Binding Errors stopped before its third hit: {window.Status}");
+
+        // Break When Value Changes on the caption sends the function breakpoints again, XAML Binding Errors' unchanged.
+        LiveTreeView tree = window.LiveTree;
+        tree.Tree.SelectedItem = tree.Rows.First(r => r.Element.Name == "Caption");
+        Ui.WaitFor(() => tree.Details?.Name == "Caption", "the caption's details");
+        tree.ShowPage(LiveTreePage.Properties);
+        Ui.Settle();
+        tree.PropertyList.SelectedItem = tree.PropertyRows.First(p => p.Name == "FontSize");
+        Ui.ChooseFromMenu(tree.PropertyList, LiveTreeView.BreakWhenValueChanges);
+        PropertyBreakpoint size = store.FindProperty(tree.Details!.Id, "FontSize")
+            ?? throw new Xunit.Sdk.XunitException("Break When Value Changes set no property breakpoint on the caption's FontSize");
+        Ui.WaitFor(() => size.Status == BreakpointStatus.Bound, $"the debugger to take the property breakpoint, not to say {size.Message}");
+
+        Say(window, "rebind");
+        DebugStop stop;
+        try
+        {
+            stop = Stopped(window, "the stop at the third failed binding");
+        }
+        catch (TimeoutException)
+        {
+            throw new Xunit.Sdk.XunitException($"XAML Binding Errors let its third hit go, its count started again by the property breakpoint set beside it: {window.Status}");
+        }
+        AssertAt(stop, program, LineIn(program, "window.DataContext = new MainViewModel();"));
+        Says(window, "paused on a binding error");
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
+        window.Close();
+    }
+
     /// <summary>Text typed after XAML Binding Errors' condition in the Breakpoints window.</summary>
     private static void Condition(MainWindow window, string typed)
     {

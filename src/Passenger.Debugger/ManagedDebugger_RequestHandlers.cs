@@ -491,22 +491,39 @@ public partial class ManagedDebugger
         return result;
     }
 
+    /// <summary>Sets the function breakpoints to those asked for, which replace those set before. One asked for again just as
+    /// it was is kept whole, as <see cref="SetBreakpoints"/> keeps a line's: its id, its bindings and its hit count, so a
+    /// change beside it (a property breakpoint added) starts no count again and a hit of it on its way still stops.</summary>
     public List<BreakpointManager.BreakpointInfo> SetFunctionBreakpoints(FunctionBreakpointRequest[] breakpoints)
     {
-        foreach (BreakpointManager.BreakpointInfo bp in _breakpointManager.GetFunctionBreakpoints())
+        List<BreakpointManager.BreakpointInfo> existing = _breakpointManager.GetFunctionBreakpoints();
+        BreakpointManager.BreakpointInfo?[] kept = new BreakpointManager.BreakpointInfo?[breakpoints.Length];
+        for (int i = 0; i < breakpoints.Length; i++)
         {
-            foreach (BreakpointManager.FunctionBreakpointBinding binding in bp.FunctionBindings)
+            kept[i] = existing.FirstOrDefault(b => b.FunctionRequest == breakpoints[i] && !kept.Contains(b));
+        }
+        foreach (BreakpointManager.BreakpointInfo gone in existing.Where(b => !kept.Contains(b)))
+        {
+            foreach (BreakpointManager.FunctionBreakpointBinding binding in gone.FunctionBindings)
             {
                 try { binding.CorBreakpoint.Activate(false); }
                 catch (Exception ex) { _logger?.Invoke($"Error deactivating function breakpoint: {ex.Message}"); }
             }
+            _breakpointManager.RemoveBreakpoint(gone.Id);
         }
-        _breakpointManager.ClearFunctionBreakpoints();
 
         List<BreakpointManager.BreakpointInfo> result = new List<BreakpointManager.BreakpointInfo>();
-        foreach (FunctionBreakpointRequest request in breakpoints)
+        for (int i = 0; i < breakpoints.Length; i++)
         {
+            if (kept[i] is { } same)
+            {
+                _logger?.Invoke($"Function breakpoint {same.Id} on {same.FunctionName} kept as it was, {same.HitCount} hits in");
+                result.Add(same);
+                continue;
+            }
+            FunctionBreakpointRequest request = breakpoints[i];
             BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition, request.LogMessage, request.Suspend);
+            bp.FunctionRequest = request;
             if (bp.HitCondition is { } hits && !Passenger.Dap.HitCondition.TryParse(hits, out _, out string? problem))
             {
                 bp.Message = problem;

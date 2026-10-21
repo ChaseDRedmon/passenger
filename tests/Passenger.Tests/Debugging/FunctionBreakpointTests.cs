@@ -99,6 +99,36 @@ public class FunctionBreakpointTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_function_breakpoints_hit_count_goes_on_when_another_is_set_beside_it_and_it_stops_on_its_third_hit()
+    {
+        // As the IDE sends XAML Binding Errors again with a property breakpoint added between its hits.
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended: true, out Process program);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(program.Id)
+            .WaitForInitializedEvent();
+        DapFunctionBreakpoint third = new("DebuggableConsoleApp.HitConditionClass.Test", HitCondition: "==3");
+        DapFunctionBreakpoint everyPass = new("DebuggableConsoleApp.MyClassNoMembers.MyMethod");
+        SetBreakpointsResponse before = host.Request<SetBreakpointsResponse>("setFunctionBreakpoints", new SetFunctionBreakpointsArguments([third, everyPass]));
+        host.WithConfigurationDoneRequest();
+
+        // Each pass of the program's loop stops in MyMethod first, then calls Test, whose hit count counts on.
+        Assert.EndsWith("MyClassNoMembers.cs", (await host.WaitForStoppedEvent()).Source?.Path);
+        Assert.EndsWith("MyClassNoMembers.cs", (await host.WithContinueRequest().WaitForStoppedEvent()).Source?.Path);
+        SetBreakpointsResponse after = host.Request<SetBreakpointsResponse>("setFunctionBreakpoints",
+            new SetFunctionBreakpointsArguments([third, everyPass, new DapFunctionBreakpoint("DebuggableConsoleApp.Nowhere.Nothing")]));
+        Assert.EndsWith("MyClassNoMembers.cs", (await host.WithContinueRequest().WaitForStoppedEvent()).Source?.Path);
+
+        StoppedEvent hit = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.True(hit.Source?.Path?.EndsWith("HitConditionClass.cs", StringComparison.Ordinal) == true,
+            $"The third pass through Test did not stop it, its hit count started again by the breakpoint set beside it: the program stopped in {hit.Source?.Path}:{hit.Line}");
+        host.WithEvaluateRequest(host.GetTopStackFrame(hit.ThreadId!.Value).Id, "_count", out EvaluateResponse passes);
+        Assert.Equal("2", passes.Result);
+        Assert.True(before.Breakpoints.Select(b => b.Id).SequenceEqual(after.Breakpoints.Take(2).Select(b => b.Id)),
+            "The function breakpoints asked for again just as they were were made anew, with new ids");
+    }
+
+    [Fact]
     public async Task SharpDbgCli_SetFunctionBreakpoint_NoParametersSpecified_BreaksOnAllMethodOverloads()
     {
         bool startSuspended = true;

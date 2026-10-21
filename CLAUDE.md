@@ -787,7 +787,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   error", off until turned on, never removed, kept with the folder): under a debugger the inspector's binding sink calls
   `Breaks.BindingFailed(BindingError)` (`Breaks.cs`, with `Breaks.Changed`) on each failure, repeats too, on the thread
   that evaluated it, where the IDE sets one function breakpoint (`Wire.Failed`), sent with the property breakpoints' in
-  one `setFunctionBreakpoints`; its condition and log message say `$bindingError` (rewritten to the parameter). The
+  one `setFunctionBreakpoints` (the engine keeps each asked for again as it was whole, its hit count included, as it keeps
+  a line's); its condition and log message say `$bindingError` (rewritten to the parameter). The
   stop reads `bindingError.Said` (a `BindingFailure` as JSON) in frame 0, selects the first user frame, says the failure
   in the status bar, annotates the line, lists `$bindingError` in Variables and writes a linked console line. A function
   breakpoint's binding is told apart by its module, not its base address: the inspector is two modules over one image.
