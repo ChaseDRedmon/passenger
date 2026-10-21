@@ -20,9 +20,13 @@ public partial class MainWindow
     /// <summary>Open Solution's question while it asks, else null.</summary>
     public OpenProjectDialog? Asking { get; private set; }
 
-    /// <summary>Whether the window has started (taken its command line) or opened a folder, so a solution the system hands
-    /// Passenger goes to it rather than waiting for the first window's start.</summary>
+    /// <summary>Whether the window has started (taken its command line, or been opened beside another) or opened a
+    /// folder, so a solution the system hands Passenger goes to it rather than waiting for the first window's start.</summary>
     public bool IsStarted => started || Folder is not null;
+
+    /// <summary>A window opened beside another (<see cref="PassengerApp.NewWindow"/>) has no command line to take: it is
+    /// started as it is made, so a solution handed to Passenger opens from it whatever it has open.</summary>
+    internal void StartBeside() => started = true;
 
     private void AddProjectWindows()
     {
