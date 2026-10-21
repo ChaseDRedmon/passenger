@@ -545,11 +545,31 @@ window or takes the focus; it shows everything but the system's own window chrom
   `StopAsync` (`down`, or `rm --stop` of the .NET services when backing services are kept, which then go with the folder).
   `ContainerPaths` maps an image's paths (its Dockerfile's COPY of the context into WORKDIR, and `/_/`) to the workspace's
   and back, for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
-  #344's debugger takes it at the protocol's edge. Debug and Profile of a container configuration are refused
-  (`LaunchPlan.InContainers`). Edit Configurations' Compose page lists the services from Compose's model
+  the debugger takes it at the protocol's edge (`AdapterPlace`, a service's `DotnetService.Paths` in images mode,
+  `ContainerPaths.None` in fast mode). A run is started one of three ways (`ContainerStart`): Run; Debug, its services
+  marked Debug (else every .NET service it starts, `ContainerPlan.Debugged`) held at their runtime's start
+  (`ContainerPlans.HeldVariable`, DOTNET_DefaultDiagnosticPortSuspend=1, with DOTNET_MODIFIABLE_ASSEMBLIES=debug, in the
+  override); and Run with Hot Reload (Settings' Hot Reload when running, or `run`'s `hotReload`), every .NET service held, since
+  dotnet watch would need the SDK in the image. `ContainerRun.UpAsync` runs `up --wait` while each held service is attached
+  to alongside (`BuildRunController.AttachAllAsync`: its container from `compose ps -q` once Compose starts it, the tools
+  copied in for its image's system, never mounted, since the system is known only once the image is and an engine shares
+  only some of this machine's folders; its program from the tools' `processes` by its assembly), so a healthcheck or a
+  dependent's `service_healthy` is not waited on before the attach lets it go. Debug gives each service a Debug tab named for
+  it, of the run's group (`DebugTab.Group`, the configuration's name: Hot Reload's Apply goes to each tab of the group),
+  its console the container's `docker logs --follow --since` its start (`AdapterPlace.Output`); Run with Hot Reload attaches
+  quietly (`DebugController.AttachForHotReloadAsync`, `DebugSession.Quiet`: no breakpoint sent, no exception stops it, the
+  store never told), Apply Hot Reload Changes and a save applying the edits through it (`ApplyRunningAsync`). An edit Hot
+  Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartContainerServicesAsync`: only
+  the services whose project holds a rude edit, since Roslyn names one in another project rude to each session; images mode
+  `up --build --no-deps --force-recreate`), its session ended first and attached again, as Rerun's restart of a held service
+  does. A Release build (the tools' `optimized`), a runtime with DOTNET_EnableDiagnostics=0 (not held, and not attached: it
+  runs on) and an image of another processor than the engine's are said in the status bar after the run comes up. Stop ends
+  the run's sessions (`ContainerRun.Debugged`) before the containers go, since a container taken from under its adapter
+  would end it as a failure. Profile of a container configuration is still refused (`LaunchPlan.InContainers`; #345).
+  Edit Configurations' Compose page lists the services from Compose's model
   (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
-  Dockerfile's final FROM, their menu running that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
+  Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
   run them against the engine on aspnet:10.0 and busybox; their HTTPS test exports the machine's development certificate
   first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
   which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`), and their SDK container image
@@ -860,8 +880,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`sessions`): the debug tools and `stop` take `session`, a Debug tab's name, else act on the one paused, else the only
   one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All);
   `hot_reload` is Apply Hot Reload Changes
-  (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word); the headless `--mcp` IDE
-  starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `McpTests.Actions`
+  (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word; a container run with Hot Reload,
+  `MainWindow.HotReloadRunning`, through `ApplyRunningAsync`); the headless `--mcp` IDE
+  starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
+  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests.Actions`
   holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
@@ -1087,7 +1109,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   resume or step), Problems' Hot Reload tab for rude edits, and the restart (Settings' Hot Reload page: always restart
   for a change it can't apply, on by default, else dotnet watch's question); an attach gets it only when its caller
   started the program held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug (`AttachAsync`'s `hotReload`,
-  Passenger's `AttachArguments.HotReload`), and never the restart. Roslyn
+  Passenger's `AttachArguments.HotReload`), and the restart only as a container run's service (Containers above; a
+  container run's restart is never asked, Settings' always restart deciding). Roslyn
   applies a changed signature as a delete plus an add and recompiles only members whose code changed, so `StaleCallers`
   blocks an update that leaves a loaded module's unchanged code calling the deleted body (ENC0033 at the new
   declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s (`PASSENGER_WATCH_LATER_MS`) past its first, the last
@@ -1447,8 +1470,11 @@ into `artifacts/container-tools` (seconds when up to date, a minute or two the f
 images and publishes for both. `ContainerProfilingTests` (Alone, skipped the same way) profile `Spins` (a program that
 spins in `Hot.Spin` and keeps `Keepsake`s, saying how many, made once a run, `Spins.Shared`) in containers they start:
 chosen in Attach Profiler's dialog, debugged there first, held at its start (let go once recording), and memory
-snapshots compared; `McpTests.ContainerProfile.cs` has an agent profile it with `attach` and `container`.
-`WpfPreviewTests` (Windows only)
+snapshots compared; `McpTests.ContainerProfile.cs` has an agent profile it with `attach` and `container`. `ContainerRunDebuggingTests`
+(Alone) debug ContainerRunsTests' Compose solution (`ContainerRunsTests.Shop`, its Program.cs stopping in Main and in a
+request's handler), run it with Hot Reload, and in images mode build its apps here with `-p:PathMap=…=/src/` copied into
+aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is asked again while nothing listens yet,
+since the attach lets the service go a moment before Kestrel listens. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
