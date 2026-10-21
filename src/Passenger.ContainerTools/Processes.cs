@@ -43,8 +43,8 @@ public static class Processes
                 continue;
             }
             // Held at its start for a debugger (Passenger's Debug of a container run): no pipe yet, which the attach's
-            // registration for its runtime's start and its diagnostic port's resume see to.
-            bool held = Variable(id, "DOTNET_DefaultDiagnosticPortSuspend") == "1";
+            // registration for its runtime's start and its diagnostic port's resume see to. Diagnostics off, nothing holds it.
+            bool held = Variable(id, "DOTNET_DefaultDiagnosticPortSuspend") == "1" && !DiagnosticsOff(id);
             found.Add(new ContainerProcess(process.Id, process.Name, process.CommandLine, process.User,
                 held && Variable(id, "DOTNET_MODIFIABLE_ASSEMBLIES") is { } modifiable && modifiable.Equals("debug", StringComparison.OrdinalIgnoreCase),
                 Optimized(process.Id, process.CommandLine), held ? null : WhyUnreachable(id)));
@@ -54,11 +54,13 @@ public static class Processes
 
     /// <summary>Why a .NET program opened no pipe for a debugger: diagnostics turned off, or its temporary folder elsewhere.</summary>
     private static string WhyUnreachable(int id) =>
-        Variable(id, "DOTNET_EnableDiagnostics") == "0" || Variable(id, "DOTNET_EnableDiagnostics_Debugger") == "0"
+        DiagnosticsOff(id)
             ? "Its runtime was started with DOTNET_EnableDiagnostics=0, which turns its debugger off: nothing can attach to it"
             : Variable(id, "TMPDIR") is { Length: > 0 } temporary && !SameFolder(temporary, Path.GetTempPath())
                 ? $"Its runtime keeps the debugger's pipes in TMPDIR {temporary}, which the container's other programs do not share"
                 : "Its runtime opened no pipe for a debugger";
+
+    private static bool DiagnosticsOff(int id) => Variable(id, "DOTNET_EnableDiagnostics") == "0" || Variable(id, "DOTNET_EnableDiagnostics_Debugger") == "0";
 
     private static bool SameFolder(string one, string other) => string.Equals(one.TrimEnd('/'), other.TrimEnd('/'), StringComparison.Ordinal);
 

@@ -161,41 +161,54 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         window.Close();
     }
 
+    /// <summary>Images as deployed, of builds made here naming the images' own paths (/src, where each Dockerfile copies the
+    /// context), so only the path map puts web's stop in the workspace's file, with no SDK image needed; api is a Release
+    /// build, which is said, and a third service of api's image with its runtime's diagnostics off runs on undebugged, saying
+    /// why.</summary>
     [AvaloniaFact]
-    public void In_images_mode_a_service_built_with_container_paths_stops_at_its_breakpoint_through_the_path_map()
+    public void In_images_mode_a_service_stops_through_the_path_map_a_Release_build_is_said_and_one_with_diagnostics_off_runs_on_saying_why()
     {
         Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
         (string folder, string project) = Shop("images");
-        // The image as deployed, of a Debug build made here naming the image's own paths (/src, where the Dockerfile copies the
-        // context), so only the path map puts its stops in the workspace's files; no SDK image is needed.
-        ContainerRunsTests.Write(folder, "Web/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /src\nCOPY . .\nEXPOSE 8080\n"
-            + "ENTRYPOINT [\"dotnet\", \"/src/Web/out/Web.dll\"]\n");
-        ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", Path.Combine(folder, "Web", "Web.csproj"), "-c", "Debug",
-            "-o", Path.Combine(folder, "Web", "out"), $"-p:PathMap={folder}{Path.DirectorySeparatorChar}=/src/", "-nologo", "-v:q"], folder), null,
-            TimeSpan.FromMinutes(5).Scaled(), CancellationToken.None)).GetAwaiter().GetResult();
-        Assert.True(built.Succeeded, $"Web did not build: {built.Output}{built.Error}");
+        foreach ((string app, string configuration) in (ReadOnlySpan<(string, string)>)[("Web", "Debug"), ("Api", "Release")])
+        {
+            ContainerRunsTests.Write(folder, $"{app}/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /src\nCOPY . .\nEXPOSE 8080\n"
+                + $"ENTRYPOINT [\"dotnet\", \"/src/{app}/out/{app}.dll\"]\n");
+            ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", Path.Combine(folder, app, $"{app}.csproj"), "-c", configuration,
+                "-o", Path.Combine(folder, app, "out"), $"-p:PathMap={folder}{Path.DirectorySeparatorChar}=/src/", "-nologo", "-v:q"], folder), null,
+                TimeSpan.FromMinutes(5).Scaled(), CancellationToken.None)).GetAwaiter().GetResult();
+            Assert.True(built.Succeeded, $"{app} did not build: {built.Output}{built.Error}");
+        }
+        File.AppendAllText(Path.Combine(folder, "compose.yaml"), "  quiet:\n    build: { context: ., dockerfile: Api/Dockerfile }\n"
+            + "    environment: { DOTNET_EnableDiagnostics: \"0\" }\n");
         MainWindow window = ContainerRunsTests.Open(folder);
         RunConfiguration images = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with
         {
-            Name = "Web as deployed",
+            Name = "Shop as deployed",
             Mode = ContainerMode.Images,
-            Services = ["web"],
             Generated = false,
         };
         window.SetConfigurations([images], images.Name);
-        window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InMain);
+        window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InRequest);
         try
         {
-            Debugged(window, "web's image to be built and debugged");
+            Debugged(window, "the images to be built and debugged");
+            Assert.Contains("api: " + ContainerTools.ReleaseBuild, window.Status, StringComparison.Ordinal);
+            Assert.Contains("quiet runs without the debugger: Its runtime was started with DOTNET_EnableDiagnostics=0", window.Status, StringComparison.Ordinal);
+            Assert.DoesNotContain(window.Debugger.Tabs, t => t.Name == "quiet");
+            Assert.Equal("running", ContainerRunsTests.States(project)["quiet"]);
             DebugTab web = Tab(window, "web");
-            StoppedAt(window, web, Source(folder, "Web"), InMain, "web, built with its image's paths, to stop through the path map");
-            Assert.Equal("\"Web\"", Evaluate(web.Session!, "app.Environment.ApplicationName"));
+            Task<string> answer = Get(ContainerRunsTests.Published(project, "web"));
+            StoppedAt(window, web, Source(folder, "Web"), InRequest, "web, built with its image's paths, to stop through the path map");
+            Assert.Equal("\"web 1\"", Evaluate(web.Session!, "Message.Text"));
+            Resume(window, web);
+            Assert.Equal("web 1", Ui.Await(answer, "web's answer", TimeSpan.FromMinutes(1)));
         }
         finally
         {
             window.Perform(AppActions.Stop);
             Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                "Stop to take web down", TimeSpan.FromMinutes(2));
+                "Stop to take the services down", TimeSpan.FromMinutes(2));
             window.Close();
         }
     }
