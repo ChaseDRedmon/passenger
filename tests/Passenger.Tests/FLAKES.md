@@ -10,9 +10,15 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-20
 
+- `TypeRenameTests`' form and partial class renames, the Mac, three times in four class runs once: "Form1.cs changed on
+  disk as the language server worked this out", the test writing those files about 2 s before the rename it asked for,
+  which refuses a file not open written within 2 s (`WorkspaceEdits.StaleAsync`). **Test waited wrong**, fixed in
+  8933a612 (the files are the project's from the start).
 - `TablesTests`' CSV Text, TSV copy and sheet choice, Ubuntu VM: "Sequence contains no matching element" for a segment,
-  or a click a row below its cell, the table read but its bar and grid not yet laid out when the wait returned. **Test
-  waited wrong**, fixed in f0fa876f (Open waits for both to be arranged).
+  or a click a row below its cell, the table read but its bar and grid not yet laid out when the wait returned: a small
+  file's read can end before its await, so `Ui.WaitFor` found it there at once and ran none of the window's jobs.
+  **Test waited wrong**, fixed in 00ba1dae (Open waited for both to be arranged), then for every test in e835e3e2 (every
+  wait ends with the window laid out and drawn, and Open no longer waits itself).
 
 ## 2026-10-19
 
