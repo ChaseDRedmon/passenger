@@ -161,16 +161,14 @@ public sealed class MenuTests : IDisposable
     [AvaloniaFact]
     public void The_main_menu_as_a_bar_shows_the_menus_the_toolbar_has_room_for_and_the_rest_behind_its_button()
     {
-        if (OperatingSystem.IsMacOS())
-        {
-            Assert.Skip("macOS shows the main menu in its own menu bar, so the toolbar has neither the button nor the bar");
-        }
+        // macOS shows the main menu in its own menu bar; here the window keeps it on the toolbar as Windows and Linux do.
+        MainWindow.SystemMenuBar = false;
         MainWindow window = new() { Width = 1800, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
         try
         {
+            window.Show();
+            window.OpenFolder(folder);
+            Ui.Settle();
             window.ApplySettings(window.Settings with { MainMenuBar = true });
             Ui.Settle();
             MainMenuPlace place = window.FindControl<MainMenuPlace>("MainMenuPlace")!;
@@ -231,9 +229,85 @@ public sealed class MenuTests : IDisposable
         }
         finally
         {
+            MainWindow.SystemMenuBar = OperatingSystem.IsMacOS();
             window.Close();
         }
     }
+
+    /// <summary>The bar takes the keys as a menu bar does: Alt tapped alone takes its first title, Left and Right move
+    /// among the titles and, with a menu open, open the next one's, Down opens a menu, the open menu's title shows pressed,
+    /// and Escape gives the keys back to the editor.</summary>
+    [AvaloniaFact]
+    public void The_main_menu_bar_takes_the_keys_as_a_menu_bar_does_and_gives_them_back_to_the_editor()
+    {
+        MainWindow.SystemMenuBar = false;
+        File.WriteAllText(Path.Combine(folder, "Notes.txt"), "notes\n");
+        MainWindow window = new() { Width = 1800, Height = 800 };
+        try
+        {
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile("Notes.txt");
+            window.ApplySettings(window.Settings with { MainMenuBar = true });
+            window.EditorArea.CodeEditor.Focus();
+            Ui.Settle();
+            MainMenuPlace place = window.FindControl<MainMenuPlace>("MainMenuPlace")!;
+            Button[] titles = [.. place.Children.OfType<Button>().Where(b => b.Tag is string)];
+
+            TapAlt(window);
+            Assert.True(Focused(window) == titles[0], $"Alt tapped alone gave the keys to {Focused(window)?.GetType().Name}, not the bar's File");
+            Ui.Press(window, "RIGHT");
+            Assert.True(Focused(window) == titles[1], "Right did not move from File to Edit");
+            Ui.Press(window, "LEFT");
+            Ui.Press(window, "LEFT");
+            Assert.True(Focused(window) == titles[^1], "Left from File did not go round to the last title, Help");
+            Ui.Press(window, "RIGHT");
+            Assert.True(Focused(window) == titles[0], "Right from Help did not go round to File");
+
+            // Down opens File's menu with its first item taking the keys, its title shown pressed while it is open.
+            Ui.Press(window, "DOWN");
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Open..."), "the File menu, opened by Down");
+            Assert.True(Focused(window) is MenuItem, $"The File menu opened by Down left the keys with {Focused(window)?.GetType().Name}");
+            Assert.True(titles[0].Classes.Contains("open"), "The open File menu's title does not show pressed");
+            // Right on an item with no submenu opens the next menu, Left the one before.
+            Ui.Press(window, "RIGHT");
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu, opened by Right from File's");
+            Assert.False(titles[0].Classes.Contains("open"), "File's title still shows pressed with Edit's menu open");
+            Assert.True(titles[1].Classes.Contains("open") && Focused(window) is MenuItem, "Edit's menu opened by Right is not shown pressed with the keys");
+            Ui.Press(window, "LEFT");
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Open..."), "the File menu again, opened by Left from Edit's");
+
+            // Escape closes it and gives the keys back to the editor, as Alt does from the bar.
+            Ui.Press(window, "ESCAPE");
+            Assert.False(MenuOpen(window), "Escape left the bar's menu open");
+            Assert.True(Focused(window) == window.EditorArea.CodeEditor, $"Escape gave the keys to {Focused(window)?.GetType().Name}, not back to the editor");
+            Assert.False(titles[0].Classes.Contains("open"), "File's title still shows pressed with its menu closed");
+            TapAlt(window);
+            TapAlt(window);
+            Assert.True(Focused(window) == window.EditorArea.CodeEditor, "Alt tapped again did not give the keys back to the editor");
+
+            // Alt held with another key is that key's shortcut, never the bar.
+            window.KeyPress(Key.LeftAlt, RawInputModifiers.Alt, PhysicalKey.AltLeft, null);
+            Ui.Press(window, "alt UP");
+            window.KeyRelease(Key.LeftAlt, RawInputModifiers.None, PhysicalKey.AltLeft, null);
+            Ui.Settle();
+            Assert.False(Focused(window) is Button, "Alt released after another key gave the keys to the bar");
+        }
+        finally
+        {
+            MainWindow.SystemMenuBar = OperatingSystem.IsMacOS();
+            window.Close();
+        }
+    }
+
+    private static void TapAlt(MainWindow window)
+    {
+        window.KeyPress(Key.LeftAlt, RawInputModifiers.Alt, PhysicalKey.AltLeft, null);
+        window.KeyRelease(Key.LeftAlt, RawInputModifiers.None, PhysicalKey.AltLeft, null);
+        Ui.Settle();
+    }
+
+    private static object? Focused(MainWindow window) => window.FocusManager?.GetFocusedElement();
 
     /// <summary>The pointer moved over a control, from beside it, as a person's moves.</summary>
     private static void Hover(MainWindow window, Control target)

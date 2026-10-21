@@ -569,6 +569,10 @@
     <Style Selector="Border.titleBar Button.tool:pressed /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Pressed}" />
     </Style>
+    <!-- The main menu bar's title whose menu is open, held pressed under the pointer or not. -->
+    <Style Selector="Border.titleBar Button.menuBarItem.open /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Pressed}" />
+    </Style>
     <Style Selector="Border.titleBar Button.windowButton Path">
         <Setter Property="Stroke" Value="{DynamicResource Passenger.TitleBar.Icon}" />
     </Style>

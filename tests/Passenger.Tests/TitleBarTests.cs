@@ -67,20 +67,28 @@ public sealed class TitleBarTests : IDisposable
     [AvaloniaFact]
     public void The_main_menus_titles_on_the_bar_keep_their_clicks_and_the_space_beside_them_still_moves_the_window()
     {
-        Assert.SkipWhen(OperatingSystem.IsMacOS(), "macOS shows the main menu in its own menu bar, never on the toolbar");
-        MainWindow window = Open();
-        Assert.SkipUnless(window.TitleBarMerged, $"This desktop keeps the system's title bar: {TitleBars.NotOnThisDesktop}");
-        window.ApplySettings(window.Settings with { MainMenuBar = true });
-        Ui.Settle();
-        Button[] titles = [.. Find<Control>(window, "MainMenuPlace").GetVisualChildren().OfType<Button>().Where(b => b.Tag is string && b.IsHitTestVisible)];
-        Assert.True(titles.Length > 3, $"The bar shows {titles.Length} of the main menu's titles at 1200 wide");
-        foreach (Button title in titles)
+        // macOS shows the main menu in its own menu bar; here the window keeps it on the toolbar as Windows and Linux do.
+        MainWindow.SystemMenuBar = false;
+        try
         {
-            Assert.True(ChromeAt(window, Centre(window, title)) == WindowDecorationsElementRole.User,
-                $"Windows would take a press on the bar's {title.Content} as one on its caption, moving the window instead of opening the menu");
+            MainWindow window = Open();
+            Assert.SkipUnless(window.TitleBarMerged, $"This desktop keeps the system's title bar: {TitleBars.NotOnThisDesktop}");
+            window.ApplySettings(window.Settings with { MainMenuBar = true });
+            Ui.Settle();
+            Button[] titles = [.. Find<Control>(window, "MainMenuPlace").GetVisualChildren().OfType<Button>().Where(b => b.Tag is string && b.IsHitTestVisible)];
+            Assert.True(titles.Length > 3, $"The bar shows {titles.Length} of the main menu's titles at 1200 wide");
+            foreach (Button title in titles)
+            {
+                Assert.True(ChromeAt(window, Centre(window, title)) == WindowDecorationsElementRole.User,
+                    $"Windows would take a press on the bar's {title.Content} as one on its caption, moving the window instead of opening the menu");
+            }
+            Assert.Equal(OperatingSystem.IsWindows() ? WindowDecorationsElementRole.TitleBar : null, ChromeAt(window, EmptySpace(window)));
+            window.Close();
         }
-        Assert.Equal(OperatingSystem.IsWindows() ? WindowDecorationsElementRole.TitleBar : null, ChromeAt(window, EmptySpace(window)));
-        window.Close();
+        finally
+        {
+            MainWindow.SystemMenuBar = OperatingSystem.IsMacOS();
+        }
     }
 
     [AvaloniaFact]
