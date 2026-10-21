@@ -121,8 +121,8 @@ public sealed class MenuTests : IDisposable
         window.SetConfigurations([new RunConfiguration { Name = "First" }, new RunConfiguration { Name = "Second" }], "First");
         Ui.Settle();
 
-        // The main menu's button is there where the system has no menu bar of its own (not on macOS).
-        string[] widgets = window.FindControl<Button>("MenuButton")!.IsVisible
+        // The main menu's button is there where the system has no menu bar of its own (not on macOS, where its place is hidden).
+        string[] widgets = window.FindControl<Button>("MenuButton")!.IsEffectivelyVisible
             ? ["MenuButton", "ProjectButton", "BranchButton", "RunConfigButton"]
             : ["ProjectButton", "BranchButton", "RunConfigButton"];
         foreach (string widget in widgets)
@@ -198,6 +198,14 @@ public sealed class MenuTests : IDisposable
             Ui.WaitFor(() => OpenMenuTitles(window).Contains("Open..."), "the File menu again, opened by the pointer moving back over its title");
             Ui.Press(window, "ESCAPE");
             Assert.False(MenuOpen(window), "Escape left the bar's File menu open: it never took the keys");
+            // A click on the open menu's title closes it, as a menu bar's does, rather than opening it again.
+            Click(window, titles[1]);
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu");
+            Click(window, titles[1]);
+            Assert.False(MenuOpen(window), "A click on the open Edit menu's title left it open");
+            Click(window, titles[1]);
+            Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu, opened again by the next click");
+            Ui.Press(window, "ESCAPE");
 
             // Narrower, the menus the toolbar has no room for go behind the button after the bar, which holds just those.
             window.Width = 1200;

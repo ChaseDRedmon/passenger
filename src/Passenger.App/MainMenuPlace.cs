@@ -27,7 +27,13 @@ public sealed class MainMenuPlace : Panel, IGivesWayFirst
     /// <summary>How many of the menus stand on the bar as last measured; the button holds those after them.</summary>
     public int MenusShown { get; private set; }
 
+    /// <summary>The title bar's empty space the menus go behind the button to keep, so the window can still be taken
+    /// hold of and moved (on Windows, its caption).</summary>
+    private const double CaptionRoom = 120;
+
     public double LeastWidth => Children.Count > 0 ? Children[0].DesiredSize.Width : 0;
+
+    public double LeavesFree => ShowsBar ? CaptionRoom : 0;
 
     private int Titles => ShowsBar ? Children.Count - 1 : 0;
 

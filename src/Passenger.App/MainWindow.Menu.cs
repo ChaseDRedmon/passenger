@@ -27,33 +27,57 @@ public partial class MainWindow
         MainMenuPlace.IsVisible = !OperatingSystem.IsMacOS();
     }
 
-    /// <summary>The main menu as a bar on the toolbar or behind its button, as Settings says; its titles made once.</summary>
+    /// <summary>The main menu as a bar on the toolbar or behind its button, as Settings says; its titles made once, each
+    /// menu built from the actions as it opens.</summary>
     private void FollowMainMenu(AppSettings next)
     {
         MainMenuPlace.ShowsBar = next.MainMenuBar && !OperatingSystem.IsMacOS();
         if (MainMenuPlace.ShowsBar && MainMenuPlace.Children.Count == 1)
         {
-            foreach (MenuEntry menu in MainMenu.Build(actions!.All))
+            foreach (string menu in MainMenu.Titles)
             {
-                Button title = new() { Content = menu.Title, Tag = menu, Classes = { "widget", "menuBarItem" } };
-                title.Click += (_, _) => OpenBarMenu(title, menu);
+                Button title = new() { Content = menu, Tag = menu, Classes = { "widget", "menuBarItem" } };
+                title.Click += (_, _) => OnBarTitleClicked(title);
                 MainMenuPlace.Children.Add(title);
             }
+            AddHandler(PointerPressedEvent, NoteBarPress, RoutingStrategies.Tunnel, handledEventsToo: true);
         }
     }
 
+    /// <summary>A title clicked opens its menu, or closes it when that menu was open as the press came: the press closed
+    /// it, passing through to the title, which would open it again.</summary>
+    private void OnBarTitleClicked(Button title)
+    {
+        if (barPressedOpen == title)
+        {
+            barPressedOpen = null;
+            return;
+        }
+        OpenBarMenu(title);
+    }
+
+    /// <summary>Which open menu's title a press came on, before the menu's light dismiss closes it.</summary>
+    private void NoteBarPress(object? sender, PointerPressedEventArgs e) =>
+        barPressedOpen = barMenu is { IsOpen: true } && BarTitleAt(this, e) is { } title && title == barMenuFrom ? title : null;
+
+    /// <summary>The bar's title shown under the pointer, an event of the window's or of a menu's own popup turned into the
+    /// window's place through the screen.</summary>
+    private Button? BarTitleAt(Visual root, PointerEventArgs e)
+    {
+        Point at = this.PointToClient(root.PointToScreen(e.GetPosition(root)));
+        return MainMenuPlace.Children.OfType<Button>().FirstOrDefault(t => t.Tag is string && t.IsHitTestVisible
+            && t.TranslatePoint(default, this) is { } corner && new Rect(corner, t.Bounds.Size).Contains(at));
+    }
+
     /// <summary>While one of the bar's menus is open, the pointer moving over another title opens that one, as a menu bar
-    /// does. The open menu holds the pointer, so its moves are followed from the menu's own popup as well as the window,
-    /// each turned into the window's place through the screen.</summary>
+    /// does. The open menu holds the pointer, so its moves are followed from the menu's own popup as well as the window.</summary>
     private void FollowBarPointer(object? sender, PointerEventArgs e)
     {
         if (barMenu is not { IsOpen: true } || sender is not Visual root)
         {
             return;
         }
-        Point at = this.PointToClient(root.PointToScreen(e.GetPosition(root)));
-        Button? over = MainMenuPlace.Children.OfType<Button>().FirstOrDefault(t => t.Tag is MenuEntry && t.IsHitTestVisible
-            && t.TranslatePoint(default, this) is { } corner && new Rect(corner, t.Bounds.Size).Contains(at));
+        Button? over = BarTitleAt(root, e);
         if (over is not null && over != barMenuFrom)
         {
             // Not inside the event of the popup the switch closes.
@@ -61,7 +85,7 @@ public partial class MainWindow
             {
                 if (barMenu is { IsOpen: true } && barMenuFrom != over)
                 {
-                    OpenBarMenu(over, (MenuEntry)over.Tag!);
+                    OpenBarMenu(over);
                 }
             });
         }
@@ -70,13 +94,15 @@ public partial class MainWindow
     private MenuFlyout? barMenu;
     private Button? barMenuFrom;
     private ActionContext? barMenuContext;
+    private Button? barPressedOpen;
 
-    /// <summary>One of the bar's menus opened under its title, built as it opens, in the context the first of them opened in
-    /// (the focus is the menu's once one is open).</summary>
-    private void OpenBarMenu(Button title, MenuEntry entry)
+    /// <summary>One of the bar's menus opened under its title, built from the actions as it opens, in the context the first
+    /// of them opened in (the focus is the menu's once one is open).</summary>
+    private void OpenBarMenu(Button title)
     {
         ActionContext context = barMenu is { IsOpen: true } && barMenuContext is { } kept ? kept : actions!.Context();
         barMenu?.Hide();
+        MenuEntry entry = MainMenu.Build(actions!.All).First(m => m.Title == (string)title.Tag!);
         MenuFlyout flyout = new() { Placement = PlacementMode.BottomEdgeAlignedLeft, OverlayDismissEventPassThrough = true };
         if (FlyoutEntry(entry, context) is MenuItem built)
         {

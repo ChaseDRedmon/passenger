@@ -23,13 +23,17 @@ public sealed class ShrinkingRow : Panel
             total += widths[i];
         }
         double excess = double.IsInfinity(availableSize.Width) ? 0 : total - availableSize.Width;
-        // A child that gives way first does so before any other gives a pixel, down to its least.
-        for (int i = Children.Count - 1; i >= 0 && excess > 0; i--)
+        // A child that gives way first does so before any other gives a pixel, down to its least, and before the row takes
+        // the room it leaves free beside the row.
+        double free = Children.OfType<IGivesWayFirst>().Sum(c => c.LeavesFree);
+        double before = double.IsInfinity(availableSize.Width) ? 0 : total - Math.Max(0, availableSize.Width - free);
+        for (int i = Children.Count - 1; i >= 0 && before > 0; i--)
         {
             if (Children[i] is IGivesWayFirst first)
             {
-                double give = Math.Min(excess, Math.Max(0, widths[i] - (first.LeastWidth + Children[i].Margin.Left + Children[i].Margin.Right)));
+                double give = Math.Min(before, Math.Max(0, widths[i] - (first.LeastWidth + Children[i].Margin.Left + Children[i].Margin.Right)));
                 widths[i] -= give;
+                before -= give;
                 excess -= give;
             }
         }
@@ -77,4 +81,8 @@ public interface IGivesWayFirst
 {
     /// <summary>The least it takes, known once it has been measured.</summary>
     double LeastWidth { get; }
+
+    /// <summary>The room beside the row it gives way to keep free while it has more to give (the title bar's caption,
+    /// which moves the window).</summary>
+    double LeavesFree { get; }
 }
