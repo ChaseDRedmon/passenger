@@ -139,13 +139,13 @@ public partial class MainWindow
 
     private void ShowSolutionProblems()
     {
-        IReadOnlyList<(string Path, Diagnostic Diagnostic)>? found = session.CSharp?.SolutionProblems;
+        IReadOnlyList<(string Path, Diagnostic Diagnostic, TextPosition At)>? found = session.CSharp?.SolutionProblems;
         Bottom.Problems.ShowSolution(found?.Select(p => new Problem(
             p.Diagnostic.Severity == 1 ? ProblemSeverity.Error : ProblemSeverity.Warning,
             p.Diagnostic.Message,
             p.Diagnostic.Code?.ValueKind == System.Text.Json.JsonValueKind.String ? p.Diagnostic.Code.Value.GetString() : p.Diagnostic.Code?.ToString(),
             p.Path,
-            new TextPosition(p.Diagnostic.Range.Start.Line, p.Diagnostic.Range.Start.Character),
+            p.At,
             ProjectNameOf(p.Path))).ToList());
         ShowAnalysis();
     }

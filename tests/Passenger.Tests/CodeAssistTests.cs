@@ -888,6 +888,37 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>Go to Symbol's rows say the line a symbol is on below breaks only the server counts as the editor numbers
+    /// it, an open file's as it stands and one not open as on disk, and an agent's refactoring names the lines it changed
+    /// the same way.</summary>
+    [AvaloniaFact]
+    public void Go_to_symbol_rows_and_a_refactorings_changed_lines_are_the_editors_below_line_breaks_only_roslyn_counts()
+    {
+        MainWindow window = project.Open("Separated.cs");
+        Ui.Run(window, AppActions.GoToSymbol);
+        SymbolPopup popup = Assert.IsType<SymbolPopup>(window.Popup);
+        window.KeyTextInput("Separated");
+        Ui.WaitFor(() => popup.IsSettled && popup.Rows.Any(r => r.Name == "SecondSeparated"), "the server's symbols for what was typed");
+        Assert.Equal("Separated.cs:7", popup.Rows.First(r => r.Name == "FirstSeparated").Where);
+        Assert.Equal("Separated.cs:12", popup.Rows.First(r => r.Name == "SecondSeparated").Where);
+        Ui.Press(window, "ESCAPE");
+        Ui.Run(window, AppActions.GoToSymbol);
+        popup = Assert.IsType<SymbolPopup>(window.Popup);
+        window.KeyTextInput("Value");
+        Ui.WaitFor(() => popup.IsSettled && popup.Rows.Any(r => r.Where?.StartsWith("Separators.cs", StringComparison.Ordinal) == true), "the closed file's Value");
+        Assert.Equal("Separators.cs:4", popup.Rows.First(r => r.Where?.StartsWith("Separators.cs", StringComparison.Ordinal) == true).Where);
+        Ui.Press(window, "ESCAPE");
+
+        // A parameter added to Separators.Value: its declaration on the editor's line 4, its call in Separated.cs on 14.
+        Passenger.App.Mcp.PassengerTools tools = new(window);
+        System.Text.Json.JsonElement options = System.Text.Json.JsonDocument.Parse("{\"parameters\": [{\"type\": \"int\", \"name\": \"extra\", \"callValue\": \"0\"}]}").RootElement;
+        Passenger.App.Mcp.RefactorAnswer changed = Await(tools.Refactor("change_signature", "Separators.cs", 4, 23, options: options), "the agent's Change Signature");
+        Assert.Equal(["Separated.cs changed on 14", "Separators.cs changed on 4"],
+            changed.Files.Select(f => $"{f.Path} {f.Change} on {string.Join(", ", f.Lines)}").Order(StringComparer.Ordinal));
+        Assert.Contains("public int Value() => Separators.Value(0);", File.ReadAllText(project.PathOf("Separated.cs")), StringComparison.Ordinal);
+        window.Close();
+    }
+
     /// <summary>The server counts a line at each break in Separators.cs's and Separated.cs's comments that the editor does
     /// not, so a place it names is read in the file's own text: a file not open as it is on disk.</summary>
     [AvaloniaFact]

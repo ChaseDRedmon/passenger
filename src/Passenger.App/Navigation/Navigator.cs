@@ -41,6 +41,10 @@ public sealed class Navigator
     /// <summary>Whether Recent Locations last showed only the places edited, which it opens on again, as Rider's does.</summary>
     private bool recentEditedOnly;
 
+    /// <summary>The lines of the files Go to Symbol's rows have named, read once while its popup is open, kept only where
+    /// the server's are not the editor's (<see cref="ServerPlaces.Differing"/>); any thread.</summary>
+    private System.Collections.Concurrent.ConcurrentDictionary<string, Lsp.ServerLines?> symbolFiles = new(StringComparer.Ordinal);
+
     public Navigator(NavigatorParts parts)
     {
         this.parts = parts;
@@ -272,6 +276,7 @@ public sealed class Navigator
         {
             return;
         }
+        symbolFiles = new(StringComparer.Ordinal);
         SymbolPopup popup = new(title, placeholder, search, SelectedWord());
         popup.Done += (_, row) =>
         {
@@ -308,7 +313,22 @@ public sealed class Navigator
             throw new Lsp.LanguageServerFailed(csharp is null ? "no C# language server runs for this folder" : $"the C# language server is not ready: {csharp.State}");
         }
         IReadOnlyList<Lsp.SymbolInformation> found = await server.SymbolsAsync(query.Trim(), cancel);
-        return [.. found.Take(200).Select(SymbolRowOf)];
+        // Each row's line as the editor counts its file's, the files read off the UI thread: an open one as it is now.
+        string? root = Session.Folder;
+        Dictionary<string, TextSnapshot> open = new(StringComparer.Ordinal);
+        foreach (OpenDocument document in Editors.Documents)
+        {
+            open.TryAdd(document.Path, document.Text.Snapshot);
+        }
+        System.Collections.Concurrent.ConcurrentDictionary<string, Lsp.ServerLines?> files = symbolFiles;
+        return await BackgroundWork.Run(() => (IReadOnlyList<SymbolRow>)[.. found.Take(200).Select(symbol =>
+        {
+            string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
+            Lsp.ServerLines? lines = open.TryGetValue(path, out TextSnapshot? text)
+                ? ServerPlaces.Differing(text)
+                : files.GetOrAdd(path, at => ServerPlaces.Differing(ServerPlaces.Read(at)));
+            return SymbolRowOf(symbol, path, root, ServerPlaces.PositionOf(lines, symbol.Location.Range.Start));
+        })], cancel);
     }
 
     /// <summary>Go to Everything: types first, then files, then members, as Rider orders them; the recent files
@@ -340,14 +360,13 @@ public sealed class Navigator
             new(Path.GetFileName(relative), null, Path.GetDirectoryName(relative), SymbolRow.FileKind, Path.Combine(root, relative), place ?? new TextPosition(0, 0));
     }
 
-    private SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)
+    /// <summary>A symbol's row, at <paramref name="at"/>: where the server put it, as the editor counts its file's lines.</summary>
+    private static SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol, string path, string? root, TextPosition at)
     {
-        string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
-        string where = Session.Folder is { } root && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
-        Lsp.LspPosition start = symbol.Location.Range.Start;
-        return new SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character))
+        string where = root is not null && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+        return new SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{at.Line + 1}", symbol.Kind, path, at)
         {
-            ServerPosition = start,
+            ServerPosition = symbol.Location.Range.Start,
         };
     }
 

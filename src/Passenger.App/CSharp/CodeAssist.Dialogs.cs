@@ -242,6 +242,7 @@ public sealed partial class CodeAssist
                 return RefactorOutcome.Refused($"{name} was not applied: {stale}");
             }
             List<string> dropped = [];
+            IReadOnlyList<RefactoredFile> files = WorkspaceEdits.Files(edit, WorkspaceEdits.Answered(editors, asked));
             using (CommandHistory.Recording recording = editors.Commands.Record(name))
             {
                 foreach (FileChange change in made.Changes)
@@ -253,7 +254,7 @@ public sealed partial class CodeAssist
             FilesChanged?.Invoke(this, EventArgs.Empty);
             // Counted by file: a file made is its creation and its text, which the edit counts apart.
             string said = done(made.Changes.Count - dropped.Count) + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
-            return new RefactorOutcome(said, null, WorkspaceEdits.Files(edit), dropped);
+            return new RefactorOutcome(said, null, files, dropped);
         }
         catch (LanguageServerFailed failed)
         {

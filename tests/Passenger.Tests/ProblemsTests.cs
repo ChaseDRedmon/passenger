@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
@@ -202,6 +203,84 @@ public sealed class ProblemsTests : IDisposable
         Assert.Equal(new TextPosition(4 + Keys, 12), problems.FileProblems[0].Position);
         Assert.Equal(new TextPosition(4 + Keys + 2999, 12), problems.FileProblems[^1].Position);
         window.Close();
+    }
+
+    /// <summary>Roslyn's compiler ends a line at each break in Separated.cs's comment, as its language server does, where the
+    /// editor's lines end only at '\n': the problem below them is listed and gone to at the editor's line 4, not the
+    /// compiler's 8, from Problems' Build and Solution tabs, the Build window's link to the message, and an agent's look.</summary>
+    [AvaloniaFact]
+    public void A_problem_below_line_breaks_only_roslyn_counts_is_listed_and_gone_to_at_its_own_line()
+    {
+        Write("Separated.cs", $"class Separated\n{{\n    /* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\n    public int Below = \"none\";\n}}\n");
+        string separated = Passenger.Core.PathNames.Canonical(Path.Combine(folder, "Separated.cs"));
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("Program.cs");
+        Ui.Settle();
+        ProblemsView problems = window.BottomPanel.Problems;
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+
+        Ui.Run(window, AppActions.Build);
+        Ui.Settle();
+        Problem built = Assert.Single(problems.Problems, p => p.Path == separated);
+        Assert.True(built.Position == new TextPosition(3, 23), $"The build's problem is listed at {built.Where}, not Separated.cs:4:24");
+
+        // The compiler's message in the Build window names its line 8; its link goes to the editor's line 4.
+        OutputView console = window.BottomPanel.Build;
+        console.Flush();
+        string message = console.Document.Snapshot.ToString().Split('\n').First(l => l.Contains("Separated.cs(8,24): error CS0029", StringComparison.Ordinal));
+        ClickLink(window, console, message);
+        Assert.Equal(separated, window.EditorArea.Active?.Path);
+        Assert.True(editor.CaretPosition == new TextPosition(3, 23), $"The Build window's link went to {editor.CaretPosition.Line + 1}:{editor.CaretPosition.Column + 1}, not 4:24");
+
+        // The row in Problems' Build tab goes there too.
+        window.OpenFile("Program.cs");
+        window.Perform(AppActions.ShowProblems);
+        problems.Shown = ProblemsTab.Build;
+        Ui.Settle();
+        Choose(problems, separated);
+        Assert.Equal(separated, window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(3, 23), editor.CaretPosition);
+
+        // Solution-wide analysis reads the file as the server does, and so does an agent.
+        window.OpenFile("Program.cs");
+        window.Perform(AppActions.ToggleSolutionAnalysis);
+        Ui.WaitFor(() => problems.SolutionProblems?.Any(p => p.Path == separated) == true, "Separated.cs's error in the solution's problems");
+        Assert.Equal(new TextPosition(3, 23), problems.SolutionProblems!.First(p => p.Path == separated).Position);
+        problems.Shown = ProblemsTab.Solution;
+        Ui.Settle();
+        Choose(problems, separated);
+        Assert.Equal(new TextPosition(3, 23), editor.CaretPosition);
+        Passenger.App.Mcp.ProblemsInfo told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Problems(), "the problems an agent asks for");
+        Assert.Equal((4, 24), told.Build.Where(f => f.Path == "Separated.cs").Select(f => (f.Line, f.Column)).Single());
+        Assert.Equal((4, 24), told.Solution!.Where(f => f.Path == "Separated.cs").Select(f => (f.Line, f.Column)).Single());
+        window.Close();
+    }
+
+    /// <summary>A problem's row chosen in the tab shown and gone to from its menu, as a person goes to it.</summary>
+    private static void Choose(ProblemsView problems, string path)
+    {
+        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
+        rows.SelectedItem = problems.Rows.First(r => r.Problem?.Path == path);
+        Ui.ChooseFromMenu(rows, "Go to");
+    }
+
+    /// <summary>A click on a console line's link to a file, at its first character, as a person clicks it.</summary>
+    private static void ClickLink(MainWindow window, OutputView console, string line)
+    {
+        Passenger.Editor.CodeEditor editor = console.Editor;
+        Passenger.App.ToolWindows.FoundLink link = console.Links.In(line).Single(l => l.Target is FileLink);
+        int offset = editor.Document.Snapshot.ToString().IndexOf(line, StringComparison.Ordinal) + link.Start;
+        editor.GoTo(editor.Document.Snapshot.GetPosition(offset));
+        Ui.Settle();
+        Point at = editor.TranslatePoint(editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2), window)!.Value;
+        window.MouseMove(at);
+        Ui.Settle();
+        Assert.True(editor.HoveredLink is { Target: FileLink }, $"The pointer rests on the message's place but nothing is underlined:\n{line}");
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
     }
 
     private void Write(string name, string text) => File.WriteAllText(Path.Combine(folder, name), text);

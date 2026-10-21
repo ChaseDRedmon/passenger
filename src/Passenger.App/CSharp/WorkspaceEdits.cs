@@ -19,6 +19,14 @@ public static class WorkspaceEdits
     /// <summary>Every open document followed from now, for a request about to be sent; disposed once its answer is applied.</summary>
     public static Asked Track(EditorArea editors) => new(editors.Documents.ToDictionary(d => d, d => new ChangeTracker(d.Text)));
 
+    /// <summary>Each file's text as a server's answer was made for it: an open file's as it was when the request was sent
+    /// (<paramref name="asked"/>), else as the editor or the disk has it now (<see cref="ServerPlaces.Texts"/>).</summary>
+    public static Func<string, TextSnapshot?> Answered(EditorArea editors, Asked? asked)
+    {
+        Func<string, TextSnapshot?> now = ServerPlaces.Texts(editors);
+        return path => asked?.Trackers.FirstOrDefault(t => t.Key.Path == path).Value?.Snapshot ?? now(path);
+    }
+
     /// <summary>How long after a file changes on disk the language server may still hold it as it was: it reads a file
     /// not open again only once its own watcher hears of the change.</summary>
     internal static readonly TimeSpan Catching = TimeSpan.FromSeconds(2);
@@ -324,8 +332,10 @@ public static class WorkspaceEdits
     }
 
     /// <summary>What an edit does to each file, as a refactoring's answer names them: made, moved or deleted, else changed,
-    /// with the lines (from one, of the text it was made for) its edits start on. A file made and then filled is one made.</summary>
-    public static IReadOnlyList<RefactoredFile> Files(JsonElement edit)
+    /// with the lines (from one) its edits start on, as the editor counts those of the text it was made for, which
+    /// <paramref name="texts"/> gives (<see cref="Answered"/>), so found before it is applied. A file made and then filled is
+    /// one made.</summary>
+    public static IReadOnlyList<RefactoredFile> Files(JsonElement edit, Func<string, TextSnapshot?> texts)
     {
         List<RefactoredFile> files = [];
         HashSet<string> made = new(StringComparer.Ordinal);
@@ -347,7 +357,8 @@ public static class WorkspaceEdits
             {
                 continue;
             }
-            IReadOnlyList<int> lines = [.. change.Edits.Select(e => e.Range.Start.Line + 1).Distinct().Order()];
+            TextSnapshot? text = texts(path);
+            IReadOnlyList<int> lines = [.. change.Edits.Select(e => ServerPlaces.PositionOf(text, e.Range.Start).Line + 1).Distinct().Order()];
             if (files.FindIndex(f => f.Path == path && f.Change == "changed") is int at and >= 0)
             {
                 files[at] = files[at] with { Lines = [.. files[at].Lines.Concat(lines).Distinct().Order()] };
@@ -384,7 +395,7 @@ public sealed record RefactorOutcome(string Said, string? Problem, IReadOnlyList
 }
 
 /// <summary>A file a refactoring changed: created, changed, moved (to <paramref name="To"/>) or deleted, with the lines its
-/// edits start on, from one, in the text as it was.</summary>
+/// edits start on, from one, as the editor counts the text as it was.</summary>
 public sealed record RefactoredFile(string Path, string Change, IReadOnlyList<int> Lines, string? To = null);
 
 /// <summary>A workspace edit that could not be made, and why: a file it renames onto is there already, one it renames

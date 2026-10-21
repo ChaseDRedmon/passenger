@@ -42,6 +42,20 @@ public static class ServerPlaces
     /// <summary>A server's position in a file as the editor's line and column there.</summary>
     public static TextPosition PositionOf(EditorArea editors, string path, LspPosition at) => PositionOf(TextOf(editors, path), at);
 
+    /// <summary>A text's lines as the server counts them where they are not the editor's, else null (as for a text that
+    /// could not be read): what a long list of places keeps of each file it read, since few hold such a break.</summary>
+    public static ServerLines? Differing(TextSnapshot? text) =>
+        text is not null && ServerLines.Of(text) is { } lines && lines.LineCount != text.LineCount ? lines : null;
+
+    /// <summary>A server's position as the editor's line and column through lines kept by <see cref="Differing"/>.</summary>
+    public static TextPosition PositionOf(ServerLines? lines, LspPosition at) =>
+        lines is null ? new TextPosition(at.Line, at.Character) : lines.Text.GetPosition(lines.OffsetOf(at));
+
+    /// <summary>Whether Roslyn's compilers read the file (C#, Visual Basic, Razor), so the lines a compiler's message or a
+    /// stack frame (its PDB's) names in it are counted as the server counts them, to be read through its text.</summary>
+    public static bool CountedByRoslyn(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".cs" or ".csx" or ".vb" or ".razor" or ".cshtml";
+
     /// <summary>Edits in a text's offsets as the server's, in its lines, for a workspace edit applied to that text.</summary>
     public static List<LspTextEdit> EditsOf(TextSnapshot text, IEnumerable<TextEdit> edits)
     {

@@ -9,7 +9,12 @@ namespace Passenger.App.ToolWindows;
 /// address in the person's browser.</summary>
 public abstract record LinkTarget;
 
-public sealed record FileLink(string Path, TextPosition Position) : LinkTarget;
+public sealed record FileLink(string Path, TextPosition Position) : LinkTarget
+{
+    /// <summary>Whether the line is a compiler's or a stack frame's in a file Roslyn compiles, which count its lines as the
+    /// language server does: read in the file's text as it is opened (<see cref="CSharp.ServerPlaces"/>).</summary>
+    public bool RoslynLines { get; init; }
+}
 
 public sealed record WebLink(Uri Address) : LinkTarget;
 
@@ -114,7 +119,8 @@ public sealed partial class ConsoleLinks : IHighlighter
         if (Frame().Match(line) is { Success: true } frame && Resolve(frame.Groups["path"].Value.Trim(), deterministic: true) is { } framed)
         {
             Group path = frame.Groups["path"];
-            Claim(found, new FoundLink(path.Index, frame.Index + frame.Length - path.Index, new FileLink(framed, Position(frame.Groups["line"], null))));
+            Claim(found, new FoundLink(path.Index, frame.Index + frame.Length - path.Index,
+                new FileLink(framed, Position(frame.Groups["line"], null)) { RoslynLines = CSharp.ServerPlaces.CountedByRoslyn(framed) }));
         }
         if (FilePaths)
         {
@@ -140,7 +146,8 @@ public sealed partial class ConsoleLinks : IHighlighter
         else if (Compiler().Match(line) is { Success: true } message && Resolve(message.Groups["path"].Value, project: ProjectOf(line)) is { } source)
         {
             Group path = message.Groups["path"];
-            Claim(found, new FoundLink(path.Index, message.Groups["close"].Index + 1 - path.Index, new FileLink(source, Position(message.Groups["line"], message.Groups["column"]))));
+            Claim(found, new FoundLink(path.Index, message.Groups["close"].Index + 1 - path.Index,
+                new FileLink(source, Position(message.Groups["line"], message.Groups["column"])) { RoslynLines = CSharp.ServerPlaces.CountedByRoslyn(source) }));
         }
         found.Sort((a, b) => a.Start.CompareTo(b.Start));
         FoundLink[] links = [.. found];

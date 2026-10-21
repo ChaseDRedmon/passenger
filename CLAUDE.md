@@ -250,6 +250,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   there (`ServerLines`, as Roslyn's own parse counts them, and `SourcePlace` with it), so every position crossing either
   way goes through `ServerLines` of the file's text, a place in another file through `App/CSharp/ServerPlaces` (the
   editor's text, else the disk's), never `new TextPosition(line, character)`; MCP's places are the editor's lines too.
+  Roslyn's compilers count a C#, Visual Basic or Razor file's lines the same way (`ServerPlaces.CountedByRoslyn`), so a
+  build's problems and console links to its messages and to stack frames are read through it as well.
   `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
   HTML in the HTML server (`LanguageServer.HtmlServer`) as `<uri>__virtual.html` and forwards Razor's HTML questions

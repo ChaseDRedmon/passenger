@@ -78,7 +78,14 @@ public partial class MainWindow
         switch (target)
         {
             case FileLink file:
-                NavigateTo(file.Path, file.Position);
+                if (file.RoslynLines)
+                {
+                    NavigateTo(file.Path, new Lsp.LspPosition(file.Position.Line, file.Position.Column));
+                }
+                else
+                {
+                    NavigateTo(file.Path, file.Position);
+                }
                 if (Editors.Active is { } active && PathNames.Same(active.Path, file.Path))
                 {
                     Editors.CodeEditor.Focus();

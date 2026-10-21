@@ -21,8 +21,8 @@ public sealed record SymbolRow(string Name, string? Detail, string? Where, int K
     /// Structure opens.</summary>
     public bool Spans(int line) => Position.Line <= line && line <= (EndLine ?? Position.Line);
 
-    /// <summary>Where the language server put it, in its lines, read in its file as it is gone to; its <see cref="Position"/>
-    /// is then the server's line, which the row shows without reading every file listed.</summary>
+    /// <summary>Where the language server put it, in its lines, read again in its file as it is gone to, which may have
+    /// changed since the row's <see cref="Position"/> was read from it.</summary>
     public Passenger.Lsp.LspPosition? ServerPosition { get; init; }
 
     /// <summary>A file, not a symbol: shown with its file icon (Go to Everything's files).</summary>

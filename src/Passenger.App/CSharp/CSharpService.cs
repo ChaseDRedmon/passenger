@@ -120,7 +120,9 @@ public sealed class CSharpService : IAsyncDisposable
         ["dotnet_compiler_diagnostics_scope"] = "fullSolution",
     };
 
-    private readonly Dictionary<(string? Source, string Uri), (string? ResultId, IReadOnlyList<Diagnostic> Items)> solutionReports = [];
+    /// <summary>Each file's last report by source, with the file's lines as the server counts them where they are not the
+    /// editor's (<see cref="ServerPlaces.Differing"/>), read as the report came.</summary>
+    private readonly Dictionary<(string? Source, string Uri), (string? ResultId, IReadOnlyList<Diagnostic> Items, ServerLines? Lines)> solutionReports = [];
     private CancellationTokenSource? analysing;
     private bool solutionWide;
 
@@ -190,8 +192,9 @@ public sealed class CSharpService : IAsyncDisposable
         ["tab_width"] = indent.TabWidth.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 
-    /// <summary>Every error and warning the solution-wide analysis has found, by file; null with it off.</summary>
-    public IReadOnlyList<(string Path, Diagnostic Diagnostic)>? SolutionProblems
+    /// <summary>Every error and warning the solution-wide analysis has found, by file, each where it starts as the editor
+    /// counts the file's lines; null with it off.</summary>
+    public IReadOnlyList<(string Path, Diagnostic Diagnostic, TextPosition At)>? SolutionProblems
     {
         get
         {
@@ -199,21 +202,21 @@ public sealed class CSharpService : IAsyncDisposable
             {
                 return null;
             }
-            Dictionary<string, IReadOnlyList<Diagnostic>> byPath = [];
-            foreach (((string? _, string uri), (string? _, IReadOnlyList<Diagnostic> items)) in solutionReports)
+            Dictionary<string, (IReadOnlyList<Diagnostic> Items, ServerLines? Lines)> byPath = [];
+            foreach (((string? _, string uri), (string? _, IReadOnlyList<Diagnostic> items, ServerLines? lines)) in solutionReports)
             {
                 string path = DocumentUris.ToPath(uri);
-                byPath[path] = byPath.TryGetValue(path, out IReadOnlyList<Diagnostic>? before) ? [.. before, .. items] : items;
+                byPath[path] = byPath.TryGetValue(path, out (IReadOnlyList<Diagnostic> Items, ServerLines? Lines) before) ? ([.. before.Items, .. items], lines ?? before.Lines) : (items, lines);
             }
             // An open file's problems are its own pull's, which the workspace's leave out and which follow typing.
             foreach ((OpenDocument open, CSharpDocument features) in documents)
             {
-                byPath[open.Path] = features.Diagnostics;
+                byPath[open.Path] = (features.Diagnostics, ServerLines.Of(open.Text.Snapshot));
             }
-            return [.. byPath.SelectMany(p => p.Value
+            return [.. byPath.SelectMany(p => p.Value.Items
                 .Where(d => d.Severity is 1 or 2)
                 .DistinctBy(d => (d.Range, d.Message))
-                .Select(d => (p.Key, d)))];
+                .Select(d => (p.Key, d, ServerPlaces.PositionOf(p.Value.Lines, d.Range.Start))))];
         }
     }
 
@@ -279,9 +282,19 @@ public sealed class CSharpService : IAsyncDisposable
                     return;
                 }
                 List<WorkspaceDocumentDiagnosticReport> changed = [.. reports.Where(r => r.Kind != "unchanged")];
+                // The files with problems read off the UI thread, as the server read them: a file not open is the disk's.
+                Dictionary<string, ServerLines?> lines = await BackgroundWork.Run(() => changed
+                    .Where(r => r.Items?.Any(d => d.Severity is 1 or 2) == true)
+                    .Select(r => r.Uri)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToDictionary(u => u, u => ServerPlaces.Differing(ServerPlaces.Read(DocumentUris.ToPath(u))), StringComparer.Ordinal), cancel);
+                if (cancel.IsCancellationRequested)
+                {
+                    return;
+                }
                 foreach (WorkspaceDocumentDiagnosticReport report in changed)
                 {
-                    solutionReports[(source, report.Uri)] = (report.ResultId, report.Items ?? []);
+                    solutionReports[(source, report.Uri)] = (report.ResultId, report.Items ?? [], lines.GetValueOrDefault(report.Uri));
                 }
                 if (changed.Count > 0 || first)
                 {

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
 using Passenger.App.Editors;
@@ -49,6 +50,10 @@ public sealed class BuildRunController
     /// <summary>The problem the build's last line began, kept from Problems until a line that doesn't go on with its
     /// message, so a message of several lines is one problem, listed once however often MSBuild repeats it.</summary>
     private Problem? reading;
+
+    /// <summary>The texts of the files the build's problems are in, each read once a build: a compiler's line in a file
+    /// Roslyn compiles is read there as the editor counts it (<see cref="ServerPlaces"/>).</summary>
+    private Func<string, TextSnapshot?>? builtTexts;
 
     private BuildKind buildKind;
     private IReadOnlyList<string>? lastProjects;
@@ -187,6 +192,7 @@ public sealed class BuildRunController
         parts.Editors.SaveAll();
         session.Problems.Clear();
         reading = null;
+        builtTexts = null;
         builtLines.Clear();
         parts.Views.Build.Clear();
         parts.Views.Build.SetRunning(true);
@@ -253,15 +259,21 @@ public sealed class BuildRunController
         }
     }, stop);
 
-    /// <summary>Puts the problem being read in Problems, unless it is there already.</summary>
+    /// <summary>Puts the problem being read in Problems at its line as the editor counts it, unless it is there already.</summary>
     private void ReadProblem()
     {
-        if (reading is { } problem && !session.Problems.Contains(problem))
+        if (reading is { } read && Placed(read) is var problem && !session.Problems.Contains(problem))
         {
             session.Problems.Add(problem);
         }
         reading = null;
     }
+
+    /// <summary>A problem's place as the editor counts its file's lines: Roslyn's compilers end a line at a lone '\r',
+    /// U+0085, U+2028 and U+2029, as its language server does.</summary>
+    private Problem Placed(Problem problem) => problem.Path is { } path && ServerPlaces.CountedByRoslyn(path)
+        ? problem with { Position = ServerPlaces.PositionOf((builtTexts ??= ServerPlaces.Texts(parts.Editors))(path), new Lsp.LspPosition(problem.Position.Line, problem.Position.Column)) }
+        : problem;
 
     private void OnBuilt(int code)
     {
@@ -299,6 +311,7 @@ public sealed class BuildRunController
         building = null;
         buildWork?.Dispose();
         buildWork = null;
+        builtTexts = null;
         session.DesignTimeBuilds.Release();
         parts.Views.Build.SetRunning(false);
         ShowProblems();

@@ -1879,6 +1879,7 @@ public sealed partial class CodeAssist
     private RefactorOutcome ApplyEdit(System.Text.Json.JsonElement edit, Asked? asked, string what)
     {
         List<string> dropped = [];
+        IReadOnlyList<RefactoredFile> files = WorkspaceEdits.Files(edit, WorkspaceEdits.Answered(editors, asked));
         try
         {
             WorkspaceEdits.ApplyAsCommand(editors, edit, what, asked, dropped);
@@ -1887,7 +1888,7 @@ public sealed partial class CodeAssist
         {
             return RefactorOutcome.Refused($"{what} was not applied: {failed.Message}");
         }
-        return new RefactorOutcome(string.Empty, null, WorkspaceEdits.Files(edit), dropped);
+        return new RefactorOutcome(string.Empty, null, files, dropped);
     }
 
     /// <summary>Edits answered for a document's text as it was asked about, applied to that document as it is now (through
