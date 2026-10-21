@@ -52,6 +52,11 @@ public sealed class TextDocument
     /// changed on the UI thread alone.</summary>
     public event EventHandler<DocumentChangedEventArgs>? Changed;
 
+    /// <summary>Raised for each change before <see cref="Changed"/>, for what keeps a view of the text in step with it (an
+    /// editor's soft wraps), so a handler of Changed that asks the view where a line is drawn finds it carried through the
+    /// change rather than made again for the whole text.</summary>
+    public event EventHandler<DocumentChangedEventArgs>? ChangedFirst;
+
     public TextSnapshot Snapshot { get; private set; }
 
     /// <summary>Counts every change, undo and redo included; the language server's document version.</summary>
@@ -269,7 +274,9 @@ public sealed class TextDocument
     {
         Snapshot = after;
         Version++;
-        Changed?.Invoke(this, new DocumentChangedEventArgs(before, after, SortedEdits.Of(edits), Version, reason));
+        DocumentChangedEventArgs change = new(before, after, SortedEdits.Of(edits), Version, reason);
+        ChangedFirst?.Invoke(this, change);
+        Changed?.Invoke(this, change);
     }
 
     private sealed class UndoEntry(EditKind kind, SelectionSet selectionsBefore, SelectionSet selectionsAfter, long time, List<Step> steps)

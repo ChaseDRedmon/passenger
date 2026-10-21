@@ -461,6 +461,60 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.True(soft <= (3 * plain) + 1, $"A key took {soft:F2} ms soft-wrapped, against {plain:F2} ms with soft wrap off.");
     }
 
+    /// <summary>An open C# file has folds, which the file carries through each key before the editor hears of the key: with
+    /// soft wrap on, a key in a file of 2,000 members, a wrapped comment over each, wraps the line it changed and no more, as
+    /// in a file of 20, and allocates on the UI thread, beyond what a key there does, under a quarter of what wrapping the
+    /// file's lines takes; the rows asked for as the folds moved wrapped the whole file again, and the editor once more.</summary>
+    [AvaloniaFact]
+    public void A_key_in_an_open_soft_wrapped_file_with_folds_wraps_only_its_line_however_long_the_file()
+    {
+        (long smallWrapped, long smallBytes, _) = SoftWrappedKeys("Few.cs", 20);
+        (long largeWrapped, long largeBytes, long wrapAll) = SoftWrappedKeys("Many.cs", 2000);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"A key wrapped {smallWrapped} characters in 20 members and {largeWrapped} in 2,000, allocating {smallBytes / 1024:N0} KB and {largeBytes / 1024:N0} KB on the UI thread; wrapping the larger file's lines allocates {wrapAll / 1024:N0} KB.");
+        Assert.True(largeWrapped <= smallWrapped, $"A key in 2,000 members wrapped {largeWrapped} characters, more than the {smallWrapped} it wraps in 20: it wrapped the file again");
+        Assert.True(largeBytes - smallBytes < wrapAll / 4,
+            $"A key in 2,000 members allocated {largeBytes / 1024:N0} KB on the UI thread, {(largeBytes - smallBytes) / 1024:N0} KB more than in 20, a quarter or more of the {wrapAll / 1024:N0} KB wrapping the file's lines takes");
+    }
+
+    /// <summary>What a key typed at the top of an open C# file of members, each under a comment that wraps, costs with soft
+    /// wrap on: the characters it wrapped and the bytes it allocated on the UI thread, its parse landing included, each key's
+    /// average; and the bytes turning soft wrap on allocated, which wraps every line.</summary>
+    private (long Wrapped, long Bytes, long WrapAll) SoftWrappedKeys(string name, int members)
+    {
+        StringBuilder text = new("class Many\n{\n    int Typed()\n    {\n        int value = 1;\n        return value;\n    }\n\n");
+        for (int i = 0; i < members; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    // {Words}\n    int Member{i}()\n    {{\n        return {i};\n    }}\n\n");
+        }
+        text.Append("}\n");
+        string source = text.ToString();
+        MainWindow window = Open(name, source);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.FoldsFound && document.FoldRegions.Count > members, "the file's regions");
+        editor.Selections = SelectionSet.Single(source.IndexOf("= 1;", StringComparison.Ordinal) + 2);
+        editor.Focus();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Ui.Run(window, AppActions.SoftWrap);
+        long wrapAll = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(document.SoftWrap && editor.RowsShown > source.Count(c => c == '\n') + members, "Soft wrap did not wrap the comments.");
+        const int Keys = 10;
+        long wrapped = editor.CharactersWrapped;
+        long bytes = 0;
+        for (int i = 0; i < Keys; i++)
+        {
+            before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("1");
+            Ui.Settle();
+            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        wrapped = editor.CharactersWrapped - wrapped;
+        Assert.Contains("int value = 11111111111;", document.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+        return (wrapped / Keys, bytes / Keys, wrapAll);
+    }
+
     /// <summary>Keys typing, deleting and moving through rows, which leave the text as it was: six edits of the caret's line
     /// and six moves.</summary>
     private static readonly string[] Timed = ["x", "y", "LEFT", "RIGHT", "DOWN", "UP", "BACK_SPACE", "BACK_SPACE", "meta RIGHT", "meta LEFT", "z", "BACK_SPACE"];

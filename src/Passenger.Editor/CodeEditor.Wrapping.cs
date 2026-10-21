@@ -366,8 +366,10 @@ public sealed partial class CodeEditor
         }
     }
 
-    /// <summary>The wraps carried through an edit: a line it did not touch keeps its rows, the ones it did are wrapped again.</summary>
-    private void FollowWraps(DocumentChangedEventArgs change)
+    /// <summary>The wraps carried through an edit: a line it did not touch keeps its rows, the ones it did are wrapped again.
+    /// Ahead of everyone who hears of the edit (<see cref="TextDocument.ChangedFirst"/>), since the host moving its folds
+    /// through it asks for the rows, and what follows it asks where the carets are drawn.</summary>
+    private void FollowWraps(object? sender, DocumentChangedEventArgs change)
     {
         if (wraps is not { } map || !ReferenceEquals(map.Text, change.Before))
         {

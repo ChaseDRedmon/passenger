@@ -81,6 +81,7 @@ public sealed partial class CodeEditor : Control
             caretOn = !caretOn;
             InvalidateVisual();
         });
+        document.ChangedFirst += FollowWraps;
         document.Changed += OnDocumentChanged;
         caretsText = document.Snapshot;
         ActualThemeVariantChanged += (_, _) => RefreshStyle();
@@ -395,8 +396,10 @@ public sealed partial class CodeEditor : Control
         get => document;
         set
         {
+            document.ChangedFirst -= FollowWraps;
             document.Changed -= OnDocumentChanged;
             document = value;
+            document.ChangedFirst += FollowWraps;
             document.Changed += OnDocumentChanged;
             // A template's places, a composition, a GoTo waiting for layout and the folds are offsets in the text left behind.
             snippet = null;
@@ -749,8 +752,6 @@ public sealed partial class CodeEditor : Control
 
     private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
-        // First, since what follows the change asks where its carets are drawn.
-        FollowWraps(e);
         FollowSnippet(e.Edits);
         // What was offered to choose among is the text left behind.
         CancelChoices();

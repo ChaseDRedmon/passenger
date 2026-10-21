@@ -135,7 +135,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`CSharpHighlighter`, from its syntax, never the server). Soft wrap (`CodeEditor.Wrapping.cs`) makes every line one or
   more rows: `Rows` maps lines to rows and back, so whatever turns an offset into a place, a click into an offset or a
   line into a height goes through a row's `RowSpan`, never a `LineSpan` alone; an edit wraps again only the lines it
-  touched.
+  touched, in the document's `ChangedFirst`, ahead of every `Changed` handler, so a host that asks for rows as it
+  carries its folds through the edit never has the whole file wrapped again.
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
