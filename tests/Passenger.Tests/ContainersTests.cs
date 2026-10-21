@@ -1,0 +1,360 @@
+using System.Globalization;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
+using Passenger.App;
+using Passenger.App.Containers;
+using Passenger.App.Run;
+using Passenger.App.ToolWindows;
+using Passenger.Core;
+
+namespace Passenger.Tests;
+
+/// <summary>The engine a test runs containers on: the person's docker, used only where its server runs Linux containers
+/// (Docker Desktop, Docker Engine, Colima, OrbStack), each object a test makes carrying the run's label, which the run's
+/// end removes (<see cref="RemoveEverything"/>). Tiny public images only: busybox.</summary>
+internal static class Docker
+{
+    /// <summary>The run's label: everything a test makes carries it, and the run's end removes whatever carries it.</summary>
+    public static readonly string RunLabel = $"net.passenger-ide.test-run={Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}";
+
+    public const string Image = "busybox:1.37";
+
+    private static readonly Lazy<string?> Unusable = new(() =>
+    {
+        if (ContainerEngine.Shared.Cli is null)
+        {
+            return "No docker command is installed here, so no container can run";
+        }
+        try
+        {
+            ChildResult info = Ask(["info", "--format", "{{.OSType}}"], TimeSpan.FromSeconds(30));
+            string os = info.Output.Trim();
+            return !info.Succeeded ? $"The container engine is not running here: {ContainerEngine.Said(info)}"
+                : os != "linux" ? $"The container engine here runs {os} containers, and these tests run Linux ones" : null;
+        }
+        catch (TimeoutException)
+        {
+            return "The container engine did not answer docker info within 30 s";
+        }
+    });
+
+    /// <summary>Runs docker to its end off the caller's thread, which may be the window's: its continuations never wait on it.</summary>
+    private static ChildResult Ask(string[] words, TimeSpan limit) => Task.Run(() => ContainerEngine.Shared.RunAsync(words, limit)).GetAwaiter().GetResult();
+
+    /// <summary>Why no container can run here (no CLI, no engine, Windows containers), or null when one can.</summary>
+    public static string? WhyNot => Unusable.Value;
+
+    /// <summary>Runs docker to its end, failing the test with what it said when it fails.</summary>
+    public static string Run(params string[] arguments)
+    {
+        ChildResult result = Ask(arguments, TimeSpan.FromMinutes(3).Scaled());
+        Assert.True(result.Succeeded, $"docker {string.Join(' ', arguments)} failed: {ContainerEngine.Said(result)}");
+        return result.Output.Trim();
+    }
+
+    /// <summary>A folder of the test's own holding a Compose file whose services and network carry the run's label, brought
+    /// up and waited for until healthy; its project's name is the test run's and the folder's.</summary>
+    public static (string Folder, string Project) ComposeUp(string name, string services)
+    {
+        string folder = TestFolders.Create($"ctr-{name}-");
+        string project = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}{name}";
+        string label = RunLabel.Replace("=", ": \"", StringComparison.Ordinal) + "\"";
+        File.WriteAllText(Path.Combine(folder, "compose.yaml"), $"name: {project}\nservices:\n{services.Replace("$LABEL", label, StringComparison.Ordinal)}\nnetworks:\n  default:\n    labels: {{ {label} }}\n");
+        Run("compose", "-f", Path.Combine(folder, "compose.yaml"), "up", "-d", "--wait");
+        return (PathNames.Canonical(folder), project);
+    }
+
+    /// <summary>A container of busybox running <paramref name="command"/>, named and labelled as the test's, with more labels.</summary>
+    public static string Container(string name, string command, params string[] labels)
+    {
+        string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}{name}";
+        List<string> words = ["run", "-d", "--name", named, "--label", RunLabel];
+        foreach (string label in labels)
+        {
+            words.AddRange(["--label", label]);
+        }
+        Run([.. words, Image, "sh", "-c", command]);
+        return named;
+    }
+
+    /// <summary>A container's state as docker inspect says it (running, exited, paused), or null when there is none.</summary>
+    public static string? State(string name)
+    {
+        ChildResult result = Ask(["inspect", "-f", "{{.State.Status}}", name], TimeSpan.FromSeconds(30).Scaled());
+        return result.Succeeded ? result.Output.Trim() : null;
+    }
+
+    /// <summary>Removes every container and network the run's tests made or had the IDE make (the run's state's label), as
+    /// the run ends; quiet where there is no engine.</summary>
+    public static void RemoveEverything()
+    {
+        // A run none of whose tests asked for an engine made nothing on one.
+        if (!Unusable.IsValueCreated || Unusable.Value is not null)
+        {
+            return;
+        }
+        try
+        {
+            foreach (string label in (string[])[RunLabel, $"{ContainerLabels.State}={ContainerLabels.StateValue}"])
+            {
+                ChildResult containers = Ask(["ps", "-aq", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                string[] ids = containers.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (ids.Length > 0)
+                {
+                    Ask(["rm", "-f", .. ids], TimeSpan.FromSeconds(60));
+                }
+                ChildResult networks = Ask(["network", "ls", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                string[] made = networks.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (made.Length > 0)
+                {
+                    Ask(["network", "rm", .. made], TimeSpan.FromSeconds(60));
+                }
+            }
+        }
+        catch (Exception failed) when (failed is TimeoutException or System.ComponentModel.Win32Exception or IOException)
+        {
+            Console.Error.WriteLine($"The tests' containers could not be removed: {failed.Message}");
+        }
+    }
+}
+
+/// <summary>The Containers window over a real engine, as a person uses it: a Compose project the test brought up listed with
+/// its services, ports and health, a container's log streaming with its links, its stats, its files opened read-only, a
+/// shell in the terminal, and Start, Stop, Restart and Remove acting; and with no CLI or no engine, the status bar and
+/// Problems saying so. Each skips, saying why, where no Linux engine runs.</summary>
+public sealed class ContainersTests
+{
+    /// <summary>A web server answering on a port the engine chooses, healthy once it answers, and a worker that ticks.</summary>
+    private const string Shop = """
+          web:
+            image: busybox:1.37
+            command: ["sh", "-c", "mkdir -p /www && echo hello > /www/index.html && echo 'web listening on http://localhost:8080/ at /app/Program.cs:line 12' && exec httpd -f -v -p 8080 -h /www"]
+            ports: ["8080"]
+            labels: { $LABEL }
+            healthcheck: { test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/"], interval: 1s, retries: 30 }
+          worker:
+            image: busybox:1.37
+            command: ["sh", "-c", "i=0; while true; do i=$$((i+1)); echo \"worker tick $$i\"; sleep 1; done"]
+            labels: { $LABEL }
+        """;
+
+    [AvaloniaFact]
+    public void The_window_lists_a_compose_project_the_test_brought_up_with_its_services_ports_and_health()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Docker.ComposeUp("list", Shop);
+        MainWindow window = Open(folder);
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Rows.Any(r => r.Kind == ContainerRowKind.Project && r.Label == project), $"{project} listed under Compose");
+
+        ContainerRow web = Service(view, project, "web");
+        Assert.Equal("healthy", web.Container!.Health);
+        Assert.True(web.Container.IsRunning, $"web is {web.Container.State}");
+        ContainerPort port = Assert.Single(web.Container.Ports);
+        Assert.Equal("8080", port.Inside);
+        Assert.Equal(Docker.Image, Service(view, project, "worker").Container!.Image);
+        // The port is a link the browser opens.
+        Button? link = null;
+        Ui.WaitFor(() => (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort" && Equals(b.Content, port.ToString()))) is not null,
+            "web's port link");
+        Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+        Assert.Contains(new Uri($"http://localhost:{port.HostPort}/"), window.Browsed);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_containers_log_streams_into_its_console_with_links_and_a_projects_log_merges_its_services()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Docker.ComposeUp("log", Shop);
+        MainWindow window = Open(folder);
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == "web"), "web's row");
+        OutputView console = view.Log.Console;
+        Ui.WaitFor(() => Text(console).Contains("web listening on http://localhost:8080/", StringComparison.Ordinal), "web's first line in its log");
+        string line = Text(console).Split('\n').First(l => l.Contains("web listening", StringComparison.Ordinal));
+        Assert.Contains(console.Links.In(line), l => l.Target is WebLink { Address.Port: 8080 });
+
+        // The project's log merges its services' lines, each service a toggle.
+        Assert.True(view.Choose(r => r.Kind == ContainerRowKind.Project && r.Label == project), "The project's row was not listed");
+        Ui.WaitFor(() => Text(console).Contains("worker tick", StringComparison.Ordinal) && Text(console).Contains("web listening", StringComparison.Ordinal),
+            "both services' lines in the project's log");
+        Assert.Equal(["web", "worker"], view.Log.ServiceToggles.Select(t => (string)t.Content!));
+        // Lines go on coming while it is shown.
+        int ticks = Ticks(console);
+        Ui.WaitFor(() => Ticks(console) > ticks, "the worker's next tick, streamed");
+        window.Close();
+
+        static int Ticks(OutputView console) => Text(console).Split('\n').Count(l => l.Contains("worker tick", StringComparison.Ordinal));
+    }
+
+    [AvaloniaFact]
+    public void Stop_start_restart_and_remove_act_on_the_chosen_container()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string name = Docker.Container("solo", "trap 'exit 0' TERM; while true; do sleep 1; done");
+        MainWindow window = Open(TestFolders.Create("ctr-solo-"));
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+
+        Assert.True(window.Perform(AppActions.ContainerStop), "Stop did not run");
+        Ui.WaitFor(() => Docker.State(name) == "exited" && Row(view, name)?.Container?.State == "exited", $"{name} stopped, and shown so");
+        Assert.True(window.Perform(AppActions.ContainerStart), "Start did not run");
+        Ui.WaitFor(() => Docker.State(name) == "running" && Row(view, name)?.Container?.IsRunning == true, $"{name} started again");
+        string started = Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name);
+        Assert.True(window.Perform(AppActions.ContainerRestart), "Restart did not run");
+        Ui.WaitFor(() => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name) != started, $"{name} restarted");
+        Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
+        Ui.WaitFor(() => Docker.State(name) is null && Row(view, name) is null, $"{name} removed, and gone from the window");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Stats_show_a_running_containers_numbers()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string name = Docker.Container("busy", "while true; do :; done");
+        MainWindow window = Open(TestFolders.Create("ctr-stats-"));
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+        view.ShowTab("Stats");
+        Ui.WaitFor(() => view.Stats.Latest.Count == 1 && view.Stats.Latest[0].Memory.Length > 0 && view.Stats.Latest[0].Cpu > 0, "the engine's numbers for the busy container");
+        ContainerStatsSample sample = view.Stats.Latest[0];
+        Assert.Equal(name, sample.Name);
+        Assert.Contains("/", sample.Memory, StringComparison.Ordinal);
+        // Hidden, nothing streams.
+        view.ShowTab("Log");
+        Ui.Settle();
+        Assert.Empty(view.Stats.Latest);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_containers_file_opens_read_only_from_its_files_tab()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string name = Docker.Container("files", "echo 'from inside' > /tmp/note.txt; sleep 600");
+        MainWindow window = Open(TestFolders.Create("ctr-files-"));
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+        view.ShowTab("Files");
+        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp" && f.IsFolder), "the container's root listed");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp"));
+        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp/note.txt"), "/tmp's files listed under it");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp/note.txt"));
+        Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith("note.txt", StringComparison.Ordinal) == true, "note.txt open in the editor");
+        Passenger.App.Workspace.OpenDocument note = window.EditorArea.Active!;
+        Assert.True(note.IsReadOnly, "A container's file opened editable");
+        Assert.Equal("from inside\n", note.Text.Snapshot.ToString());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Open_shell_runs_a_command_in_the_container_in_a_terminal_tab()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string name = Docker.Container("shell", "sleep 600");
+        MainWindow window = Open(TestFolders.Create("ctr-shell-"));
+        ContainersView view = Shown(window);
+        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+        Assert.True(window.Perform(AppActions.ContainerShell), "Open Shell did not run");
+        Ui.WaitFor(() => window.TerminalPanel.Tabs.Any(t => t.Name == $"{name} (shell)" && !t.HasEnded), "the shell's terminal tab");
+        Terminal.TerminalSession shell = window.TerminalPanel.Tabs.First(t => t.Name == $"{name} (shell)").Session;
+        Ui.WaitFor(() => Screen(shell).Contains('#', StringComparison.Ordinal), "the container's shell prompt");
+        shell.Write("echo inside-$((6*7)) $(hostname)\r");
+        Ui.WaitFor(() => Screen(shell).Contains("inside-42", StringComparison.Ordinal), "the command's answer in the shell");
+        shell.Write("exit\r");
+        Ui.WaitFor(() => window.TerminalPanel.Tabs.First(t => t.Name == $"{name} (shell)").HasEnded, "the shell to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_status_bar_and_problems_say_when_there_is_no_docker_or_its_engine_is_not_running()
+    {
+        // No CLI anywhere: what to install.
+        MainWindow none = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: null, search: false) };
+        none.Show();
+        none.OpenFolder(TestFolders.Create("ctr-none-"));
+        Ui.Settle();
+        ContainersView view = Shown(none);
+        Ui.WaitFor(() => view.HasRead, "the engine's state read");
+        Assert.Equal(EngineStatus.NoCli, view.State!.Status);
+        Assert.StartsWith("No docker command was found", none.Status, StringComparison.Ordinal);
+        Assert.Contains(none.BottomPanel.Problems.ContainerProblems, p => p.Message.StartsWith("No docker command was found", StringComparison.Ordinal));
+        Assert.Equal("see it in Problems, Containers", none.StatusPlace?.Name);
+        none.Close();
+
+        // A CLI whose engine does not answer: start it, a click starting Docker Desktop where it is installed (never clicked here).
+        string folder = TestFolders.Create("ctr-down-");
+        MainWindow down = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: StandInCli(folder)) };
+        down.Show();
+        down.OpenFolder(folder);
+        Ui.Settle();
+        ContainersView downView = Shown(down);
+        Ui.WaitFor(() => downView.HasRead, "the stand-in engine's state read");
+        Assert.Equal(EngineStatus.NotRunning, downView.State!.Status);
+        Assert.StartsWith("Docker isn't running (context stand-in)", down.Status, StringComparison.Ordinal);
+        Assert.Equal(EngineState.DesktopApp is null ? "see it in Problems, Containers" : "start Docker Desktop", down.StatusPlace?.Name);
+        Assert.Single(down.BottomPanel.Problems.ContainerProblems);
+        down.Close();
+    }
+
+    /// <summary>A docker that answers as a CLI does whose engine is not running: its client's version, then an error.</summary>
+    private static string StandInCli(string folder)
+    {
+        const string Client = """{"Client":{"Version":"29.0.0","Context":"stand-in"},"Server":null}""";
+        const string Error = "Cannot connect to the Docker daemon at unix:///nowhere/docker.sock. Is the docker daemon running?";
+        if (OperatingSystem.IsWindows())
+        {
+            string script = Path.Combine(folder, "docker.cmd");
+            File.WriteAllText(script, $"@echo off\r\nif \"%1\"==\"version\" (echo {Client.Replace("\"", "\"", StringComparison.Ordinal)}& echo {Error} 1>&2& exit /b 1)\r\nexit /b 1\r\n");
+            return script;
+        }
+        string sh = Path.Combine(folder, "docker");
+        File.WriteAllText(sh, $"#!/bin/sh\nif [ \"$1\" = version ]; then echo '{Client}'; echo '{Error}' >&2; exit 1; fi\nexit 1\n");
+        File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return sh;
+    }
+
+    private static MainWindow Open(string folder)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        return window;
+    }
+
+    private static ContainersView Shown(MainWindow window)
+    {
+        window.ShowToolWindow("containers");
+        Ui.Settle();
+        return window.ContainersWindow;
+    }
+
+    private static ContainerRow Service(ContainersView view, string project, string service)
+    {
+        ContainerRow? found = null;
+        Ui.WaitFor(() => (found = view.Rows.FirstOrDefault(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == service)) is { Container.Health: "healthy" or null }
+            || found?.Service == "worker", $"{project}'s {service} listed");
+        return found!;
+    }
+
+    private static ContainerRow? Row(ContainersView view, string name) =>
+        view.Rows.FirstOrDefault(r => r.Kind == ContainerRowKind.Container && r.Label == name);
+
+    private static string Text(OutputView console)
+    {
+        console.Flush();
+        return console.Document.Snapshot.ToString();
+    }
+
+    private static string Screen(Terminal.TerminalSession shell) => string.Join('\n', shell.Screen.Lines.Select(l => l.Text()));
+}

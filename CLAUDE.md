@@ -464,6 +464,26 @@ window or takes the focus; it shows everything but the system's own window chrom
   there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
   variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
   only to `EndpointsTests`' stand-in on loopback (its `localhost` name the other host).
+- `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
+  (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
+  `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
+  through `Programs` then Docker Desktop's, OrbStack's and Rancher Desktop's folders, every command through
+  ChildProcesses (`Command` to stream, `RunAsync`, `RunForAsync` to read for a while, `JsonAsync`/`JsonLinesAsync` for
+  `--format json`), its `StateAsync` (no CLI, not running, Windows containers, no Compose v2; the context's endpoint for
+  `DOCKER_HOST`) and `Follow` (`docker events --format json` while anyone follows). `ContainerSnapshot` reads what the
+  engine holds at once (Compose projects by `com.docker.compose.project`, stopped ones too, then containers, images,
+  volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
+  `container_action` share. `ContainersView` (`MainWindow.Containers.cs`) asks the engine only while shown, its lists
+  again as events say; a container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
+  consoles'), a project's merged one (a toggle a service), Stats (`docker stats`, streamed only while its tab shows) and
+  Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp …:path -` under the state's
+  `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON there). Open Shell is
+  `docker exec -it … sh` in a Terminal tab, an image with no shell said. The status bar and Problems' Containers tab say
+  the engine's problem, the link starting Docker Desktop where it is installed; a test run of a project referencing a
+  `Testcontainers*` package asks the engine first (`TestController.ContainerEngine`). `ContainerLabels` and
+  `FolderContainers` (`ProjectSession.Containers`) are what a folder starts and how it is ended (Rules). Its tests
+  (`ContainersTests`, `McpTests.Containers.cs`) skip saying why unless `docker info`'s OSType is linux, use busybox and
+  Compose files they write, and never prune or start or stop Docker Desktop.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -1062,7 +1082,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   start elsewhere. macOS's update runs nothing after Passenger: it swaps the app in as the process ends and starts the new
   one through LaunchServices (`open`, through ChildProcesses). A program a run configuration runs in the terminal is
   started by Porta.Pty and then `ChildProcesses.Adopt`ed: its process group goes on Lifeline's watchdog (macOS, Linux),
-  and Porta.Pty's job ends it on Windows.
+  and Porta.Pty's job ends it on Windows. Docker Desktop, which the status bar's link starts, is the person's: `open -a`
+  (through ChildProcesses) on macOS, `StartApart` on Windows.
+- **Containers are ended by label**, since no child holds one and Lifeline cannot end it: everything Passenger has an
+  engine make carries `ContainerLabels.Arguments` (`net.passenger-ide.state`, a hash of the state folder, and
+  `net.passenger-ide.process`, the process's id and start time, and the folder's), its folder's `ProjectSession.Containers`
+  removes what it started as the folder ends, the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the
+  process's own on macOS and Linux however it ends, and the next start (`ContainerLabels.RemoveLeftoversAsync`) removes
+  those of its state whose process is gone. Tests label what they make with the run's `Docker.RunLabel`, removed at its end.
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.

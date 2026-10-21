@@ -198,6 +198,8 @@ public sealed class TestRun : IDisposable
 
     private static void End()
     {
+        // No child holds a container: what the run's tests made, and what they had the IDE make, goes by its labels.
+        Docker.RemoveEverything();
         // The windows' agent sockets are in a folder named for the run's state, outside it.
         foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder])
         {

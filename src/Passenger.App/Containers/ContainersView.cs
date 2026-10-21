@@ -37,6 +37,11 @@ public sealed class ContainersView : DockPanel
     private readonly Debounce refreshing;
     private IDisposable? following;
     private bool shown;
+    private bool filling;
+
+    /// <summary>Events that change nothing the window lists: a command run in a container, an attach, a copy.</summary>
+    private static bool Quiet(string action) =>
+        action.StartsWith("exec_", StringComparison.Ordinal) || action is "attach" or "detach" or "resize" or "top" or "archive-path" or "extract-to-dir" or "export" or "copy";
     private int reads;
     private string shownTab = LogTab;
 
@@ -72,9 +77,15 @@ public sealed class ContainersView : DockPanel
         list = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<ContainerRow>((row, _) => Row(row), supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<ContainerRow>((row, _) => row is null ? new Panel() : Row(row), supportsRecycling: false),
         };
-        list.SelectionChanged += (_, _) => ShowChosen();
+        list.SelectionChanged += (_, _) =>
+        {
+            if (!filling)
+            {
+                ShowChosen();
+            }
+        };
         list.DoubleTapped += (_, _) => Toggle(Chosen);
         list.KeyDown += (_, e) =>
         {
@@ -180,7 +191,8 @@ public sealed class ContainersView : DockPanel
         shown = true;
         following ??= parts.Engine().Follow(told =>
         {
-            if (told.Type is "container" or "network" or "volume" or "image")
+            // What the window's own tabs do (exec for Files, attach and copy) changes nothing it lists, and would read again for ever.
+            if (told.Type is "container" or "network" or "volume" or "image" && !Quiet(told.Action))
             {
                 UiThread.Post(() =>
                 {
@@ -303,8 +315,17 @@ public sealed class ContainersView : DockPanel
                     new ContainerRow(kind, 1, $"{o.Kind}:{o.Id}", o.Name) { Detail = o.Detail, Object = o })));
             }
         }
-        list.ItemsSource = rows;
-        list.SelectedItem = chosen is null ? null : rows.FirstOrDefault(r => r.Key == chosen);
+        // The rows replaced choose nothing for a moment, which must not end the chosen row's streams.
+        filling = true;
+        try
+        {
+            list.ItemsSource = rows;
+            list.SelectedItem = chosen is null ? null : rows.FirstOrDefault(r => r.Key == chosen);
+        }
+        finally
+        {
+            filling = false;
+        }
         empty.IsVisible = rows.Count == 0;
         ShowChosen();
 

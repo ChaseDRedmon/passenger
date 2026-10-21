@@ -37,7 +37,7 @@ public sealed class ContainerFilesPane : DockPanel
         list = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<ContainerFile>((file, _) => Row(file), supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<ContainerFile>((file, _) => file is null ? new Panel() : Row(file), supportsRecycling: false),
         };
         list.DoubleTapped += (_, _) => _ = ActivateAsync(list.SelectedItem as ContainerFile);
         list.KeyDown += (_, e) =>

@@ -207,14 +207,16 @@ public sealed class ContainerEngine
         }
         foreach (string line in output.Split('\n'))
         {
+            // docker stats puts a terminal's codes around each line's object, even into a pipe.
             int at = line.IndexOf('{', StringComparison.Ordinal);
-            if (at < 0)
+            int end = line.LastIndexOf('}');
+            if (at < 0 || end < at)
             {
                 continue;
             }
             try
             {
-                using JsonDocument one = JsonDocument.Parse(line.AsMemory(at));
+                using JsonDocument one = JsonDocument.Parse(line.AsMemory(at, end - at + 1));
                 found.Add(one.RootElement.Clone());
             }
             catch (JsonException)
