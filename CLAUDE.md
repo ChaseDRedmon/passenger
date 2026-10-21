@@ -189,12 +189,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
   `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
-  file, projects read off the UI thread, told each build's AVLN problems, a project read again as a restore's
-  `project.assets.json` lands (the folder watcher passes over obj/ but reports that file apart, never to Local History,
-  the Explorer or Git), including one under `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder
-  holds and `XamlService.RestoredFor` maps to its project by name; `LibrarySources` decompiles a library's
-  type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
-  request needs the `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address).
+  file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
+  project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
+  by `ProjectInputs.Compiles`), a project read again, its builder and dialect made anew (one that takes Avalonia later
+  gets its help), as its project file changes or a restore's `project.assets.json` lands (the folder watcher passes over
+  obj/ but reports that file apart, never to Local History, the Explorer or Git), including one under
+  `artifacts/obj/<Project>/` (UseArtifactsOutput), which no project's folder holds and `XamlService.RestoredFor` maps to
+  its project by name; `LibrarySources` decompiles a library's type read-only, once per assembly version (`Entry`: a
+  folder named by a SHA-256 of the assembly's path, time and length, alike in every session; Source Link's too), pruned
+  at a process's first use as the debugger's symbol cache is (30 days unused, 256 MB, never one used in the last day);
+  `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose request needs the
+  `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address), each path, which the theme's own
+  includes give, made canonical and refused outside its version's folder (`LibrarySources.Inside`), each file written
+  whole through a temporary file and a rename (`LibrarySources.WriteWhole`).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
   ChildProcesses over Avalonia.Remote.Protocol, restarted by `BuildRunController.BuildFinished`; frames are bitmaps at
   96 DPI sized by the host's scale, and the host's viewport resize requests go unanswered (answering made it ask again
@@ -247,9 +254,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   on the project's own eslint (`ProjectPackages`: found from the file up, or Settings' Manual package); its fixes are
   commands whose edits come back as `workspace/applyEdit` (`ServerStart.ApplyEdit`, applied through `WorkspaceEdits`),
   and its markers go beside the server's (`WebDocument.ShowLint`). `WebLanguages.Prettier` runs the project's prettier
-  through `Web/prettier.cjs` (carried as `web/passenger/prettier.cjs`), one warm Node.js per folder over JSON lines.
+  through `Web/prettier.cjs` (carried as `web/passenger/prettier.cjs`), one warm Node.js per folder over JSON lines,
+  Prettier 2 or 3: a request's answer is the line of its id (any other line ends the runner), and what a plugin or
+  configuration prints goes to its standard error, the IDE's log.
   `CodeAssist.Linting.cs` is ESLint's context actions, Fix ESLint Problems, Reformat Code / Reformat with Prettier and
-  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only. A banner's link is
+  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only, then saving the files it was pressed
+  on (Save's, the one shown then) whatever came of them. A banner's link is
   `OpenDocument.NoticeAction` (Run 'npm install', through ChildProcesses).
 - `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
   `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one
@@ -330,12 +340,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`LaunchPlan.SandboxedState`, as IntelliJ's DevKit sandbox), unless its configuration sets `PASSENGER_SETTINGS`. A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
-  stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
+  stay (and an entry another window removed stays removed; a list its `Sets` names merges as what each side added and
+  took away), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
   (`StateFile.TakeUnsaid`). New state is a document there, never a file of
   its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
-  `roslyn/` (the server's own logs), `lsp.log`, `dap.log` and `vstest.log`. Settings | Diagnostics turns on protocol
+  `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol
   traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
   ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
@@ -351,9 +362,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   favourites are the folder's `gitBranches.json`. `MergeState` is what a merge, rebase, cherry-pick or
   revert stopped on and Rider's words for its sides (during a rebase yours is git's theirs); `ConflictsDialog` is
   Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge` (each stage read with
-  `git cat-file --filters` in the conflicted file's encoding, the result written with its encoding and breaks);
-  `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
-  agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
+  `git cat-file --filters` in the conflicted file's encoding, the result written with its encoding and breaks), only
+  for a file both sides have (`GitConflict.CanMerge`: one a side lacks is kept or deleted whole, so the Commit window's
+  Merge shows it chosen in the Conflicts dialog); `MainWindow.Conflicts.cs` wires them with Continue Rebase and the
+  aborts, and `vcs_status`/`vcs_resolve` give an agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions; the widget gives each local
   branch the branches panel's `Menu(branch)` as its submenu (`MenuChoice.Holding`), so nothing checks out until
   Checkout is chosen.
@@ -361,7 +373,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   NuGet.Configuration as restore does (feeds, credentials, packageSourceMapping); `FeedSet` searches All Feeds or one,
   over `V3Feed`, `V2Feed` and `FolderFeed` (what the tests use offline); each HTTP feed's requests go through
   `FeedClient`, with its own credentials or else `CredentialProviders` (NuGet's plugin protocol, through
-  ChildProcesses), never logged. `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
+  ChildProcesses), never logged, and only to the feed's own host: another its answers name that asks for them is
+  refused; an advisory's address from a feed is a link only when it is http or https (`Advisory.Link`, `Releases.Web`).
+  `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
@@ -523,9 +537,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   nuget.config or Directory.Packages.props saves that file first if it's open (`MainWindow.SaveBeforeWriting`, or
   SaveAll before `dotnet add package`) and then loads what it wrote (`FollowWritten`); a delete saves the open files
   under it first, and holds off design-time builds under it (`ProjectBuilds.HoldOff`). Every write of a workspace file
-  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on macOS its tags, ACL
-  and creation date (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
-  window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), Local History given the old bytes; projects,
+  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on Windows its
+  attributes, ACL and streams (ReplaceFile, `FileText.Over`), on macOS its tags, ACL and creation date
+  (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
+  window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), an open file whose folder another program moved
+  or deleted written back there only by the person's Save or Save All (`FolderGoneException`: no autosave makes that
+  folder again; the open files under a folder moved elsewhere follow it, `EditorArea.FollowMove`), Local History given
+  the old bytes; projects,
   solutions, nuget.config, .gitignore and merge results included, never `File.WriteAll*`. A server's edit to files not
   open goes through `WorkspaceEdits.StaleAsync` (refused if one was written within 2 s of the request or its text differs
   from the server's, the extension's `DocumentTexts`; an agent's call waits for the server instead, `Patience`). A project edit or a save waits out a reader that shares no
@@ -542,9 +560,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   front, and the one `OpenProject(path, ThisWindow | NewWindow)` that a start, Open, the recent solutions, the Welcome
   screen, the Window menu, the system's file activation (`App.OnActivated`) and `--mcp` go through; `NewWindow` makes a
   window as the one it is opened from. `MainWindow.Open` asks Rider's Open Solution (`OpenProjectDialog`) unless
-  Settings' Open project in answers. Quit keeps every window's solution for the next start; a window closed alone does
-  not. Discord's one presence (the front window's) and the one watch for updates live here. A window's state is its
-  own fields, and a static says why it belongs to the process.
+  Settings' Open project in answers; what follows an open (New Solution's build) is its `then`, told the window it opened
+  in once the session has begun there (`OpenFolder`'s `opened`), never when it was not opened. Quit keeps every
+  window's solution for the next start; a window closed alone does not. Discord's one presence (the front window's) and
+  the one watch for updates live here. A window's state is its own fields, and a static says why it belongs to the
+  process.
 - `src/Passenger.App/ProjectSession.cs`: one open folder's services, made together and ended together: the folder and
   its solution, the language server, index, watcher, Local History, state, recent files and places, run
   configurations, the build and run runners, terminal and profiled runs, tests, the debugger and breakpoints, Git and
@@ -568,7 +588,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action (`IdeAction.Words` are other names Find Action finds
   it by, as Rider's older names). `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
-  through the registry, so one that cannot run says why; editor actions go to the focused editor.
+  through the registry, so one that cannot run says why; editor actions go to the focused editor. An action that takes a
+  while holds a `Working` (`ActionWork.Begin`, under its id or `IdeAction.Works`) from its first moment until its work is
+  done or handed over, saying each stage (`Say`) and honouring `Stopping`: while it works the registry starts it no more
+  ("Already under way: …"), the status bar says the stage beside a `WorkingRing`, Stop can end it, and a button bound
+  with `ActionButtons.Bind` (every toolbar button, `WorkingActionsTests`) turns a ring round its icon. Run, Debug, Profile,
+  every build, test runs, Git's push, update, fetch and commit (`VcsController.Committing`), a NuGet change
+  (`NuGetView.Changing`), Attach to Process and Apply Hot Reload Changes do (#254); the begin is in the controller (the
+  session's are lent the window's `ActionWork` through `SessionSetup.Work`), so an agent's call shows too. Stop keeps its toolbar place,
+  greyed when nothing is under way: a button that comes and goes moves its neighbours from under the pointer.
   `Product` is what the build is (version, commit, runtime, the licence and notices beside it), the one place the
   version is read; `AboutDialog` is About (the application menu on macOS, Help elsewhere).
 - `src/Passenger.App/Welcome`: the Welcome screen (`WelcomeView`, in the editor area while nothing is open) and the
@@ -615,7 +643,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   console, and `profile` takes `attach`. The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
-  agent joins), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
+  agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
   folder, macOS's by `confstr` whatever TMPDIR an agent has, else XDG_RUNTIME_DIR or /tmp, named by a hash of the user and
   the state folder, mode 0700 and used only once its mode is the user's to set, so a socket's path stays within macOS's
   104 bytes whatever PASSENGER_SETTINGS is, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
@@ -623,16 +651,46 @@ window or takes the focus; it shows everything but the system's own window chrom
   its whole session, answering initialize and tools/list from `McpHost.ToolMethods` and joining, at a tool call, only a
   window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
   through the process's `PID.open` socket (`AppSocket`, `PassengerApp.OpenProject`), else starts Passenger (`open -a` on
-  the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Every call on a
+  the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Each mode ends on
+  SIGTERM as on the end of its input (`McpHost.EndOnSignal`, gone within `EndLimit` at the latest), since an agent's
+  client may send it a moment after closing the input (OpenCode 1's, 20 ms after), and `--mcp-attach` ends the test
+  run's headless window by closing its input, so it takes its socket away before the watchdog would kill it. Every call on a
   window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
   `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
-  else the person's answer to `AgentAdmissionDialog` within `MainWindow.AgentAnswerLimit`; turning the setting off, or
-  the window's folder taken off the list, ends the connections (`AgentSocket.ShutOut`). On a person's
-  window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`),
-  and `open` asks before it replaces their folder. Settings' MCP Server page (`SettingsDialog.Mcp.cs`) lists the
+  else the person's answer to `AgentAdmissionDialog`; turning the setting off, or
+  the window's folder taken off the list, ends the connections (`AgentSocket.ShutOut`). An agent is let in on a folder:
+  the window leaving it (`OpenFolder`, Close Solution) ends the connections of those let in on it (`AgentSocket.Moving`)
+  unless agents are let in unasked where it goes; the agent whose own `open` moves it stays, and those that stay are asked
+  again before each tool's first use there; `--mcp-attach` joins again by folder once its window has another folder open
+  than the one it joined it on (its own `open` aside). On a person's
+  window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`,
+  `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
+  away), and `open` asks before it replaces their folder. What runs code in a debugged program or changes it
+  (`debug_evaluate`, `debug_set_value`, `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
+  too) are `Destructive`; `save_all`, `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
+  the person is unbounded (#255): each question goes through `MainWindow.AskForAgentAsync`, which closes it unanswered
+  after `MainWindow.AgentAnswerLimit` (2 minutes), the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
+  the Dock icon on macOS, where Activate is refused while another app is in front) and has the status bar say who waits
+  on what (`AgentStatus`, "X waits for you: allow build?"). Every call is an `AgentCall` (`ConnectedTool`, `McpProxy`):
+  when its request gave a progress token it tells the agent MCP progress every `AgentCall.Every` (10 s;
+  `PASSENGER_MCP_PROGRESS_MS`, the tests' run 1 s) and at once as it starts waiting on the person, since OpenCode 1 gives
+  up on a call it hears nothing of for 60 s and OpenCode 2 waits 12 hours; what it says is what it waits on, else the
+  window's `ActionWork` stage it follows (`AgentCall.Follow`: build, run, debug_start, profile), else what the tool said
+  (`AgentCall.Say`, reached through an AsyncLocal the dispatcher flows), with the time so far. `--mcp-attach` sends the
+  window a progress token of its own and tells the agent the window's words under the agent's token and its own rising
+  counts, beating itself only until the window speaks. With protocol traces on, `mcp.log` has each call's start, waits
+  (with what they came to) and end with their times, names only (the proxy reads `traceProtocols` from settings.json);
+  passenger.log has each question and its answer always. In the MCP modes (`--mcp`, `--mcp-attach`, `--headless`)
+  `IdeLog.TakeConsole` writes Console.Out and Console.Error to passenger.log, and on macOS and Linux makes the
+  process's own standard error a pipe a thread reads into it, since an agent may never read stderr (OpenCode's never does)
+  and a full pipe stops its writer; Program.Main's fatal-flag message still goes to real stderr. Settings' MCP Server
+  page (`SettingsDialog.Mcp.cs`) lists the
   folders, each taken back by Remove, and each agent's setup (`AgentSetup`: Claude Code's and Codex's commands, a
-  repository's `.mcp.json`, Codex's config.toml, Claude Desktop's with the window's folder after `--mcp-attach`) naming
-  this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy. `McpHost.Instructions` tell an agent to
+  repository's `.mcp.json`, Codex's config.toml, Claude Desktop's with the window's folder after `--mcp-attach`,
+  OpenCode 1's opencode.json with a 10-minute timeout, which progress starts over, and OpenCode 2's `mcp.servers` with
+  Code Mode off and a 30-minute execution timeout, which progress does not: checked against both by hand, #255) naming
+  this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy, and says when `--mcp FOLDER` (asks
+  nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent to
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
   angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
@@ -704,7 +762,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   in the status bar, annotates the line, lists `$bindingError` in Variables and writes a linked console line. A function
   breakpoint's binding is told apart by its module, not its base address: the inspector is two modules over one image.
   The engine's lock (`EngineLock`) is held by one request or runtime event at a time and is not re-entrant: code under
-  it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold).
+  it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold). A read of the stop (threads, frames,
+  scopes, variables, evaluate, exceptionInfo: `DebugAdapter.Read`, `ReadLockAsync`) waits behind every other holder, so
+  continue, the steps, pause, disconnect and terminate never queue behind a stop's reads; one that leaves the stop
+  (`DebugAdapter.Leave`: continue, the steps, disconnect, terminate) is in line before it calls `ManagedDebugger.Leaving`,
+  and the read under way then starts no evaluation and leaves the one it runs to the program (`Abandoned`, aborted only
+  once its time is up, `AbortWhenDueAsync`), since `ICorDebugEval::Abort` answers only after half a second, the program
+  running or stopped, every other call into the runtime waiting meanwhile. The window shows the program running as a
+  continue or step is asked (`DebugSession.Resume`; refused, the stop is shown again), asks nothing more of a stop once
+  it is gone, and writes each stop's time to its frames and locals to passenger.log (`DebugController.LastStopTimes`).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
@@ -730,7 +796,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`DapConnection.Handle`'s `evenIfFailed`). A debug session is `DebugController.Session` from its first moment
   (`DebugSession.LaunchAsync`/`AttachAsync`'s `starting`), Starting until configurationDone answers: Stop then
   disconnects at once (a launched program ends, one being attached to is let go), the start failing as "Debugging NAME
-  was stopped as it started", and a start a disconnect was asked of sends no configurationDone. Profile's Kill shows
+  was stopped as it started", and a start a disconnect was asked of sends no configurationDone. A breakpoint changed
+  while it starts goes once configurationDone has answered, with whatever else differs from what was sent
+  (`DebugSession.SendChangedAsync`). Profile's Kill shows
   while its program has yet to reach the profiler and cancels the start.
   Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
   `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit
@@ -768,7 +836,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`Driver.cs`: raw input into the window's `ITopLevelImpl.Input` with a mouse device of its own, so the window is never
   activated and the real pointer never moves, waiting for a rendered frame before and after, since hit testing reads
   the last one). `LiveTree/AppQuery` is how an agent names elements (`@id`, type, #name, .class, "text", steps by /,
-  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process. Binding values
+  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process, whose input never
+  reaches a question Passenger asks the person for an agent nor Settings (`MainWindow.KeptFromAgents`, given to the
+  inspector's `Agent.Guard`, weighed at each event the driver sends); a headless test gets a dispatcher of its own, so
+  one test a run inspects Passenger in the test process (`McpTests.AvaloniaApp`'s person's window). Binding values
   (`BindingValues.cs`, protocol v4 `values`): each element by its XamlSourceInfo place (a root by x:Class), of several
   instances the one nearest the element chosen in the Live Visual Tree, each binding's path walked from Avalonia's
   binding expression nodes. Paused, the IDE evaluates `Wire.ReadValues` on the UI thread (the stop's, else the main
@@ -958,7 +1029,8 @@ folders (`TestFolders.Create`) and the shells' history, with an empty Git config
 (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`); on macOS and Linux NuGet's home is the run's too, its package cache named
 as NuGet names the default, ending in a separator, so a restore of the repository's own projects (SelfDebuggingTests')
 writes the nuget.g.props the person's build did and compiles nothing again. The run also shortens waits tests hold the IDE to: `PASSENGER_EVAL_TIMEOUT_MS` (3 s for
-the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux) and `PASSENGER_WATCH_LATER_MS` (3 s for 10); a test that holds a language server to not responding
+the debugger's 5 s; 1 s timed out a cold LINQ evaluation on CI's Linux), `PASSENGER_WATCH_LATER_MS` (3 s for 10) and
+`PASSENGER_MCP_PROGRESS_MS` (an agent's call told its progress every 1 s, not 10); a test that holds a language server to not responding
 sets that server's `SlowRequest`/`ResponseLimit`, never the run's, since a check Roslyn answers late under load would end
 a server that was only slow. Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
@@ -1044,8 +1116,10 @@ screenshot's `--type` sends its text as one input, so completion opens only when
 (fixture `HeadlessTestsFolder`) run an xunit v3 headless project on the platform and one on VSTest
 (`IsTestingPlatformApplication=false`), restored through `AvaloniaApp.UseFeed`. `WebLanguagesTests` need Node.js on
 the PATH and skip, saying why, without it (the TypeScript ones also on a Node.js older than typescript-language-server's
-`engines.node`). `EslintPrettierTests` copy the tests' own eslint and prettier (`tests/Passenger.Tests/NodePackages`,
-put in `node-packages/` at build by `tools/Passenger.NodePackages`) into their project; the run's npm is offline with
+`engines.node`). `EslintPrettierTests` copy the tests' own eslint and prettier, and Prettier 2 as `prettier2` (npm's
+alias, named as Settings' Manual package) (`tests/Passenger.Tests/NodePackages`, put in `node-packages/` at build by
+`tools/Passenger.NodePackages`) into their project, `Project.Holding` a configuration that holds Prettier while a test
+acts; the run's npm is offline with
 its own cache and config (`TestRun`), so Run 'npm install' fails fast without the registry. The Windows VM has no
 Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with XAML Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on

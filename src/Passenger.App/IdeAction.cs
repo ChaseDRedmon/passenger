@@ -41,6 +41,13 @@ public sealed record IdeAction(string Id, string Title, string Group, Action<Act
     /// (Split Vertically for Split Right).</summary>
     public IReadOnlyList<string> Words { get; init; } = [];
 
+    /// <summary>The action whose work this one starts, which <see cref="ActionWork"/> holds it under while it works: its own
+    /// unless it shares another's (Rebuild Solution is a build, as Build Solution is).</summary>
+    public string? Works { get; init; }
+
+    /// <summary>The id its work is held under.</summary>
+    public string WorkId => Works ?? Id;
+
     public bool CanRun(ActionContext context) => WhyNot(context) is null;
 
     /// <summary>Its title in a menu opened in this context.</summary>

@@ -33,6 +33,7 @@ internal static class Program
             Web.JsonSchemas.CheckVariable();
             Mcp.McpProxy.CheckVariable();
             _ = MainWindow.WatchSaysLater;
+            _ = Mcp.AgentCall.Every;
         }
         catch (FormatException error)
         {

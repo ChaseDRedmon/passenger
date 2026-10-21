@@ -194,7 +194,7 @@ public sealed partial class PassengerTools
         "Replaces every match find_in_files finds (the same text, options, scope and mask) with replacement, as Replace All " +
         "does: an open file's as one undoable step, saved; a closed one's in its own encoding (UTF-8 where that cannot hold " +
         "the replacement, as the answer says). A regex's replacement takes its groups ($1, ${name}). Returns how many matches " +
-        "in which files.")]
+        "in which files, and each file left as it was with why (read-only).")]
     public Task<string> ReplaceInFiles(string text, string replacement, bool matchCase = false, bool wholeWords = false, bool regex = false,
         [Description("solution (every file, the default), project, directory, openFiles, currentFile or recentlyViewed")] string scope = "solution",
         [Description("For scope project: its name or .csproj")] string? project = null,
@@ -215,7 +215,8 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException($"More than {FileSearch.MostMatches - 1} matches: narrow the scope or the mask, as Replace in Files lists no more");
         }
         List<string> files = [.. found.Select(m => m.Path).Distinct()];
-        List<string> said = [.. window.ReplaceInFiles(query, replacement, files)];
+        FilesReplaced done = window.ReplaceInFiles(query, replacement, files);
+        List<string> said = [.. done.Converted];
         foreach (OpenDocument open in Editors.Documents.Where(d => d.IsModified && files.Contains(d.Path)).ToList())
         {
             if (!Editors.Save(open))
@@ -223,7 +224,16 @@ public sealed partial class PassengerTools
                 said.Add($"{Relative(open.Path)} is changed in the editor but could not be saved");
             }
         }
-        string replaced = $"Replaced {found.Count} match{(found.Count == 1 ? "" : "es")} in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}";
+        if (done.NotReplaced(Relative) is { } refused)
+        {
+            said.Add(refused);
+        }
+        IReadOnlyList<SearchMatch> changed = done.Replaced(found);
+        if (changed.Count == 0)
+        {
+            throw new InvalidOperationException($"Nothing was replaced; {string.Join("; ", said)}");
+        }
+        string replaced = $"Replaced {FilesReplaced.Count(changed)}: {string.Join(", ", changed.Select(m => m.Path).Distinct().Select(Relative))}";
         return said.Count == 0 ? replaced : $"{replaced}; {string.Join("; ", said)}";
     });
 

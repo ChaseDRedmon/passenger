@@ -50,23 +50,23 @@ public partial class MainWindow
 
     /// <summary>A path checked as one Open takes, opened as the person chose it: in this window while it has nothing open
     /// or the path is in its own folder, where another window has it open there, else where Settings' Open project in
-    /// says, or as the person answers Open Solution.</summary>
-    private void OpenChosen(string full)
+    /// says, or as the person answers Open Solution; <paramref name="then"/> told the window once it has opened there.</summary>
+    private void OpenChosen(string full, Action<MainWindow>? then)
     {
         string opening = File.Exists(full) ? Path.GetDirectoryName(full)! : full;
         if (Folder is null || PathNames.Same(Folder, opening)
             || PassengerApp.Windows.Any(w => w.Folder is { } other && PathNames.Same(other, opening)))
         {
-            PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this);
+            PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this, then);
             return;
         }
         switch (settings.OpenProjectIn)
         {
             case OpenProjectIn.CurrentWindow:
-                PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this);
+                PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this, then);
                 return;
             case OpenProjectIn.NewWindow:
-                PassengerApp.OpenProject(full, OpenTarget.NewWindow, this);
+                PassengerApp.OpenProject(full, OpenTarget.NewWindow, this, then);
                 return;
         }
         Asking?.Close();
@@ -87,7 +87,7 @@ public partial class MainWindow
                 ApplySettings(settings with { OpenProjectIn = target == OpenTarget.NewWindow ? OpenProjectIn.NewWindow : OpenProjectIn.CurrentWindow });
             }
             // Once the question has gone and this window has the keys back, so a new window comes in front of it.
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => PassengerApp.OpenProject(full, target, this));
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => PassengerApp.OpenProject(full, target, this, then));
         };
         _ = dialog.ShowDialog(this);
     }

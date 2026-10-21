@@ -137,9 +137,11 @@ public sealed class TestRun : IDisposable
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
         // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Debugger's Extensions.EvaluationTimeoutVariable;
         // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
-        // made of a save are followed for 3 s, not 10.
+        // made of a save are followed for 3 s, not 10, and an agent's call that takes a while tells it so every second, not
+        // every 10 s.
         Environment.SetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS", "3000");
         Environment.SetEnvironmentVariable(Passenger.App.MainWindow.WatchSaysLaterVariable, "3000");
+        Environment.SetEnvironmentVariable(Passenger.App.Mcp.AgentCall.EveryVariable, "1000");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }
@@ -967,6 +969,43 @@ public static class Ui
         return frame.Format == Avalonia.Platform.PixelFormat.Rgba8888
             ? Avalonia.Media.Color.FromRgb(pixel[0], pixel[1], pixel[2])
             : Avalonia.Media.Color.FromRgb(pixel[2], pixel[1], pixel[0]);
+    }
+
+    /// <summary>Fails unless an editor's gutter and text, as the compositor last drew them, each show more than a ground: an
+    /// editor drawing no rows leaves both a colour or two, where line numbers and code bring the shades of their glyphs.</summary>
+    public static void DrawsText(TopLevel window, CodeEditor editor, string after)
+    {
+        Settle();
+        using Avalonia.Media.Imaging.WriteableBitmap frame = window.CaptureRenderedFrame()
+            ?? throw new InvalidOperationException("The window has drawn no frame.");
+        double textLeft = editor.PointOf(0).X + editor.ScrollOffset.X;
+        int gutter = Colours(new Rect(0, 0, textLeft - 2, editor.Bounds.Height));
+        // Short of the scroll bar's error stripe and the problem counts over it.
+        int text = Colours(new Rect(textLeft, 0, Math.Max(1, editor.Bounds.Width - textLeft - 80), editor.Bounds.Height));
+        Assert.True(gutter > 4 && text > 4,
+            $"After {after} the editor drew no rows ({gutter} colours in its gutter, {text} in its text), scrolled {editor.ScrollOffset.Y / editor.LineHeight:0.#} rows down a text of {editor.RowsShown}");
+
+        int Colours(Rect area)
+        {
+            Point from = editor.TranslatePoint(area.TopLeft, window)!.Value;
+            PixelRect pixels = new(PixelPoint.FromPoint(from, window.RenderScaling), PixelSize.FromSize(area.Size, window.RenderScaling));
+            byte[] bytes = new byte[pixels.Width * pixels.Height * 4];
+            System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(bytes, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                frame.CopyPixels(pixels, pinned.AddrOfPinnedObject(), bytes.Length, pixels.Width * 4);
+            }
+            finally
+            {
+                pinned.Free();
+            }
+            HashSet<int> seen = [];
+            for (int i = 0; i < bytes.Length; i += 4)
+            {
+                seen.Add(bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16));
+            }
+            return seen.Count;
+        }
     }
 
     /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>

@@ -1,23 +1,75 @@
 namespace Passenger.Debugger;
 
-/// <summary>The engine's one lock, held by a request or the runtime's event loop, one at a time. It is not re-entrant, and
-/// its holder lets it go the moment it is disposed. The library lock it replaces let go on the thread pool after Dispose
-/// returned, so a re-entrant take (DrainRuntimeEventQueue's inside a request's) could leave it held by a request waiting
-/// on itself, and every request after that went unanswered.</summary>
+/// <summary>The engine's one lock, held by a request or the runtime's event loop, one at a time: not re-entrant, and let go
+/// the moment its hold is disposed (a library lock that let go on the thread pool after Dispose once left a request waiting
+/// on itself). A read (what a stop shows: frames, values, evaluations) waits behind every other holder, even one that asked
+/// after it, so a continue, a step or a stop is never queued behind the stop's own reads; the others go in turn.</summary>
 public sealed class EngineLock
 {
-    private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly Lock gate = new();
+    private readonly LinkedList<TaskCompletionSource<IDisposable>> commands = new();
+    private readonly LinkedList<TaskCompletionSource<IDisposable>> reads = new();
+    private bool held;
 
-    public async Task<IDisposable> LockAsync(CancellationToken cancel = default)
+    public Task<IDisposable> LockAsync(CancellationToken cancel = default) => Take(commands, cancel);
+
+    /// <summary>The lock for a read, which it gets once no other holder waits.</summary>
+    public Task<IDisposable> ReadLockAsync(CancellationToken cancel = default) => Take(reads, cancel);
+
+    private Task<IDisposable> Take(LinkedList<TaskCompletionSource<IDisposable>> queue, CancellationToken cancel)
     {
-        await gate.WaitAsync(cancel).ConfigureAwait(false);
-        return new Held(gate);
+        cancel.ThrowIfCancellationRequested();
+        TaskCompletionSource<IDisposable> waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        LinkedListNode<TaskCompletionSource<IDisposable>> place;
+        lock (gate)
+        {
+            if (!held)
+            {
+                held = true;
+                return Task.FromResult<IDisposable>(new Held(this));
+            }
+            place = queue.AddLast(waiting);
+        }
+        if (cancel.CanBeCanceled)
+        {
+            // Given up only while still waiting: once granted, the hold is the caller's to let go.
+            cancel.Register(() =>
+            {
+                lock (gate)
+                {
+                    if (place.List is null)
+                    {
+                        return;
+                    }
+                    queue.Remove(place);
+                }
+                waiting.TrySetCanceled(cancel);
+            });
+        }
+        return waiting.Task;
+    }
+
+    private void Release()
+    {
+        TaskCompletionSource<IDisposable> next;
+        lock (gate)
+        {
+            LinkedList<TaskCompletionSource<IDisposable>> queue = commands.Count > 0 ? commands : reads;
+            if (queue.First is not { } first)
+            {
+                held = false;
+                return;
+            }
+            queue.RemoveFirst();
+            next = first.Value;
+        }
+        next.SetResult(new Held(this));
     }
 
     /// <summary>A hold of the lock, let go once however often it is disposed.</summary>
-    private sealed class Held(SemaphoreSlim held) : IDisposable
+    private sealed class Held(EngineLock owner) : IDisposable
     {
-        private SemaphoreSlim? releasing = held;
+        private EngineLock? releasing = owner;
 
         public void Dispose() => Interlocked.Exchange(ref releasing, null)?.Release();
     }

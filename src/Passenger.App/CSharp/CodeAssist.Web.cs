@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Text;
 using System.Text.RegularExpressions;
 using Passenger.App.Web;
 using Passenger.App.Workspace;
@@ -200,7 +200,8 @@ public sealed partial class CodeAssist
     /// <c>npm run</c> of a script renamed with it.</summary>
     internal static IReadOnlyList<TextEdit> JsonRenameEdits(List<DocumentSymbol> path, TextRange key, ServerLines lines, string name, bool packageJson)
     {
-        List<TextEdit> edits = [new TextEdit(key.Start, key.Length, JsonSerializer.Serialize(name))];
+        string written = JsonStringContent(name);
+        List<TextEdit> edits = [new TextEdit(key.Start, key.Length, $"\"{written}\"")];
         if (packageJson && path is [{ Name: "scripts" } scripts, _])
         {
             TextRange within = TextRange.FromBounds(lines.OffsetOf(scripts.Range.Start), lines.OffsetOf(scripts.Range.End));
@@ -208,10 +209,42 @@ public sealed partial class CodeAssist
             foreach (Match run in Runs(path[^1].Name).Matches(text))
             {
                 Group script = run.Groups["script"];
-                edits.Add(new TextEdit(within.Start + script.Index, script.Length, name));
+                edits.Add(new TextEdit(within.Start + script.Index, script.Length, written));
             }
         }
         return [.. edits.OrderBy(e => e.Start)];
+    }
+
+    /// <summary>Text as a JSON string holds it, read as typed: only what JSON must escape is (a quote, a backslash, a control
+    /// character), where a serializer's encoder escapes every letter outside ASCII and <c>+</c>, <c>&lt;</c> and the like.</summary>
+    private static string JsonStringContent(string text)
+    {
+        StringBuilder written = new(text.Length);
+        foreach (char c in text)
+        {
+            switch (c)
+            {
+                case '"' or '\\':
+                    written.Append('\\').Append(c);
+                    break;
+                case '\n':
+                    written.Append("\\n");
+                    break;
+                case '\r':
+                    written.Append("\\r");
+                    break;
+                case '\t':
+                    written.Append("\\t");
+                    break;
+                case < ' ':
+                    written.Append($"\\u{(int)c:x4}");
+                    break;
+                default:
+                    written.Append(c);
+                    break;
+            }
+        }
+        return written.ToString();
     }
 
     internal static bool IsPackageJson(OpenDocument document) => Path.GetFileName(document.Path).Equals("package.json", StringComparison.OrdinalIgnoreCase);

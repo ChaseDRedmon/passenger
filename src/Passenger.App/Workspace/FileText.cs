@@ -160,20 +160,20 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// rather than take it for a new file.</summary>
     public static bool IsSaving(string path) => path.EndsWith(SaveSuffix, StringComparison.Ordinal);
 
-    /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
-    /// where the old one was; a symlink is written through to its target, the file keeps its permissions (on macOS its
-    /// extended attributes, ACL and creation date too), one deleted since it was opened is written anew, and a read-only
-    /// one is refused. A text the encoding cannot hold is written as UTF-8 instead, never with a question mark for each
-    /// such character; the result is how it was written, with why when it changed. A CR file (<paramref name="crBreaks"/>)
-    /// has each of the text's breaks written as '\r'.</summary>
-    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false)
+    /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file;
+    /// a symlink is written through to its target, the file keeps what it was (<see cref="Over"/>; off Windows its mode,
+    /// on macOS its extended attributes, ACL and creation date), one deleted since it was opened is written anew, and a
+    /// read-only one is refused. A text the encoding cannot hold is written as UTF-8, never with question marks, the result
+    /// saying so. A CR file (<paramref name="crBreaks"/>) has each of the text's breaks written as '\r'.</summary>
+    /// <param name="makeFolder">Whether a folder no longer there is made again for it (<see cref="FolderGoneException"/>).</param>
+    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false, bool makeFolder = true)
     {
         string? unheld = Unheld(encoding, text);
         FileText written = unheld is null ? new FileText(text, encoding, bom, crBreaks) : new FileText(text, new UTF8Encoding(false), false, crBreaks);
         Writing?.Invoke(path);
         byte[] preamble = written.HasBom ? Preamble(written.Encoding) : [];
         byte[] body = written.Encoding.GetBytes(crBreaks ? LineEndings.In(text, "\r") : text);
-        Write(path, preamble, body, written.Encoding);
+        Write(path, preamble, body, written.Encoding, makeFolder);
         return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {FileEncoding.Of(encoding, bom).Name} cannot hold '{unheld}'");
     }
 
@@ -182,7 +182,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     public static void Restore(string path, byte[] bytes)
     {
         Writing?.Invoke(path);
-        Write(path, [], bytes, null);
+        Write(path, [], bytes, null, makeFolder: true);
     }
 
     /// <summary>Whether a file (through a symlink, its target) is there and marked read-only, as Perforce and TFVC mark a
@@ -212,13 +212,18 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         new FileInfo(path).LinkTarget is not null ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
 
     /// <param name="encoding">What the text was written in; null for bytes put back as a file had them.</param>
-    private static void Write(string path, byte[] preamble, byte[] body, Encoding? encoding)
+    private static void Write(string path, byte[] preamble, byte[] body, Encoding? encoding, bool makeFolder)
     {
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
         if (!there)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            string folder = Path.GetDirectoryName(target)!;
+            if (!makeFolder && !Directory.Exists(folder))
+            {
+                throw new FolderGoneException(folder);
+            }
+            Directory.CreateDirectory(folder);
         }
         else if (new FileInfo(target) is { Exists: true, IsReadOnly: true })
         {
@@ -277,7 +282,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         {
             try
             {
-                File.Move(temporary, target, overwrite: true);
+                Over(temporary, target);
                 return;
             }
             catch (Exception refused) when (OperatingSystem.IsWindows() && refused is IOException or UnauthorizedAccessException && File.Exists(target))
@@ -298,6 +303,26 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             stream.Flush(flushToDisk: true);
         });
         File.Delete(temporary);
+    }
+
+    /// <summary>Puts the written file in the target's place. On Windows that is ReplaceFile's, which keeps what the target
+    /// was (its attributes, Hidden and System among them, its explicit ACL, its alternate data streams, Zone.Identifier's
+    /// too, its creation date), where a move gives it the new file's attributes and the folder's inherited ACL.</summary>
+    private static void Over(string temporary, string target)
+    {
+        if (OperatingSystem.IsWindows() && File.Exists(target))
+        {
+            try
+            {
+                File.Replace(temporary, target, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                return;
+            }
+            catch (Exception refused) when (refused is IOException or UnauthorizedAccessException && !File.Exists(target) && File.Exists(temporary))
+            {
+                // ERROR_UNABLE_TO_MOVE_REPLACEMENT: the old file went but the new one could not take its name; the move gives it.
+            }
+        }
+        File.Move(temporary, target, overwrite: true);
     }
 
     /// <summary>A write made again while Windows refuses it because another program has the file open sharing no writes,
@@ -347,6 +372,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
 
     private byte[] Bytes(Encoding encoding, bool bom) => [.. bom ? Preamble(encoding) : [], .. encoding.GetBytes(Text)];
 }
+
+/// <summary>A save refused because the file's folder is no longer there (moved, renamed or deleted by another program),
+/// which only a save the person asked for makes again, so an autosave never brings back a folder moved away: an
+/// IOException, so every writer's failure says it.</summary>
+public sealed class FolderGoneException(string folder) : IOException($"its folder {Path.GetFileName(folder)} was moved or deleted, and only Save makes it again");
 
 /// <summary>A write refused because the file is read-only (<see cref="FileText.IsReadOnly"/>), which only the person's
 /// Clear Read-Only Status makes writable: an IOException, so every writer's failure says it.</summary>

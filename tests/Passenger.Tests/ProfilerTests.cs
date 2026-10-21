@@ -281,7 +281,7 @@ public sealed class ProfilerTests : IDisposable
         try
         {
             Ui.PumpUntil(() => Programs().Count > 0, "the program to run as the profiler waits for it", TimeSpan.FromMinutes(2));
-            Assert.Equal("A run is already being profiled", window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+            Assert.Equal("Already under way: Starting Starting: Undiagnosed under the profiler…", window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
 
             again = window.ProfileAsync();
             Assert.True(Ui.Pumped(() => again.IsCompleted, TimeSpan.FromSeconds(10)), $"A second Profile while the first program started went on to start it again ({Programs().Count} programs)");

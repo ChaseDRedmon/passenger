@@ -8,8 +8,9 @@ namespace Passenger.DebugAdapter;
 
 /// <summary>The engine behind the Debug Adapter Protocol. Each request runs under the engine's lock,
 /// after the runtime events queued before it, so a request never sees the debuggee half way through
-/// an event; each engine event goes out as the protocol's. Lines and columns are the client's choice
-/// of base, the engine's own counting from one.</summary>
+/// an event; a read of the stop (<see cref="Read{T}(Func{T})"/>) waits behind every other request, and the read under way
+/// gives way as one that leaves the stop comes (<see cref="Leave"/>). Each engine event goes out as the protocol's.
+/// Lines and columns are the client's choice of base, the engine's own counting from one.</summary>
 public sealed class DebugAdapter
 {
     private readonly ManagedDebugger debugger;
@@ -91,7 +92,7 @@ public sealed class DebugAdapter
         connection.Handle<SetExceptionBreakpointsArguments, SetExceptionBreakpointsResponse>("setExceptionBreakpoints", SetExceptionBreakpoints);
         connection.Handle<DataBreakpointInfoArguments, DataBreakpointInfoResponse>("dataBreakpointInfo", async arguments =>
         {
-            DataBreakpointAnswer answer = await Locked(() => debugger.DataBreakpointInfo(arguments.VariablesReference, arguments.Name));
+            DataBreakpointAnswer answer = await Read(() => debugger.DataBreakpointInfo(arguments.VariablesReference, arguments.Name));
             return new DataBreakpointInfoResponse
             {
                 DataId = answer.DataId,
@@ -103,32 +104,32 @@ public sealed class DebugAdapter
         connection.Handle<SetDataBreakpointsArguments, SetDataBreakpointsResponse>("setDataBreakpoints", SetDataBreakpoints);
         connection.Handle<DapEmpty, ThreadsResponse>("threads", async _ =>
         {
-            List<(int id, string name)> threads = await Locked(() => debugger.GetThreads());
+            List<(int id, string name)> threads = await Read(() => debugger.GetThreads());
             return new ThreadsResponse([.. threads.Select(t => new DapThread(t.id, t.name))]);
         });
         connection.Handle<StackTraceArguments, StackTraceResponse>("stackTrace", async arguments =>
         {
-            List<StackFrameInfo> frames = await Locked(() => debugger.GetStackTrace(arguments.ThreadId, arguments.StartFrame ?? 0, arguments.Levels));
+            List<StackFrameInfo> frames = await Read(() => debugger.GetStackTrace(arguments.ThreadId, arguments.StartFrame ?? 0, arguments.Levels));
             return new StackTraceResponse([.. frames.Select(ToProtocol)]);
         });
         // The frame's assembly is decompiled between two holds of the engine's lock, never under one (CoreLib's takes many
         // seconds), so a request meanwhile, a disconnect among them, is answered; the second fails if the program ran on.
         connection.Handle<ResolveStackFrameArguments, ResolveStackFrameResponse>("resolveStackFrame", async arguments =>
         {
-            if (await Locked(() => debugger.SymbolsWantedAt(arguments.StackFrameId)) is { } wanted)
+            if (await Read(() => debugger.SymbolsWantedAt(arguments.StackFrameId)) is { } wanted)
             {
                 await debugger.DecompileAsync(wanted).ConfigureAwait(false);
             }
-            return new ResolveStackFrameResponse(ToProtocol(await Locked(() => debugger.ResolveStackFrame(arguments.StackFrameId))));
+            return new ResolveStackFrameResponse(ToProtocol(await Read(() => debugger.ResolveStackFrame(arguments.StackFrameId))));
         });
         connection.Handle<ScopesArguments, ScopesResponse>("scopes", async arguments =>
         {
-            List<ScopeInfo> scopes = await Locked(() => debugger.GetScopes(arguments.FrameId));
+            List<ScopeInfo> scopes = await Read(() => debugger.GetScopes(arguments.FrameId));
             return new ScopesResponse([.. scopes.Select(s => new DapScope(s.Name, s.VariablesReference, s.Expensive))]);
         });
         connection.Handle<VariablesArguments, VariablesResponse>("variables", async arguments =>
         {
-            List<VariableInfo> variables = await Locked(() => debugger.GetVariables(arguments.VariablesReference));
+            List<VariableInfo> variables = await Read(() => debugger.GetVariables(arguments.VariablesReference));
             return new VariablesResponse([.. variables.Select(v => new DapVariable
             {
                 Name = v.Name,
@@ -142,7 +143,7 @@ public sealed class DebugAdapter
         connection.Handle<EvaluateArguments, EvaluateResponse>("evaluate", async arguments =>
         {
             // A hover, or a value the client shows of itself, is evaluated as the Variables view's getters are.
-            VariableInfo value = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId, implicitly: arguments.Context is "hover" or "variables"));
+            VariableInfo value = await Read(() => debugger.Evaluate(arguments.Expression, arguments.FrameId, implicitly: arguments.Context is "hover" or "variables"));
             return new EvaluateResponse
             {
                 Result = value.Value,
@@ -159,7 +160,7 @@ public sealed class DebugAdapter
             {
                 return new GotoTargetsResponse();
             }
-            (int Line, int Column, int ILOffset)? target = await Locked(() => debugger.GotoTarget(thread, path, LineIn(arguments.Line)));
+            (int Line, int Column, int ILOffset)? target = await Read(() => debugger.GotoTarget(thread, path, LineIn(arguments.Line)));
             return target is { } found
                 ? new GotoTargetsResponse { Targets = [new GotoTarget(found.ILOffset, $"Line {found.Line}", LineOut(found.Line), ColumnOut(found.Column))] }
                 : new GotoTargetsResponse();
@@ -187,17 +188,21 @@ public sealed class DebugAdapter
         });
         connection.Handle<ThreadArguments, ContinueResponse>("continue", async _ =>
         {
-            await Locked(() => debugger.Continue());
+            await Leave(() =>
+            {
+                debugger.Continue();
+                return Task.CompletedTask;
+            });
             return new ContinueResponse(AllThreadsContinued: true);
         });
-        connection.Handle<ThreadArguments>("next", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOver)));
-        connection.Handle<StepInArguments>("stepIn", arguments => Locked(() => arguments.TargetId is int target
+        connection.Handle<ThreadArguments>("next", arguments => Leave(() => debugger.Step(arguments.ThreadId, StepType.StepOver)));
+        connection.Handle<StepInArguments>("stepIn", arguments => Leave(() => arguments.TargetId is int target
             ? debugger.StepIntoTarget(arguments.ThreadId, target)
             : debugger.Step(arguments.ThreadId, StepType.StepIn)));
         // Smart Step Into: the calls of the frame's statement, each placed where it is written.
         connection.Handle<StepInTargetsArguments, StepInTargetsResponse>("stepInTargets", async arguments =>
         {
-            List<StepInTargetInfo> targets = await Locked(() => debugger.StepInTargets(arguments.FrameId));
+            List<StepInTargetInfo> targets = await Read(() => debugger.StepInTargets(arguments.FrameId));
             return new StepInTargetsResponse
             {
                 Targets = [.. targets.Select(t => new StepInTarget
@@ -232,18 +237,26 @@ public sealed class DebugAdapter
             IReadOnlyList<ModuleApplied> applied = await Locked(() => debugger.ApplyChanges(updates));
             return new ApplyChangesResponse([.. applied.Select(a => new DapModuleApplied(a.Module, a.Name, a.Applied, a.Message))]);
         });
-        connection.Handle<ThreadArguments>("stepOut", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
+        connection.Handle<ThreadArguments>("stepOut", arguments => Leave(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
         connection.Handle<ThreadArguments>("pause", _ => Locked(() => debugger.Pause()));
         // A start still waiting for the program's runtime holds the engine's lock: told the session is ending, it lets go.
         connection.Handle<DisconnectArguments>("disconnect", arguments =>
         {
             debugger.Ending();
-            return Locked(() => debugger.Disconnect(arguments.TerminateDebuggee ?? false));
+            return Leave(() =>
+            {
+                debugger.Disconnect(arguments.TerminateDebuggee ?? false);
+                return Task.CompletedTask;
+            });
         }, then: RequestShutdown);
         connection.Handle<TerminateArguments>("terminate", _ =>
         {
             debugger.Ending();
-            return Locked(() => debugger.Terminate());
+            return Leave(() =>
+            {
+                debugger.Terminate();
+                return Task.CompletedTask;
+            });
         });
         connection.Handle<ThreadArguments, ExceptionInfoResponse>("exceptionInfo", ExceptionInfo);
         // Not under the engine's lock: a program waiting for input may be running, and the write is all.
@@ -502,7 +515,7 @@ public sealed class DebugAdapter
 
     private async Task<ExceptionInfoResponse> ExceptionInfo(ThreadArguments arguments)
     {
-        ExceptionInfo info = await Locked(() => debugger.ExceptionInfo(new ThreadId(arguments.ThreadId)));
+        ExceptionInfo info = await Read(() => debugger.ExceptionInfo(new ThreadId(arguments.ThreadId)));
         return new ExceptionInfoResponse
         {
             ExceptionId = info.ExceptionId,
@@ -567,6 +580,58 @@ public sealed class DebugAdapter
         {
             log?.Invoke("Shutdown requested");
             ShutdownRequested?.Invoke();
+        }
+    }
+
+    /// <summary>A read of the stop (its threads, frames, values, an evaluation): it waits behind every other request, and its
+    /// evaluations give way to one that leaves the stop.</summary>
+    private async Task<T> Read<T>(Func<Task<T>> work)
+    {
+        using (await debugger.DapRequestAndRuntimeEventLock.ReadLockAsync())
+        {
+            await debugger.DrainRuntimeEventQueue();
+            debugger.Reading = true;
+            try
+            {
+                return await work().ConfigureAwait(false);
+            }
+            finally
+            {
+                debugger.Reading = false;
+            }
+        }
+    }
+
+    private async Task<T> Read<T>(Func<T> work)
+    {
+        using (await debugger.DapRequestAndRuntimeEventLock.ReadLockAsync())
+        {
+            await debugger.DrainRuntimeEventQueue();
+            return work();
+        }
+    }
+
+    /// <summary>A request that leaves the stop (a continue, a step, a disconnect, a terminate): it goes ahead of the reads still
+    /// waiting, which then find the program gone on, and the read under way is told as it comes, so it evaluates no more and
+    /// leaves the evaluation it runs to the program.</summary>
+    private async Task Leave(Func<Task> work)
+    {
+        // In line first, so nothing the read under way does as it gives way gets the lock before this.
+        Task<IDisposable> locking = debugger.DapRequestAndRuntimeEventLock.LockAsync();
+        debugger.Leaving();
+        IDisposable held;
+        try
+        {
+            held = await locking;
+        }
+        finally
+        {
+            debugger.Left();
+        }
+        using (held)
+        {
+            await debugger.DrainRuntimeEventQueue();
+            await work().ConfigureAwait(false);
         }
     }
 

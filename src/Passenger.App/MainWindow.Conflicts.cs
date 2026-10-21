@@ -70,11 +70,17 @@ public partial class MainWindow
     }
 
     /// <summary>The merge window on a conflicted file, over the Conflicts dialog (or this window), done once it closes:
-    /// whether the file was resolved there.</summary>
+    /// whether the file was resolved there. A file a side lacks has nothing to merge, and never becomes an empty file:
+    /// the Conflicts dialog shows it chosen instead, its Accept Yours and Accept Theirs keeping or deleting it.</summary>
     public async Task<bool> MergeAsync(string path, Window? over = null)
     {
-        if (session.Vcs.Repository is not { } repository || !session.Vcs.Conflicts.Any(c => c.Path == path))
+        if (session.Vcs.Repository is not { } repository || session.Vcs.Conflicts.FirstOrDefault(c => c.Path == path) is not { } conflict)
         {
+            return false;
+        }
+        if (!conflict.CanMerge)
+        {
+            Unmergeable(conflict);
             return false;
         }
         // What the editors show is on disk before the merge reads and writes it.
@@ -104,6 +110,22 @@ public partial class MainWindow
         Window owner = over is { IsVisible: true } ? over : this;
         await window.ShowDialog<bool?>(owner);
         return window.Resolved;
+    }
+
+    /// <summary>The Conflicts dialog with a file one side lacks chosen, and the status bar saying which keeps it.</summary>
+    private void Unmergeable(GitConflict conflict)
+    {
+        ConflictSides sides = session.Vcs.Sides;
+        bool yours = sides.YoursHas(conflict);
+        bool theirs = sides.TheirsHas(conflict);
+        string why = yours || theirs
+            ? $"{conflict.Name} is only in {(yours ? "yours" : "theirs")}, so there is nothing to merge: Accept {(yours ? "Yours" : "Theirs")} keeps it, Accept {(yours ? "Theirs" : "Yours")} deletes it"
+            : $"{conflict.Name} is in neither side, so there is nothing to merge: Accept Yours or Accept Theirs deletes it";
+        if (ShowConflicts() is { } dialog)
+        {
+            dialog.Chosen = [.. dialog.Rows.Where(r => r.Conflict.Path == conflict.Path)];
+        }
+        status.Text = why;
     }
 
     /// <summary>Asks as <see cref="Confirm"/> does, over the window asking, with its own answer for no.</summary>

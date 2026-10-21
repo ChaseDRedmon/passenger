@@ -60,7 +60,12 @@ public partial class MainWindow
     public async Task<string?> AttachAsync(DotnetProcess process)
     {
         UiThread.Check();
-        using IDisposable held = BackgroundWork.Scope();
+        if (work.Begin(AppActions.AttachToProcess, $"Attaching to {process.Program}…") is not { } attaching)
+        {
+            return ActionWork.Busy(work.Of(AppActions.AttachToProcess)!);
+        }
+        using Working held = attaching;
+        using IDisposable background = BackgroundWork.Scope();
         if (session.Debug.Session is { Attached: true, State: not Debugging.DebugState.Ended })
         {
             await session.Debug.DetachAsync();

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -112,15 +113,24 @@ public sealed class PrettierService : IAsyncDisposable
             {
                 return new PrettierAnswer(Error: "the folder was closed");
             }
-            if (runner is { } running && (running.HasExited || running.Node != runtime.Path))
+            if (runner is { } stale && (stale.HasExited || stale.Node != runtime.Path))
             {
-                running.Dispose();
-                runner = null;
+                End(stale);
             }
-            runner ??= Runner.Start(runtime.Path!, folder);
+            // This format's own runner from here on: the folder's close takes the field away while it waits.
+            Runner running;
+            try
+            {
+                running = runner ??= Runner.Start(runtime.Path!, folder);
+            }
+            catch (Exception error) when (error is Win32Exception or IOException or InvalidOperationException)
+            {
+                return new PrettierAnswer(Error: $"Prettier's runner could not start on {runtime.Path}: {error.Message}");
+            }
+            int id = ++asked;
             JsonObject request = new()
             {
-                ["id"] = ++asked,
+                ["id"] = id,
                 ["prettier"] = package,
                 ["file"] = path,
                 ["text"] = text,
@@ -131,28 +141,34 @@ public sealed class PrettierService : IAsyncDisposable
             string? line;
             try
             {
-                line = await runner.AskAsync(request.ToJsonString(), Limit, cancel).ConfigureAwait(false);
+                line = await running.AskAsync(request.ToJsonString(), Limit, cancel).ConfigureAwait(false);
             }
-            catch (Exception error) when (error is TimeoutException or IOException or OperationCanceledException)
+            catch (Exception error) when (error is TimeoutException or IOException or OperationCanceledException or ObjectDisposedException or InvalidOperationException)
             {
-                runner.Dispose();
-                runner = null;
+                End(running);
                 if (error is OperationCanceledException && cancel.IsCancellationRequested)
                 {
                     throw;
                 }
-                return new PrettierAnswer(Error: error is TimeoutException ? $"Prettier did not answer in {Limit.TotalSeconds:0} s" : $"Prettier's runner ended: {error.Message}");
+                return new PrettierAnswer(Error: disposed ? "the folder was closed"
+                    : error is TimeoutException ? $"Prettier did not answer in {Limit.TotalSeconds:0} s" : $"Prettier's runner ended: {error.Message}");
             }
             if (line is null)
             {
-                runner.Dispose();
-                runner = null;
-                return new PrettierAnswer(Error: "Prettier's runner ended before it answered; the IDE's log has what it said");
+                End(running);
+                return new PrettierAnswer(Error: disposed ? "the folder was closed" : "Prettier's runner ended before it answered; the IDE's log has what it said");
             }
-            PrettierAnswer answer = Read(line);
-            if (!runner.Timed)
+            if (Read(line, id) is not { } answer)
             {
-                runner.Timed = true;
+                // After a line that is not this request's answer, every answer would be the request's before: the runner goes.
+                End(running);
+                string said = line[..Math.Min(line.Length, 200)];
+                IdeErrors.Write($"Prettier's runner (process {running.ProcessId}) wrote what is not its answer for {path}, so it was ended: {said}");
+                return new PrettierAnswer(Error: $"Prettier's runner wrote what is not its answer for {Path.GetFileName(path)}, so it was ended: {said}");
+            }
+            if (!running.Timed)
+            {
+                running.Timed = true;
                 IdeErrors.Write($"Prettier {answer.Version} formatted {Path.GetFileName(path)} for {folder} in {Stopwatch.GetElapsedTime(began).TotalMilliseconds:0} ms, its runner started on Node.js {runtime.Version}");
             }
             return answer;
@@ -163,12 +179,25 @@ public sealed class PrettierService : IAsyncDisposable
         }
     }
 
-    private static PrettierAnswer Read(string line)
+    /// <summary>Ends a runner, which is then no longer the folder's if it still was.</summary>
+    private void End(Runner ending)
+    {
+        ending.Dispose();
+        Interlocked.CompareExchange(ref runner, null, ending);
+    }
+
+    /// <summary>The runner's answer to request <paramref name="id"/>; null for a line that is not it: another request's, or
+    /// no answer at all.</summary>
+    private static PrettierAnswer? Read(string line, int id)
     {
         try
         {
             using JsonDocument read = JsonDocument.Parse(line);
             JsonElement answer = read.RootElement;
+            if (answer.ValueKind != JsonValueKind.Object || !answer.TryGetProperty("id", out JsonElement asked) || !asked.TryGetInt32(out int answered) || answered != id)
+            {
+                return null;
+            }
             string? Text(string name) => answer.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             bool Flag(string name) => answer.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.True;
             int cursor = answer.TryGetProperty("cursor", out JsonElement at) && at.TryGetInt32(out int offset) ? offset : 0;
@@ -176,7 +205,7 @@ public sealed class PrettierService : IAsyncDisposable
         }
         catch (JsonException)
         {
-            return new PrettierAnswer(Error: $"Prettier's runner answered what is not JSON: {line[..Math.Min(line.Length, 200)]}");
+            return null;
         }
     }
 
@@ -186,8 +215,10 @@ public sealed class PrettierService : IAsyncDisposable
         await turn.WaitAsync().ConfigureAwait(false);
         try
         {
-            runner?.Dispose();
-            runner = null;
+            if (runner is { } running)
+            {
+                End(running);
+            }
         }
         finally
         {
@@ -207,14 +238,18 @@ public sealed class PrettierService : IAsyncDisposable
     private sealed class Runner : IDisposable
     {
         private readonly Process process;
+        private int ended;
 
         private Runner(Process process, string node)
         {
             this.process = process;
             Node = node;
+            ProcessId = process.Id;
         }
 
         public string Node { get; }
+
+        public int ProcessId { get; }
 
         /// <summary>Whether its first format's time has been logged.</summary>
         public bool Timed { get; set; }
@@ -241,11 +276,13 @@ public sealed class PrettierService : IAsyncDisposable
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
             Process process = ChildProcesses.Start(start);
+            int id = process.Id;
+            // What a plugin or configuration prints comes here too: the runner keeps its output for the answers.
             process.ErrorDataReceived += (_, e) =>
             {
                 if (e.Data is { Length: > 0 } said)
                 {
-                    IdeErrors.Write($"Prettier runner (process {process.Id}): {said}");
+                    IdeErrors.Write($"Prettier runner (process {id}): {said}");
                 }
             };
             process.BeginErrorReadLine();
@@ -268,8 +305,13 @@ public sealed class PrettierService : IAsyncDisposable
             }
         }
 
+        /// <summary>Ends it, once: the format waiting on it and the folder's close may both.</summary>
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref ended, 1) == 1)
+            {
+                return;
+            }
             ChildProcesses.Kill(process);
             process.Dispose();
         }

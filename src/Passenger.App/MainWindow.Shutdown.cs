@@ -64,6 +64,7 @@ public partial class MainWindow
             return open;
         }
         EndSession();
+        AgentsGoTo(null, null);
         ProjectName.Text = "No solution";
         ProjectBadge.IsVisible = false;
         Editors.ShowWelcome(welcome);

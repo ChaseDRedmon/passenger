@@ -131,10 +131,11 @@ public static partial class McpHost
         "Attached to a person's Passenger (--mcp-attach), the first call joins the Passenger window open on the agent's folder (the folder " +
         "after --mcp-attach, else the agent's working folder). With none open, it has the running Passenger open that folder, or starts " +
         "Passenger on it, in a window the person sees, and waits for it. Unless the person has turned on Enable MCP Server, or let agents " +
-        "into that folder always, the window asks them to let the agent in, and the call waits for their answer (2 minutes at most); a call " +
-        "they refuse or leave unanswered says so, and a later one asks again. The person is also asked before the agent first uses each tool " +
-        "that changes something (edit, rename, build, run, debug_start, vcs_commit and the like; reading never asks), and before it opens " +
-        "another folder in their window. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
+        "into that folder always, the window asks them to let the agent in. The person is also asked before the agent first uses each tool " +
+        "that changes something (edit, rename, build, run, debug_start, breakpoint_set, debug_evaluate, vcs_commit and the like; reading, " +
+        "save_all, stop and stepping never ask), and before it opens another folder in their window. A call waits for each answer 2 " +
+        "minutes at most, telling its progress meanwhile when asked to; one refused or left unanswered says so, and a later call asks " +
+        "again. Passenger --mcp FOLDER is an agent's own IDE with no window, which asks nothing.";
 
     /// <summary>The server as an agent sees it, whichever way it is reached.</summary>
     internal static Implementation ServerInfo => new()
@@ -217,15 +218,78 @@ public static partial class McpHost
         };
     }
 
-    /// <summary><c>--mcp</c>: the IDE with no window, its tools on standard input and output until the
-    /// agent closes them.</summary>
+    /// <summary>--mcp's server, its tools' list answered at once and each call waiting for the IDE it acts on.</summary>
+    private static McpServerOptions Options(Task<PassengerTools> ready, AgentConnection connection)
+    {
+        McpServerPrimitiveCollection<McpServerTool> collection = [];
+        foreach (MethodInfo method in ToolMethods())
+        {
+            // Asked for only once the call has waited for the IDE.
+            collection.Add(new ConnectedTool(Lean(McpServerTool.Create(method, _ => ready.Result, ToolCreateOptions())), null, connection, ready));
+        }
+        return new McpServerOptions
+        {
+            ServerInfo = ServerInfo,
+            ServerInstructions = Instructions,
+            ToolCollection = collection,
+        };
+    }
+
+    /// <summary>How long an MCP mode the system asked to end takes to end as the end of its input ends it, before it goes
+    /// however far it got.</summary>
+    internal static readonly TimeSpan EndLimit = TimeSpan.FromSeconds(3);
+
+    /// <summary>Has the system's request to end the process (SIGTERM, which an agent's client may send a moment after it
+    /// closes the input, as OpenCode 1's does 20 ms after) end it as the end of its input does, <paramref name="end"/>, so
+    /// its state is written and what it started ends, the process going after <see cref="EndLimit"/> at the latest.
+    /// Null where the system has no such signal to take.</summary>
+    internal static System.Runtime.InteropServices.PosixSignalRegistration? EndOnSignal(Action end)
+    {
+        try
+        {
+            return System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGTERM, context =>
+            {
+                context.Cancel = true;
+                end();
+                _ = Task.Delay(EndLimit).ContinueWith(_ => Environment.Exit(143), TaskScheduler.Default);
+            });
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary><c>--mcp</c>: the IDE with no window, its tools on standard input and output until the agent closes them
+    /// or the system asks it to end. Its server answers before the IDE is up (initialize and the tools' list need none of
+    /// it), so an agent asking as it connects finds the tools at once; each call waits for the IDE.</summary>
     public static int RunStdio(LaunchOptions launch)
     {
         IsHeadless = true;
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
-        // Standard output is the protocol's alone: anything else written to the console goes to stderr.
-        Console.SetOut(Console.Error);
+        // Standard output is the protocol's alone, and standard error the agent may never read: the console goes to the log.
+        IdeLog.TakeConsole();
+
+        using CancellationTokenSource done = new();
+        TaskCompletionSource<PassengerTools> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The agent's own IDE: nobody else is at it to ask.
+        AgentConnection connection = new(done.Token, attached: false);
+        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(ready.Task, connection));
+        // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await server.RunAsync(done.Token);
+            }
+            finally
+            {
+                ended.TrySetResult();
+            }
+        });
+        using System.Runtime.InteropServices.PosixSignalRegistration? terminated = EndOnSignal(() => ended.TrySetResult());
 
         AppBuilder.Configure<App>()
             .UseSkia()
@@ -240,22 +304,9 @@ public static partial class McpHost
         window.SetRenderScaling(2);
         window.Show();
         window.Start(launch);
-
-        using CancellationTokenSource done = new();
-        // The agent's own IDE: nobody else is at it to ask.
-        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(window, new AgentConnection(done.Token, attached: false)));
-        // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await server.RunAsync(done.Token);
-            }
-            finally
-            {
-                UiThread.Post(done.Cancel);
-            }
-        });
+        ready.SetResult(new PassengerTools(window, connection));
+        // Posted once the dispatcher is this thread's: the agent may have gone before it was.
+        _ = ended.Task.ContinueWith(_ => UiThread.Post(done.Cancel), TaskScheduler.Default);
         // The UI thread runs the dispatcher's loop, timers and all, until the agent goes.
         Dispatcher.UIThread.MainLoop(done.Token);
         // What the agent left running (a program, a debugger) ends with the windows, as it does with the person's.
@@ -271,7 +322,8 @@ public static partial class McpHost
     {
         IsHeadless = true;
         Stream input = Console.OpenStandardInput();
-        Console.SetOut(Console.Error);
+        // Its starter (a test run's --mcp-attach) reads nothing of its output or error: the console goes to the log.
+        IdeLog.TakeConsole();
         AppBuilder.Configure<App>()
             .UseSkia()
             .UseHarfBuzz()
@@ -286,6 +338,7 @@ public static partial class McpHost
         window.Start(launch);
 
         using CancellationTokenSource done = new();
+        using System.Runtime.InteropServices.PosixSignalRegistration? terminated = EndOnSignal(() => UiThread.Post(done.Cancel));
         // Not held: it waits for the end of the input, which its starter's own end closes.
         _ = Task.Run(() =>
         {

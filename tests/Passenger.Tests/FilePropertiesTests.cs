@@ -254,7 +254,7 @@ public sealed class FilePropertiesTests : IDisposable
     }
 
     /// <summary>A click on a status bar widget, where the pointer finds it.</summary>
-    private static void Click(MainWindow window, string name)
+    internal static void Click(MainWindow window, string name)
     {
         Button widget = window.FindControl<Button>(name)!;
         Assert.True(widget.IsVisible, $"The status bar's {name} is hidden");
@@ -270,7 +270,7 @@ public sealed class FilePropertiesTests : IDisposable
         [.. menu.Items.OfType<MenuItem>().Select(i => $"{i.Header}{(i.IsEnabled ? "" : " (disabled)")}{(i.IsChecked ? " (checked)" : "")}")];
 
     /// <summary>Chooses an item of the open menu, or of its More.</summary>
-    private static void Choose(MainWindow window, string item)
+    internal static void Choose(MainWindow window, string item)
     {
         ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("No menu is open");
         IEnumerable<MenuItem> items = menu.Items.OfType<MenuItem>();
@@ -283,7 +283,7 @@ public sealed class FilePropertiesTests : IDisposable
     }
 
     /// <summary>Answers Rider's Reload or Convert question, failing unless it was asked as named.</summary>
-    private static void Answer(MainWindow window, string title, string button)
+    internal static void Answer(MainWindow window, string title, string button)
     {
         Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), $"the question '{title}'");
         ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
@@ -298,7 +298,7 @@ public sealed class FilePropertiesTests : IDisposable
         Ui.Settle();
     }
 
-    private static string? Shown(MainWindow window, string name) => window.FindControl<TextBlock>(name)!.Text;
+    internal static string? Shown(MainWindow window, string name) => window.FindControl<TextBlock>(name)!.Text;
 
     private static string? Tip(MainWindow window, string name) => ToolTip.GetTip(window.FindControl<Button>(name)!) as string;
 

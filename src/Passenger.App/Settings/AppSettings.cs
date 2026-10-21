@@ -277,6 +277,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, DiscordOnNamingNothing];
 
+    /// <summary><see cref="AgentFolders"/> is a set: a folder let in always from one window while another's Settings takes
+    /// back a different one stays let in.</summary>
+    public static IReadOnlyList<string> Sets { get; } = [nameof(AgentFolders)];
+
     /// <summary>Version 1 to 2, Discord's activity on at first and naming nothing of the work: a file whose activity was not
     /// turned on holds the old defaults (off, the solution and the file), written with whatever else was changed, so it
     /// comes up on, naming only Passenger; one the person had turned on keeps what they chose.</summary>

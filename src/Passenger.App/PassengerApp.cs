@@ -72,8 +72,9 @@ public static class PassengerApp
     /// <summary>Opens a folder, solution (.sln, .slnx) or C# project (.csproj), a path checked already (<see
     /// cref="MainWindow.Open"/> says why one cannot be), in the window it is opened from or one of its own; a window with
     /// nothing open takes it either way, as Rider's Welcome screen does. One another window has open (its folder) is
-    /// brought forward there instead, taking the solution named. The window it opened in.</summary>
-    public static MainWindow OpenProject(string path, OpenTarget target, MainWindow from)
+    /// brought forward there instead, taking the solution named. The window it opened in; <paramref name="then"/> is told
+    /// that window once the solution's session has begun there, never when it was not opened.</summary>
+    public static MainWindow OpenProject(string path, OpenTarget target, MainWindow from, Action<MainWindow>? then = null)
     {
         UiThread.Check();
         string full = PathNames.Canonical(path);
@@ -82,13 +83,17 @@ public static class PassengerApp
         {
             if (already.WorkspaceModel?.OpenedAs is not { } opened || !PathNames.Same(opened, full))
             {
-                already.OpenFolder(full);
+                already.OpenFolder(full, opened: then is null ? null : () => then(already));
+            }
+            else
+            {
+                then?.Invoke(already);
             }
             BringForward(already);
             return already;
         }
         MainWindow into = target == OpenTarget.NewWindow && from.Folder is { } open && !PathNames.Same(open, folder) ? NewWindow(from) : from;
-        into.OpenFolder(full);
+        into.OpenFolder(full, opened: then is null ? null : () => then(into));
         if (into != from)
         {
             BringForward(into);

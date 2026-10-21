@@ -97,8 +97,21 @@ public sealed class XamlDocument : IDisposable
         return file is null ? null : await BackgroundWork.Run(() => XamlCompletion.At(file, caret), cancel);
     }
 
-    /// <summary>The file checked as it stands, its markers replaced by what is found, unless it changed meanwhile.</summary>
+    /// <summary>The file checked as it stands, its markers replaced by what is found, unless it changed meanwhile; a check
+    /// that fails is reported, as nothing awaits it (a Debounce's work).</summary>
     private async Task AnalyseAsync()
+    {
+        try
+        {
+            await CheckAsync();
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            IdeErrors.Report(error);
+        }
+    }
+
+    private async Task CheckAsync()
     {
         using IDisposable held = BackgroundWork.Scope();
         using IDisposable checking = Document.Checking();

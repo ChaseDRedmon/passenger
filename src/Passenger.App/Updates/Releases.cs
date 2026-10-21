@@ -146,7 +146,8 @@ public static partial class Releases
         }
     }
 
-    /// <summary>An absolute http or https URL, or null: what a release's JSON names is opened only as a web page.</summary>
+    /// <summary>An absolute http or https URL, or null: what a release's JSON (or a NuGet feed's advisory) names is opened
+    /// only as a web page.</summary>
     public static Uri? Web(string? text) =>
         Uri.TryCreate(text, UriKind.Absolute, out Uri? uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) ? uri : null;
 

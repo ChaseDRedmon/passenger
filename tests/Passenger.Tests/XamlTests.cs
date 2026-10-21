@@ -194,6 +194,198 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void An_interface_typed_as_its_own_base_or_in_a_cycle_beside_open_xaml_leaves_the_xaml_checked_and_the_ide_running()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        OpenDocument view = window.EditorArea.Active!;
+        PlaceAfter(window.EditorArea.CodeEditor, "<TextBlock Text=\"{Binding #Go.Content}\" />");
+        window.KeyTextInput("\n        <TextBlock Text=\"{Binding Subtitle}\" />\n        <TextBlock Text=\"{Binding Caption}\" />");
+        Ui.WaitFor(() => view.Markers.Count == 2, "the two properties the view model lacks marked");
+
+        // On the way to IMainViewModelBase the interface names itself; a binding the view model lacks then asks what it
+        // implements (the toolkit's ObservableObject, INotifyPropertyChanged, for Create property), which went round for good.
+        window.OpenFile(app.PathOf("ViewModels/MainViewModel.cs"));
+        Ui.Settle();
+        CodeEditor code = window.EditorArea.CodeEditor;
+        Replace(code, "public class MainViewModel\n{", "public interface IMainViewModel : IMainViewModel\n{\n}\n\npublic class MainViewModel : IMainViewModel\n{\n    public string Caption { get; set; } = \"\";\n");
+        Ui.WaitFor(() => view.Markers.Count == 1, "the property typed into the view model no longer marked, its types read again");
+        Assert.Equal("Cannot resolve property 'Subtitle' on MainViewModel", Assert.Single(view.Markers).Message);
+
+        // Two interfaces, each the other's base.
+        Replace(code, "public interface IMainViewModel : IMainViewModel\n{\n}", "public interface IMainViewModel : IViewModelBase\n{\n}\n\npublic interface IViewModelBase : IMainViewModel\n{\n}");
+        Replace(code, "public string Caption", "public string Heading");
+        Ui.WaitFor(() => view.Markers.Count == 2, "the property renamed in the view model marked again, its types read again");
+        Assert.Equal(["Cannot resolve property 'Caption' on MainViewModel", "Cannot resolve property 'Subtitle' on MainViewModel"], view.Markers.Select(m => m.Message).Order());
+
+        window.OpenFile(app.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "{Binding Subt");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
+        Assert.Equal("Create property 'Subtitle'", window.Assist.Offered[0]);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_character_reference_to_half_a_surrogate_pair_leaves_its_file_and_the_projects_others_with_their_help()
+    {
+        // An emoji written as two references, each half a UTF-16 pair: no character XML allows, read as written. The file is
+        // on disk as the project loads, and the window's own file has one typed into it.
+        string emoji = app.Write("Emoji.axaml", """
+            <UserControl xmlns="https://github.com/avaloniaui"
+                         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                         x:Class="Gallery.Emoji">
+                <StackPanel>
+                    <TextBlock Text="&#xD83D;&#xDE00;" />
+                    <TextBlock Text="&#55357;" />
+                </StackPanel>
+            </UserControl>
+
+            """);
+        app.Write("Emoji.axaml.cs", "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class Emoji : UserControl\n{\n}\n");
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument view = window.EditorArea.Active!;
+        Ui.WaitFor(() => window.XamlService.For(view)?.IsLoaded == true, "the project's XAML read, the file with the references among it");
+        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        window.KeyTextInput("\n        <TextBlock Text=\"&#xD83D;\" />\n        ");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered beside a typed reference to half a pair");
+        Ui.Press(window, "ESCAPE");
+        Ui.Press(window, "BACK_SPACE");
+        Ui.Settle();
+        Assert.Empty(view.Markers);
+
+        window.OpenFile(emoji);
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<TextBlock Text=\"&#55357;\"");
+        window.KeyTextInput(" ");
+        window.KeyTextInput("F");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Foreground"), "a TextBlock's properties in the file holding the references");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_property_added_to_a_view_model_in_a_referenced_project_reaches_the_xaml_that_binds_to_it()
+    {
+        // The usual layout: the app's XAML in Shop, its view models in Shop.Core, which Shop references.
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-core-"));
+        string shop = Path.Combine(folder, "Shop");
+        string core = Path.Combine(folder, "Shop.Core");
+        string viewModel = Path.Combine(core, "ViewModels", "MainViewModel.cs");
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                AvaloniaApp.Create(shop, "Shop");
+                string project = Path.Combine(shop, "Shop.csproj");
+                File.WriteAllText(project, File.ReadAllText(project).Replace("</Project>",
+                    "  <ItemGroup>\n    <ProjectReference Include=\"..\\Shop.Core\\Shop.Core.csproj\" />\n  </ItemGroup>\n</Project>", StringComparison.Ordinal));
+                Directory.CreateDirectory(Path.GetDirectoryName(viewModel)!);
+                File.WriteAllText(Path.Combine(core, "Shop.Core.csproj"),
+                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+                File.WriteAllText(viewModel, "namespace Shop.Core.ViewModels;\n\npublic class MainViewModel\n{\n    public string Greeting { get; set; } = \"Hello\";\n}\n");
+                File.WriteAllText(Path.Combine(shop, "MainWindow.axaml"), """
+                    <Window xmlns="https://github.com/avaloniaui"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:vm="using:Shop.Core.ViewModels"
+                            x:Class="Shop.MainWindow"
+                            x:DataType="vm:MainViewModel"
+                            Title="Shop">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Greeting}" />
+                            <TextBlock Text="{Binding Subtitle}" />
+                            <TextBlock Text="{Binding Caption}" />
+                        </StackPanel>
+                    </Window>
+
+                    """);
+                Restore.Run(shop);
+            }, folder);
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
+            OpenDocument view = window.EditorArea.Active!;
+            Ui.WaitFor(() => view.Markers.Count == 2, "the two properties the referenced project's view model lacks marked");
+            Assert.Equal(["Cannot resolve property 'Caption' on MainViewModel", "Cannot resolve property 'Subtitle' on MainViewModel"], view.Markers.Select(m => m.Message).Order());
+
+            // Written on disk (a pull, another editor), and typed into the view model open in the editor.
+            File.WriteAllText(viewModel, "namespace Shop.Core.ViewModels;\n\npublic class MainViewModel\n{\n    public string Greeting { get; set; } = \"Hello\";\n\n    public string Subtitle { get; set; } = \"\";\n}\n");
+            Ui.WaitFor(() => view.Markers.Count == 1, "the property written into the referenced project's view model no longer marked");
+            window.OpenFile(viewModel);
+            Ui.Settle();
+            CodeEditor code = window.EditorArea.CodeEditor;
+            PlaceAfter(code, "public string Subtitle { get; set; } = \"\";");
+            window.KeyTextInput("\n\n    public string Caption { get; set; } = \"\";");
+            Ui.WaitFor(() => view.Markers.Count == 0, "the property typed into the referenced project's view model no longer marked");
+
+            window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
+            Ui.Settle();
+            PlaceAfter(window.EditorArea.CodeEditor, "Text=\"{Binding ");
+            Ui.Run(window, AppActions.Complete);
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Caption"), "the property typed into the referenced project offered in a binding");
+            Assert.Contains("Subtitle", window.Assist.CompletionLabels);
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_project_that_takes_avalonia_while_its_xaml_is_open_gets_its_xaml_help_once_the_restore_lands()
+    {
+        // A library with XAML in it but no Avalonia yet: nothing Passenger reads until the package is added and restored.
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-later-"));
+        string project = Path.Combine(folder, "Later.csproj");
+        const string Plain = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n";
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                File.WriteAllText(project, Plain + "</Project>\n");
+                File.WriteAllText(Path.Combine(folder, "MainView.axaml"), """
+                    <UserControl xmlns="https://github.com/avaloniaui"
+                                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                        <StackPanel>
+                            <TextBlock Text="Later" />
+                        </StackPanel>
+                    </UserControl>
+
+                    """);
+                Restore.Run(folder);
+            }, folder);
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(folder, "MainView.axaml"));
+            OpenDocument document = window.EditorArea.Active!;
+            Passenger.App.Xaml.XamlDocument xaml = window.XamlService.For(document) ?? throw new InvalidOperationException("The XAML file of a C# project was given no XAML");
+            Ui.WaitFor(() => xaml.Loaded.IsCompleted, "the project read and found to be neither Avalonia's nor WPF's");
+            Assert.False(xaml.IsLoaded, "A project referencing neither Avalonia nor WPF had its XAML read as one of theirs");
+
+            // Avalonia added, as NuGet's window or dotnet add package adds it, and restored.
+            File.WriteAllText(project, $"{Plain}  <ItemGroup>\n    <PackageReference Include=\"Avalonia\" Version=\"{AvaloniaApp.Version}\" />\n  </ItemGroup>\n</Project>\n");
+            Ui.Settle();
+            Restore.Run(folder);
+            Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read as Avalonia's once the package it now references was restored", TimeSpan.FromSeconds(30));
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            PlaceAfter(editor, "<TextBlock Text=\"Later\" />");
+            window.KeyTextInput("\n        ");
+            window.KeyTextInput("<");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<' once the project references it");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void A_package_restored_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands()
     {
         string folder = PathNames.Canonical(TestFolders.Create("xaml-restore-"));
@@ -696,6 +888,45 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Assert.Equal("Button.xaml", window.EditorArea.Active?.Name);
         Assert.Contains("x:Key=\"|ButtonBackground\"", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_themes_include_that_climbs_out_of_its_sources_folder_is_refused_and_nothing_is_written_outside_it()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        Passenger.App.Xaml.XamlDocument xaml = window.XamlService.For(window.EditorArea.Active!)!;
+        Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read");
+        // Fluent's control list as its Source Link gave it in an earlier session, merging in a file five folders up from
+        // the version's own: in the state folder itself, had the download been let through.
+        Passenger.Xaml.Metadata.AssemblyTypes fluent = xaml.Loaded.Result!.Types.Assemblies.Single(a => a.Name == "Avalonia.Themes.Fluent");
+        string entry = Path.Combine(Passenger.App.Xaml.LibrarySources.Folder, "SourceLink", fluent.Name,
+            Passenger.App.Xaml.LibrarySources.Stamp(Passenger.App.Xaml.LibrarySources.Implementation(fluent.Path)));
+        string escaped = Path.Combine(Passenger.App.State.StateStore.DefaultRoot, "escaped");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(entry, "Controls"));
+            File.WriteAllText(Path.Combine(entry, "Controls", "FluentControls.xaml"),
+                "<ResourceDictionary xmlns=\"https://github.com/avaloniaui\">\n  <ResourceDictionary.MergedDictionaries>\n"
+                + "    <MergeResourceInclude Source=\"../../../../../escaped/Button.xaml\" />\n  </ResourceDictionary.MergedDictionaries>\n</ResourceDictionary>\n");
+            PlaceAfter(window.EditorArea.CodeEditor, "<Butt");
+            Ui.Run(window, AppActions.GoToDeclaration);
+            Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the class and its control theme to choose from");
+            Ui.Press(window, "DOWN");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Status?.Contains("leads outside its sources' folder", StringComparison.Ordinal) == true, "the include that climbs out refused, saying why");
+            Assert.Equal("MainWindow.axaml", window.EditorArea.Active?.Name);
+            Assert.False(Directory.Exists(escaped), $"Source Link wrote outside its folder: {escaped}");
+            window.Close();
+        }
+        finally
+        {
+            // The run's other tests ask Source Link for Fluent's files afresh.
+            string versions = Path.Combine(Passenger.App.Xaml.LibrarySources.Folder, "SourceLink", fluent.Name);
+            if (Directory.Exists(versions))
+            {
+                Directory.Delete(versions, recursive: true);
+            }
+        }
     }
 
     /// <summary>A theme library's files as its Source Link would give them, written into a folder of the test's; what was

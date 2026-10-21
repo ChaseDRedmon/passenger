@@ -42,18 +42,19 @@ public partial class MainWindow
     /// warm server it may take up, its consoles, Debug window and tests tree, a test run's build (which the session's builds
     /// and runs make), and the Terminal tab the debugger asks for.</summary>
     private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer, Bottom,
-        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings);
+        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings, work);
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
-        OpenBrowserOnceListening, () => StateFolder);
+        OpenBrowserOnceListening, () => StateFolder, work);
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
     /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
     /// read again: its language server and open files are kept. Another folder's session is left first, and the new one
     /// made once what it ran has ended: the task is done once the folder is open (at once when nothing had to end), or
-    /// once a later open has taken its place.</summary>
-    public Task OpenFolder(string path)
+    /// once a later open has taken its place. <paramref name="opener"/> is the agent whose own open it is, which stays let in;
+    /// <paramref name="opened"/> runs once the folder's session has begun (or been read again), never for an open given up.</summary>
+    public Task OpenFolder(string path, Mcp.AgentConnection? opener = null, Action? opened = null)
     {
         UiThread.Check();
         string named = PathNames.Canonical(path);
@@ -62,6 +63,7 @@ public partial class MainWindow
         if (opening == session.Folder)
         {
             ReadAgain(opening, fileNamed ? named : null);
+            opened?.Invoke();
             return Task.CompletedTask;
         }
         // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
@@ -73,6 +75,7 @@ public partial class MainWindow
             }
             EndSession();
         }
+        AgentsGoTo(opening, opener);
         Autosave();
         // The session with no folder ends too, what it ran with it (a program attached to with no folder open); the files
         // open in it stay, the new session's.
@@ -82,9 +85,10 @@ public partial class MainWindow
         if (ending.IsCompleted)
         {
             Begin(opening, fileNamed ? named : null);
+            opened?.Invoke();
             return Task.CompletedTask;
         }
-        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null);
+        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null, opened);
     }
 
     /// <summary>The folder open now, opened again: with the solution it has, read again; with another (a solution or project
@@ -105,7 +109,7 @@ public partial class MainWindow
         Remember();
     }
 
-    private async Task BeginOnceEndedAsync(int open, string folder, string? named)
+    private async Task BeginOnceEndedAsync(int open, string folder, string? named, Action? opened)
     {
         // Held while it waits, so a screenshot or a test finds the folder open rather than the moment between.
         using IDisposable held = BackgroundWork.Scope();
@@ -114,6 +118,7 @@ public partial class MainWindow
         if (open == opens && Ended is null)
         {
             Begin(folder, named);
+            opened?.Invoke();
         }
     }
 
@@ -184,7 +189,7 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
+                ShowStop();
                 ShowHotReloadButtons();
             }
         };
@@ -200,7 +205,7 @@ public partial class MainWindow
         {
             next.Attach(document);
         }
-        StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
+        ShowStop();
         ShowHotReloadButtons();
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();

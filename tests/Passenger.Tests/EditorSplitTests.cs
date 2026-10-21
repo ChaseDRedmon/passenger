@@ -102,6 +102,32 @@ public sealed class EditorSplitTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A split scrolled to its file's end while another split deletes all but its first lines: the first draws the
+    /// lines left, where its view stood past the last of them, blank, gutter and all, until scrolled.</summary>
+    [AvaloniaFact]
+    public void A_split_scrolled_to_the_files_end_draws_the_lines_left_once_another_split_deletes_most_of_them()
+    {
+        File.WriteAllText(Path.Combine(folder, "Long.cs"), string.Concat(Enumerable.Range(1, 300).Select(i => $"// line {i}\n")));
+        MainWindow window = Open("Long.cs");
+        EditorArea area = window.EditorArea;
+        EditorGroup left = area.ActiveGroup;
+        Assert.True(window.Perform(AppActions.SplitRight));
+        Ui.Settle();
+        EditorGroup right = area.ActiveGroup;
+        left.Editor.GoTo(new TextPosition(299, 0));
+        Ui.Settle();
+        Assert.True(left.Editor.ScrollOffset.Y > 200 * left.Editor.LineHeight, "Going to the last line left the view at the file's top");
+
+        // Everything after the tenth line deleted in the right split.
+        TextSnapshot text = right.Editor.Document.Snapshot;
+        right.Editor.Selections = SelectionSet.Single(new Selection(text.GetLineStart(10), text.Length));
+        right.Editor.Focus();
+        Ui.Press(window, "BACK");
+        Assert.Equal(11, left.Editor.Document.Snapshot.LineCount);
+        Ui.DrawsText(window, left.Editor, "another split deleted all but ten lines");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_tab_dragged_to_its_splits_right_edge_splits_it_off_and_back_onto_the_first_strip_joins_it_again()
     {

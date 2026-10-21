@@ -220,6 +220,37 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public void A_save_on_Windows_keeps_the_files_attributes_its_explicit_access_control_list_and_its_alternate_data_streams()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "File attributes such as Hidden, an explicit ACL and alternate data streams are NTFS's");
+        string path = Path.Combine(folder, "Hidden.cs");
+        File.WriteAllText(path, "class Hidden { }\n");
+        // As a download is marked, and as a person shares one file with everyone or hides it.
+        File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+        FileInfo info = new(path);
+        System.Security.AccessControl.FileSecurity security = info.GetAccessControl();
+        System.Security.Principal.SecurityIdentifier everyone = new(System.Security.Principal.WellKnownSidType.WorldSid, null);
+        security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(everyone, System.Security.AccessControl.FileSystemRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+        info.SetAccessControl(security);
+        File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Hidden);
+        MainWindow window = Open();
+        Edit(window, "Hidden.cs", "public ");
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+
+        Assert.Equal("public class Hidden { }\n", File.ReadAllText(path));
+        Assert.False(window.EditorArea.Active!.IsModified, $"The hidden file was not saved: {window.Status}");
+        Assert.True(File.GetAttributes(path).HasFlag(FileAttributes.Hidden), $"The save took the file's Hidden attribute away: {File.GetAttributes(path)}");
+        bool shared = new FileInfo(path).GetAccessControl().GetAccessRules(includeExplicit: true, includeInherited: false, typeof(System.Security.Principal.SecurityIdentifier))
+            .OfType<System.Security.AccessControl.FileSystemAccessRule>()
+            .Any(r => r.IdentityReference.Equals(everyone) && r.FileSystemRights.HasFlag(System.Security.AccessControl.FileSystemRights.Read));
+        Assert.True(shared, "The save gave the file its folder's inherited ACL in place of its own, which let everyone read it");
+        Assert.True(File.Exists(path + ":Zone.Identifier") && File.ReadAllText(path + ":Zone.Identifier").Contains("ZoneId=3", StringComparison.Ordinal),
+            "The save took the file's Zone.Identifier stream away");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_read_only_file_is_never_written_by_a_save_and_its_first_edit_and_each_save_ask_to_make_it_writable()
     {
         // As Perforce or TFVC leave a file not checked out: macOS and Linux would let a save move a new file over it.

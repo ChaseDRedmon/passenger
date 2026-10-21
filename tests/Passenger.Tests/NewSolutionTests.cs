@@ -8,13 +8,15 @@ using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Explorer;
+using Passenger.App.Settings;
 using Passenger.App.Templates;
 using Passenger.Core;
 
 namespace Passenger.Tests;
 
 /// <summary>Rider's New Solution and Add, New Project, from the templates dotnet new has installed, through the window: the
-/// Welcome screen's New Solution makes a console app with an option changed, opens it, builds it and runs it; a solution
+/// Welcome screen's New Solution makes a console app with an option changed, opens it, builds it and runs it, and from a
+/// window with a solution open the new one is built in the window it opens in, wherever that is; a solution
 /// folder's Add, New Project puts a class library in it, the solution file gaining only its lines; a name taken or a
 /// folder not empty is refused with why first; the templates listed are dotnet new list's; and Avalonia's, not installed,
 /// install from the run's own feed and make an Avalonia app, free of Accelerate's tools, that builds and runs.</summary>
@@ -88,6 +90,62 @@ public sealed class NewSolutionTests : IDisposable
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the new console app to run to its end", TimeSpan.FromMinutes(2));
         Assert.Contains("Hello, World!", Output(window), StringComparison.Ordinal);
         window.Close();
+    }
+
+    /// <summary>New Solution from a window with a solution open builds the new solution in the window it opens in, once its
+    /// session there has begun, whatever Settings' Open project in says: asked, nothing builds while the question waits, and
+    /// This Window builds it there once the old solution is left; Current Window builds it there too; New Window builds it in
+    /// a window of its own. The solution that was open is never built.</summary>
+    [AvaloniaTheory]
+    [InlineData(OpenProjectIn.Ask)]
+    [InlineData(OpenProjectIn.CurrentWindow)]
+    [InlineData(OpenProjectIn.NewWindow)]
+    public void New_Solution_from_a_window_with_a_solution_open_builds_the_new_one_in_the_window_it_opens_in(OpenProjectIn openIn)
+    {
+        using IDisposable theme = TestsTheme();
+        Write("Old/Old.csproj", Executable);
+        Write("Old/Program.cs", "System.Console.WriteLine(\"Old\");\n");
+        string old = PathNames.Canonical(Path.Combine(place, "Old"));
+        MainWindow window = Started(old);
+        Assert.Equal(old, window.Folder);
+        window.ApplySettings(window.Settings with { OpenProjectIn = openIn });
+        Assert.True(window.Perform(AppActions.NewSolution), $"New Solution did not open: {Ui.Said(window)}");
+        NewProjectDialog dialog = Templates(window);
+        Assert.Equal("Console App", dialog.Chosen?.Name);
+        dialog.Folder = place;
+        Type(dialog, "Fresh");
+        string framework = dialog.Framework ?? throw new InvalidOperationException("The console template offers no target framework");
+        Click(dialog, dialog.CreateButton);
+        Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, "dotnet new to make the solution", TimeSpan.FromMinutes(5));
+        Assert.True(dialog.Problem is null, $"The solution was not made: {dialog.Problem}");
+        string folder = PathNames.Canonical(Path.Combine(place, "Fresh"));
+        string solution = Path.Combine(folder, $"Fresh.{dialog.SolutionFormat}");
+        string oldBuilt = Path.Combine(old, "bin", "Debug", "net10.0", "Old.dll");
+
+        MainWindow opened = window;
+        if (openIn == OpenProjectIn.Ask)
+        {
+            OpenProjectDialog asked = window.Asking ?? throw new InvalidOperationException($"New Solution over {old} did not ask where to open it");
+            Assert.False(window.IsBuilding || File.Exists(oldBuilt), "The solution open built while Open Solution asked where the new one goes");
+            Click(asked, asked.GetVisualDescendants().OfType<Button>().Single(b => (string?)b.Content == OpenProjectDialog.ThisWindow));
+        }
+        else if (openIn == OpenProjectIn.NewWindow)
+        {
+            opened = Assert.Single(PassengerApp.Windows, w => w != window);
+            Assert.Equal(old, window.Folder);
+        }
+        Assert.False(File.Exists(oldBuilt), "New Solution built the solution that was open before it");
+        Ui.WaitFor(() => opened.WorkspaceModel?.OpenedAs == solution, "the new solution to open", TimeSpan.FromMinutes(1));
+        string built = Path.Combine(folder, "Fresh", "bin", "Debug", framework, "Fresh.dll");
+        Assert.True(opened.IsBuilding || File.Exists(built), $"The new solution opened and no build of it began: {Ui.Said(opened)}");
+        Ui.WaitFor(() => !opened.IsBuilding, "the new solution's build in the window it opened in", TimeSpan.FromMinutes(3));
+        Assert.True(File.Exists(built), $"The new solution was not built: {Ui.Said(opened)}");
+        Assert.False(window != opened && window.IsBuilding, "The window New Solution was chosen in built as the new solution opened in another");
+        Assert.False(File.Exists(oldBuilt), "New Solution built the solution that was open before it");
+        foreach (MainWindow each in PassengerApp.Windows.ToList())
+        {
+            each.Close();
+        }
     }
 
     [AvaloniaFact]
@@ -404,14 +462,14 @@ public sealed class NewSolutionTests : IDisposable
             """);
     }
 
-    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen.</summary>
-    private MainWindow Started()
+    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen or the folder given.</summary>
+    private MainWindow Started(string? folder = null)
     {
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
-        window.Start(LaunchOptions.Empty);
+        window.Start(folder is null ? LaunchOptions.Empty : LaunchOptions.Empty with { Folder = folder });
         Ui.Settle();
         return window;
     }

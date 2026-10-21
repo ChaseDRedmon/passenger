@@ -42,8 +42,9 @@ public partial class MainWindow
     /// a solution (.sln, .slnx) or C# project (.csproj) as the workspace over its folder, or a folder, in this window or
     /// another as Settings says or the person answers (<see cref="Asking"/>); any other file in an editor tab here, in the
     /// open folder or on its own, as Rider's Open does. Null once it is open or asked where, else why not (it is not there,
-    /// or cannot be read), which the status bar and the Welcome screen say.</summary>
-    public string? Open(string path)
+    /// or cannot be read), which the status bar and the Welcome screen say; <paramref name="then"/> is told the window a
+    /// workspace opened in once its session has begun there, whenever that is.</summary>
+    public string? Open(string path, Action<MainWindow>? then = null)
     {
         string full = PathNames.Canonical(path);
         if (File.Exists(full) && !WorkspaceModel.Opens(full))
@@ -59,7 +60,7 @@ public partial class MainWindow
             status.Text = why;
             return why;
         }
-        OpenChosen(full);
+        OpenChosen(full, then);
         return null;
     }
 

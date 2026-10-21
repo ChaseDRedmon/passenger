@@ -99,7 +99,7 @@ public sealed class ProjectLoadTests : IDisposable
         window.Perform(AppActions.ShowNuGet);
         Ui.Landed(() => nuget.Selected is { Id: "Passenger.Vulnerable", IsVulnerable: true } && nuget.Versions.Count == 3, "the vulnerable package marked and its versions");
         Advisory advisory = Assert.Single(nuget.Selected!.Advisories);
-        Assert.True(advisory.Severity == AdvisorySeverity.Moderate && advisory.Url == new Uri(Advisory), $"The NuGet window has the package's advisory as {advisory}");
+        Assert.True(advisory.Severity == AdvisorySeverity.Moderate && advisory.Link == new Uri(Advisory), $"The NuGet window has the package's advisory as {advisory}");
         Assert.True(nuget.Status == "1 package installed, 1 vulnerable", $"The NuGet window's status says \"{nuget.Status}\"");
         Assert.True(nuget.ChosenVersion == "1.0.1", $"The NuGet window offers {nuget.ChosenVersion}, not 1.0.1, the version that fixes the vulnerability");
         Assert.True(Labels(nuget).Contains("Update"), $"Web's line offers [{string.Join(", ", Labels(nuget))}], not Update");
@@ -109,6 +109,27 @@ public sealed class ProjectLoadTests : IDisposable
             $"The package's details do not say Rider's words on its vulnerability, its severity and its fix: [{string.Join(" | ", said)}]");
         Links(nuget).Single(b => (string?)b.Content == Advisory).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.True(window.Browsed.Count(u => u == new Uri(Advisory)) == 2, "The NuGet window's advisory link did not open the advisory");
+        window.Close();
+    }
+
+    /// <summary>An advisory's address is the feed's to name, in any scheme: only an http or https one is a link, and one that
+    /// would launch a program (a file: address) is words that open nothing.</summary>
+    [AvaloniaFact]
+    public void An_advisory_whose_address_is_no_web_page_is_shown_in_the_nuget_window_as_words_not_a_link()
+    {
+        const string Local = "file:///System/Applications/Calculator.app";
+        feed.Advise("Passenger.Vulnerable", 2, Local, "[1.0.0, 1.0.1)");
+        MainWindow window = Open();
+        NuGetView nuget = window.NuGet;
+        window.Perform(AppActions.ShowNuGet);
+        Ui.Landed(() => nuget.Selected is { Id: "Passenger.Vulnerable", IsVulnerable: true, Advisories.Count: 2 }, "the vulnerable package marked with both advisories");
+        Advisory local = nuget.Selected!.Advisories.Single(a => a.Address == Local);
+        Assert.True(local is { Severity: AdvisorySeverity.High, Link: null }, $"The NuGet window has the file: advisory as {local}");
+
+        List<string> said = Texts(nuget);
+        Assert.True(said.Contains(Local) && !Labels(nuget).Contains(Local), $"The file: advisory is not shown as words beside the web one's link: [{string.Join(" | ", said)}]");
+        Links(nuget).Single(b => (string?)b.Content == Advisory).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(window.Browsed.SequenceEqual([new Uri(Advisory)]), $"The NuGet window's advisories opened [{string.Join(", ", window.Browsed)}]");
         window.Close();
     }
 

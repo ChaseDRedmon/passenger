@@ -41,6 +41,8 @@ internal sealed class Driver(Inspector inspector)
         {
             throw new Refusal("That window has closed");
         }
+        // Before anything is focused there; keys going to a focus elsewhere are weighed as each is sent.
+        Refuse(top, keys: false);
         // The window's own element names its point and takes its keys as any other does.
         Visual? target = element == top && action.X is not null ? null : element;
         return action.Kind switch
@@ -331,14 +333,35 @@ internal sealed class Driver(Inspector inspector)
     private static IKeyboardDevice Keyboard() =>
         AvaloniaLocator.Current.GetService<IKeyboardDevice>() ?? throw new Refusal("The app has no keyboard device");
 
-    /// <summary>Raw input into the window, as its platform delivers it; on the UI thread it is handled before this returns.</summary>
+    /// <summary>Raw input into the window, as its platform delivers it; on the UI thread it is handled before this returns.
+    /// Each is weighed as it goes, since one before it (a key that opens a dialog) may have moved the focus.</summary>
     private static void Send(TopLevel top, RawInputEventArgs input)
     {
         if (top.PlatformImpl?.Input is not { } deliver)
         {
             throw new Refusal("That window has closed");
         }
+        Refuse(top, keys: input is RawKeyEventArgs or RawTextInputEventArgs);
         deliver(input);
+    }
+
+    /// <summary>Refuses input the app keeps from agents (<see cref="Agent.Guard"/>): into a top level it names, or, for keys
+    /// and text, to the focus held in one, wherever Avalonia routes them.</summary>
+    private static void Refuse(TopLevel top, bool keys)
+    {
+        if (Agent.Refusing is not { } refusing)
+        {
+            return;
+        }
+        string? why = refusing(top);
+        if (why is null && keys && Shown.Focused() is Visual focused && TopLevel.GetTopLevel(focused) is { } holding && holding != top)
+        {
+            why = refusing(holding);
+        }
+        if (why is not null)
+        {
+            throw new Refusal(why);
+        }
     }
 
     private static Dictionary<Key, PhysicalKey> PhysicalKeys()

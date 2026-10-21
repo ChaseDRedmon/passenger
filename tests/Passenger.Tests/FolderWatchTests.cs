@@ -221,6 +221,82 @@ public sealed class FolderWatchTests : IDisposable
         Assert.False(window.IsVisible, "The window would not close");
     }
 
+    /// <summary>A folder renamed elsewhere (mv, git mv, Finder) is seen as that folder alone, not the files in it. Its open
+    /// files stayed on their old paths, and the next save wrote them there, making the old folder again beside the new.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Open_files_follow_their_folder_renamed_elsewhere_and_their_saves_never_make_the_old_folder_again(bool eachFolder)
+    {
+        Assert.SkipWhen(eachFolder && OperatingSystem.IsWindows(), "Windows renames a folder only once its own watch lets go; there one watch covers the tree");
+        string old = Path.Combine(folder, "src", "Old");
+        string renamed = Path.Combine(folder, "src", "New");
+        Write("src/Old/One.cs", "class One { }\n");
+        Write("src/Old/Deep/Two.cs", "class Two { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        window.OpenFile(Path.Combine(old, "Deep", "Two.cs"));
+        Ui.Settle();
+        Type(window, "sealed ");
+        window.OpenFile(Path.Combine(old, "One.cs"));
+        Ui.Settle();
+
+        Directory.Move(old, renamed);
+        Ui.WaitFor(() => window.EditorArea.Documents.All(d => PathNames.IsUnder(d.Path, renamed)), "the open files to follow their folder to its new name");
+        Assert.Equal(["One.cs", "Two.cs"], window.EditorArea.Documents.Select(d => d.Name).Order(StringComparer.Ordinal));
+        OpenDocument two = window.EditorArea.Documents.Single(d => d.Name == "Two.cs");
+        Assert.True(two.IsModified && two.Text.Snapshot.ToString() == "sealed class Two { }\n", "The file with unsaved edits lost them as it followed its folder");
+
+        // Typed into, both are saved as the window closes: in the folder's new place, and nowhere else.
+        window.EditorArea.CodeEditor.Focus();
+        Type(window, "public ");
+        window.Close();
+        Assert.False(window.IsVisible, $"The window would not close: {window.Status}");
+        Assert.False(Directory.Exists(old), "A save made the folder renamed elsewhere again under its old name");
+        Assert.Equal("public class One { }\n", File.ReadAllText(Path.Combine(renamed, "One.cs")));
+        Assert.Equal("sealed class Two { }\n", File.ReadAllText(Path.Combine(renamed, "Deep", "Two.cs")));
+    }
+
+    /// <summary>Finder's Move to Trash renames a folder out of the one open, seen as that folder gone alone: an open file in
+    /// it with no edits closes as a file deleted does, and one with edits keeps them, never written back there unasked.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_folder_trashed_elsewhere_closes_its_open_files_and_no_autosave_makes_it_again(bool eachFolder)
+    {
+        Assert.SkipWhen(eachFolder && OperatingSystem.IsWindows(), "Windows moves a folder only once its own watch lets go; there one watch covers the tree");
+        string old = Path.Combine(folder, "src", "Old");
+        string trash = TestFolders.Create("trash-");
+        Write("src/Old/One.cs", "class One { }\n");
+        Write("src/Old/Two.cs", "class Two { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        window.OpenFile(Path.Combine(old, "Two.cs"));
+        Ui.Settle();
+        Type(window, "sealed ");
+        window.OpenFile(Path.Combine(old, "One.cs"));
+        Ui.Settle();
+
+        Directory.Move(old, Path.Combine(trash, "Old"));
+        Ui.WaitFor(() => window.EditorArea.Documents.All(d => d.Name != "One.cs"), "the tab of the file trashed with its folder to close");
+        OpenDocument two = Assert.Single(window.EditorArea.Documents);
+        Assert.Equal("sealed class Two { }\n", two.Text.Snapshot.ToString());
+
+        // Typed into and left for the terminal, which autosaves: the file stays unsaved, and the status bar says why.
+        window.EditorArea.CodeEditor.Focus();
+        Type(window, "public ");
+        Ui.Run(window, AppActions.ShowTerminal);
+        Ui.WaitFor(() => window.Status?.StartsWith("Two.cs could not be saved", StringComparison.Ordinal) == true, "the autosave to say why it left the file");
+        Assert.Equal("Two.cs could not be saved: its folder Old was moved or deleted, and only Save makes it again", window.Status);
+        Assert.False(Directory.Exists(old), "An autosave made the folder trashed elsewhere again");
+        Assert.True(two.IsModified);
+
+        // The person's own Save writes it back there, as asked.
+        window.Perform(AppActions.Save);
+        Ui.WaitFor(() => !two.IsModified, "the person's Save");
+        Assert.Equal("public sealed class Two { }\n", File.ReadAllText(Path.Combine(old, "Two.cs")));
+        window.Close();
+        Assert.False(window.IsVisible, $"The window would not close: {window.Status}");
+    }
+
     [AvaloniaFact]
     public void Lines_changed_on_disk_leave_breakpoints_bookmarks_and_the_caret_with_their_own_lines()
     {

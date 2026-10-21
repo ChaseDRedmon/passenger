@@ -25,6 +25,7 @@ public sealed partial class PassengerTools
         DebugController debugger = Session.Debug;
         if (window.HotReloadWatched)
         {
+            AgentCall.Say("Saving the edits for dotnet watch and waiting for what it makes of them");
             HotReloadOutcome? said = await window.SaveForWatchAsync().WaitAsync(cancel);
             return said is null
                 ? new HotReloadInfo("unanswered", "The files were saved, and dotnet watch said nothing of them in 30 s: debug_output or the Run window shows what it printed",
@@ -37,11 +38,14 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException($"Hot Reload cannot apply changes: {why}");
         }
         DebugSession before = debugger.Session!;
+        AgentCall.Say("Applying the edits to the program being debugged");
         HotReloadOutcome outcome = await debugger.ApplyChangesAsync().WaitAsync(cancel);
         bool needed = outcome.Result == HotReloadResult.RestartNeeded;
         bool restarted = false;
         if (needed && (restart ?? window.Settings.RestartOnRudeEdit))
         {
+            AgentCall.Say("Restarting the program for edits it cannot take running");
+            AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
             restarted = await window.RestartForAgentAsync(outcome);
         }
         else if (needed && debugger.HotReload is { } reload)
