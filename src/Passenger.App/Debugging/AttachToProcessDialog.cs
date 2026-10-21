@@ -16,7 +16,9 @@ public sealed record AttachRow(DotnetProcess? Process, string? Heading = null);
 
 /// <summary>Rider's Attach to Process: the .NET programs running on this machine that the debugger can attach to, each by
 /// Rider's columns (executable, process id, user, command line), those attached to before in this window first under
-/// Recently attached. The search box narrows them by any of those as it is typed, the arrow keys choose among the rows
+/// Recently attached, then those in the engine's running containers under each container (what to know first after the
+/// command line; one no debugger can attach to says why, and Attach stays off for it). The search box narrows them by any
+/// of those as it is typed, the arrow keys choose among the rows
 /// left, and Enter, a double-click or Attach with .NET Debugger closes it with the program chosen (null when cancelled).
 /// Refresh lists them again, for a program started since it opened.</summary>
 public sealed class AttachToProcessDialog : Window
@@ -81,7 +83,7 @@ public sealed class AttachToProcessDialog : Window
                 Attach();
             }
         };
-        rows.SelectionChanged += (_, _) => attach!.IsEnabled = Chosen is not null;
+        rows.SelectionChanged += (_, _) => attach!.IsEnabled = Chosen is { WhyNot: null };
         empty = new TextBlock { Classes = { "emptyText" }, Text = "Looking for .NET processes…" };
         Border table = new()
         {
@@ -121,13 +123,18 @@ public sealed class AttachToProcessDialog : Window
     /// <summary>What the list says when it shows no program: still looking, none running, or none the search finds.</summary>
     public string? Placeholder => empty.IsVisible ? empty.Text : null;
 
-    /// <summary>Chooses a program's row, as a click does.</summary>
-    public void Choose(int processId) => rows.SelectedItem = Rows.FirstOrDefault(r => r.Process?.Id == processId);
+    /// <summary>Chooses a program's row, as a click does: this machine's by its process id, or a container's by its name and
+    /// the program's command line there.</summary>
+    public void Choose(int processId) => rows.SelectedItem = Rows.FirstOrDefault(r => r.Process is { Container: null } p && p.Id == processId);
 
-    /// <summary>Closes with the program chosen, as Attach with .NET Debugger does.</summary>
+    /// <summary>Chooses a container's program, by the container and what its command line holds.</summary>
+    public void Choose(string container, string commandLine) =>
+        rows.SelectedItem = Rows.FirstOrDefault(r => r.Process is { } p && p.Container == container && p.CommandLine.Contains(commandLine, StringComparison.Ordinal));
+
+    /// <summary>Closes with the program chosen, as Attach with .NET Debugger does; one no debugger can attach to stays.</summary>
     public void Attach()
     {
-        if (Chosen is { } chosen)
+        if (Chosen is { WhyNot: null } chosen)
         {
             Close(chosen);
         }
@@ -153,15 +160,33 @@ public sealed class AttachToProcessDialog : Window
         string typed = Search.Text?.Trim() ?? string.Empty;
         List<DotnetProcess> found = [.. listed.Where(p => p.Matches(typed))];
         List<DotnetProcess> before = [.. found.Where(recent)];
-        List<AttachRow> shown = before.Count == 0
-            ? [.. found.Select(p => new AttachRow(p))]
-            : [new AttachRow(null, "Recently attached"), .. before.Select(p => new AttachRow(p)),
-                .. found.Count > before.Count ? [new AttachRow(null, "Other processes")] : Array.Empty<AttachRow>(),
-                .. found.Except(before).Select(p => new AttachRow(p))];
-        int? kept = Chosen?.Id;
+        List<DotnetProcess> local = [.. found.Except(before).Where(p => p.Container is null)];
+        List<IGrouping<string, DotnetProcess>> containers = [.. found.Except(before).Where(p => p.Container is not null).GroupBy(p => p.Container!)];
+        List<AttachRow> shown = [];
+        if (before.Count > 0)
+        {
+            shown.Add(new AttachRow(null, "Recently attached"));
+            shown.AddRange(before.Select(p => new AttachRow(p)));
+        }
+        if (local.Count > 0)
+        {
+            if (before.Count > 0 || containers.Count > 0)
+            {
+                shown.Add(new AttachRow(null, before.Count > 0 ? "Other processes" : "This machine"));
+            }
+            shown.AddRange(local.Select(p => new AttachRow(p)));
+        }
+        foreach (IGrouping<string, DotnetProcess> container in containers)
+        {
+            // Its programs' ids there are known once Passenger's tools are in it, which attaching copies in: said before it does.
+            shown.Add(new AttachRow(null, container.Any(p => p.Id == 0) ? $"Container {container.Key}: {Containers.ContainerProcesses.CopiesTools}" : $"Container {container.Key}"));
+            shown.AddRange(container.Select(p => new AttachRow(p)));
+        }
+        DotnetProcess? kept = Chosen;
         rows.ItemsSource = shown;
-        rows.SelectedItem = shown.FirstOrDefault(r => r.Process is { } p && p.Id == kept) ?? shown.FirstOrDefault(r => r.Process is not null);
-        attach.IsEnabled = Chosen is not null;
+        rows.SelectedItem = shown.FirstOrDefault(r => r.Process is { } p && kept is not null && p.Id == kept.Id && p.Container == kept.Container && p.CommandLine == kept.CommandLine)
+            ?? shown.FirstOrDefault(r => r.Process is { WhyNot: null });
+        attach.IsEnabled = Chosen is { WhyNot: null };
         empty.Text = listed.Count == 0 ? "No .NET processes to attach to" : $"No .NET process matches '{typed}'";
         empty.IsVisible = found.Count == 0;
         if (rows.SelectedItem is { } selected)
@@ -213,10 +238,12 @@ public sealed class AttachToProcessDialog : Window
         }
         Grid grid = new() { ColumnDefinitions = new ColumnDefinitions(Columns), Height = ListRow.Height };
         grid.Children.Add(Cell(process.Name, 0, muted: false));
-        grid.Children.Add(Cell(process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), 1, muted: false));
+        grid.Children.Add(Cell(process.Id == 0 ? string.Empty : process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), 1, muted: false));
         grid.Children.Add(Cell(process.User, 2, muted: true));
-        TextBlock line = Cell(process.CommandLine, 3, muted: true);
-        ToolTip.SetTip(line, process.CommandLine);
+        // Why it cannot be attached to, or what to know first (a Release build, emulation), after its command line.
+        string? said = process.WhyNot ?? process.Note;
+        TextBlock line = Cell(said is null ? process.CommandLine : $"{process.CommandLine}  ({said})", 3, muted: true);
+        ToolTip.SetTip(line, said is null ? process.CommandLine : $"{process.CommandLine}\n{said}");
         grid.Children.Add(line);
         return grid;
     }

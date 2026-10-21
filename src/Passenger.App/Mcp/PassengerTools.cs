@@ -957,20 +957,23 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     [McpServerTool(Name = "debug_processes", Title = "The .NET programs to attach to", ReadOnly = true), Description(
-        "The .NET programs running here that the debugger can attach to: each one's process id, executable, program (the .dll " +
-        "the dotnet host runs, else the executable), user and command line.")]
+        "The .NET programs running here and in running containers that the debugger can attach to: each one's process id, " +
+        "executable, program (the .dll the dotnet host runs, else the executable), user, command line and container (its id " +
+        "there 0 until Passenger's tools, copied in as debug_attach attaches, say it).")]
     public Task<IReadOnlyList<ProcessInfo>> DebugProcesses(CancellationToken cancel = default) => OnUi(cancel, async () =>
-        (IReadOnlyList<ProcessInfo>)[.. (await BackgroundWork.Run(DotnetProcesses.List)).Select(p => new ProcessInfo(p.Id, p.Name, p.Program, p.User, p.CommandLine))]);
+        (IReadOnlyList<ProcessInfo>)[.. (await window.AttachableAsync()).Where(p => p.WhyNot is null)
+            .Select(p => new ProcessInfo(p.Id, p.Name, p.Program, p.User, p.CommandLine, p.Container))]);
 
     [McpServerTool(Name = "debug_attach", Title = "Attach to a running program", Destructive = true), Description(
         "Attaches the debugger to a running .NET program, as Attach to Process does: by processId, or by program when one " +
-        "running program has that name (debug_processes lists them). The breakpoints apply at once; it waits up to waitSeconds " +
-        "for a stop or its end and returns where it is. debug_detach lets it go running on; stop ends it.")]
+        "running program has that name (debug_processes lists them), in container when it runs in one. The breakpoints apply " +
+        "at once; it waits up to waitSeconds for a stop or its end and returns where it is. debug_detach lets it go running " +
+        "on; stop ends it.")]
     public Task<DebugSnapshot> DebugAttach(int? processId = null, [Description("A program's name, as debug_processes gives it")] string? program = null,
-        int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        string? container = null, int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        IReadOnlyList<DotnetProcess> running = await BackgroundWork.Run(DotnetProcesses.List);
-        List<DotnetProcess> named = processId is int id ? [.. running.Where(p => p.Id == id)]
+        IReadOnlyList<DotnetProcess> running = [.. (await window.AttachableAsync()).Where(p => p.Container == container)];
+        List<DotnetProcess> named = processId is int id and not 0 ? [.. running.Where(p => p.Id == id)]
             : program is { Length: > 0 } name ? [.. running.Where(p => p.Program.Equals(name, StringComparison.OrdinalIgnoreCase) || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))]
             : throw new ArgumentException("Name the program to attach to by its processId, or by its program's name");
         DotnetProcess chosen = named switch
@@ -1673,7 +1676,7 @@ public sealed record BreakpointInfo(string? Path, int? Line, bool Enabled, strin
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
 
 /// <summary>A .NET program the debugger can attach to, as Attach to Process lists it.</summary>
-public sealed record ProcessInfo(int ProcessId, string Executable, string Program, string User, string CommandLine);
+public sealed record ProcessInfo(int ProcessId, string Executable, string Program, string User, string CommandLine, string? Container = null);
 
 public sealed record DebugSnapshot(
     string State,

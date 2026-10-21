@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Passenger's container tools: what runs inside a Linux container for the IDE outside it, over docker exec's standard
+       input and output. One executable with modes: dap (the IDE's own debug adapter, the same engine, compiled in from
+       Passenger.DebugAdapter), processes (the container's .NET programs as JSON). Published self-contained for linux-x64,
+       linux-arm64, linux-musl-x64 and linux-musl-arm64 (just container-tools, the release's
+       Passenger-container-tools-<rid>.tar.gz), so it needs nothing of the image but the C library. The IDE never carries
+       it: a dev build finds artifacts/container-tools/<rid>/, a release downloads its own version's. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>passenger-tools</AssemblyName>
+    <RootNamespace>Passenger.ContainerTools</RootNamespace>
+    <!-- No ICU in a container's image is needed: the debugger formats nothing by culture (the program's own ToString runs
+         in the program), and Alpine's .NET images carry none. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Its own runtime goes with it into the container: the program's may be another version, or none (self-contained). -->
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+  </PropertyGroup>
+
+  <!-- Microsoft.Diagnostics.DbgShim brings one package a system, and for a musl system both its own and the glibc one's
+       libdbgshim.so match (musl's systems derive from linux's), the glibc one winning the publish's conflict: it needs
+       ld-linux, which Alpine lacks. A musl publish keeps its own. -->
+  <Target Name="KeepMuslDbgShim" AfterTargets="ResolvePackageAssets" Condition="$(RuntimeIdentifier.StartsWith('linux-musl-'))">
+    <PropertyGroup>
+      <GlibcDbgShim>Microsoft.Diagnostics.DbgShim.$(RuntimeIdentifier.Replace('-musl', ''))</GlibcDbgShim>
+    </PropertyGroup>
+    <ItemGroup>
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="'%(NativeCopyLocalItems.NuGetPackageId)' == '$(GlibcDbgShim)'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <Compile Include="../Passenger.DebugAdapter/AdapterProgram.cs" Link="DebugAdapter/AdapterProgram.cs" />
+    <Compile Include="../Passenger.DebugAdapter/DebugAdapter.cs" Link="DebugAdapter/DebugAdapter.cs" />
+    <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />
+    <ProjectReference Include="../Passenger.Debugger/Passenger.Debugger.csproj" />
+  </ItemGroup>
+</Project>

@@ -11,6 +11,20 @@ namespace Passenger.Core;
 /// runs as, <see cref="IsMine"/> when that is the person running Passenger.</summary>
 public sealed partial record DotnetProcess(int Id, string Name, string CommandLine, string User, bool IsMine)
 {
+    /// <summary>The container it runs in, by name, or null for a program of this machine. Its <see cref="Id"/> is then the
+    /// container's own, and 0 until Passenger's tools in the container have said which it is.</summary>
+    public string? Container { get; init; }
+
+    /// <summary>Started held with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so a debugger attached to it may change its code (Hot
+    /// Reload), as a launch's may.</summary>
+    public bool HotReload { get; init; }
+
+    /// <summary>What a person should know before attaching (a Release build's code, a container's processor emulated), or null.</summary>
+    public string? Note { get; init; }
+
+    /// <summary>Why no debugger can attach to it (its runtime's diagnostics turned off), or null when one can.</summary>
+    public string? WhyNot { get; init; }
+
     /// <summary>What the program is to a person: the .dll the dotnet host runs ("Shop.Api" for "dotnet Shop.Api.dll"),
     /// else the executable's name without its extension.</summary>
     public string Program => Hosted().Match(CommandLine) is { Success: true } dll && Executable.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
@@ -20,9 +34,11 @@ public sealed partial record DotnetProcess(int Id, string Name, string CommandLi
     /// <summary>The name without Windows' .exe; any other dot is the name's own ("Passenger.Tests").</summary>
     private string Executable => Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? Name[..^4] : Name;
 
-    /// <summary>Whether a search typed into Attach to Process finds it: in its name, its process id, its user or its command line.</summary>
+    /// <summary>Whether a search typed into Attach to Process finds it: in its name, its process id, its user, its command
+    /// line or its container's name.</summary>
     public bool Matches(string search) => search.Length == 0
         || Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+        || Container?.Contains(search, StringComparison.OrdinalIgnoreCase) == true
         || Id.ToString(CultureInfo.InvariantCulture).Contains(search, StringComparison.Ordinal)
         || User.Contains(search, StringComparison.OrdinalIgnoreCase)
         || CommandLine.Contains(search, StringComparison.OrdinalIgnoreCase);
@@ -63,6 +79,10 @@ public static partial class DotnetProcesses
 
     /// <summary>The program with this process id, when it is one a debugger can attach to.</summary>
     public static DotnetProcess? Find(int id) => List().FirstOrDefault(p => p.Id == id);
+
+    /// <summary>A process as the system describes it (name, command line, user), whether or not a debugger can attach to it;
+    /// null when it has gone or cannot be read. The container tools describe a program whose runtime opened no pipe by it.</summary>
+    public static DotnetProcess? Describe(int id) => Read(id, null);
 
     /// <summary>The .NET programs a debugger can attach to that a process started, or that those started in turn (the app
     /// dotnet watch runs, under the CLI's own processes), the nearest first. Read off the UI thread, as the list is.</summary>

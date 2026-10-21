@@ -7,8 +7,10 @@ namespace Passenger.Debugger;
 /// name the file system gives it (macOS's /var is /private/var, Windows' C:\Users\RUNNER~1 a long name). A document
 /// recorded under another root (a deterministic build's "/_/", a build on another machine) is not on this disk, and
 /// matches by the folders and file name it shares from the end, at least the file and its folder. A document that is
-/// on this disk as another file never matches, so a same-named file in another folder or project does not
-/// take a breakpoint (upstream issue #57).</summary>
+/// on this disk as another file never matches while the breakpoint's file is on this disk too, so a same-named file in
+/// another folder or project does not take a breakpoint (upstream issue #57); a breakpoint's file that is not here (the
+/// IDE's, this adapter in a container) matches a document that is (one built in the image) by what they share from the
+/// end. A Windows path (C:\…, \\server\…) compares ignoring case wherever the adapter runs, as Windows names files.</summary>
 public static class SourcePaths
 {
     public const int Same = int.MaxValue;
@@ -20,26 +22,32 @@ public static class SourcePaths
 
     public static int Match(string requested, string document)
     {
+        StringComparison comparison = IsWindows(requested) || IsWindows(document) ? StringComparison.OrdinalIgnoreCase : Comparison;
         string want = Normalize(requested);
         string have = Normalize(document);
-        if (string.Equals(want, have, Comparison))
+        if (string.Equals(want, have, comparison))
         {
             return Same;
         }
-        if (Canonical(have) is { } real)
+        if (Canonical(have) is { } real && Canonical(want) is { } wanted)
         {
-            return string.Equals(Canonical(want) ?? want, real, Comparison) ? Same : 0;
+            return string.Equals(wanted, real, comparison) ? Same : 0;
         }
-        string[] wanted = want.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        string[] asked = want.Split('/', StringSplitOptions.RemoveEmptyEntries);
         string[] had = have.Split('/', StringSplitOptions.RemoveEmptyEntries);
         int shared = 0;
-        while (shared < wanted.Length && shared < had.Length
-            && string.Equals(wanted[^(shared + 1)], had[^(shared + 1)], Comparison))
+        while (shared < asked.Length && shared < had.Length
+            && string.Equals(asked[^(shared + 1)], had[^(shared + 1)], comparison))
         {
             shared++;
         }
         return shared >= 2 ? shared : 0;
     }
+
+    /// <summary>A path a Windows machine gave, a drive's (C:\ or C:/) or a share's (\\server\share), on any system.</summary>
+    private static bool IsWindows(string path) =>
+        (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/')
+        || path.StartsWith(@"\\", StringComparison.Ordinal);
 
     private static string Normalize(string path)
     {

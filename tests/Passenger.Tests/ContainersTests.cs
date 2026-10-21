@@ -45,6 +45,13 @@ internal static class Docker
     /// <summary>Runs docker to its end off the caller's thread, which may be the window's: its continuations never wait on it.</summary>
     private static ChildResult Ask(string[] words, TimeSpan limit) => Task.Run(() => ContainerEngine.Shared.RunAsync(words, limit)).GetAwaiter().GetResult();
 
+    /// <summary>What docker says to a command, its output or else its errors, whether it succeeded or not.</summary>
+    public static string Ask(string[] arguments)
+    {
+        ChildResult result = Ask(arguments, TimeSpan.FromMinutes(1).Scaled());
+        return result.Output.Length > 0 ? result.Output : result.Error;
+    }
+
     /// <summary>Why no container can run here (no CLI, no engine, Windows containers), or null when one can.</summary>
     public static string? WhyNot => Unusable.Value;
 

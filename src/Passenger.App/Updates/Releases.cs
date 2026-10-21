@@ -23,6 +23,10 @@ public sealed record ReleaseFeed(Uri Latest, TimeSpan Timeout)
     /// nothing a person waits on.</summary>
     public static readonly TimeSpan ShortTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>Where a release's files download from, each under its tag (v0.2.0/SHA256SUMS): GitHub's for GitHub's feed,
+    /// else the same path on the feed's own host, as a test's stand-in serves them.</summary>
+    public Uri Downloads => Latest == GitHub ? new Uri("https://github.com/Zaneris/passenger/releases/download/") : new Uri(Latest, "/Zaneris/passenger/releases/download/");
+
     /// <summary>GitHub's, or the one <c>PASSENGER_RELEASES</c> names; a value there that is no http or https URL is
     /// fatal, as a malformed flag is (Program checks it before the window opens).</summary>
     public static ReleaseFeed Default => Environment.GetEnvironmentVariable(Variable) is { Length: > 0 } named

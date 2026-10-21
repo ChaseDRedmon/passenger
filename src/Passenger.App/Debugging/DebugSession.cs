@@ -28,6 +28,9 @@ public sealed class DebugSession
 
     private readonly Process adapter;
     private readonly DapConnection connection;
+
+    /// <summary>How the IDE's paths are named where the program runs, and back, at the protocol's edge.</summary>
+    private readonly DebugPaths paths;
     private readonly BreakpointStore breakpoints;
     private readonly BuiltLines lines;
 
@@ -81,30 +84,41 @@ public sealed class DebugSession
     /// <summary>Why a start failed that was stopped (Stop, Detach, the window's close) before it was done.</summary>
     public const string StoppedStarting = "the session was stopped as it started";
 
-    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns, bool elsewhere)
+    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns, bool elsewhere,
+        AdapterPlace? place)
     {
-        Elsewhere = elsewhere;
+        Elsewhere = elsewhere || place is not null;
+        paths = place?.Paths ?? DebugPaths.Same;
         this.breakpoints = breakpoints;
         this.lines = lines;
         this.columns = columns ?? (_ => null);
         // The log is called from the adapter's error stream and the connection's own threads: each line lands on the UI's.
         log = UiThread.Marshal(log);
-        string path = Path.Combine(AppContext.BaseDirectory, "debugger", "Passenger.DebugAdapter.dll");
-        if (!File.Exists(path))
+        ProcessStartInfo start;
+        if (place is not null)
         {
-            throw new FileNotFoundException("The debug adapter is not beside the app", path);
+            // The adapter where the program is (in its container): its flags the same, its symbols kept there.
+            start = place.Command(["--interpreter=vscode", $"--symbolCache={place.SymbolCache}", "--remote"]);
         }
-        // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of every session, for a stop or an end that goes wrong.
-        List<string> arguments = [path, "--interpreter=vscode", $"--symbolCache={SymbolCache}"];
-        if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
+        else
         {
-            arguments.Add($"--engineLogging={engineLog}");
+            string path = Path.Combine(AppContext.BaseDirectory, "debugger", "Passenger.DebugAdapter.dll");
+            if (!File.Exists(path))
+            {
+                throw new FileNotFoundException("The debug adapter is not beside the app", path);
+            }
+            // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of every session, for a stop or an end that goes wrong.
+            List<string> arguments = [path, "--interpreter=vscode", $"--symbolCache={SymbolCache}"];
+            if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
+            {
+                arguments.Add($"--engineLogging={engineLog}");
+            }
+            if (elsewhere)
+            {
+                arguments.Add("--remote");
+            }
+            start = ChildProcesses.DotnetCommand(arguments);
         }
-        if (elsewhere)
-        {
-            arguments.Add("--remote");
-        }
-        ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
@@ -236,36 +250,41 @@ public sealed class DebugSession
     /// <paramref name="elsewhere"/> the program is not on this machine (<see cref="Elsewhere"/>).</summary>
     public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false,
-        Action<DebugSession>? starting = null, bool elsewhere = false) =>
-        StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
+        Action<DebugSession>? starting = null, bool elsewhere = false, AdapterPlace? place = null)
+    {
+        DebugPaths paths = place?.Paths ?? DebugPaths.Same;
+        return StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
-            Program = plan.Program,
+            Program = paths.ToProgram(plan.Program),
             Args = plan.Arguments,
-            Cwd = plan.WorkingDirectory,
+            Cwd = paths.ToProgram(plan.WorkingDirectory),
             Env = plan.Environment,
             Console = runInTerminal is null ? "internalConsole" : "integratedTerminal",
             JustMyCode = true,
             StopAtEntry = false,
             HotReload = hotReload,
-        }, breakpoints, lines, log, output, runInTerminal, columns, starting, elsewhere);
+        }, breakpoints, lines, log, output, runInTerminal, columns, starting, elsewhere, place);
+    }
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (one Attach to Process chose, or a test host
     /// VSTest started), with the store's breakpoints; <paramref name="starting"/> is handed the session as it begins. With
     /// <paramref name="hotReload"/> the program was started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug,
-    /// so its code may change as a launch's may; with <paramref name="elsewhere"/> it is not on this machine.</summary>
+    /// so its code may change as a launch's may; with <paramref name="elsewhere"/> it is not on this machine, and with
+    /// <paramref name="place"/> the adapter runs where it is (a container's, its process id that container's).</summary>
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null, bool hotReload = false, bool elsewhere = false) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true, HotReload = hotReload ? true : null },
-            breakpoints, lines, log, output, null, columns, starting, elsewhere);
+        Func<LineBreakpoint, int?>? columns = null, Action<DebugSession>? starting = null, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null) =>
+        StartAsync(place is null ? $"process {processId}" : $"process {processId} in {place.Where}", "attach",
+            new AttachArguments { ProcessId = processId, JustMyCode = true, HotReload = hotReload ? true : null },
+            breakpoints, lines, log, output, null, columns, starting, elsewhere, place);
 
     /// <summary>Opens the session: the adapter told what to start, the breakpoints sent, then configurationDone, whose answer
     /// waits for the program's runtime however long it takes. A session stopped meanwhile ends the start at once, failing it
     /// with <see cref="StoppedStarting"/>.</summary>
     private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting, bool elsewhere)
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns, Action<DebugSession>? starting, bool elsewhere, AdapterPlace? place)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere) { Program = program, Attached = request == "attach" };
+        DebugSession session = new(breakpoints, lines, log, output, columns, elsewhere, place) { Program = program, Attached = request == "attach" };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {
@@ -574,10 +593,11 @@ public sealed class DebugSession
         (await connection.RequestAsync<ThreadsResponse>("threads", new DapEmpty())).Threads;
 
     /// <summary>A thread's frames, each source on this disk named as the IDE names its files: a PDB records a file as the
-    /// build was given it (another letter case, an 8.3 name), and its stops would otherwise miss the open file.</summary>
+    /// build was given it (another letter case, an 8.3 name, a container's path the session's map names back), and its
+    /// stops would otherwise miss the open file.</summary>
     public async Task<IReadOnlyList<DapStackFrame>> StackTraceAsync(int threadId) =>
         [.. (await connection.RequestAsync<StackTraceResponse>("stackTrace", new StackTraceArguments(threadId))).StackFrames.Select(f =>
-            f.Source is { Path: { } path } source && Path.IsPathFullyQualified(path) && File.Exists(path)
+            f.Source is { Path: { } named } source && paths.ToIde(named) is var path && Path.IsPathFullyQualified(path) && File.Exists(path)
                 ? f with { Source = source with { Path = PathNames.Canonical(path) } }
                 : f)];
 
@@ -597,7 +617,7 @@ public sealed class DebugSession
 
     /// <summary>Where the paused thread could go on from at a line of a file (from one), if the line is in its method.</summary>
     public async Task<GotoTarget?> GotoTargetAsync(string path, int line) =>
-        (await connection.RequestAsync<GotoTargetsResponse>("gotoTargets", new GotoTargetsArguments(new DapSource { Path = path }, line))).Targets.FirstOrDefault();
+        (await connection.RequestAsync<GotoTargetsResponse>("gotoTargets", new GotoTargetsArguments(new DapSource { Path = paths.ToProgram(path) }, line))).Targets.FirstOrDefault();
 
     /// <summary>Set Next Statement: the paused thread goes on from a target; it stops there anew.</summary>
     public Task GotoAsync(int thread, GotoTarget target) => connection.RequestAsync<object>("goto", new GotoArguments(thread, target.Id));
@@ -609,12 +629,17 @@ public sealed class DebugSession
 
     /// <summary>What Hot Reload needs of the program: its runtime's capabilities, its modules and, paused, its active
     /// statements.</summary>
-    public Task<HotReloadStateResponse> HotReloadStateAsync() =>
-        connection.RequestAsync<HotReloadStateResponse>("hotReloadState", new DapEmpty());
+    public async Task<HotReloadStateResponse> HotReloadStateAsync()
+    {
+        HotReloadStateResponse state = await connection.RequestAsync<HotReloadStateResponse>("hotReloadState", new DapEmpty());
+        return state with { ActiveStatements = [.. state.ActiveStatements.Select(s => s.Document is { } document ? s with { Document = paths.ToIde(document) } : s)] };
+    }
 
-    /// <summary>Applies Edit and Continue's updates to the program, paused or running.</summary>
+    /// <summary>Applies Edit and Continue's updates to the program, paused or running, each document's lines named as the
+    /// program's PDB names it.</summary>
     public Task<ApplyChangesResponse> ApplyChangesAsync(IReadOnlyList<DapModuleUpdate> updates) =>
-        connection.RequestAsync<ApplyChangesResponse>("applyChanges", new ApplyChangesArguments(updates));
+        connection.RequestAsync<ApplyChangesResponse>("applyChanges", new ApplyChangesArguments(
+            [.. updates.Select(u => u with { Lines = [.. u.Lines.Select(l => l with { Document = paths.ToProgram(l.Document) })] })]));
 
     /// <summary>Sends files' breakpoints again, at their lines now, after an update the program took: the debugger binds
     /// each again in the code it runs now, as the files' built lines are now their lines.</summary>
@@ -677,7 +702,7 @@ public sealed class DebugSession
         }
         sent[path] = Signature(path);
         SetBreakpointsResponse response = await connection.RequestAsync<SetBreakpointsResponse>(
-            "setBreakpoints", new SetBreakpointsArguments(new DapSource { Path = path, Name = Path.GetFileName(path) }, requests));
+            "setBreakpoints", new SetBreakpointsArguments(new DapSource { Path = paths.ToProgram(path), Name = Path.GetFileName(path) }, requests));
         foreach (int id in byId.Where(p => p.Value.Path == path).Select(p => p.Key).ToList())
         {
             byId.Remove(id);

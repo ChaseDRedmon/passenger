@@ -89,7 +89,7 @@ Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources.
 `Directory.Packages.props` (Roslyn's server's too, as `RoslynServerVersion`); shared properties only in
 `Directory.Build.props`. Packages come from nuget.org alone, as nuget.org signed them (`nuget.config`), at what each
 project's `packages.lock.json` pins: a restore that adds or changes a package rewrites the lock file, committed with
-the change, and CI restores in locked mode. Every lock file holds all six systems of `RuntimeIdentifiers` (osx-x64 restores, though no Intel Mac build ships), even a project carried
+the change, and CI restores in locked mode. Every lock file holds all eight systems of `RuntimeIdentifiers` (osx-x64 restores, though no Intel Mac build ships; linux-musl-x64 and linux-musl-arm64 for the container tools alone), even a project carried
 only on Windows (`Passenger.Inspector.Wpf`, `Passenger.WpfPreview`): a publish's RuntimeIdentifier reaches the restore
 of every project it references (`GlobalPropertiesToRemove` keeps it out of the build only). Every `just` recipe and CI set `AVALONIA_TELEMETRY_OPTOUT=1`, which
 Avalonia's build task reads only from the environment. `Directory.Build.targets` gives every

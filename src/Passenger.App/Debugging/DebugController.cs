@@ -340,13 +340,13 @@ public sealed class DebugController : IDisposable
     /// debugged; the plan's last session, still debugged, is stopped first. With <paramref name="elsewhere"/> the program
     /// runs on another machine (<see cref="DebugSession.Elsewhere"/>). Null once the session is open (the program may have
     /// ended already), else why it could not.</summary>
-    public Task<string?> StartAsync(Run.LaunchPlan plan, bool elsewhere = false)
+    public Task<string?> StartAsync(Run.LaunchPlan plan, bool elsewhere = false, AdapterPlace? place = null)
     {
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = !elsewhere && plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = !elsewhere && place is null && plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
             ? arguments => run(plan.Name, arguments)
             : null;
         bool hotReloadOn = HotReloadOn();
-        return OpenAsync((built, log, output, starting) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn, starting, elsewhere),
+        return OpenAsync((built, log, output, starting) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn, starting, elsewhere, place),
             plan.Name, launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn);
     }
 
@@ -366,11 +366,12 @@ public sealed class DebugController : IDisposable
     /// what it writes goes where it always went, as Rider's Console says. With <paramref name="hotReload"/> the program was
     /// started held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug, so Hot Reload is offered as for a launch (while
     /// Settings' Hot Reload while debugging is on); with
-    /// <paramref name="elsewhere"/> it runs on another machine. Null once the session is open, else why it could not.</summary>
-    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false)
+    /// <paramref name="elsewhere"/> it runs on another machine, and with <paramref name="place"/> the adapter runs where it
+    /// is (in its container). Null once the session is open, else why it could not.</summary>
+    public Task<string?> AttachAsync(int processId, string name, bool hotReload = false, bool elsewhere = false, AdapterPlace? place = null)
     {
         bool hotReloadOn = hotReload && HotReloadOn();
-        return OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReloadOn, elsewhere), name,
+        return OpenAsync((built, log, output, starting) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf, starting, hotReloadOn, elsewhere, place), name,
             launched: false, hotReloadOn: hotReloadOn);
     }
 

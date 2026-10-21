@@ -18,12 +18,13 @@
          only what it names. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
-    <!-- The systems Passenger is published for (just publish, tools/package-*.sh), so each lock file holds their
+    <!-- The systems Passenger is published for (just publish, tools/package-*.sh; the musl ones for the container tools
+         alone, just container-tools), so each lock file holds their
          packages too: a publish for one restores what is locked rather than writing new lock files, which CI's locked
          restore would refuse. Their runtime and host packs download only for a publish, never for a build for this
          machine, and ASP.NET Core's, which nothing here uses, never. A publish also builds every library for its system,
          so the Roslyn server it copies is that system's, not the publishing machine's. -->
-    <RuntimeIdentifiers>osx-arm64;osx-x64;win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>osx-arm64;osx-x64;win-x64;win-arm64;linux-x64;linux-arm64;linux-musl-x64;linux-musl-arm64</RuntimeIdentifiers>
     <EnableRuntimePackDownload Condition="'$(RuntimeIdentifier)' == ''">false</EnableRuntimePackDownload>
     <EnableAppHostPackDownload Condition="'$(RuntimeIdentifier)' == ''">false</EnableAppHostPackDownload>
     <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>

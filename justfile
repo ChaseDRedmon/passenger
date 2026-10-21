@@ -35,6 +35,20 @@ screenshot path *args:
 publish rid:
     dotnet publish {{app}} -c Release -r {{rid}} --self-contained -p:PublishReadyToRun=true
 
+# Passenger's container tools (its debug adapter and process lister, run inside a Linux container) self-contained for one
+# system into artifacts/container-tools/<rid>/, where a dev build finds them; --archive also packs the release's
+# Passenger-container-tools-<rid>.tar.gz. No RID: the glibc one for the container engine's processor.
+# just container-tools [linux-x64|linux-arm64|linux-musl-x64|linux-musl-arm64] [--archive]
+[unix]
+container-tools *args:
+    tools/container-tools.sh {{args}}
+
+# On Windows the script runs in Git's sh, as package-win's does.
+# just container-tools [linux-x64|linux-arm64|linux-musl-x64|linux-musl-arm64] [--archive]
+[windows]
+container-tools *args:
+    $sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\sh.exe' }; & $sh tools/container-tools.sh {{args}}
+
 # The macOS disk image, artifacts/package/Passenger-macos-arm64.dmg (Apple Silicon only): the app signed ad hoc, or with
 # PASSENGER_SIGN_IDENTITY and then, with PASSENGER_NOTARY_PROFILE, the app and the image notarized and stapled; checked
 # mounted. --dry-run writes what those two would run instead: just package-mac [osx-arm64] [--dry-run]

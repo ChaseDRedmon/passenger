@@ -986,7 +986,7 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
     /// <summary>GitHub on a loopback port of its own: releases/latest, answered as the test says or taken and never answered
     /// until the client gives up, and a release's downloads, each request's head kept as it came. A file held is sent half
     /// way and the rest only once the test lets it go.</summary>
-    private sealed class StandIn : IDisposable
+    internal sealed class StandIn : IDisposable
     {
         private const string DownloadPath = "/Zaneris/passenger/releases/download/";
 
