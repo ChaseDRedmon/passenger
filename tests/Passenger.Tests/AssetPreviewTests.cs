@@ -257,7 +257,7 @@ public sealed class AssetPreviewTests : IDisposable
         // was loading, and the status bar says why in the same words.
         (string File, string Why)[] refused =
         [
-            ("broken.png", "image"), ("broken.ttf", "font"), ("empty.otf", "font must be non-empty"), ("unknown.bin", "looks like a binary file"),
+            ("broken.png", "image"), ("broken.ttf", "font"), ("empty.otf", "font must be non-empty"),
             ("missing.png", "missing.png"), ("large.ttf", "no larger than 32 MB"), ("large.png", "no larger than 64 MB"), ("huge.bmp", "32 million pixels"),
         ];
         foreach ((string file, string why) in refused)
@@ -267,6 +267,12 @@ public sealed class AssetPreviewTests : IDisposable
             Assert.Empty(window.EditorArea.Documents);
             Assert.Contains(why, error ?? window.Status ?? "", StringComparison.Ordinal);
         }
+        // A binary file of no kind a preview takes opens as its bytes' text, read-only, rather than refused.
+        Assert.Null(window.OpenFile("unknown.bin"));
+        Ui.Settle();
+        Assert.True(window.EditorArea.Active is { Asset: null, IsBinary: true, IsReadOnly: true }, "unknown.bin did not open as its bytes' text, read-only");
+        window.EditorArea.Close(window.EditorArea.Active!);
+        Ui.Settle();
         Passenger.App.Mcp.PassengerTools agent = new(window);
         Task<string> opening = agent.OpenFile("huge.bmp");
         Ui.WaitFor(() => opening.IsCompleted, "the agent's open_file to answer");

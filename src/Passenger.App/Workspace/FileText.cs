@@ -5,8 +5,9 @@ namespace Passenger.App.Workspace;
 
 /// <summary>A file's text and how it was stored, so saving writes it back the same way: the same encoding (or UTF-8,
 /// when that cannot hold what was typed), a byte-order mark only if it had one, and its own line endings (kept by the
-/// document, but for a CR file's lone carriage returns, held as '\n' and written back as they were).</summary>
-public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool CrBreaks = false)
+/// document, but for a CR file's lone carriage returns, held as '\n' and written back as they were). A binary file's is only
+/// its bytes to look at (<see cref="Bytes"/>), never written back.</summary>
+public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool CrBreaks = false, bool IsBinary = false)
 {
     /// <summary>How much of a file is checked for a NUL byte before it is called binary.</summary>
     private const int BinaryProbe = 8000;
@@ -54,6 +55,30 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             // Latin-1 reads every byte, for one the 8-bit encoding has no character for.
             return Strict(eightBit, bytes) is { } text ? Held(text, eightBit, false) : Held(Encoding.Latin1.GetString(bytes), Encoding.Latin1, false);
         }
+    }
+
+    /// <summary>A binary file's bytes as text to look at, as a text editor shows one: each byte its Latin-1 character, and a
+    /// C0 control but tab and line feed its Control Pictures sign (NUL as ␀, DEL as ␡) and a C1 control a middle dot, so
+    /// every byte shows and only a line feed breaks a line.</summary>
+    public static FileText Bytes(string path)
+    {
+        byte[] bytes = Read(path);
+        string text = string.Create(bytes.Length, bytes, static (chars, bytes) =>
+        {
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                byte b = bytes[i];
+                chars[i] = b switch
+                {
+                    (byte)'\t' or (byte)'\n' => (char)b,
+                    < 0x20 => (char)(0x2400 + b),
+                    0x7F => '\u2421',
+                    >= 0x80 and < 0xA0 => '\u00B7',
+                    _ => (char)b,
+                };
+            }
+        });
+        return new FileText(text, Encoding.Latin1, false, IsBinary: true);
     }
 
     /// <summary>The encoding a byte-order mark at the start of the bytes is, or null without one.</summary>

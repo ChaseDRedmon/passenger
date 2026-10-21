@@ -81,16 +81,23 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_binary_file_is_refused_rather_than_opened_as_text()
+    public void A_binary_file_opens_as_its_bytes_text_read_only_and_typing_never_changes_it()
     {
-        string path = Path.Combine(folder, "image.png");
-        File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x1A, 0x0A]);
+        // A file with no view of its own: an image's name would open it as a preview.
+        string path = Path.Combine(folder, "data.bin");
+        byte[] bytes = [0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x1A, 0x0A];
+        File.WriteAllBytes(path, bytes);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
-        window.OpenFile("image.png");
+        Assert.Null(window.OpenFile("data.bin"));
         Ui.Settle();
-        Assert.Null(window.EditorArea.Active);
+        Assert.True(window.EditorArea.Active is { IsBinary: true, IsReadOnly: true }, "data.bin should open as its bytes' text, read-only");
+
+        Ui.Type(window, "x", "x");
+        window.Perform(AppActions.SaveAll);
+        Ui.Settle();
+        Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)), "Typing in a binary file's tab should never change the file");
         window.Close();
     }
 

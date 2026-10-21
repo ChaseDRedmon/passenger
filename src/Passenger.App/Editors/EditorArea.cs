@@ -138,9 +138,9 @@ public sealed partial class EditorArea : UserControl
         TitleWindows();
     }
 
-    /// <summary>Opens text or a read-only asset in the active group (or shows its tab if open), returning why not when
-    /// the file cannot be read; an asset whose decode fails once its tab shows it loading says so through
-    /// <see cref="OpenFailed"/>.</summary>
+    /// <summary>Opens text, a read-only asset, or a binary file with no view of its own as its bytes' text, read-only
+    /// (<see cref="FileText.Bytes"/>), in the active group (or shows its tab if open), returning why not when the file
+    /// cannot be read; an asset whose decode fails once its tab shows it loading says so through <see cref="OpenFailed"/>.</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
