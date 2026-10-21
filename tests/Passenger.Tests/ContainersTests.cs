@@ -98,7 +98,7 @@ internal static class Docker
     /// <summary>Whether a volume of that name is there.</summary>
     public static bool VolumeExists(string name) => Ask(["volume", "inspect", name], TimeSpan.FromSeconds(30).Scaled()).Succeeded;
 
-    /// <summary>Removes every container and network the run's tests made or had the IDE make (the run's state's label), as
+    /// <summary>Removes every container, network, volume and image the run's tests made or had the IDE make (the run's state's label), as
     /// the run ends; quiet where there is no engine.</summary>
     public static void RemoveEverything()
     {
@@ -129,9 +129,10 @@ internal static class Docker
                 {
                     Ask(["volume", "rm", "-f", .. kept], TimeSpan.FromSeconds(60));
                 }
-                // A container run's images (its builds carry the state's label), never a base image they share layers with.
-                ChildResult images = Ask(["images", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
-                string[] built = [.. images.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct()];
+                // The run's images (a container run's builds and the tests' own carry the label), never a base image they share
+                // layers with; untagged ones too, since one removed while a container ran is only untagged and stays.
+                ChildResult images = Ask(["image", "ls", "-a", "-q", "--filter", $"label={label}"], TimeSpan.FromSeconds(30));
+                string[] built = [.. images.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.Ordinal)];
                 if (built.Length > 0)
                 {
                     Ask(["rmi", "-f", .. built], TimeSpan.FromSeconds(60));

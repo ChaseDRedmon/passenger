@@ -41,13 +41,14 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             DotnetProcess listed = Assert.Single(dialog.Shown, p => p.Container == container);
             Assert.Equal("Turns", listed.Program);
             Assert.Contains(dialog.Rows, r => r.Heading == $"Container {container}: {ContainerProcesses.CopiesTools}");
-            dialog.Choose(container, "Turns.dll");
+            ChooseIn(dialog, container);
             Assert.Equal(container, dialog.Chosen?.Container);
             dialog.Attach();
             StoppedAtBreakpoint(window, "the program in the container");
             ShownAt(window, Said);
             DebugSession session = window.Debugger.Session!;
             Assert.False(session.IsLocal, "A container's program was taken for one of this machine's, which Stop could kill by its id");
+            Assert.Null(window.Debugger.HotReload);
             Assert.Matches("^turn [0-9]+$", Evaluate(session, "said").Trim('"'));
 
             Ui.Run(window, AppActions.StepOver);
@@ -89,7 +90,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
         try
         {
             AttachToProcessDialog dialog = OpenAttachToProcess(window);
-            dialog.Choose(container, "Turns.dll");
+            ChooseIn(dialog, container);
             dialog.Attach();
             StoppedAtBreakpoint(window, "the program in the Alpine container");
             ShownAt(window, Said);
@@ -102,10 +103,41 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             // nothing can attach to it, and the status bar says so.
             string off = Start("alpineoff", turns.Alpine, "-e", "DOTNET_EnableDiagnostics=0");
             dialog = OpenAttachToProcess(window);
-            dialog.Choose(off, "Turns.dll");
+            ChooseIn(dialog, off);
             dialog.Attach();
             Ui.WaitFor(() => window.Status?.Contains("DOTNET_EnableDiagnostics=0", StringComparison.Ordinal) == true, "the status bar to say why the program cannot be attached to");
             Assert.False(window.Debugger.IsDebugging, "A session started on a program whose runtime has its debugger off");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>What holds a program at its start until a debugger lets it go, as a container run's Debug starts it.</summary>
+    private const string Held = "DOTNET_DefaultDiagnosticPortSuspend=1";
+
+    /// <summary>A program held at its start with DOTNET_MODIFIABLE_ASSEMBLIES=debug, as Debug of a container run will start
+    /// each service: listed, attached to, let go by the attach so its first turn stops at the breakpoint, and offered Hot
+    /// Reload, which a program not started so is not.</summary>
+    [AvaloniaFact]
+    public void A_program_held_at_its_start_in_a_container_is_let_go_by_the_attach_stops_at_its_breakpoint_and_is_offered_hot_reload()
+    {
+        Assert.SkipWhen(turns.WhyNot is not null, turns.WhyNot ?? string.Empty);
+        string container = Start("held", turns.Glibc, "-e", Held, "-e", "DOTNET_MODIFIABLE_ASSEMBLIES=debug");
+        MainWindow window = Open(turns.Source("host"));
+        try
+        {
+            Assert.Equal(0, Turned(container));
+            AttachToProcessDialog dialog = OpenAttachToProcess(window);
+            ChooseIn(dialog, container);
+            dialog.Attach();
+            StoppedAtBreakpoint(window, "the program held at its start");
+            Assert.Equal("turn 1", Evaluate(window.Debugger.Session!, "said").Trim('"'));
+            Assert.NotNull(window.Debugger.HotReload);
+            Assert.True(window.Perform(AppActions.Detach), "Detach could not run on the held program");
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugger to let go of the held program");
+            Ui.WaitFor(() => Turned(container) > 1, "the program let go of to count on");
         }
         finally
         {
@@ -126,7 +158,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
         try
         {
             AttachToProcessDialog dialog = OpenAttachToProcess(window);
-            dialog.Choose(container, "Turns.dll");
+            ChooseIn(dialog, container);
             dialog.Attach();
             StoppedAtBreakpoint(window, "the program whose PDB names the container's paths");
             Assert.True(window.Perform(AppActions.Detach), "Detach could not run");
@@ -192,9 +224,10 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
         try
         {
             AttachToProcessDialog dialog = OpenAttachToProcess(refused);
-            dialog.Choose(refusing, "Turns.dll");
+            ChooseIn(dialog, refusing);
             dialog.Attach();
-            Ui.WaitFor(() => refused.Status?.Contains("SHA256SUMS", StringComparison.Ordinal) == true, "the status bar to say the download was refused");
+            Ui.WaitFor(() => refused.Status is { } said && (said.Contains("SHA256SUMS", StringComparison.Ordinal) || said.StartsWith("Could not", StringComparison.Ordinal)),
+                "the status bar to say the download was refused");
             Assert.Contains("are not what the", refused.Status, StringComparison.Ordinal);
             Assert.False(refused.Debugger.IsDebugging, "A session started with tools whose checksum did not match");
             Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(badCache, Product.Version)));
@@ -213,7 +246,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
         try
         {
             AttachToProcessDialog dialog = OpenAttachToProcess(window);
-            dialog.Choose(container, "Turns.dll");
+            ChooseIn(dialog, container);
             dialog.Attach();
             StoppedAtBreakpoint(window, "the program attached to with downloaded tools");
             Assert.True(File.Exists(Path.Combine(cache, Product.Version, turns.Rid, ContainerTools.Executable)), "The downloaded tools were not kept in the cache");
@@ -232,7 +265,10 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
     {
         string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}turns{name}";
         Docker.Run(["run", "-d", "--name", named, "--label", Docker.RunLabel, .. options, image]);
-        Ui.WaitFor(() => Turned(named) > 0, "the program in the container to start counting");
+        if (!options.Contains(Held))
+        {
+            Ui.WaitFor(() => Turned(named) > 0, "the program in the container to start counting");
+        }
         return named;
     }
 
@@ -256,6 +292,14 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
         window.EditorArea.CodeEditor.GoTo(new TextPosition(Said, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
         return window;
+    }
+
+    /// <summary>Chooses the program in a container, as a click on its row does, failing with the rows listed when it has none.</summary>
+    private static void ChooseIn(AttachToProcessDialog dialog, string container)
+    {
+        dialog.Choose(container, "Turns.dll");
+        Assert.True(dialog.Chosen?.Container == container,
+            $"Attach to Process listed no program in {container}: {string.Join(", ", dialog.Rows.Select(r => r.Heading ?? $"{r.Process?.Container}/{r.Process?.CommandLine}"))}");
     }
 
     private static AttachToProcessDialog OpenAttachToProcess(MainWindow window)
@@ -324,7 +368,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
     /// paths, naming a Windows machine's), each copied into an image of .NET's runtime (Debian's, and Alpine's for musl),
     /// and Passenger's container tools for the engine's processor made where a dev build finds them
     /// (artifacts/container-tools), as <c>just container-tools</c> makes them: a publish of each system, some seconds when
-    /// they are up to date. The images carry the run's label and are removed with the fixture.</summary>
+    /// they are up to date. The images carry the run's label and go with the run's containers as it ends (Docker.RemoveEverything).</summary>
     public sealed class Turns : IDisposable
     {
         private const string Program = """
@@ -353,7 +397,6 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             """;
 
         private readonly string root;
-        private readonly List<string> images = [];
 
         public Turns()
         {
@@ -456,7 +499,6 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
             File.WriteAllText(Path.Combine(context, "Dockerfile"), dockerfile.ToString());
             string tag = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}-turns:{variant}";
             Docker.Run("build", "-q", "--label", Docker.RunLabel, "-t", tag, context);
-            images.Add(tag);
             return tag;
         }
 
@@ -480,10 +522,6 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
 
         public void Dispose()
         {
-            if (images.Count > 0)
-            {
-                Docker.Ask(["rmi", "-f", .. images]);
-            }
             if (Directory.Exists(root))
             {
                 Directory.Delete(root, recursive: true);

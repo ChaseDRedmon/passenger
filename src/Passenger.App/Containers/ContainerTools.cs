@@ -228,7 +228,7 @@ public static class ContainerTools
         foreach (string folder in (string[])[Mounted, CopiedInto.GetValueOrDefault(container) ?? Copied])
         {
             string executable = $"{folder}/{Executable}";
-            ChildResult said = await engine.RunAsync(["exec", container, executable, "version"], cancel: cancel).ConfigureAwait(false);
+            ChildResult said = await engine.RunAsync(["exec", .. Unheld, container, executable, "version"], cancel: cancel).ConfigureAwait(false);
             if (said.Succeeded && said.Output.Trim() == Product.Version)
             {
                 return executable;
@@ -253,7 +253,7 @@ public static class ContainerTools
     /// <summary>The tools' <c>processes</c> in a container: its .NET programs, by their ids there.</summary>
     public static async Task<IReadOnlyList<DotnetProcess>> ProcessesAsync(ContainerEngine engine, string container, string executable, CancellationToken cancel)
     {
-        ChildResult listed = await engine.RunAsync(["exec", container, executable, "processes"], cancel: cancel).ConfigureAwait(false);
+        ChildResult listed = await engine.RunAsync(["exec", .. Unheld, container, executable, "processes"], cancel: cancel).ConfigureAwait(false);
         if (!listed.Succeeded)
         {
             throw new ContainerToolsException($"Passenger's tools could not list the programs in {container}: {ContainerEngine.Said(listed)}");
@@ -273,6 +273,12 @@ public static class ContainerTools
     /// <summary>What a person should know of a Release build: Just My Code finds none of its code the user's.</summary>
     public const string ReleaseBuild = "A Release build: optimized, so under Just My Code none of its code is yours and no breakpoint in it stops";
 
+    /// <summary>docker exec runs the tools in the container's environment, which a run held for the debugger sets for its
+    /// program: the tools' own runtime would hold at its start too, waiting for a debugger never coming, or load the
+    /// program's startup hooks. Cleared for every command of theirs.</summary>
+    private static readonly string[] Unheld =
+        ["-e", "DOTNET_DefaultDiagnosticPortSuspend=0", "-e", "DOTNET_DiagnosticPorts=", "-e", "DOTNET_STARTUP_HOOKS=", "-e", "DOTNET_MODIFIABLE_ASSEMBLIES="];
+
     /// <summary>The adapter's variable for how long an evaluation may run (Passenger.Debugger's).</summary>
     private const string EvaluationLimit = "PASSENGER_EVAL_TIMEOUT_MS";
 
@@ -280,7 +286,7 @@ public static class ContainerTools
     /// limit given it as the IDE's own adapter has it.</summary>
     public static IReadOnlyList<string> AdapterCommand(string container, string executable, IReadOnlyList<string> adapterArguments)
     {
-        List<string> words = ["exec", "-i"];
+        List<string> words = ["exec", "-i", .. Unheld];
         if (Environment.GetEnvironmentVariable(EvaluationLimit) is { Length: > 0 } limit)
         {
             words.AddRange(["-e", $"{EvaluationLimit}={limit}"]);

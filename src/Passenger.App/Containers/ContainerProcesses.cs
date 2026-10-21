@@ -61,7 +61,7 @@ public static class ContainerProcesses
                 : outside;
             return [.. found.Select(p => emulated is null ? p : p with { Note = p.Note is null ? emulated : $"{p.Note}; {emulated}" })];
         }
-        catch (Exception unread) when (unread is ContainerCommandException or ContainerToolsException or JsonException)
+        catch (Exception unread) when (unread is ContainerCommandException or ContainerToolsException or JsonException or TimeoutException)
         {
             // A container that ended meanwhile, or one the engine would not describe: not listed.
             IdeLog.Write(IdeLog.Debugger, $"Attach to Process could not list the programs in container {name}: {unread.Message}");

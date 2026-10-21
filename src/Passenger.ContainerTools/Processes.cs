@@ -42,7 +42,12 @@ public static class Processes
             {
                 continue;
             }
-            found.Add(new ContainerProcess(process.Id, process.Name, process.CommandLine, process.User, false, Optimized(process.Id, process.CommandLine), WhyUnreachable(id)));
+            // Held at its start for a debugger (Passenger's Debug of a container run): no pipe yet, which the attach's
+            // registration for its runtime's start and its diagnostic port's resume see to.
+            bool held = Variable(id, "DOTNET_DefaultDiagnosticPortSuspend") == "1";
+            found.Add(new ContainerProcess(process.Id, process.Name, process.CommandLine, process.User,
+                held && Variable(id, "DOTNET_MODIFIABLE_ASSEMBLIES") is { } modifiable && modifiable.Equals("debug", StringComparison.OrdinalIgnoreCase),
+                Optimized(process.Id, process.CommandLine), held ? null : WhyUnreachable(id)));
         }
         return found;
     }

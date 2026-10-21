@@ -113,7 +113,7 @@ public partial class MainWindow
             {
                 (target, place) = await InContainerAsync(process, container, held);
             }
-            catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or OperationCanceledException
+            catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or OperationCanceledException or TimeoutException
                 or System.Text.Json.JsonException)
             {
                 return failed is OperationCanceledException ? $"Attaching to {name} was stopped" : $"Could not attach to {name}: {failed.Message}";
