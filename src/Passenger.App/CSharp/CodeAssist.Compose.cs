@@ -68,6 +68,20 @@ public sealed partial class CodeAssist
         return ComposeDeclarations.Find(document.Path, text, outline, offset, texts, projects);
     }
 
+    /// <summary>The registry page of the image a Dockerfile's FROM names where an offset is on it; null elsewhere.</summary>
+    internal static Uri? FromImageAt(TextSnapshot text, int offset)
+    {
+        int line = text.GetLineFromOffset(Math.Clamp(offset, 0, text.Length));
+        int column = Math.Clamp(offset, 0, text.Length) - text.GetLineStart(line);
+        return FromLine().Match(text.GetLineText(line)) is { Success: true } from
+            && column >= from.Groups["image"].Index && column <= from.Groups["image"].Index + from.Groups["image"].Length
+            ? ComposeDeclarations.RegistryPage(from.Groups["image"].Value)
+            : null;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*FROM\s+(?:--\S+\s+)*(?<image>[^\s]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FromLine();
+
     /// <summary>Whether a file is a compose file the YAML server reads, whose declarations Passenger finds first.</summary>
     private static bool IsComposeFile(WebDocument web, OpenDocument document) =>
         web.Kind == WebServerKind.Yaml && ComposeDeclarations.IsCompose(document.Path);

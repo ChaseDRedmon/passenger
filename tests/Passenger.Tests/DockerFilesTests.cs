@@ -36,6 +36,17 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
             Assert.Equal("Dockerfile", document.Language.Name);
+
+            // A FROM's image goes to its registry's page; a stage it names, to the stage.
+            PlaceAfter(editor, "FROM mcr.microsoft.com/dotnet/asp");
+            Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+            Ui.WaitFor(() => window.Browsed.Count > 0, "the aspnet image's page opened");
+            Assert.Equal("https://mcr.microsoft.com/artifact/mar/dotnet/aspnet", window.Browsed[^1].AbsoluteUri);
+            PlaceAfter(editor, "FROM ba");
+            Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+            Ui.WaitFor(() => editor.CaretPosition == new TextPosition(0, 45), $"the caret at the base stage's name, not {editor.CaretPosition}");
+            Assert.Single(window.Browsed);
+
             editor.Selections = SelectionSet.Single(editor.Document.Snapshot.Length);
             TypeEach(window, "WORK");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Any(l => l.StartsWith("WORKDIR", StringComparison.Ordinal)), "the Dockerfile server's instructions as one is typed");

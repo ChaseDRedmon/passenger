@@ -296,7 +296,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   Declaration in a compose file (from the YAML server's outline: a build to its Dockerfile and the project its ENTRYPOINT
   or dotnet publish names, a service, volume, network, config or secret named to its declaration, `${VAR}` to `.env` or
   an env_file, an env_file to its file, an image to its registry's page through `CodeAssist.Browse`), tried before the
-  server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`. The Structure window shows the web servers'
+  server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`; a Dockerfile's FROM image that names no
+  stage goes to its page too (`CodeAssist.FromImageAt`). The Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
   The Dockerfile server completes a FROM image's tags by asking Docker Hub itself.
   `WebLanguages.Eslint` (`EslintService`/`EslintDocument`) runs vscode-langservers-extracted's ESLint server per folder

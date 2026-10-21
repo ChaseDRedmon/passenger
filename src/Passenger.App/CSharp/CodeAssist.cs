@@ -1456,6 +1456,12 @@ public sealed partial class CodeAssist
         try
         {
             IReadOnlyList<LspLocation> found = await lsp.DefinitionAsync(offset);
+            // A FROM's image that names no stage of the file: its registry's page, as a compose file's image goes.
+            if (found.Count == 0 && WebCurrent is { Kind: Passenger.App.Web.WebServerKind.Dockerfile } && FromImageAt(Editor.Document.Snapshot, offset) is { } page)
+            {
+                Browse?.Invoke(this, page);
+                return;
+            }
             if (NamedElementOf(found, offset) is { } element)
             {
                 await Arrive(element);
