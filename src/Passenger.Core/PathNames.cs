@@ -53,6 +53,49 @@ public static partial class PathNames
     /// <summary>Where a path is once a file or folder moved: the new place when it was that or under it, else itself.</summary>
     public static string Moved(string path, string from, string to) => Within(path, from) ? to + path[from.Length..] : path;
 
+    /// <summary>A folder and the folders under it that <paramref name="enters"/> lets the walk into, nearest first, each once
+    /// by its canonical path whatever links reach it (named as first reached), and none a link goes up to (the first folder
+    /// or one above it), as MSBuild's globs walk them: a link back up would otherwise have the walk go round the tree for
+    /// good. A folder that cannot be read is passed over. Every walk of a project's folders goes through this one.</summary>
+    public static IEnumerable<string> FoldersUnder(string start, Func<string, bool> enters)
+    {
+        string root = Canonical(start);
+        HashSet<string> walked = new(StringComparer.FromComparison(Comparison)) { root };
+        Queue<(string At, string Canonical)> waiting = new([(start, root)]);
+        while (waiting.TryDequeue(out (string At, string Canonical) folder))
+        {
+            yield return folder.At;
+            try
+            {
+                foreach (DirectoryInfo sub in new DirectoryInfo(folder.At).EnumerateDirectories())
+                {
+                    // Only a link (or another reparse point) is asked where it leads: any other folder is its name in its parent.
+                    string canonical = sub.Attributes.HasFlag(FileAttributes.ReparsePoint) ? Canonical(sub.FullName) : Path.Join(folder.Canonical, sub.Name);
+                    if (!Within(root, canonical) && Enters(sub.FullName) && walked.Add(canonical))
+                    {
+                        waiting.Enqueue((sub.FullName, canonical));
+                    }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Gone or shut: it holds nothing to walk.
+            }
+        }
+
+        bool Enters(string sub)
+        {
+            try
+            {
+                return enters(sub);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+    }
+
     private static ReadOnlySpan<char> Separators => OperatingSystem.IsWindows() ? @"\/" : "/";
 
     /// <summary>An existing file or folder's name as the system resolves it; null for one that is not there.</summary>

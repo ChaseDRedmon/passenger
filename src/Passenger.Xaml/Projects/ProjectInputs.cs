@@ -156,7 +156,7 @@ public sealed record ProjectInputs(
         }
         Regex matcher = new("^" + Regex.Escape(normal).Replace(@"\*\*/", "(.*/)?", StringComparison.Ordinal).Replace(@"\*\*", ".*", StringComparison.Ordinal)
             .Replace(@"\*", "[^/]*", StringComparison.Ordinal).Replace(@"\?", "[^/]", StringComparison.Ordinal) + "$", RegexOptions.CultureInvariant);
-        foreach (string file in FoldersUnder(start, _ => true).SelectMany(f => FilesIn(f, "*")))
+        foreach (string file in PathNames.FoldersUnder(start, _ => true).SelectMany(f => FilesIn(f, "*")))
         {
             string relative = Path.GetRelativePath(folder, file).Replace('\\', '/');
             if (relative.StartsWith("bin/", StringComparison.Ordinal) || relative.StartsWith("obj/", StringComparison.Ordinal))
@@ -414,57 +414,12 @@ public sealed record ProjectInputs(
     private static List<string> SourceFilesOf(string folder) => [.. OwnFolders(folder).SelectMany(f => FilesIn(f, "*.cs"))];
 
     /// <summary>A project's own folders: its folder and those under it but bin, obj, node_modules, hidden folders and another
-    /// project's (<see cref="FoldersUnder"/>).</summary>
-    internal static IEnumerable<string> OwnFolders(string folder) => FoldersUnder(folder, sub =>
+    /// project's (<see cref="PathNames.FoldersUnder"/>).</summary>
+    internal static IEnumerable<string> OwnFolders(string folder) => PathNames.FoldersUnder(folder, sub =>
     {
         string name = Path.GetFileName(sub);
         return name is not ("bin" or "obj" or "node_modules") && !name.StartsWith('.') && !Directory.EnumerateFiles(sub, "*.csproj").Any();
     });
-
-    /// <summary>A folder and the folders under it that <paramref name="enters"/> lets the walk into, each once whatever links
-    /// it is reached through, and none a link goes up to (the first folder or one above it), as MSBuild's globs walk them: a
-    /// link back up the tree would otherwise have the walk go round for good. A folder that cannot be read is passed over.</summary>
-    internal static IEnumerable<string> FoldersUnder(string start, Func<string, bool> enters)
-    {
-        string root = PathNames.Canonical(start);
-        HashSet<string> walked = new(StringComparer.FromComparison(PathNames.Comparison)) { root };
-        Stack<string> waiting = new([start]);
-        while (waiting.TryPop(out string? at))
-        {
-            yield return at;
-            List<string> entered = [];
-            try
-            {
-                foreach (string sub in Directory.EnumerateDirectories(at))
-                {
-                    if (Enters(sub) && PathNames.Canonical(sub) is var canonical && !PathNames.Within(root, canonical) && walked.Add(canonical))
-                    {
-                        entered.Add(sub);
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // A folder that cannot be read holds nothing the XAML can name.
-            }
-            for (int i = entered.Count - 1; i >= 0; i--)
-            {
-                waiting.Push(entered[i]);
-            }
-        }
-
-        bool Enters(string sub)
-        {
-            try
-            {
-                return enters(sub);
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                return false;
-            }
-        }
-    }
 
     /// <summary>A folder's files a pattern names, none for a folder that cannot be read.</summary>
     internal static IReadOnlyList<string> FilesIn(string folder, string pattern)

@@ -3,6 +3,7 @@ using Microsoft.Build.Definition;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
+using Passenger.Core;
 
 namespace Passenger.Host;
 
@@ -59,7 +60,7 @@ internal static class Evaluation
     {
         // Stamped before they are read: whatever changes once evaluation has begun changes the stamps too.
         Stamp file = Stamps.File(path);
-        IReadOnlyList<Stamp> folders = Walked([Path.GetDirectoryName(path)!]);
+        IReadOnlyList<Stamp> folders = Walked(Path.GetDirectoryName(path)!);
         if (file.Ticks == 0)
         {
             return (new EvaluatedProject { Path = path, Problem = $"{path} does not exist", Inputs = [file] }, []);
@@ -299,30 +300,8 @@ internal static class Evaluation
         return [.. read.Concat(LookedFor(path, null)).DistinctBy(s => s.Path, PathComparer)];
     }
 
-    /// <summary>Every folder under these that a wildcard would enter, stamped.</summary>
-    internal static IReadOnlyList<Stamp> Walked(IEnumerable<string> roots)
-    {
-        List<Stamp> stamps = [];
-        Queue<string> walking = new(roots.Distinct(PathComparer));
-        while (walking.Count > 0 && stamps.Count < FolderLimit)
-        {
-            string folder = walking.Dequeue();
-            stamps.Add(Stamps.Folder(folder));
-            try
-            {
-                foreach (string child in Directory.EnumerateDirectories(folder))
-                {
-                    if (Stamps.Counts(Path.GetFileName(child), folder: true))
-                    {
-                        walking.Enqueue(child);
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // Gone or shut, as a wildcard would find it.
-            }
-        }
-        return stamps;
-    }
+    /// <summary>Every folder under a project's that a wildcard would enter, stamped: each once whatever links reach it, and
+    /// none a link goes up to (<see cref="PathNames.FoldersUnder"/>), the nearest first up to the limit.</summary>
+    internal static IReadOnlyList<Stamp> Walked(string folder) =>
+        [.. PathNames.FoldersUnder(folder, sub => Stamps.Counts(Path.GetFileName(sub), folder: true)).Take(FolderLimit).Select(Stamps.Folder)];
 }

@@ -195,7 +195,7 @@ internal static class DesignTimeBuilds
         CancellationToken cancel)
     {
         Stamp file = Stamps.File(path);
-        IReadOnlyList<Stamp> folders = Evaluation.Walked([Path.GetDirectoryName(path)!]);
+        IReadOnlyList<Stamp> folders = Evaluation.Walked(Path.GetDirectoryName(path)!);
         string? language = Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".csproj" => "C#",
@@ -251,7 +251,7 @@ internal static class DesignTimeBuilds
                 .Select(d => Path.GetDirectoryName(d.FilePath)!)
                 .Where(d => !d.StartsWith(own, PathComparison))
                 .Distinct(PathComparer)
-                .Where(Directory.Exists)
+                .Where(d => !folders.Any(f => PathComparer.Equals(f.Path, d)) && Directory.Exists(d))
                 .Select(Stamps.Folder)];
             return new BuiltProject(path, JsonSerializer.Serialize(infos, Written), [.. inputs, .. walked], null, said);
         }

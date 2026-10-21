@@ -112,7 +112,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Programs` and `ShellEnvironment` find the tools as the login shell would (the shell writes its environment to a file,
   its output to /dev/null, so a job its profile leaves running holds nothing up, and `Ready` waits out a slow profile
   once, 10 s from the read's start); `PathNames` makes paths canonical
-  (`realpath`, or `GetFinalPathNameByHandle` on Windows) and answers `IsUnder` for every "is this inside that folder".
+  (`realpath`, or `GetFinalPathNameByHandle` on Windows), answers `IsUnder` for every "is this inside that folder", and
+  `FoldersUnder` is every walk of a project's folders (the XAML core's, and the project host's stamps, which compiles
+  PathNames.cs in): each folder once by its canonical path whatever links reach it, none a link goes up to, as MSBuild's
+  globs walk them.
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
   `TextEditing.MapOffset`/`MapRange`/`MapThrough` carry an offset through a key's edits by halving: pass `e.Edits` as
@@ -163,9 +166,8 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Xaml`: Passenger's own XAML core, no UI and no Avalonia, which WPF (#187) shares: `Syntax` (XmlTree and
   MarkupExtension, positions kept, tolerant of half-typed markup), `Metadata` (a TypeSystem over the project's
   assemblies through System.Reflection.Metadata and its C# through Roslyn's parser), `Projects` (ProjectInputs reads
-  project.assets.json; XamlProjectBuilder keeps a project's types and XAML under its own lock; every walk of a project's
-  folders is `ProjectInputs.FoldersUnder`, each folder once whatever links reach it and none a link goes up to, as
-  MSBuild's globs walk them), `Dialects`
+  project.assets.json; XamlProjectBuilder keeps a project's types and XAML under its own lock; its walks of a project's
+  folders are `PathNames.FoldersUnder`), `Dialects`
   (AvaloniaDialect, WpfDialect) and `Features` (XamlCompletion, XamlDiagnostics, XamlNavigation, ThemeVariants, Colours). Not
   Avalonia.Ide.CompletionEngine, which is archived, predates Avalonia 12 and went with AvaloniaVS into Accelerate.
   A project's dialect is the framework it references (`XamlProjectBuilder.DialectOf`): Avalonia's package, or WPF's

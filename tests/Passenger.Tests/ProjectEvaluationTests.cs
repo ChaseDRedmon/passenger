@@ -169,6 +169,43 @@ public sealed class ProjectEvaluationTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_project_holding_folder_links_back_up_its_own_tree_keeps_its_real_folders_alone_as_what_its_evaluation_and_build_read()
+    {
+        // Links to the folder each is in and to those above it, at the project's top and inside it: a walk that followed
+        // them would go round the tree until its limit, stamping the same folders thousands of times over.
+        string app = Path.Combine(folder, "App");
+        Directory.CreateDirectory(Path.Combine(app, "Legacy", "Deep"));
+        TestFolders.LinkFolder(Path.Combine(app, "self"), app);
+        TestFolders.LinkFolder(Path.Combine(app, "up"), folder);
+        TestFolders.LinkFolder(Path.Combine(app, "Legacy", "here"), Path.Combine(app, "Legacy"));
+        TestFolders.LinkFolder(Path.Combine(app, "Legacy", "Deep", "up"), Path.Combine(app, "Legacy"));
+        // The project's own folders, and those of the files it takes in from ../Shared.
+        string[] real = [.. new[] { "App", "App/Legacy", "App/Legacy/Deep", "Shared", "Shared/Text" }
+            .Select(f => Path.Combine(folder, f.Replace('/', Path.DirectorySeparatorChar))).Order(StringComparer.Ordinal)];
+
+        string settings = TestFolders.Create("settings-");
+        MainWindow window = Keeping(settings);
+        window.OpenFile(Path.Combine(app, "Program.cs"));
+        string project = Path.Combine(app, "App.csproj");
+        Ui.WaitFor(() => window.Session.State?.ProjectModels.Value.Projects.ContainsKey(project) == true, "App's evaluation kept for the folder's next opening");
+        // MSBuild's wildcards pass the links over too: the project holds what it held without them.
+        Assert.Equal(["Dependencies", "Shared", "Program.cs"], Children(window, "App"));
+        Ui.WaitFor(() => window.Session.State?.ProjectBuilds.Value.Projects.ContainsKey(project) == true, "App's design-time build kept for the folder's next opening", TimeSpan.FromMinutes(2));
+
+        IReadOnlyList<Passenger.Host.Stamp> evaluated = window.Session.State!.ProjectModels.Value.Projects[project].Folders;
+        IReadOnlyList<Passenger.Host.Stamp> built = [.. window.Session.State.ProjectBuilds.Value.Projects[project].Inputs.Where(s => s.Folder)];
+        Assert.True(evaluated.Count == real.Length, $"App's evaluation kept {evaluated.Count} folders' stamps for the {real.Length} its tree has{Walk(evaluated)}");
+        Assert.True(built.Count == real.Length, $"App's design-time build kept {built.Count} folders' stamps for the {real.Length} its tree has{Walk(built)}");
+        Assert.Equal(real, evaluated.Select(s => PathNames.Canonical(s.Path)).Order(StringComparer.Ordinal));
+        Assert.Equal(real, built.Select(s => PathNames.Canonical(s.Path)).Order(StringComparer.Ordinal));
+        window.Close();
+
+        static string Walk(IReadOnlyList<Passenger.Host.Stamp> stamps) => stamps.Count > 20
+            ? ", its walk going round the links back up"
+            : ": " + string.Join(", ", stamps.Select(s => s.Path));
+    }
+
+    [AvaloniaFact]
     public void The_project_of_the_file_shown_and_those_it_references_load_in_the_language_server_before_the_rest()
     {
         Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Core/Core.csproj\" />\n  <Project Path=\"Reports/Reports.csproj\" />\n"
