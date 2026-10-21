@@ -107,6 +107,7 @@ public sealed class AssetPreviewTests : IDisposable
             Assert.True(shown.IsEffectivelyVisible && shown.Bounds.Width > 100 && shown.Bounds.Height > 16, $"The font sample '{sample}' has no visible glyph area");
         }
         Assert.Contains(preview.GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "All printable ASCII glyphs are present.");
+        Assert.Equal("Font", window.FindControl<TextBlock>("LanguageText")!.Text);
         window.Close();
     }
 
@@ -252,14 +253,26 @@ public sealed class AssetPreviewTests : IDisposable
         BinaryPrimitives.WriteInt32LittleEndian(huge.AsSpan(22), 10000);
         File.WriteAllBytes(Path.Combine(folder, "huge.bmp"), huge);
         MainWindow window = Open();
-        foreach (string file in new[] { "broken.png", "broken.ttf", "empty.otf", "unknown.bin", "missing.png", "large.ttf", "large.png", "huge.bmp" })
+        // What a stat tells is refused at once; what only the decode finds, off the UI thread, closes the tab that said it
+        // was loading, and the status bar says why in the same words.
+        (string File, string Why)[] refused =
+        [
+            ("broken.png", "image"), ("broken.ttf", "font"), ("empty.otf", "font must be non-empty"), ("unknown.bin", "looks like a binary file"),
+            ("missing.png", "missing.png"), ("large.ttf", "no larger than 32 MB"), ("large.png", "no larger than 64 MB"), ("huge.bmp", "32 million pixels"),
+        ];
+        foreach ((string file, string why) in refused)
         {
             string? error = window.OpenFile(file);
             Ui.Settle();
-            Assert.False(string.IsNullOrEmpty(error), $"{file} was accepted without an error");
             Assert.Empty(window.EditorArea.Documents);
+            Assert.Contains(why, error ?? window.Status ?? "", StringComparison.Ordinal);
         }
-        Assert.Contains("32 million pixels", window.OpenFile("huge.bmp")!, StringComparison.Ordinal);
+        Passenger.App.Mcp.PassengerTools agent = new(window);
+        Task<string> opening = agent.OpenFile("huge.bmp");
+        Ui.WaitFor(() => opening.IsCompleted, "the agent's open_file to answer");
+        Assert.True(opening.IsFaulted, "An agent was told an image whose decode failed is open");
+        Assert.Contains("32 million pixels", opening.Exception!.InnerException!.Message, StringComparison.Ordinal);
+        Assert.Empty(window.EditorArea.Documents);
         File.WriteAllText(Path.Combine(folder, "vector.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" />");
         Assert.Null(window.OpenFile("vector.svg"));
         Ui.Settle();
@@ -286,6 +299,7 @@ public sealed class AssetPreviewTests : IDisposable
 
         Assert.False(window.FindControl<Button>("EncodingButton")!.IsVisible, "An image's preview shows a text encoding");
         Assert.False(window.FindControl<Button>("LineSeparatorButton")!.IsVisible, "An image's preview shows a line separator");
+        Assert.Equal("Image", window.FindControl<TextBlock>("LanguageText")!.Text);
         Assert.False(window.Perform(AppActions.ToggleBookmark), "A bookmark was put on a line of an image");
         Assert.False(window.Perform(AppActions.ToggleBreakpoint), "A breakpoint was put on a line of an image");
         Assert.Empty(window.Bookmarks.All);
@@ -330,6 +344,91 @@ public sealed class AssetPreviewTests : IDisposable
         Assert.NotNull(Preview(window.EditorArea.ActiveGroup));
         window.Close();
         Assert.False(Directory.Exists(old), "The folder renamed elsewhere was made again under its old name");
+    }
+
+    /// <summary>An image up to the limits takes a while to decode: the window goes on answering meanwhile, its tab saying the
+    /// image is loading, since what the UI thread does to open one is the same for a large image as for a small.</summary>
+    [AvaloniaFact]
+    public void A_large_image_decodes_off_the_UI_thread_its_tab_saying_it_is_loading_until_the_picture_lands()
+    {
+        byte[] large = NoiseBytes(2048, 2048);
+        File.WriteAllBytes(Path.Combine(folder, "large.png"), large);
+        File.WriteAllBytes(Path.Combine(folder, "small.png"), ImageBytes(".png"));
+        MainWindow window = Open();
+        // The first open warms what every open runs, so neither measured one pays for it.
+        Opening(window, "small.png");
+
+        long small = Opening(window, "small.png");
+        long big = Opening(window, "large.png");
+        Assert.True(big - small < large.Length / 4,
+            $"Opening a {large.Length / (1024 * 1024)} MB image allocated {big / 1024} KB on the UI thread, a small one {small / 1024} KB: the large one was decoded there");
+        window.Close();
+    }
+
+    /// <summary>An agent's tools look an open file up before every answer: a preview's is answered from the picture shown,
+    /// never decoded again, and only the folder watcher's word that the file changed reads it anew.</summary>
+    [AvaloniaFact]
+    public void An_agent_asking_about_an_open_preview_never_decodes_it_again()
+    {
+        string picture = Path.Combine(folder, "picture.png");
+        File.WriteAllBytes(picture, ImageBytes(".png"));
+        MainWindow window = Open();
+        Assert.Null(window.OpenFile("picture.png"));
+        Ui.Settle();
+        OpenDocument document = window.EditorArea.Active!;
+        AssetPreview shown = document.Asset!;
+
+        Passenger.App.Mcp.PassengerTools agent = new(window);
+        foreach (Task asked in new Task[] { agent.OpenFile("picture.png"), agent.EditorText("picture.png"), agent.Diagnostics("picture.png"), agent.GetWorkspace() })
+        {
+            Ui.WaitFor(() => asked.IsCompleted, "the agent's answer");
+            // editor_text's refusal is its answer, read so it is never reported as an error nobody saw.
+            _ = asked.Exception;
+            Assert.False(document.IsDecoding, "An agent's lookup of an open image decoded it again");
+        }
+        Ui.Settle();
+        Assert.Same(shown, document.Asset);
+
+        File.WriteAllBytes(picture, ImageBytes(".png", width: 16, height: 8));
+        Ui.WaitFor(() => document.Asset is { Bitmap.PixelSize.Width: 16 }, "the image changed on disk to be decoded again once the watcher heard it");
+        Image image = Assert.Single(Preview(window.EditorArea.ActiveGroup).GetVisualDescendants().OfType<Image>());
+        Assert.Same(document.Asset!.Bitmap, image.Source);
+        window.Close();
+    }
+
+    /// <summary>Opens an image, its tab saying it is loading until the decode lands, and closes it again: what the UI thread
+    /// allocated from the open to the picture shown.</summary>
+    private static long Opening(MainWindow window, string file)
+    {
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Null(window.OpenFile(file));
+        OpenDocument document = window.EditorArea.Active!;
+        Assert.True(document.Asset!.IsPending, $"{file} was decoded before the open returned, on the UI thread");
+        Assert.Contains(Preview(window.EditorArea.ActiveGroup).GetVisualDescendants().OfType<TextBlock>(), text => text.Text == "Loading the image…");
+        Ui.Settle();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.False(document.Asset!.IsPending, $"{file} never finished decoding");
+        Image image = Assert.Single(Preview(window.EditorArea.ActiveGroup).GetVisualDescendants().OfType<Image>());
+        Assert.Same(document.Asset.Bitmap, image.Source);
+        Ui.Run(window, AppActions.CloseTab);
+        Assert.Empty(window.EditorArea.Documents);
+        return allocated;
+    }
+
+    /// <summary>An opaque picture of random pixels, which PNG cannot compress: its file is as large as its pixels.</summary>
+    private static byte[] NoiseBytes(int width, int height)
+    {
+        byte[] pixels = new byte[width * height * 4];
+        new Random(330).NextBytes(pixels);
+        for (int alpha = 3; alpha < pixels.Length; alpha += 4)
+        {
+            pixels[alpha] = 255;
+        }
+        using SKBitmap bitmap = new(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+        System.Runtime.InteropServices.Marshal.Copy(pixels, 0, bitmap.GetPixels(), pixels.Length);
+        using SKImage image = SKImage.FromBitmap(bitmap);
+        using SKData encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+        return encoded.ToArray();
     }
 
     private MainWindow Open()

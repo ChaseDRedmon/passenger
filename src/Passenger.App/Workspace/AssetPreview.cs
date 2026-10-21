@@ -8,8 +8,16 @@ using SkiaSharp;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>A decoded image or local font owned by its <see cref="OpenDocument"/> and shared by its tabs. Each group
-/// borrows it for a view of its own; the document releases it after its last view or hold closes.</summary>
+/// <summary>What a previewed file is, known from its name before anything is read.</summary>
+public enum AssetKind
+{
+    Image,
+    Font,
+}
+
+/// <summary>A decoded image or local font owned by its <see cref="OpenDocument"/> and shared by its tabs, or the stand-in
+/// they show while it decodes. Each group borrows it for a view of its own; the document releases it after its last view
+/// or hold closes.</summary>
 public sealed class AssetPreview : IDisposable
 {
     /// <summary>The most encoded data kept while decoding an image or a font.</summary>
@@ -24,17 +32,27 @@ public sealed class AssetPreview : IDisposable
     /// <summary>The SHA-256 of the bytes it was decoded from.</summary>
     private byte[] read = [];
 
+    private AssetPreview(AssetKind kind) => Kind = kind;
+
     private AssetPreview(Bitmap bitmap, int frames)
+        : this(AssetKind.Image)
     {
         Bitmap = bitmap;
         Frames = frames;
     }
 
     private AssetPreview(GlyphTypeface typeface, IFontCollection fonts)
+        : this(AssetKind.Font)
     {
         Typeface = typeface;
         this.fonts = fonts;
     }
+
+    /// <summary>Whether it is an image or a font, a stand-in's too.</summary>
+    public AssetKind Kind { get; }
+
+    /// <summary>Whether this stands in for a decode still under way (<see cref="Pending"/>): no picture or face yet.</summary>
+    public bool IsPending => Bitmap is null && Typeface is null;
 
     /// <summary>The decoded image, or null for a font; borrowed by views, never disposed by them.</summary>
     public Bitmap? Bitmap { get; }
@@ -46,22 +64,48 @@ public sealed class AssetPreview : IDisposable
     public GlyphTypeface? Typeface { get; }
 
     /// <summary>Whether a path names an image or font type shown as a read-only preview instead of text.</summary>
-    public static bool Supports(string path) => System.IO.Path.GetExtension(path).ToLowerInvariant() is
-        ".png" or ".jpg" or ".jpeg" or ".bmp" or ".gif" or ".webp" or ".ico" or ".ttf" or ".otf";
+    public static bool Supports(string path) => KindOf(path) is not null;
+
+    /// <summary>What a path's preview would be, by its name; null for a file shown as text.</summary>
+    public static AssetKind? KindOf(string path) => System.IO.Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" or ".jpg" or ".jpeg" or ".bmp" or ".gif" or ".webp" or ".ico" => AssetKind.Image,
+        ".ttf" or ".otf" => AssetKind.Font,
+        _ => null,
+    };
+
+    /// <summary>What a tab shows until <see cref="Load"/> lands off the UI thread, given once the file opens at a size the
+    /// decode takes: a missing, unreadable, empty or oversized file is refused at once, with the <see cref="IOException"/>
+    /// or <see cref="UnauthorizedAccessException"/> the decode would end in. Nothing of it is read here.</summary>
+    public static AssetPreview Pending(string path)
+    {
+        AssetKind kind = KindOf(path) ?? throw new IOException($"{System.IO.Path.GetFileName(path)} is neither an image nor a font.");
+        using FileStream file = File.OpenRead(path);
+        Sized(kind, file.Length);
+        return new AssetPreview(kind);
+    }
+
+    /// <summary>Refuses an empty file, or one past its kind's limit.</summary>
+    private static void Sized(AssetKind kind, long length)
+    {
+        long limit = kind == AssetKind.Font ? FontBytes : ImageBytes;
+        if (length == 0 || length > limit)
+        {
+            throw new IOException($"The {(kind == AssetKind.Font ? "font" : "image")} must be non-empty and no larger than {limit / (1024 * 1024)} MB.");
+        }
+    }
 
     /// <summary>Reads an image or font into a bounded snapshot and decodes it, rejecting empty, oversized or invalid
     /// content with an <see cref="IOException"/>. Images show the codec's first frame; font collections are refused.
-    /// The caller owns the result until its document closes.</summary>
+    /// Run off the UI thread (<see cref="OpenDocument"/>'s decode, through BackgroundWork); the caller owns the result
+    /// until its document closes.</summary>
     public static AssetPreview Load(string path)
     {
-        bool font = System.IO.Path.GetExtension(path).ToLowerInvariant() is ".ttf" or ".otf";
+        AssetKind kind = KindOf(path) ?? throw new IOException($"{System.IO.Path.GetFileName(path)} is neither an image nor a font.");
+        bool font = kind == AssetKind.Font;
         using FileStream file = File.OpenRead(path);
         long length = file.Length;
-        long limit = font ? FontBytes : ImageBytes;
-        if (length == 0 || length > limit)
-        {
-            throw new IOException($"The {(font ? "font" : "image")} must be non-empty and no larger than {limit / (1024 * 1024)} MB.");
-        }
+        Sized(kind, length);
         // A growing file must not feed the decoder more than the length whose limit was checked.
         byte[] bytes = new byte[(int)length];
         file.ReadExactly(bytes);

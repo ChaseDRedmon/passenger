@@ -21,12 +21,29 @@ public sealed class AssetPreviewControl : DockPanel, IDisposable
 
     private readonly List<FontSample> samples = [];
 
-    /// <summary>Shows the borrowed asset as a fitted image with dimensions, or as labelled samples of its own font.</summary>
+    /// <summary>Shows the borrowed asset as a fitted image with dimensions, or as labelled samples of its own font; a
+    /// stand-in whose decode is still under way as the ring that says so, which the group replaces once it lands.</summary>
     public AssetPreviewControl(AssetPreview asset)
     {
         Focusable = true;
         LastChildFill = true;
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
+        if (asset.IsPending)
+        {
+            TextBlock loading = new() { Text = asset.Kind == AssetKind.Font ? "Loading the font…" : "Loading the image…", Margin = default };
+            loading.Classes.Add("emptyText");
+            StackPanel waiting = new()
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = Gap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children = { new WorkingRing { Width = 14, Height = 14, VerticalAlignment = VerticalAlignment.Center }, loading },
+            };
+            AutomationProperties.SetName(waiting, loading.Text);
+            Children.Add(waiting);
+            return;
+        }
         if (asset.Bitmap is { } bitmap)
         {
             // Inset as the font's samples are, its words and picture on one edge.

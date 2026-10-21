@@ -157,6 +157,12 @@ public partial class MainWindow
             Tables.TableFile.For(document)?.Follow();
             return;
         }
+        if (document.Asset is not null)
+        {
+            // Nor does a preview's: its picture or face is decoded again off the UI thread, the one shown kept until then.
+            document.Reload();
+            return;
+        }
         if (!document.ChangedOnDisk())
         {
             return;

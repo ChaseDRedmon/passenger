@@ -76,7 +76,8 @@ public partial class MainWindow
     /// <summary>A file the editor opened: its content is what the history knows of it from now.</summary>
     private void LookAt(OpenDocument document)
     {
-        if (session.LocalHistory is not { } history || !history.Keeps(document.Path))
+        // A preview's or a workbook's bytes are no text the history keeps, and an image's run to 64 MB: never read for nothing.
+        if (session.LocalHistory is not { } history || !document.HoldsText || !history.Keeps(document.Path))
         {
             return;
         }

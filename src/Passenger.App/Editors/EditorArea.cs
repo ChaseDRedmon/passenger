@@ -61,6 +61,10 @@ public sealed partial class EditorArea : UserControl
     /// <summary>A file that could not be written, and why: it stays open with its edits.</summary>
     public event EventHandler<string>? SaveFailed;
 
+    /// <summary>An image or font whose first decode, off the UI thread, failed, and why: its tabs have closed, as a file
+    /// <see cref="Open"/> could not read never opens.</summary>
+    public event EventHandler<string>? OpenFailed;
+
     /// <summary>A file not written because something else changed it on disk since it was last loaded or saved: which
     /// to keep is the person's question (File Cache Conflict), never settled by writing over the disk's.</summary>
     public event EventHandler<OpenDocument>? SaveConflicted;
@@ -135,7 +139,8 @@ public sealed partial class EditorArea : UserControl
     }
 
     /// <summary>Opens text or a read-only asset in the active group (or shows its tab if open), returning why not when
-    /// the file cannot be read or decoded.</summary>
+    /// the file cannot be read; an asset whose decode fails once its tab shows it loading says so through
+    /// <see cref="OpenFailed"/>.</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
@@ -153,6 +158,7 @@ public sealed partial class EditorArea : UserControl
         {
             return error.Message;
         }
+        document.PreviewFailed += OnPreviewFailed;
         Opened?.Invoke(this, document);
         documents.Add(document);
         activeGroup.Add(document);
@@ -679,7 +685,8 @@ public sealed partial class EditorArea : UserControl
         return new EditorFrame.Leaf(group);
     }
 
-    /// <summary>A file's document, open already or loaded as text, a workbook or an asset now; null when it cannot be loaded.</summary>
+    /// <summary>A file's document, open already or loaded as text, a workbook or an asset now (still decoding); null when
+    /// it cannot be loaded.</summary>
     private OpenDocument? Load(string path)
     {
         string full = PathNames.Canonical(path);
@@ -690,6 +697,7 @@ public sealed partial class EditorArea : UserControl
         try
         {
             OpenDocument document = OpenDocument.Load(full);
+            document.PreviewFailed += OnPreviewFailed;
             Opened?.Invoke(this, document);
             documents.Add(document);
             return document;
@@ -697,6 +705,17 @@ public sealed partial class EditorArea : UserControl
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return null;
+        }
+    }
+
+    /// <summary>An asset whose first decode failed closes, its tabs with it, as a file that could not be read never
+    /// opens, and the window says why.</summary>
+    private void OnPreviewFailed(object? sender, string why)
+    {
+        if (sender is OpenDocument document && documents.Contains(document))
+        {
+            Close(document, forGood: true);
+            OpenFailed?.Invoke(this, why);
         }
     }
 

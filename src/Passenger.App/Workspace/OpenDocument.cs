@@ -44,22 +44,121 @@ public sealed class OpenDocument : Observable
     /// disk tries first.</summary>
     private bool encodingChosen;
 
-    /// <summary>The decoded image or font owned by this document, null for text; replaced only after a successful reload.</summary>
+    /// <summary>The image or font owned by this document, null for text: a stand-in (<see cref="AssetPreview.IsPending"/>)
+    /// until its first decode lands, then the decoded one, replaced only after a successful reload.</summary>
     public AssetPreview? Asset { get; private set; }
 
+    /// <summary>The asset's decode under way off the UI thread, until what it came to has landed.</summary>
+    private Task? decoding;
+
+    /// <summary>A reload asked for while a decode was under way: one more follows it rather than running beside it.</summary>
+    private bool decodeAgain;
+
+    /// <summary>Closed, so a decode that lands after lets go of what it decoded.</summary>
+    private bool closed;
+
+    /// <summary>Why the asset's first decode failed, said once: its tabs close, as a file that could not be opened.</summary>
+    public event EventHandler<string>? PreviewFailed;
+
+    /// <summary>Why the asset's first decode failed, once it has; null while it shows or loads, and for text.</summary>
+    public string? PreviewFailure { get; private set; }
+
+    /// <summary>Whether the asset is being decoded off the UI thread: its first time (the tab says it is loading) or again.</summary>
+    public bool IsDecoding => decoding is { IsCompleted: false };
+
+    /// <summary>Waits until no decode of the asset is under way, a reload's that followed another's too.</summary>
+    public async Task DecodedAsync()
+    {
+        while (decoding is { IsCompleted: false } under)
+        {
+            await under;
+        }
+    }
+
     /// <summary>Opens a supported image or font as a read-only asset with an empty text placeholder, otherwise as text.
-    /// Unsupported binary content is refused with an <see cref="IOException"/>, never exposed to text editing or saving.</summary>
+    /// An asset's tab shows it loading until its decode lands off the UI thread; a missing, empty or oversized one is
+    /// refused at once. Unsupported binary content is refused with an <see cref="IOException"/>, never exposed to text
+    /// editing or saving.</summary>
     public static OpenDocument Load(string path)
     {
-        if (AssetPreview.Supports(path))
+        if (AssetPreview.KindOf(path) is { } kind)
         {
-            AssetPreview asset = AssetPreview.Load(path);
-            return new OpenDocument(path, new FileText(string.Empty, new UTF8Encoding(false), false)) { Asset = asset };
+            OpenDocument asset = new(path, new FileText(string.Empty, new UTF8Encoding(false), false))
+            {
+                Asset = AssetPreview.Pending(path),
+                Language = kind == AssetKind.Font ? Language.Font : Language.Image,
+            };
+            asset.Decode();
+            return asset;
         }
         // A workbook's tab holds no text, since its table is read from the file itself.
         FileText file = Tables.Workbook.IsWorkbook(path) ? new FileText(string.Empty, new UTF8Encoding(false), false)
             : FileText.Load(path) ?? throw new IOException($"{System.IO.Path.GetFileName(path)} looks like a binary file.");
         return new OpenDocument(path, file);
+    }
+
+    /// <summary>Decodes the asset off the UI thread, the one shown (the stand-in at first) kept until the new one lands;
+    /// while one decode is under way, one more follows it, so a file written in several steps is read once more, never
+    /// twice at once.</summary>
+    private void Decode()
+    {
+        if (IsDecoding)
+        {
+            decodeAgain = true;
+            return;
+        }
+        decoding = DecodeAsync();
+    }
+
+    /// <summary>One decode and what it came to: the new asset in place of the one shown, or why not, said in the banner
+    /// over a picture already shown, or as <see cref="PreviewFailed"/> over the stand-in.</summary>
+    private async Task DecodeAsync()
+    {
+        string path = Path;
+        AssetPreview? decoded = null;
+        string? failed = null;
+        try
+        {
+            decoded = await BackgroundWork.Run(() => AssetPreview.Load(path));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            failed = error.Message;
+        }
+        catch (Exception error)
+        {
+            // A fault of the IDE's rather than the file's: reported, and the tab never left loading for good.
+            IdeErrors.Report(error);
+            failed = $"Passenger failed: {error.GetType().Name}: {error.Message}";
+        }
+        // Moved meanwhile, it is read again where it is now.
+        if (closed || decodeAgain || path != Path)
+        {
+            decoded?.Dispose();
+            if (!closed)
+            {
+                decodeAgain = false;
+                decoding = DecodeAsync();
+            }
+            return;
+        }
+        AssetPreview shown = Asset!;
+        if (decoded is not null)
+        {
+            Asset = decoded;
+            Raise(nameof(Asset));
+            shown.Dispose();
+            Notice = null;
+        }
+        else if (!shown.IsPending)
+        {
+            Notice = $"Preview reload failed; showing the previous version: {failed}";
+        }
+        else
+        {
+            PreviewFailure = failed;
+            PreviewFailed?.Invoke(this, failed!);
+        }
     }
 
     /// <summary>Opens text with the encoding and line endings read from disk, and the conventions its path supplies.</summary>
@@ -331,9 +430,11 @@ public sealed class OpenDocument : Observable
         set => Set(ref showWhitespaces, value);
     }
 
-    /// <summary>Lets go of the file's asset, colours and folds after its last view or hold closes.</summary>
+    /// <summary>Lets go of the file's asset (one still decoding as it lands), colours and folds after its last view or hold
+    /// closes.</summary>
     public void Close()
     {
+        closed = true;
         Asset?.Dispose();
         (Highlighter as IDisposable)?.Dispose();
         (finder as FoldScan)?.Dispose();
@@ -347,7 +448,7 @@ public sealed class OpenDocument : Observable
     public void MoveTo(string path)
     {
         Path = path;
-        Language language = Asset is null ? Language.ForPath(path) : Language.PlainText;
+        Language language = Asset is null ? Language.ForPath(path) : Language;
         if (language != Language)
         {
             Language = language;
@@ -765,12 +866,12 @@ public sealed class OpenDocument : Observable
     public bool HoldsText => Asset is null && !IsWorkbook;
 
     /// <summary>What a file whose tab holds no text is shown as, for what refuses its text to say; null for text.</summary>
-    public string? ShownAs => Asset is { Bitmap: not null } ? "an image, shown as a read-only preview"
+    public string? ShownAs => Asset is { Kind: AssetKind.Image } ? "an image, shown as a read-only preview"
         : Asset is not null ? "a font, shown as a read-only preview"
         : IsWorkbook ? "an Excel workbook, shown as its sheets' cells" : null;
 
     /// <summary>What the bar over a read-only file says it is and where it came from.</summary>
-    public string Origin => Asset is { Bitmap: not null } ? "An image, shown as its pixels, read-only"
+    public string Origin => Asset is { Kind: AssetKind.Image } ? "An image, shown as its pixels, read-only"
         : Asset is not null ? "A font, shown in its own glyphs, read-only"
         : IsWorkbook ? "An Excel workbook, shown as its sheets' cells, read-only"
         : Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
@@ -800,12 +901,12 @@ public sealed class OpenDocument : Observable
     /// <summary>Whether something other than this IDE changed the file's text on disk since it was last loaded or saved.
     /// A change only to how it is stored there (a BOM a formatter added, a conversion to UTF-8) is taken at once, over
     /// unsaved edits too, since they were made over the same text: the next save keeps it, and no question is asked.
-    /// An asset is reloaded directly and returns false, since there is no text conflict to resolve.</summary>
+    /// An asset answers false with nothing read: it has no text to conflict, and the folder watcher's word that its file
+    /// changed is what decodes it again (<see cref="Reload"/>).</summary>
     public bool ChangedOnDisk()
     {
         if (Asset is not null)
         {
-            Reload();
             return false;
         }
         FileText? file;
@@ -848,27 +949,15 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
-    /// changes only when asked (File Cache Conflict's Load File System Changes). An asset is replaced only after decoding
-    /// succeeds, keeping the previous preview and setting <see cref="Notice"/> on failure. Whether text or an asset changed.</summary>
+    /// changes only when asked (File Cache Conflict's Load File System Changes). An asset is decoded again off the UI
+    /// thread and replaced once that succeeds, the previous preview kept and <see cref="Notice"/> set on failure. Whether
+    /// the text changed; false for an asset, whose change lands later.</summary>
     public bool Reload(bool overUnsaved = false)
     {
         if (Asset is not null)
         {
-            try
-            {
-                AssetPreview replacement = AssetPreview.Load(Path);
-                AssetPreview previous = Asset;
-                Asset = replacement;
-                Raise(nameof(Asset));
-                previous.Dispose();
-                Notice = null;
-                return true;
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                Notice = $"Preview reload failed; showing the previous version: {error.Message}";
-                return false;
-            }
+            Decode();
+            return false;
         }
         FileText? file;
         try
@@ -988,6 +1077,10 @@ public sealed record NoticeAction(string Text, Action Run);
 public sealed record Language(string Name, string? LineComment, int IndentSize = 4, string? BlockStart = null, string? BlockEnd = null)
 {
     public static readonly Language PlainText = new("Text", null);
+
+    /// <summary>What an image's or a font's preview is, as the status bar and the tools name it: no text, so no comments.</summary>
+    public static readonly Language Image = new("Image", null);
+    public static readonly Language Font = new("Font", null);
 
     /// <summary>How a file of the language indents when neither an .editorconfig nor its own lines say.</summary>
     public IndentOptions Indent => new(IndentSize);

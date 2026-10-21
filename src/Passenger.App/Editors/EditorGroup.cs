@@ -461,11 +461,17 @@ public sealed class EditorGroup : DockPanel
         switch (e.PropertyName)
         {
             case nameof(OpenDocument.Asset):
+                // The decode landed: the picture takes the stand-in's place, and its focus.
+                bool focused = preview?.IsKeyboardFocusWithin == true;
                 ClearPreview();
                 if (document.Asset is { } asset)
                 {
                     preview = new AssetPreviewControl(asset);
                     body.Children.Add(preview);
+                    if (focused)
+                    {
+                        preview.Focus();
+                    }
                 }
                 break;
             case nameof(OpenDocument.Highlighter):

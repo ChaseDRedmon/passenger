@@ -80,6 +80,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             {
                 throw new InvalidOperationException(problem);
             }
+            if (Editors.Active is { } shown)
+            {
+                await Previewed(shown, cancel);
+            }
         }
         else
         {
@@ -100,15 +104,27 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "open_file", Title = "Show a file", Destructive = false), Description(
         "Opens a file in the editor, at a line and column if given, as the person sees it.")]
-    public Task<string> OpenFile(string path, int? line = null, int? column = null, CancellationToken cancel = default) => OnUi(cancel, () =>
+    public Task<string> OpenFile(string path, int? line = null, int? column = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         OpenDocument document = Document(path);
+        await Previewed(document, cancel);
         if (line is int l)
         {
             window.NavigateTo(document.Path, new TextPosition(Math.Max(0, l - 1), Math.Max(0, (column ?? 1) - 1)));
         }
-        return Task.FromResult($"{Relative(document.Path)} is open");
+        return $"{Relative(document.Path)} is open";
     });
+
+    /// <summary>Waits for an image's or a font's decode, which lands off the window's thread: one whose first decode
+    /// failed has closed its tab, and the agent hears why rather than that the file is open.</summary>
+    private async Task Previewed(OpenDocument document, CancellationToken cancel)
+    {
+        await document.DecodedAsync().WaitAsync(cancel);
+        if (document.PreviewFailure is { } failure)
+        {
+            throw new InvalidOperationException($"{Relative(document.Path)} could not be opened: {failure}");
+        }
+    }
 
     [McpServerTool(Name = "editor_text", Title = "A file's text in the editor", ReadOnly = true), Description(
         "A file's text as the editor holds it, unsaved changes included, its lines numbered; opened if it is not.")]
@@ -1394,7 +1410,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             // An agent's own file tools write to disk and ask about the file at once, before the folder's watcher has told
             // the editor: an open file it has not changed takes the disk's text first, so no answer is about the text before.
-            if (!open.IsModified)
+            // A preview has no text to take, and is decoded again only when the watcher hears its file change.
+            if (!open.IsModified && open.HoldsText)
             {
                 open.Reload();
             }

@@ -851,11 +851,11 @@ public sealed class VcsController : IDisposable
     }
 
     /// <summary>The open files take their text from disk again where something else changed it and they have no
-    /// unsaved changes.</summary>
+    /// unsaved changes. A preview, with no text, is decoded again only when the folder watcher hears its file change.</summary>
     public void ReloadOpenFiles()
     {
         UiThread.Check();
-        foreach (OpenDocument document in documents.Keys)
+        foreach (OpenDocument document in documents.Keys.Where(d => d.HoldsText))
         {
             document.Reload();
         }

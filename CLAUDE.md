@@ -348,10 +348,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder's session and shows the Welcome screen; `LeaveFolder` keeps or closes editors and `EndSession` ends the
   session, so new per-folder state belongs in `ProjectSession`, made with it and ended in its end. An image (PNG, JPEG,
   BMP, GIF, WebP, ICO) or a TTF/OTF font opens as a read-only preview: `OpenDocument.Load` gives it an `AssetPreview`
-  (`OpenDocument.Asset`, decoded once, shared by its tabs, disposed with the document, followed by its bytes through a
-  folder moved elsewhere) and an empty text stand-in, and each group shows it through an `AssetPreviewControl` of its
-  own; it is never saved, converted or written. Its `HoldsText` is false, as a workbook's is, so the status bar's text
-  widgets, Find and Replace in Files, a line's actions and agents' `editor_text` and `edit` pass it over.
+  (`OpenDocument.Asset`, shared by its tabs, disposed with the document, followed by its bytes through a folder moved
+  elsewhere) and an empty text stand-in, and each group shows it through an `AssetPreviewControl` of its own; it is
+  never saved, converted or written. The asset is a stand-in (`IsPending`, the tab saying it is loading) until its
+  decode lands off the UI thread through `BackgroundWork` (`OpenDocument.Decode`, one at a time); a first decode that
+  fails closes the tab and the status bar says why (`EditorArea.OpenFailed`), a later one keeps the picture under the
+  banner. Only the folder watcher's word decodes it again (`FollowDisk`): `ChangedOnDisk`, an agent's lookup and Git's
+  reload of open files read nothing of it. Its `Language` is Image or Font, which the status bar names; its `HoldsText`
+  is false, as a workbook's is, so the status bar's text widgets, Find and Replace in Files, Local History's look at an
+  opened file, a line's actions and agents' `editor_text` and `edit` pass it over.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
   it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows) are its
   parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
