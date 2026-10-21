@@ -1147,6 +1147,10 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             pairs.Add(($"Passenger.Vcs.File.{file}", "Passenger.Panel", Text));
             pairs.Add(($"Passenger.Vcs.File.{file}", "Passenger.RowSelected", Text));
         }
+        foreach (string colour in (string[])["Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Pink", "Maroon", "Grey"])
+        {
+            pairs.Add(($"Passenger.FileIcon.{colour}", "Passenger.Panel", Mark));
+        }
         foreach (string ground in (string[])["Passenger.TitleBar", "Passenger.TitleBar.Hover", "Passenger.TitleBar.Pressed"])
         {
             pairs.Add(("Passenger.TitleBar.Text", ground, Text));

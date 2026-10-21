@@ -280,6 +280,15 @@ SYNTAX_KINDS = ["Keyword", "ControlKeyword", "Comment", "DocComment", "String", 
 # ---------------------------------------------------------------------------------------------------------------------
 # Every token from a variant's palette.
 
+def file_icons(hue, text, muted, panel, dark):
+    """The file icons' colours (Passenger.FileIcon.*): file-icons' ten hues in a theme's own, each a mark that reads on
+    the Explorer's ground. Tokens.axaml and Harbour.axaml took theirs from their own hues through this too."""
+    icons = {name.capitalize(): hue(name) for name in ("red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink")}
+    icons["Maroon"] = shift(mix(hue("red"), hue("orange"), 0.45), -0.08)
+    icons["Grey"] = mix(text, muted, 0.8)
+    return {f"Passenger.FileIcon.{name}": legible(colour, [panel], 3.1, dark) for name, colour in icons.items()}
+
+
 def variant(theme, p, dark):
     t = {}
     hue = lambda name: p.get(name) or p[{"string": "green", "member": "blue"}.get(name, name)]
@@ -453,18 +462,8 @@ def variant(theme, p, dark):
 
     t["Passenger.File.Folder"] = mix(text, muted, 0.6)
     t["Passenger.File.SolutionFolder"] = hue("purple")
-    t["Passenger.File.CSharp"] = hue("purple")
-    t["Passenger.File.Project"] = hue("green")
-    t["Passenger.File.Xml"] = hue("orange")
-    t["Passenger.File.Json"] = hue("yellow")
-    t["Passenger.File.Markdown"] = hue("blue")
-    t["Passenger.File.Code"] = hue("cyan")
     t["Passenger.File.Plain"] = t["Passenger.File.Folder"]
-    # The File Icons set's colours, file-icons' ten hues in this theme's own.
-    for name in ("red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink"):
-        t[f"Passenger.FileIcon.{name.capitalize()}"] = hue(name)
-    t["Passenger.FileIcon.Maroon"] = shift(mix(hue("red"), hue("orange"), 0.45), -0.08)
-    t["Passenger.FileIcon.Grey"] = mix(text, muted, 0.8)
+    t.update(file_icons(hue, text, muted, panel, dark))
 
     t["Passenger.Editor.Background"] = editor
     t["Passenger.Editor.Gutter"] = editor
