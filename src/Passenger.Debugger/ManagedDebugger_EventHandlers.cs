@@ -503,11 +503,13 @@ public partial class ManagedDebugger
     }
 
     /// <summary>A breakpoint that stops ends the step in progress, on its own thread or another, as Rider's does: the
-    /// stepper and an async step's breakpoints at an await. One whose condition is false, or a tracepoint, leaves it going.</summary>
+    /// stepper, an async step's breakpoints at an await, and the step a remap would make again in the new code. One whose
+    /// condition is false, or a tracepoint, leaves it going.</summary>
     private void EndStepForStop()
     {
         _asyncStepper?.Disable();
         _stepAfterEvaluation = null;
+        _restepAfterRemap = null;
         EndSmartStep();
         if (_stepper is not null)
         {
