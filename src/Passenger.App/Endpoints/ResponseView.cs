@@ -105,7 +105,10 @@ public sealed class ResponseView : DockPanel
             TextBlock what = new() { Text = result.Expectation.ToString(), FontFamily = CSharp.Fonts.Mono, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
             TextBlock had = new() { Text = $"  got {result.Actual}", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             Paint(had, "Passenger.TextMuted");
-            criteria.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Height = ListRow.Height, Children = { mark, what, had } });
+            // What the answer had takes what the row leaves, so a narrow pane ends it in an ellipsis rather than cutting it.
+            DockPanel.SetDock(mark, Dock.Left);
+            DockPanel.SetDock(what, Dock.Left);
+            criteria.Children.Add(new DockPanel { Height = ListRow.Height, Children = { mark, what, had } });
         }
         ShowPart(bodyTab.IsChecked == true);
     }
