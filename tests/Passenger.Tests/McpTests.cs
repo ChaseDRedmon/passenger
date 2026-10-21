@@ -1445,38 +1445,79 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             // A Windows program gets the person's whole environment, PATH included.
             return;
         }
-        // A login profile that puts its own git first, as Homebrew's shellenv does; the git notes that it ran.
         string home = TestFolders.Create("home-");
         try
         {
-            string tools = Path.Combine(home, "tools");
-            Directory.CreateDirectory(tools);
-            string git = Path.Combine(tools, "git");
-            string real = global::Passenger.Core.Programs.Git()!;
-            File.WriteAllText(git, $"#!/bin/sh\ntouch \"{Path.Combine(home, "used")}\"\nexec {real} \"$@\"\n");
-            File.SetUnixFileMode(git, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            File.WriteAllText(Path.Combine(home, ".zprofile"), $"export PATH=\"{tools}:$PATH\"\n");
-            File.WriteAllText(Path.Combine(home, ".profile"), $"export PATH=\"{tools}:$PATH\"\n");
+            string used = ProfileGit(home);
             TestGit.Run(folder, "init", "-q");
-
-            // launchd's environment: the bare PATH, no terminal, no .NET or zsh settings of the person's.
-            await using McpClient client = await Start(["--mcp", folder], environment: new()
-            {
-                ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin",
-                ["HOME"] = home,
-                ["SHELL"] = File.Exists("/bin/zsh") ? "/bin/zsh" : "/bin/sh",
-                ["TERM"] = null,
-                ["ZDOTDIR"] = null,
-                ["DOTNET_ROOT"] = null,
-            });
+            await using McpClient client = await Start(["--mcp", folder], environment: Launchd(home));
             await Call(client, "vcs_status");
-            Assert.True(File.Exists(Path.Combine(home, "used")), "Passenger ran a git other than the one its login shell's PATH finds");
+            Assert.True(File.Exists(used), "Passenger ran a git other than the one its login shell's PATH finds");
         }
         finally
         {
             TestFolders.Delete(home);
         }
     }
+
+    [Fact]
+    public async Task A_login_profile_that_leaves_a_job_running_holds_up_no_git_Passenger_starts()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        string home = TestFolders.Create("home-");
+        try
+        {
+            // As `some-daemon &` in a profile: the job keeps the shell's output open long after the shell has ended.
+            string used = ProfileGit(home, "sleep 300 &\n");
+            TestGit.Run(folder, "init", "-q");
+            await using McpClient client = await Start(["--mcp", folder], environment: Launchd(home));
+            await Call(client, "vcs_status");
+            Assert.True(File.Exists(used), "With a job its profile left running, Passenger never took the login shell's PATH, and ran a git other than the one it finds");
+
+            // Each git start waits for the shell's environment while it is still being read.
+            long began = Stopwatch.GetTimestamp();
+            await Call(client, "vcs_status");
+            TimeSpan took = Stopwatch.GetElapsedTime(began);
+            Assert.True(took < TimeSpan.FromSeconds(10),
+                $"Git's status took {took.TotalSeconds:0.0} s the second time: the git it ran waited for the login shell's environment again, the profile's job holding up its read");
+        }
+        finally
+        {
+            TestFolders.Delete(home);
+        }
+    }
+
+    /// <summary>A home whose login profile (zsh's and sh's) puts a git of its own first on the PATH, as Homebrew's shellenv
+    /// does, and then does <paramref name="more"/>; the git notes that it ran in the file whose path this returns.</summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static string ProfileGit(string home, string more = "")
+    {
+        string tools = Path.Combine(home, "tools");
+        Directory.CreateDirectory(tools);
+        string git = Path.Combine(tools, "git");
+        string used = Path.Combine(home, "used");
+        string real = global::Passenger.Core.Programs.Git()!;
+        File.WriteAllText(git, $"#!/bin/sh\ntouch \"{used}\"\nexec {real} \"$@\"\n");
+        File.SetUnixFileMode(git, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        File.WriteAllText(Path.Combine(home, ".zprofile"), $"export PATH=\"{tools}:$PATH\"\n{more}");
+        File.WriteAllText(Path.Combine(home, ".profile"), $"export PATH=\"{tools}:$PATH\"\n{more}");
+        return used;
+    }
+
+    /// <summary>launchd's environment, as the Finder or the Dock start Passenger: the bare PATH, no terminal, no .NET or zsh
+    /// settings of the person's, the home given.</summary>
+    private static Dictionary<string, string?> Launchd(string home) => new()
+    {
+        ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin",
+        ["HOME"] = home,
+        ["SHELL"] = File.Exists("/bin/zsh") ? "/bin/zsh" : "/bin/sh",
+        ["TERM"] = null,
+        ["ZDOTDIR"] = null,
+        ["DOTNET_ROOT"] = null,
+    };
 
     /// <summary>Longer than any one exchange may take, for a wait on an agent's calls, whose own limits fail first and
     /// name the call.</summary>

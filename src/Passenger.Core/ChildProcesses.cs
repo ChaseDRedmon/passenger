@@ -155,8 +155,8 @@ public static class ChildProcesses
 
     /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first; an
     /// exit code among <paramref name="answers"/> is its answer (git's "no such file"), not a failure to log. Canceled, or
-    /// still running after <paramref name="limit"/>, it is killed with all it started, and the task is canceled or fails
-    /// with a <see cref="TimeoutException"/>.</summary>
+    /// not done after <paramref name="limit"/> (still running, or ended with a job it left holding its output open), it is
+    /// killed with all it started, its output let go, and the task is canceled or fails with a <see cref="TimeoutException"/>.</summary>
     public static async Task<ChildResult> RunAsync(ProcessStartInfo start, string? input = null, TimeSpan? limit = null, CancellationToken cancel = default,
         IReadOnlyCollection<int>? answers = null)
     {
@@ -186,9 +186,12 @@ public static class ChildProcesses
                 // It ended, or closed its input, before reading all it was given: its exit says how it went.
             }
             await process.WaitForExitAsync(ending.Token);
+            // A job it left running in the background (a shell profile's) holds its output open for as long as it lives.
+            await Task.WhenAll(output, errors).WaitAsync(ending.Token);
         }
         catch (OperationCanceledException) when (ending.IsCancellationRequested)
         {
+            bool ended = process.HasExited;
             // One given up on was ended, not failed; one that outran its limit hung, and its end says so.
             if (cancel.IsCancellationRequested)
             {
@@ -202,7 +205,9 @@ public static class ChildProcesses
             Forget(output);
             Forget(errors);
             cancel.ThrowIfCancellationRequested();
-            throw new TimeoutException($"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
+            throw new TimeoutException(ended
+                ? $"{Display(start)} ended, but what it left running still held its output after {limit.GetValueOrDefault().TotalSeconds:0} s"
+                : $"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
         }
         return new ChildResult(process.ExitCode, await output, await errors);
     }

@@ -106,9 +106,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   group per child, which a watchdog shell kills once Passenger's pipe to it closes). A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
-  only with Log every program. `DotnetCommand` builds without
+  only with Log every program. `RunAsync`'s limit covers reading its output to the end, which a job the child left
+  running holds open. `DotnetCommand` builds without
   MSBuild's server (which Stop could not reach) and in nodes salted to this IDE, which end with it. `Dotnet`,
-  `Programs` and `ShellEnvironment` find the tools as the login shell would; `PathNames` makes paths canonical
+  `Programs` and `ShellEnvironment` find the tools as the login shell would (the shell writes its environment to a file,
+  its output to /dev/null, so a job its profile leaves running holds nothing up, and `Ready` waits out a slow profile
+  once, 10 s from the read's start); `PathNames` makes paths canonical
   (`realpath`, or `GetFinalPathNameByHandle` on Windows) and answers `IsUnder` for every "is this inside that folder".
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
