@@ -510,7 +510,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value (a word of its variable's or key's name, split at
   `_`, `-`, `.` and case turns, is PASSWORD, PASSWD, PWD, SECRET, TOKEN, KEY or CREDENTIAL, or its plural, or two make
-  CONNECTIONSTRING: `ComposeCheck.Secret`) shows as the same dots whatever its length. Their problems are Problems'
+  CONNECTIONSTRING, but for the shell's own `PWD` and `OLDPWD`: `ComposeCheck.Secret`) shows as the same dots whatever
+  its length. Their problems are Problems'
   Containers tab by file
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a

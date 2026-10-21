@@ -235,11 +235,18 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     /// <summary>The words that make a variable's or key's value a secret, as a word of its name.</summary>
     private static readonly HashSet<string> Secrets = new(StringComparer.Ordinal) { "PASSWORD", "PASSWD", "PWD", "SECRET", "TOKEN", "KEY", "CREDENTIAL", "CONNECTIONSTRING" };
 
+    /// <summary>The shell's working folders, paths a compose file's volumes are written with, whose PWD is no password's.</summary>
+    private static readonly HashSet<string> Folders = new(StringComparer.Ordinal) { "PWD", "OLDPWD" };
+
     /// <summary>Whether a name's value is a secret: a word of it (between underscores, dashes or dots, or where its case
     /// turns, as apiKey's Key) is one of <see cref="Secrets"/> or its plural, or two words make one (CONNECTION_STRING), so
-    /// API_KEY and dbPassword are and MONKEY is not.</summary>
+    /// API_KEY, dbPassword and DB_PWD are and MONKEY, PWD and OLDPWD (<see cref="Folders"/>) are not.</summary>
     internal static bool Secret(string name)
     {
+        if (Folders.Contains(name))
+        {
+            return false;
+        }
         string[] words = [.. Words().Split(name).Where(w => w.Length > 0).Select(w => w.ToUpperInvariant())];
         for (int i = 0; i < words.Length; i++)
         {

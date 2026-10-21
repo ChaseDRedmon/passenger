@@ -93,7 +93,7 @@ public sealed class EngineChecksTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         const string Compose = "services:\n  web:\n    image: \"busybox:${TAG:-1.36}\"\n    ports:\n      - \"${PORT:-8080}:80\"  # the host's port\n"
-            + "    environment:\n      GREETING: hello $NAME\n      ZOO: $MONKEY\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_USER: shop\n"
+            + "    environment:\n      GREETING: hello $NAME\n      ZOO: $MONKEY\n    volumes:\n      - $PWD/data:/data\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_USER: shop\n"
             + "      POSTGRES_PASSWORD: ${DB_PASSWORD:-hunter2}\n";
         string folder = Folder(("compose.yaml", Compose), (".env", "PORT=9090\nNAME=world\nMONKEY=banana\nDB_PASSWORD=s3cret-value\n"),
             ("compose.override.yaml", "services:\n  db:\n    image: postgres:17\n    environment:\n      POSTGRES_USER: shop\n      POSTGRES_PASSWORD: other-s3cret\n"));
@@ -102,8 +102,10 @@ public sealed class EngineChecksTests
         {
             OpenDocument document = window.EditorArea.Active!;
             // A secret's value (a password's, as a word of its variable's or key's name says) is masked, the same dots whatever its
-            // length; MONKEY has no word KEY.
-            string[] expected = ["${TAG:-1.36}|= 1.36", "${PORT:-8080}|= 9090", "$NAME|= world", "$MONKEY|= banana", "postgres:16|compose.override.yaml: postgres:17",
+            // length; MONKEY has no word KEY, and PWD is the working folder Compose was started in, a path.
+            string pwd = Environment.GetEnvironmentVariable("PWD") ?? string.Empty;
+            string folderHint = $"$PWD|= {(pwd.Length == 0 ? "\"\"" : pwd.Length > 48 ? pwd[..47] + "…" : pwd)}";
+            string[] expected = ["${TAG:-1.36}|= 1.36", "${PORT:-8080}|= 9090", "$NAME|= world", "$MONKEY|= banana", folderHint, "postgres:16|compose.override.yaml: postgres:17",
                 "${DB_PASSWORD:-hunter2}|= ••••••", "${DB_PASSWORD:-hunter2}|compose.override.yaml: ••••••"];
             Ui.WaitFor(() => Hints(document, expected).SequenceEqual(expected), $"Compose's values after the text, not [{string.Join(", ", Hints(document, expected))}]");
             Assert.DoesNotContain(document.InlayHints, h => h.Label.Contains("s3cret", StringComparison.Ordinal));
@@ -112,7 +114,7 @@ public sealed class EngineChecksTests
             string text = document.Text.Snapshot.ToString();
             int port = text.IndexOf("${PORT:-8080}", StringComparison.Ordinal);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(port, "${PORT:-8080}".Length, "${HOST_PORT:-8081}")]);
-            string[] typed = ["${TAG:-1.36}|= 1.36", "${HOST_PORT:-8081}|= 8081", "$NAME|= world", "$MONKEY|= banana", "postgres:16|compose.override.yaml: postgres:17",
+            string[] typed = ["${TAG:-1.36}|= 1.36", "${HOST_PORT:-8081}|= 8081", "$NAME|= world", "$MONKEY|= banana", folderHint, "postgres:16|compose.override.yaml: postgres:17",
                 "${DB_PASSWORD:-hunter2}|= ••••••", "${DB_PASSWORD:-hunter2}|compose.override.yaml: ••••••"];
             Ui.WaitFor(() => Hints(document, typed).SequenceEqual(typed), $"the new variable's default, not [{string.Join(", ", Hints(document, typed))}]");
             Assert.Empty(window.BottomPanel.Problems.ContainerProblems);
