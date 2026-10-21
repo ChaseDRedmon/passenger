@@ -55,6 +55,11 @@ public sealed partial class McpTests
                 Docker.Run("rm", "-f", attached);
             }
             await Call(client, "stop");
+            // The headless IDE's state is not the run's, whose end removes only its own images: these go here.
+            foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Docker.Run("rmi", "-f", image);
+            }
         }
     }
 }
