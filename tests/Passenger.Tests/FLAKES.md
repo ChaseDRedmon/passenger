@@ -8,6 +8,12 @@ pattern shows. A **race in the IDE** is fixed in the IDE; waiting longer or tryi
 To add one: a line under its date, newest first, naming the test, the run, the cause in a sentence and the commit
 that fixed it, in one of the forms below. A failure not yet understood goes in only once it is.
 
+## 2026-10-20
+
+- `TablesTests`' CSV Text, TSV copy and sheet choice, Ubuntu VM: "Sequence contains no matching element" for a segment,
+  or a click a row below its cell, the table read but its bar and grid not yet laid out when the wait returned. **Test
+  waited wrong**, fixed in f0fa876f (Open waits for both to be arranged).
+
 ## 2026-10-19
 
 - `EvalTests`' LINQ watch, CI Linux 39301973028: "The expression took too long to evaluate", a
