@@ -102,6 +102,39 @@ public sealed class FileTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A file past what the editor opens as text or bytes (64 MB) is refused at once, nothing of it read, with why in
+    /// the status bar, as a preview past its limit is: opened, a file holds about six and a half times its size.</summary>
+    [AvaloniaFact]
+    public void A_file_too_large_to_open_as_text_or_bytes_is_refused_with_why_in_the_status_bar()
+    {
+        string log = Path.Combine(folder, "huge.log");
+        using (FileStream file = File.Create(log))
+        {
+            file.SetLength(65 * 1024 * 1024);
+        }
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        string? why = window.OpenFile("huge.log");
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Ui.Settle();
+        Assert.Equal("huge.log is 65 MB: the editor opens a file of up to 64 MB as text", why);
+        Assert.Equal(why, window.Status);
+        Assert.Empty(window.EditorArea.Documents);
+        Assert.True(allocated < 16 << 20, $"Refusing huge.log allocated {allocated >> 20} MB on the UI thread: it was read first");
+
+        // Through File, Open too, with nothing open.
+        window.Close();
+        MainWindow front = new() { Width = 1200, Height = 800 };
+        front.Show();
+        Ui.Settle();
+        Assert.Equal("huge.log is 65 MB: the editor opens a file of up to 64 MB as text", front.Open(log));
+        Assert.Empty(front.EditorArea.Documents);
+        front.Close();
+    }
+
     /// <summary>A binary file's tab shows its bytes drawn as signs, none of the file's text: what reads or changes a file's
     /// text leaves it alone, as it leaves a preview, or an agent's replace would write the signs over its bytes.</summary>
     [AvaloniaFact]

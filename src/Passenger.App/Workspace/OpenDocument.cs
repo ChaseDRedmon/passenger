@@ -79,7 +79,7 @@ public sealed class OpenDocument : Observable
     /// An asset's tab shows it loading until its decode lands off the UI thread; a missing, empty or oversized one is
     /// refused at once. Other binary content opens as its bytes' text, read-only and never written
     /// (<see cref="FileText.Bytes"/>), or, unless <paramref name="asBytes"/> (for what would edit it), is refused with an
-    /// <see cref="IOException"/>.</summary>
+    /// <see cref="IOException"/>, as is one past <see cref="LargestText"/>.</summary>
     public static OpenDocument Load(string path, bool asBytes = true)
     {
         if (AssetPreview.KindOf(path) is { } kind)
@@ -93,10 +93,24 @@ public sealed class OpenDocument : Observable
             return asset;
         }
         // A workbook's tab holds no text, since its table is read from the file itself.
-        FileText file = Tables.Workbook.IsWorkbook(path) ? new FileText(string.Empty, new UTF8Encoding(false), false)
-            : FileText.Load(path) ?? (asBytes ? FileText.Bytes(path) : throw new IOException($"{System.IO.Path.GetFileName(path)} looks like a binary file."));
+        if (Tables.Workbook.IsWorkbook(path))
+        {
+            return new OpenDocument(path, new FileText(string.Empty, new UTF8Encoding(false), false));
+        }
+        string name = System.IO.Path.GetFileName(path);
+        long length = new FileInfo(path).Length;
+        if (length > LargestText)
+        {
+            throw new IOException($"{name} is {length / (1024.0 * 1024):0.#} MB: the editor opens a file of up to {LargestText / (1024 * 1024)} MB as text");
+        }
+        FileText file = FileText.Load(path) ?? (asBytes ? FileText.Bytes(path) : throw new IOException($"{name} looks like a binary file."));
         return new OpenDocument(path, file);
     }
+
+    /// <summary>The largest file opened as text or as its bytes, as an image's preview is bounded too: plain text that size
+    /// opens in a moment and takes keys at once, but the editor holds about six and a half times a file's size (a 100 MB
+    /// log, 850 MB), and .NET holds no string past a billion characters.</summary>
+    public const long LargestText = 64 * 1024 * 1024;
 
     /// <summary>Decodes the asset off the UI thread, the one shown (the stand-in at first) kept until the new one lands;
     /// while one decode is under way, one more follows it, so a file written in several steps is read once more, never
