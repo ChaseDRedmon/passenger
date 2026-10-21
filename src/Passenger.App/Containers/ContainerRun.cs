@@ -378,6 +378,11 @@ public static class ContainerPlans
                     entry["entrypoint"] = new JsonArray("dotnet", $"{AppFolder}/{built.Assembly}.dll");
                     entry["working_dir"] = AppFolder;
                     entry["init"] = true;
+                    // Linux's engine keeps the host's permissions on a mount: the app runs as the person, who can read the build.
+                    if (OperatingSystem.IsLinux() && DotnetProcesses.UserAndGroup is { } owner)
+                    {
+                        entry["user"] = owner;
+                    }
                     volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = built.Output, ["target"] = AppFolder, ["read_only"] = true });
                     if (!service.Environment.ContainsKey("ASPNETCORE_ENVIRONMENT") && !service.Environment.ContainsKey("DOTNET_ENVIRONMENT"))
                     {

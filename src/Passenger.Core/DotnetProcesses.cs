@@ -418,6 +418,13 @@ public static partial class DotnetProcesses
     [LibraryImport("libc", EntryPoint = "geteuid")]
     private static partial uint GetEffectiveUserId();
 
+    [LibraryImport("libc", EntryPoint = "getegid")]
+    private static partial uint GetEffectiveGroupId();
+
+    /// <summary>This process's user and group ids as "uid:gid" on macOS and Linux (a container given them reads what this
+    /// user's files allow, on an engine that keeps the host's permissions); null on Windows.</summary>
+    public static string? UserAndGroup => OperatingSystem.IsWindows() ? null : $"{GetEffectiveUserId()}:{GetEffectiveGroupId()}";
+
     [LibraryImport("kernel32.dll", EntryPoint = "OpenProcess")]
     private static partial SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint id);
 

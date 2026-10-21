@@ -257,7 +257,7 @@ public sealed class RunConfigurationsDialog : Window
 
     public TextBox RunArgumentsBox { get; }
 
-    private const string FastMode = "Fast: Passenger's build in the runtime stage";
+    private const string FastMode = "Fast, from Passenger's build";
 
     private const string ImagesMode = "Build images, as deployed";
 
@@ -689,7 +689,15 @@ public sealed class RunConfigurationsDialog : Window
         line.Children.Add(name);
         if (row is { Generated: true })
         {
-            line.Children.Add(new TextBlock { Text = row.LaunchProfile.Length > 0 ? "launchSettings.json" : "project", Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) });
+            string from = row.Kind switch
+            {
+                RunKind.Compose when Containers.ContainerConfigurations.IsComposeProject(row.Project) => row.LaunchProfile.Length > 0 ? "launchSettings.json" : ".dcproj",
+                RunKind.Compose => "compose file",
+                RunKind.Dockerfile when row.LaunchProfile.Length == 0 => "Dockerfile",
+                RunKind.SdkContainer when row.LaunchProfile.Length == 0 => "SDK container",
+                _ => row.LaunchProfile.Length > 0 ? "launchSettings.json" : "project",
+            };
+            line.Children.Add(new TextBlock { Text = from, Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) });
         }
         return line;
     }
