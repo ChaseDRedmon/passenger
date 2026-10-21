@@ -434,11 +434,18 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Endpoints`: the Endpoints window (`EndpointsView`, `MainWindow.Endpoints.cs`) over the open folder's
   .http and .rest files (`HttpFile`, read off the UI thread while the window is shown, again as one or an env file
   changes), their `{{variables}}` from the file and the environment chosen in http-client.env.json and its private one
-  (`HttpVariables`), and their `# @expect` criteria (`Expectation`). Nothing goes over the network but on Test or the
-  Interactive Test dialog's Send (`InteractiveTestDialog`), each on a handler and HttpClient of its own (`EndpointClient`),
-  disposed before it answers; `$processEnv`, `$env.` and a `< file` body are read only then. A body is read to
-  `MostRead` and shown to `MostShown`, a request's variables filled in to `MostFilledIn`. Tests send only to
-  `EndpointsTests`' stand-in on loopback.
+  (`HttpVariables`), and their `# @expect` criteria (`Expectation`). Nothing goes over the network but on Test (Test
+  Request, `AppActions.TestEndpoint`, a `Working` that Stop ends) or the Interactive Test dialog's Send
+  (`InteractiveTestDialog`, through the window's `EndpointsView.SendAsync`), each on a handler and HttpClient of its own
+  (`EndpointClient`), disposed before it answers; env files are read off the UI thread as it sends. A send that takes
+  the person's environment (`$processEnv`, `$env.`, through env files' values too) or a body's file outside the folder
+  (`< file`, links resolved) to a host the folder has not allowed asks first (`EndpointQuestionDialog`: the host and each
+  read, an unset variable said); an Allow lasts while the folder is open, Always for this folder is the folder's
+  `endpoints.json` (`EndpointGrants`, `ProjectSession.EndpointGrants`), and the body's file is read only once allowed. A
+  redirect is followed by hand: to another host without the request's headers, and not when it would carry the body
+  there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
+  variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
+  only to `EndpointsTests`' stand-in on loopback (its `localhost` name the other host).
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
