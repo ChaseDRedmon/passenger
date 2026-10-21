@@ -287,7 +287,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   as a global property (`WindowsTargeting.cs`), in evaluate, build and inspect alike; Passenger's builds follow
   (`BuildOutput.WindowsTargeting`, `-p:EnableWindowsTargeting=true`), and Roslyn's server has it in its environment off
   Windows, since its `dotnet restore` takes no properties; it is never written into a project. Each result carries stamps of what it read
-  (`Stamps.cs`), so a reopen redoes only what changed; the caches are read off the UI thread (`StateDocument.ValueAsync`).
+  (`Stamps.cs`), so a reopen redoes only what changed: the files it imported, its folders, and what would change it by
+  coming (`Evaluation.LookedFor`: each Directory.Build.props, .targets and Directory.Packages.props MSBuild looks for from
+  the project's folder up, as far as the first found, and the restore's `obj/X.csproj.nuget.g.props` and `.targets`,
+  which the window evaluates again for as a restore lands); the caches are read off the UI thread (`StateDocument.ValueAsync`).
   The shown file's project and what it references load first (`ProjectSession.ActiveProjectsAsync`).
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
   loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled

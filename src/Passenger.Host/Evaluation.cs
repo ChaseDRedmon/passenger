@@ -77,7 +77,7 @@ internal static class Evaluation
         }
         catch (Exception error) when (error is InvalidProjectFileException or IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         {
-            return (new EvaluatedProject { Path = path, Problem = error.Message, Inputs = [file], Folders = folders }, []);
+            return (new EvaluatedProject { Path = path, Problem = error.Message, Inputs = Failed(path, file, error), Folders = folders }, []);
         }
         finally
         {
@@ -140,7 +140,9 @@ internal static class Evaluation
                 .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
                 .Distinct(PathComparer)
                 .Where(i => !excluded.Any(root => i.StartsWith(root, PathComparison)))
-                .Select(Stamps.File)],
+                .Select(Stamps.File)
+                .Concat(LookedFor(path, first))
+                .DistinctBy(s => s.Path, PathComparer)],
             // A file the project takes from elsewhere (../Shared/*.cs) has its own folder stamped, not all under it: a file
             // at the repository's top (a README packed with every project) would have the whole repository walked.
             Folders = [.. folders, .. items
@@ -247,6 +249,54 @@ internal static class Evaluation
                 roots.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar);
             }
         }
+    }
+
+    /// <summary>The files MSBuild looks for from a project's folder up, by the property that names each and its default name.</summary>
+    private static readonly (string Property, string Name)[] Above =
+    [
+        ("_DirectoryBuildPropsFile", "Directory.Build.props"),
+        ("_DirectoryBuildTargetsFile", "Directory.Build.targets"),
+        ("_DirectoryPackagesPropsFile", "Directory.Packages.props"),
+    ];
+
+    /// <summary>What would change a project's evaluation by coming or going, stamped (most as not there): each
+    /// Directory.Build.props, .targets and Directory.Packages.props MSBuild looks for from the project's folder up, as far
+    /// as the first it finds, and the props and targets a restore writes for the project to import. Without an evaluation
+    /// (one that failed), by their default names and place.</summary>
+    internal static IEnumerable<Stamp> LookedFor(string path, Project? evaluated)
+    {
+        string folder = Path.GetDirectoryName(path)!;
+        foreach ((string property, string name) in Above)
+        {
+            string named = evaluated?.GetPropertyValue(property) is { Length: > 0 } given ? given : name;
+            for (string? at = folder; at is not null; at = Path.GetDirectoryName(at))
+            {
+                Stamp stamp = Stamps.File(Path.Combine(at, named));
+                yield return stamp;
+                if (stamp.Length >= 0)
+                {
+                    break;
+                }
+            }
+        }
+        string restored = evaluated?.GetPropertyValue("MSBuildProjectExtensionsPath") is { Length: > 0 } written && Path.IsPathFullyQualified(written)
+            ? written
+            : Path.Combine(folder, "obj");
+        string file = Path.GetFileName(path);
+        yield return Stamps.File(Path.Combine(restored, file + ".nuget.g.props"));
+        yield return Stamps.File(Path.Combine(restored, file + ".nuget.g.targets"));
+    }
+
+    /// <summary>What an evaluation that failed read, so a fix to it has the project evaluated again: the project file, the
+    /// file MSBuild names as broken, and what it looks for above the project.</summary>
+    internal static IReadOnlyList<Stamp> Failed(string path, Stamp file, Exception error)
+    {
+        List<Stamp> read = [file];
+        if (error is InvalidProjectFileException { ProjectFile: { Length: > 0 } broken } && !PathComparer.Equals(broken, path))
+        {
+            read.Add(Stamps.File(broken));
+        }
+        return [.. read.Concat(LookedFor(path, null)).DistinctBy(s => s.Path, PathComparer)];
     }
 
     /// <summary>Every folder under these that a wildcard would enter, stamped.</summary>

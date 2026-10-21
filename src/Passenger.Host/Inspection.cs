@@ -134,7 +134,9 @@ internal static class Inspection
     {
         Project = asked.Project,
         Diagnostics = diagnostics,
-        Inputs = [file, .. asked.Texts.Keys.Where(p => !p.Equals(asked.Project, PathComparison)).Select(Stamps.File)],
+        // The files the failure names among them, so a fix to one is evaluated.
+        Inputs = [file, .. asked.Texts.Keys.Concat(diagnostics.Select(d => d.File)).Where(p => p.Length > 0 && !p.Equals(asked.Project, PathComparison)).Select(Stamps.File)
+            .Concat(Evaluation.LookedFor(asked.Project, null)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
         Seconds = Stopwatch.GetElapsedTime(began).TotalSeconds,
     };
 
@@ -267,7 +269,8 @@ internal static class Inspection
             Imports = imports,
             Frameworks = frameworks,
             Installed = roots,
-            Inputs = [file, .. project.Imports.Select(i => i.ImportedProject.FullPath).Distinct(StringComparer.Ordinal).Where(i => !Installed(i)).Select(Stamps.File)],
+            Inputs = [file, .. project.Imports.Select(i => i.ImportedProject.FullPath).Distinct(StringComparer.Ordinal).Where(i => !Installed(i)).Select(Stamps.File)
+                .Concat(Evaluation.LookedFor(project.FullPath, project)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
             Files = files.Paths,
             Seconds = seconds,
         };

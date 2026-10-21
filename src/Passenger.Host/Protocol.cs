@@ -100,7 +100,8 @@ public sealed record EvaluatedProject
     public IReadOnlyList<EvaluatedItem> Items { get; init; } = [];
 
     /// <summary>The project file and the files it imports outside the SDK and the package folders (which change only
-    /// with their versions, and so with these), as they were when it was evaluated.</summary>
+    /// with their versions, and so with these), and those it would import were they there (the Directory.* files above it,
+    /// its restore's props and targets), as they were when it was evaluated.</summary>
     public IReadOnlyList<Stamp> Inputs { get; init; } = [];
 
     /// <summary>The folders its items' wildcards walked, as they were: one whose files came or went changed.</summary>
@@ -134,8 +135,9 @@ public sealed record BuildParams(IReadOnlyList<string> Projects, IReadOnlyDictio
 public sealed record BuildDone(int Built, double Seconds);
 
 /// <summary>A project's design-time builds as Roslyn's server takes them (a JSON array of its ProjectFileInfo, one a target
-/// framework), what they read (the project file, its imports outside the SDK and package folders, its packages' assets,
-/// its folders), and why they failed, when they did; with the errors and warnings the builds logged.</summary>
+/// framework), what they read (the project file, its imports outside the SDK and package folders and those it would import
+/// were they there, its packages' assets, its folders), and why they failed, when they did; with the errors and warnings
+/// the builds logged.</summary>
 public sealed record BuiltProject(string Path, string Infos, IReadOnlyList<Stamp> Inputs, string? Problem, IReadOnlyList<BuildDiagnostic>? Diagnostics = null);
 
 /// <summary>An error or warning a design-time build logged, with the project file it was logged for.</summary>

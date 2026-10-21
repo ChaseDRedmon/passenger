@@ -395,7 +395,11 @@ public sealed record ProjectBuildCache : IStateDocument<ProjectBuildCache>
 
     public Dictionary<string, KeptBuild> Projects { get; init; } = [];
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, ForgetWindowsTargeting];
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, ForgetWindowsTargeting, ForgetAll];
+
+    /// <summary>Every build, kept before they stamped the Directory.Build.props, .targets and Directory.Packages.props
+    /// MSBuild looks for above a project and the props and targets a restore writes, which may have come since unseen.</summary>
+    private static void ForgetAll(JsonObject document) => document.Remove("projects");
 
     /// <summary>The builds that failed off Windows for want of EnableWindowsTargeting (NETSDK1100), kept before the host
     /// gave it, are built again.</summary>

@@ -211,6 +211,8 @@ internal static class DesignTimeBuilds
         {
             Project outer = Load(path, collection, context, global, null);
             loaded.Add(outer);
+            // As the evaluation found them, not as the builds leave obj/.
+            List<Stamp> looked = [.. Evaluation.LookedFor(path, outer)];
             string single = outer.GetPropertyValue("TargetFramework");
             string[] frameworks = outer.GetPropertyValue("TargetFrameworks").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             List<Project> each = single.Length > 0 || frameworks.Length == 0 ? [outer] : [.. frameworks.Distinct(StringComparer.OrdinalIgnoreCase).Select(f => Load(path, collection, context, global, f))];
@@ -239,7 +241,10 @@ internal static class DesignTimeBuilds
                 .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
                 .Distinct(PathComparer)
                 .Where(i => !outside.Any(root => i.StartsWith(root, PathComparison)))
-                .Select(Stamps.File), .. assets.Select(Stamps.File)];
+                .Select(Stamps.File)
+                .Concat(assets.Select(Stamps.File))
+                .Concat(looked)
+                .DistinctBy(s => s.Path, PathComparer)];
             string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
             List<Stamp> walked = [.. folders, .. infos
                 .SelectMany(i => i.Documents.Concat(i.AdditionalDocuments))

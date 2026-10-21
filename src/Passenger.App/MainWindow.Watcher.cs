@@ -49,6 +49,11 @@ public partial class MainWindow
             // A file come or gone may be one a project's wildcards take in: its folder's stamp says which.
             session.Evaluate();
         }
+        else if (changes.Restored.Count > 0)
+        {
+            // A restore writes the props and targets a project imports beside its assets.
+            session.Evaluate();
+        }
         if (changes.Structure)
         {
             session.Index.Build(folder);

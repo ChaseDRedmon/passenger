@@ -77,6 +77,36 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
     }
 
     [AvaloniaFact]
+    public void A_directory_build_file_made_above_the_projects_reaches_the_language_server_made_while_the_folder_was_closed_or_open()
+    {
+        // Each error but the first compiled only under a constant a Directory.Build file above the projects defines.
+        string counts = Path.Combine(folder, "App", "Counts.cs");
+        File.WriteAllText(counts, "static class Counts\n{\n    static int None() => Lacking;\n#if SHAPES\n    static int Many() => \"many\";\n#endif\n#if MORE\n    static int More() => 1.5;\n#endif\n}\n");
+        MainWindow first = Keeping();
+        first.OpenFile(counts);
+        WaitForCode(first, counts, "CS0103", "the server's error on Lacking, which it gives with nothing defined");
+        Assert.DoesNotContain("CS0029", Codes(first, counts));
+        first.Close();
+
+        Write(folder, "Directory.Build.props", "<Project>\n  <PropertyGroup>\n    <DefineConstants>$(DefineConstants);SHAPES</DefineConstants>\n  </PropertyGroup>\n</Project>\n");
+        MainWindow second = Keeping();
+        second.OpenFile(counts);
+        WaitForCode(second, counts, "CS0029", "the error only SHAPES compiles, the Directory.Build.props made while the folder was closed reaching the server's builds rather than the builds kept");
+
+        Write(folder, "Directory.Build.targets", "<Project>\n  <PropertyGroup>\n    <DefineConstants>$(DefineConstants);MORE</DefineConstants>\n  </PropertyGroup>\n</Project>\n");
+        WaitForCode(second, counts, "CS0266", "the error only MORE compiles, the Directory.Build.targets made while the folder is open reaching the server");
+        second.Close();
+    }
+
+    private static IEnumerable<string?> Codes(MainWindow window, string path) =>
+        window.EditorArea.Documents.FirstOrDefault(d => d.Path == path) is { } open && window.CSharpService?.For(open) is { } served
+            ? served.Diagnostics.Select(d => d.Code?.ToString())
+            : [];
+
+    private static void WaitForCode(MainWindow window, string path, string code, string what) =>
+        Ui.WaitFor(() => Codes(window, path).Contains(code), what, TimeSpan.FromMinutes(2));
+
+    [AvaloniaFact]
     public void A_file_of_a_multi_targeted_project_is_answered_for_in_the_target_framework_chosen_in_the_editor()
     {
         string greeter = Path.Combine(folder, "Lib", "Greeter.cs");

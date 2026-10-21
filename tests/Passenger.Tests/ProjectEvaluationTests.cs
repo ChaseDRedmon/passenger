@@ -97,6 +97,7 @@ public sealed class ProjectEvaluationTests : IDisposable
         first.OpenFolder(Path.Combine(folder, "Shop.slnx"));
         Ui.Settle();
         Assert.True(first.Session.Models.Evaluations > 0, "The folder's first opening evaluated nothing");
+        WaitForRestore(first);
         first.Close();
 
         MainWindow second = new() { Width = 1200, Height = 800, StateFolder = settings };
@@ -122,6 +123,49 @@ public sealed class ProjectEvaluationTests : IDisposable
         Assert.Equal(["Text", "Helper.cs"], Children(third, "Shared"));
         Assert.Equal(["Letters.cs", "Words.cs"], Children(third, "Text"));
         third.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_directory_build_file_made_above_an_open_project_shows_what_it_adds()
+    {
+        MainWindow window = Open();
+        Assert.DoesNotContain("Newtonsoft.Json", Children(window, "Dependencies"));
+        // Above the project's folder, where only MSBuild's look upward for the file reaches.
+        Write("Directory.Build.targets", "<Project>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" />\n  </ItemGroup>\n</Project>\n");
+        Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Any(r => r.Name == "Newtonsoft.Json"), "the Dependencies to show the package the new Directory.Build.targets adds");
+        Assert.Equal("13.0.3", Row(window, null, "Newtonsoft.Json").Detail);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_folder_opened_again_evaluates_a_project_whose_directory_build_file_came_while_it_was_closed()
+    {
+        string settings = TestFolders.Create("settings-");
+        MainWindow first = Keeping(settings);
+        Assert.DoesNotContain("Newtonsoft.Json", Children(first, "Dependencies"));
+        first.Close();
+
+        Write("Directory.Build.targets", "<Project>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" />\n  </ItemGroup>\n</Project>\n");
+        MainWindow second = Keeping(settings);
+        Assert.True(second.Session.Models.Evaluations > 0,
+            "A Directory.Build.targets made above the project while the folder was closed had nothing evaluated as it opened again, the project shown from the cache as it was");
+        Assert.Contains("Newtonsoft.Json", Children(second, "Dependencies"));
+        second.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_project_is_evaluated_again_once_its_first_restore_writes_what_it_imports_and_kept_so()
+    {
+        // Never restored: the language server restores it as it loads it, after its first evaluation.
+        string settings = TestFolders.Create("settings-");
+        MainWindow first = Keeping(settings);
+        WaitForRestore(first);
+        first.Close();
+
+        MainWindow second = Keeping(settings);
+        Assert.True(second.Session.Models.Evaluations == 0,
+            $"Opened again with nothing changed since its restore, the folder had {second.Session.Models.Evaluations} project(s) evaluated again rather than shown from the cache");
+        second.Close();
     }
 
     [AvaloniaFact]
@@ -154,6 +198,26 @@ public sealed class ProjectEvaluationTests : IDisposable
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
+        window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
+        Ui.Settle();
+        return window;
+    }
+
+    /// <summary>Waits for the restore the language server makes of App as it loads it, never restored, to reach App's
+    /// evaluation: what the restore writes for the project to import is among what the evaluation read.</summary>
+    private void WaitForRestore(MainWindow window)
+    {
+        string props = Path.Combine(folder, "App", "obj", "App.csproj.nuget.g.props");
+        Ui.WaitFor(() => window.Session.Workspace?.Projects.FirstOrDefault(p => p.Name == "App")?.Evaluated?.Inputs.Any(i => PathNames.Same(i.Path, props) && i.Length >= 0) == true,
+            "App evaluated again with the props its restore wrote for it to import", TimeSpan.FromMinutes(2));
+    }
+
+    /// <summary>A window keeping the folder's state in <paramref name="settings"/>, its evaluations' cache among it.</summary>
+    private MainWindow Keeping(string settings)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.KeepLayout();
         window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
         Ui.Settle();
         return window;

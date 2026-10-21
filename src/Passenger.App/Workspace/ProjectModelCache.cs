@@ -17,7 +17,11 @@ public sealed record ProjectModelCache : IStateDocument<ProjectModelCache>
     /// <summary>Each project's evaluation, complete, by its path.</summary>
     public Dictionary<string, EvaluatedProject> Projects { get; init; } = [];
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, ForgetWindowsTargeted];
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, ForgetWindowsTargeted, ForgetAll];
+
+    /// <summary>Every evaluation, kept before they stamped the Directory.Build.props, .targets and Directory.Packages.props
+    /// MSBuild looks for above a project and the props and targets a restore writes, which may have come since unseen.</summary>
+    private static void ForgetAll(JsonObject document) => document.Remove("projects");
 
     /// <summary>The evaluations of projects that target Windows, kept before they said which frameworks they reference
     /// (whether one runs only on Windows), are evaluated again.</summary>
