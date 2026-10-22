@@ -103,7 +103,9 @@ public sealed class DebugSession
         if (place is not null)
         {
             // The adapter where the program is (in its container): its flags the same, its symbols kept there.
-            start = place.Command(["--interpreter=vscode", $"--symbolCache={place.SymbolCache}", "--remote"]);
+            // PASSENGER_ENGINE_LOG keeps the engine's log there too, in the container's own temporary folder.
+            start = place.Command(["--interpreter=vscode", $"--symbolCache={place.SymbolCache}", "--remote",
+                .. Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } ? (string[])[$"--engineLogging={ContainerEngineLog}"] : []]);
         }
         else
         {
@@ -258,6 +260,9 @@ public sealed class DebugSession
     /// <summary>Where the adapter keeps symbols it decompiles for assemblies that ship none, and prunes them as it starts:
     /// under the state folder's cache/, as Rider keeps its decompiler's under its system folder.</summary>
     public static string SymbolCache => Path.Combine(Passenger.App.State.StateStore.DefaultRoot, "cache", "symbols");
+
+    /// <summary>Where an adapter in a container keeps the engine's log while PASSENGER_ENGINE_LOG asks for one.</summary>
+    public const string ContainerEngineLog = "/tmp/passenger-engine.log";
 
     /// <summary>Starts the adapter and launches a plan's program under it (a .dll under dotnet, or an
     /// executable), with the breakpoints the store has, its exception breakpoints among them (Rider's "Any exception" stops

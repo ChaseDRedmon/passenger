@@ -293,8 +293,9 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         Ui.WaitFor(() => chosen.IsCompleted, $"{tab.Name}'s tab to be chosen");
     }
 
-    /// <summary>A request to a port, answered once the program goes on; asked again while nothing listens there yet (the
-    /// program let go of a moment ago).</summary>
+    /// <summary>A request to a port, answered once the program goes on (one paused at a breakpoint is waited for); asked
+    /// again while nothing listens there yet (the program let go of a moment ago, or restarting). It never fails: a request
+    /// that gets no answer within a minute of refusals, or at all, gives back why, so no failure of it outlives its test.</summary>
     internal static Task<string> Get(int port) => Task.Run(async () =>
     {
         Uri address = new($"http://localhost:{port.ToString(CultureInfo.InvariantCulture)}/");
@@ -308,6 +309,10 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             catch (HttpRequestException) when (DateTime.UtcNow < until)
             {
                 await Waiting.UntilAsync(() => false, TimeSpan.FromMilliseconds(200));
+            }
+            catch (Exception failed) when (failed is HttpRequestException or OperationCanceledException or IOException)
+            {
+                return $"(no answer from port {port.ToString(CultureInfo.InvariantCulture)}: {failed.GetType().Name}: {failed.Message})";
             }
         }
     });

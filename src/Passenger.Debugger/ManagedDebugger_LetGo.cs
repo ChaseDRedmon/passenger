@@ -110,6 +110,65 @@ public partial class ManagedDebugger
         }
     }
 
+    /// <summary>Waits out the evaluations given up that still run in the program before it is let go: Detach is refused
+    /// while one runs, and one that returns once the debugger has gone holds its thread for good, the runtime waiting for a
+    /// debugger to go on with it (a stop's proxy read on the main thread, a moment before Detach, left an app that never got
+    /// past its startup). The program runs until each has said it ended (an evaluation's own time at most), every other event
+    /// let go, then is stopped again. None is aborted: an abort fires wherever its thread then is, and one that landed in the
+    /// runtime's making of the thread pool's gate thread ended the program ("Failed to create the thread pool Gate thread").</summary>
+    private void EndAbandonedEvaluations(ICorDebugProcess process)
+    {
+        if (EvalStatus.Abandoned.Count == 0)
+        {
+            return;
+        }
+        HashSet<int> left = [.. EvalStatus.Abandoned.Keys];
+        // Never disposed: a callback under way as the handler is taken off may still add to it.
+        BlockingCollection<CorDebugManagedCallbackEventArgs> events = [];
+        void Take(object? sender, CorDebugManagedCallbackEventArgs callbackEvent)
+        {
+            if (callbackEvent is ExitProcessCorDebugManagedCallbackEventArgs)
+            {
+                _exited.Set();
+            }
+            events.Add(callbackEvent);
+        }
+        _callbacks.OnAnyEvent += Take;
+        try
+        {
+            for (int holds = 0; holds < 16 && !_exited.IsSet && process.TryIsRunning(out bool isRunning) is Cor.S_OK && !isRunning; holds++)
+            {
+                if (process.TryContinue(false) is not Cor.S_OK)
+                {
+                    break;
+                }
+            }
+            Stopwatch since = Stopwatch.StartNew();
+            TimeSpan limit = Extensions.EvaluationTimeout;
+            while (left.Count > 0 && !_exited.IsSet && since.Elapsed < limit)
+            {
+                if (events.TryTake(out CorDebugManagedCallbackEventArgs? callbackEvent, limit - since.Elapsed) && !_exited.IsSet)
+                {
+                    if (EvaluationThread(callbackEvent) is { } thread)
+                    {
+                        left.Remove(thread.Id);
+                    }
+                    process.TryContinue(false);
+                }
+            }
+            _logger?.Invoke(left.Count == 0 ? "Letting go: the evaluations given up have ended"
+                : $"Letting go: {left.Count} evaluation{(left.Count == 1 ? string.Empty : "s")} given up did not end within {limit.TotalSeconds:0.#} s");
+            if (!_exited.IsSet)
+            {
+                process.TryStop(0);
+            }
+        }
+        finally
+        {
+            _callbacks.OnAnyEvent -= Take;
+        }
+    }
+
     private static ThreadPlace? PlaceOf(ICorDebugProcess process, int threadId) =>
         process.TryGetThread((uint)threadId, out ICorDebugThread thread) is Cor.S_OK
         && thread.TryGetActiveFrame(out ICorDebugFrame frame) is Cor.S_OK && frame is ICorDebugNativeFrame native

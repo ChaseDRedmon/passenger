@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -92,7 +93,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             // The Containers window's Restart goes through the run: its session ended, held again, stopping in Main again.
             string webDebugged = Started(project, "web");
             Act(window, view, project, "web", AppActions.ContainerRestart);
-            Ui.WaitFor(() => Started(project, "web") != webDebugged, "web to restart", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => Started(project, "web") is { Length: > 0 } now && now != webDebugged, "web to restart", TimeSpan.FromMinutes(2));
             web = ContainerRunDebuggingTests.Tab(window, "web");
             ContainerRunDebuggingTests.StoppedAt(window, web, Source(folder, "Web"), InMain, "web, restarted from the Containers window, to stop in Main again");
             ContainerRunDebuggingTests.Resume(window, web);
@@ -102,7 +103,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Act(window, view, project, "web", AppActions.ServiceRun);
             Ui.WaitFor(() => !window.Debugger.Tabs.Any(t => t.Name == "web" && t.IsLive), "web's session to be let go");
             Assert.Equal(webRestarted, Started(project, "web"));
-            Assert.Equal("web 1", Ui.Await(ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "web")), "web's answer", TimeSpan.FromMinutes(1)));
+            Assert.Equal("web 1", Answered(Request(project, "web"), project, "web"));
 
             // Attach reaches api as it runs, no restart, saying its startup has run; a request stops in its handler.
             Act(window, view, project, "api", AppActions.ServiceAttach);
@@ -113,7 +114,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Task<string> answer = ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "api"));
             ContainerRunDebuggingTests.StoppedAt(window, api, Source(folder, "Api"), InRequest, "api's request to stop in its handler");
             ContainerRunDebuggingTests.Resume(window, api);
-            Assert.Equal("api 1", Ui.Await(answer, "api's answer", TimeSpan.FromMinutes(1)));
+            Assert.Equal("api 1", Answered(answer, project, "api"));
 
             // The gutter's icon beside web joins the run: Profile records web in its container as it runs.
             Avalonia.Controls.MenuItem[] items = GutterMenu(window, folder, "  web:");
@@ -176,7 +177,48 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
 
     private static string Source(string folder, string app) => Path.Combine(folder, app, "Program.cs");
 
-    private static string Started(string project, string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));
+    /// <summary>A service's answer to a request (<see cref="ContainerRunDebuggingTests.Get"/>, which never fails), or the test
+    /// failed with what its container and the debugger's log say of why none came.</summary>
+    private static string Answered(Task<string> answering, string project, string service)
+    {
+        string? answer = null;
+        try
+        {
+            Ui.WaitFor(() => answering.IsCompleted, $"{service}'s answer", TimeSpan.FromMinutes(1.5));
+            answer = answering.Result;
+        }
+        catch (TimeoutException)
+        {
+        }
+        if (answer is null || answer.StartsWith("(no answer", StringComparison.Ordinal))
+        {
+            string log = Path.Combine(TestRun.Settings, "logs", "dap.log");
+            string said = File.Exists(log) ? Ui.Shared(log) : string.Empty;
+            string container = Docker.Ask(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label=com.docker.compose.service={service}"]).Trim();
+            Assert.Fail($"{service} gave no answer: {answer ?? "none in 90 s"}\nits container: {Docker.Ask(["inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.State.StartedAt}} {{.State.FinishedAt}}", container])}"
+                + $"\nits processes:\n{Docker.Ask(["top", container])}\nits log's end:\n{Docker.Ask(["logs", "--tail", "25", container])}\n"
+                + $"the debugger's log's end:\n{said[Math.Max(0, said.Length - 5000)..]}\nthe engine's log there (with PASSENGER_ENGINE_LOG):\n{Docker.Ask(["exec", container, "tail", "-n", "120", Passenger.App.Debugging.DebugSession.ContainerEngineLog])}");
+        }
+        return answer;
+    }
+
+    /// <summary>A request to a service's published port (<see cref="ContainerRunDebuggingTests.Get"/>), or, while it publishes
+    /// none (its container not running), what Compose said of that, as an answer that is no answer.</summary>
+    private static Task<string> Request(string project, string service)
+    {
+        string said = Docker.Ask(["compose", "-p", project, "port", service, "8080"]).Split('\n')[0].Trim();
+        return said.LastIndexOf(':') is int colon and > 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+            ? ContainerRunDebuggingTests.Get(port)
+            : Task.FromResult($"(no answer: {service} publishes no port: {said})");
+    }
+
+    /// <summary>When a service's container last started; empty while it has none, stopped or not (a restart between its
+    /// stop and its start, a container made anew), which a wait reads as not yet.</summary>
+    private static string Started(string project, string service) =>
+        Docker.Ask(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label=com.docker.compose.service={service}"]).Trim() is { Length: > 0 } container
+            && !container.Contains('\n', StringComparison.Ordinal)
+            ? Docker.Ask(["inspect", "-f", "{{.State.StartedAt}}", container]).Trim()
+            : string.Empty;
 
     private static ContainersView Shown(MainWindow window)
     {

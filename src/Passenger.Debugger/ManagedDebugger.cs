@@ -1118,6 +1118,12 @@ public partial class ManagedDebugger
         _stepAfterEvaluation = null;
         _unhandledByUser = null;
         _stopShown = false;
+        if (!exited && letGo && _process is { } held)
+        {
+            // An evaluation left running would hold its thread for good once no debugger is there to go on with it.
+            EndAbandonedEvaluations(held);
+            exited = _exited.IsSet;
+        }
         EvalStatus.Abandoned.Clear();
         EvalStatus.ImplicitOff = null;
         _threads.Clear();

@@ -1186,7 +1186,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   letting a program go (Disconnect without terminating), the engine runs it off any patch or single-step stop and stops
   it again (`ManagedDebugger_LetGo.cs`): under CET a thread resumes from a breakpoint only through the debugger's
   out-of-process SetThreadContext, which mscordbi's Detach waits for only once it has answered one such flare, so a
-  first stop after an attach, detached at, would fault (0xC0000409). Symbols for assemblies without their own are
+  first stop after an attach, detached at, would fault (0xC0000409); and it waits out an evaluation the stop's read left
+  to the program (`EndAbandonedEvaluations`, its own time at most, never aborting it, whose abort could land in the
+  runtime's own work and end the program), since the runtime refuses the detach while one runs and the thread it returns
+  on waits for good for a debugger that went. Symbols for assemblies without their own are
   decompiled into the folder the adapter is given (`--symbolCache`; the IDE's `DebugSession.SymbolCache`, the state
   folder's `cache/symbols`) by `Decompilation/SymbolCache`: `NAME/MVID/NAME.<decompiler>-<Format>.pdb` (raise
   `SymbolCache.Format` when `PortablePdbWriter2`'s output moves), written through a temporary file and renamed, one that
@@ -1525,7 +1528,7 @@ debugs Passenger.App; it finds its breakpoint by the code `status.Text = why;` i
 that line means changing the test. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
-tests' sessions and the IDE's alike. `Debugging/Helpers/StartHold` holds a launched program's runtime at its start by
+tests' sessions and the IDE's alike (an adapter in a container keeps it there, `DebugSession.ContainerEngineLog`). `Debugging/Helpers/StartHold` holds a launched program's runtime at its start by
 pointing `DOTNET_DiagnosticPorts=…,connect,suspend` at a port of the test's own, which comes before the runtime starts
 its debugger (LaunchTests, DebuggerTests, and McpTests through a launch profile); a window test with a held start waits
 with `Ui.PumpUntil`, since the start holds BackgroundWork. Attach to Process's search matches text, so tests choose a
