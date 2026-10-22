@@ -89,7 +89,7 @@ internal static class ContainerPrograms
         dockerfile.Append($"ENTRYPOINT [\"dotnet\", \"/app/{assembly}.dll\"]\n");
         File.WriteAllText(Path.Combine(context, "Dockerfile"), dockerfile.ToString());
         string tag = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}-{assembly.ToLowerInvariant()}:{variant}";
-        Docker.Run("build", "-q", "--label", Docker.RunLabel, "-t", tag, context);
+        Docker.Run(["build", "-q", .. Docker.Load, "--label", Docker.RunLabel, "-t", tag, context]);
         return tag;
     }
 

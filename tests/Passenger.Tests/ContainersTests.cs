@@ -140,6 +140,12 @@ internal static class Docker
         return result.Output.Length > 0 ? result.Output : result.Error;
     }
 
+    /// <summary>What a test's docker build takes so its image lands in the engine: Docker's buildx on a builder of its own
+    /// (on Podman's socket, a BuildKit container it starts) keeps what it built in that builder's cache unless told to load it.
+    /// Podman's own build has no --load, and lands its images.</summary>
+    public static string[] Load =>
+        Task.Run(() => ContainerEngine.Shared.StateAsync()).GetAwaiter().GetResult() is { PodmanCli: false, BuildxVersion: not null } ? ["--load"] : [];
+
     /// <summary>An image's name as Docker words it: Podman names an image built or loaded here in full (docker.io/library/…,
     /// localhost/…).</summary>
     public static string Short(string image) =>
