@@ -314,20 +314,22 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
         return Assert.IsType<FindInFilesPopup>(window.Popup);
     }
 
-    /// <summary>A window on the solution, on the server the class's last window left.</summary>
+    /// <summary>A window on the solution, with no C# language server: Find in Files, its scopes and the Solution view's
+    /// projects ask nothing of C#.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, WarmServer = shop.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
         return window;
     }
 
-    /// <summary>The window a person uses, as the app makes it: one that keeps its state, here in the test's own folder.</summary>
+    /// <summary>The window a person uses, as the app makes it: one that keeps its state, here in the test's own folder; with
+    /// no C# language server, as <see cref="Open"/>.</summary>
     private MainWindow Keeping(string open)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, WarmServer = shop.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(open);
@@ -338,7 +340,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     private string Full(string relative) => PathNames.Canonical(Path.Combine(folder, relative));
 
     /// <summary>A solution of three projects, one nested in another's folder, with "total" in code, notes, generated code and
-    /// docs outside every project; restored once for every test, and the warm server they share on it.</summary>
+    /// docs outside every project; each test starting on it as written, what a replacement wrote put back.</summary>
     public sealed class Shop : SharedProject
     {
         private static readonly string Project = TestProjects.Library();

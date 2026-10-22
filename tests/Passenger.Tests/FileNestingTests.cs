@@ -160,7 +160,9 @@ public sealed class FileNestingTests : IDisposable
         window.Close();
     }
 
-    private MainWindow Open() => Ui.OpenFolder(folder);
+    /// <summary>A window on the folder, with no C# language server: nesting, renames and moves ask nothing of C#, and the
+    /// project is never restored for one.</summary>
+    private MainWindow Open() => Ui.OpenFolder(folder, languageServer: false);
 
     /// <summary>File Nesting... from the Explorer's options in its header, as a person opens it.</summary>
     private static FileNestingDialog OpenFileNesting(MainWindow window)

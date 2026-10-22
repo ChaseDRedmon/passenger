@@ -653,7 +653,8 @@ public sealed class FoldingTests : IDisposable
             </Project>
 
             """);
-        MainWindow window = new() { Width = 1000, Height = 700 };
+        // No C# language server, which folds nothing here and would restore the project's package.
+        MainWindow window = new() { Width = 1000, Height = 700, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(project);

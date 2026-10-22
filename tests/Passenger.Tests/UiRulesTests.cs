@@ -1425,10 +1425,10 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
     private static Rect Placed(Visual window, Visual control) =>
         new(control.TranslatePoint(default, window)!.Value, control.Bounds.Size);
 
-    /// <summary>A window on the class's project, on the server the last one left.</summary>
+    /// <summary>A window on the class's project, with no C# language server: the rules are the window's, whatever C# says.</summary>
     private MainWindow Open(double width, double height)
     {
-        MainWindow window = new() { Width = width, Height = height, Autosaves = false, WarmServer = project.Server };
+        MainWindow window = new() { Width = width, Height = height, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project.Folder);
         Ui.Settle();
@@ -1461,9 +1461,9 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         }
     }
 
-    /// <summary>A small project in a Git repository (main, a branch other, the tag v1.0), restored once for every test, and
-    /// the warm server they share on it: a file long and wide enough to scroll both ways, a text file, and a file deep enough
-    /// that its path fills the status bar at the window's smallest.</summary>
+    /// <summary>A small project in a Git repository (main, a branch other, the tag v1.0), each test starting on it as
+    /// written: a file long and wide enough to scroll both ways, a text file, and a file deep enough that its path fills the
+    /// status bar at the window's smallest.</summary>
     public sealed class Project : SharedProject
     {
         public const string Deep = "Source/Features/Payments/Processing/RefundCalculator.cs";

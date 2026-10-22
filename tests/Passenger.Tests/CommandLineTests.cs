@@ -240,7 +240,8 @@ public sealed class CommandLineTests : IDisposable
         File.WriteAllText(zebra, "<Solution />\n");
         string project = Path.Combine(folder, "sub", "Tool.csproj");
         File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        // The workspace is the window's to say; no C# language server is started on either.
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
 
         window.Start(LaunchOptions.Parse([zebra]));

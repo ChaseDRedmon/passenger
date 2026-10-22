@@ -523,7 +523,7 @@ public sealed class FolderWatchTests : IDisposable
     {
         Write("App/App.csproj", Project);
         Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n</Solution>\n");
-        MainWindow window = Open();
+        MainWindow window = Open(languageServer: false);
         Assert.Equal(["App"], window.Configurations.Select(c => c.Name));
 
         Write("Tool/Tool.csproj", Project);
@@ -588,7 +588,7 @@ public sealed class FolderWatchTests : IDisposable
             TestFolders.LinkFolder(Path.Combine(folder, "App", "loop"), Path.Combine(folder, "App"));
             TestFolders.LinkFolder(Path.Combine(folder, "App", "up"), folder);
             TestFolders.LinkFolder(Path.Combine(folder, "far"), outside);
-            MainWindow window = Open();
+            MainWindow window = Open(languageServer: false);
             List<string> listed = [Path.Combine(".copy", "Copy.csproj"), Path.Combine(".github", "ci.yml"), Path.Combine("App", "App.csproj"), Path.Combine("App", "Program.cs")];
             Assert.Equal(listed, window.FileIndex.Files.Order(StringComparer.Ordinal));
             Assert.Equal([PathNames.Canonical(Path.Combine(folder, "App", "App.csproj"))], window.Projects.Select(p => p.Path));
@@ -647,9 +647,11 @@ public sealed class FolderWatchTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private MainWindow Open(FolderWatching? watching = null)
+    /// <summary>A window on the folder, watching it the platform's way unless told another; with the C# language server
+    /// only where a test asks C# of it, so a project's folder starts and restores none for nothing.</summary>
+    private MainWindow Open(FolderWatching? watching = null, bool languageServer = true)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Watching = watching ?? FolderWatching.Platform };
+        MainWindow window = new() { Width = 1200, Height = 800, Watching = watching ?? FolderWatching.Platform, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
