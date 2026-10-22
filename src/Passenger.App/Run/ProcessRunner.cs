@@ -184,38 +184,51 @@ public sealed class ProcessRunner : IDisposable
         {
             landing.Ended();
         }
-        Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output), Pump(started.StandardError, sink, ConsoleStream.Error));
-        _ = outputs.ContinueWith(_ =>
-        {
-            started.WaitForExit();
-            int code = started.ExitCode;
-            UiThread.Post(() =>
-            {
-                try
-                {
-                    // Typing goes on to whatever has had the console since.
-                    if (console.Input == input)
-                    {
-                        console.Input = null;
-                    }
-                    console.Flush();
-                    if (partialLine.Length > 0)
-                    {
-                        Line?.Invoke(this, partialLine.ToString());
-                        partialLine.Clear();
-                    }
-                    console.Append($"\nProcess finished with exit code {code}.\n");
-                    running = false;
-                    ending.TrySetResult(code);
-                    Exited?.Invoke(this, code);
-                }
-                finally
-                {
-                    landing.Landed();
-                }
-            });
-        }, TaskScheduler.Default);
+        CancellationTokenSource letGo = new();
+        Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output, letGo.Token), Pump(started.StandardError, sink, ConsoleStream.Error, letGo.Token));
+        _ = LandAsync(started, outputs, letGo, input, ending, landing);
         return null;
+    }
+
+    /// <summary>Says in the console that the program ended, once it has exited and the console has what it wrote. A job it
+    /// left holding its output (a helper it started) is ended with its group after ChildProcesses' grace, so an ended
+    /// program never runs on in the console; one out of the kill's reach is let go, what it writes dropped.</summary>
+    private async Task LandAsync(Process started, Task outputs, CancellationTokenSource letGo, ConsoleInput? input, TaskCompletionSource<int> ending, Landing landing)
+    {
+        // Off the UI thread from here on, whose dispatcher a test ends: a program still running holds nothing.
+        await started.WaitForExitAsync().ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        // However its reads end, a failed one included, they are over.
+        Task read = outputs.ContinueWith(_ => { }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        if (!await ChildProcesses.OutputEndsAsync(started, read).ConfigureAwait(false))
+        {
+            letGo.Cancel();
+        }
+        int code = started.ExitCode;
+        UiThread.Post(() =>
+        {
+            try
+            {
+                // Typing goes on to whatever has had the console since.
+                if (console.Input == input)
+                {
+                    console.Input = null;
+                }
+                console.Flush();
+                if (partialLine.Length > 0)
+                {
+                    Line?.Invoke(this, partialLine.ToString());
+                    partialLine.Clear();
+                }
+                console.Append($"\nProcess finished with exit code {code}.\n");
+                running = false;
+                ending.TrySetResult(code);
+                Exited?.Invoke(this, code);
+            }
+            finally
+            {
+                landing.Landed();
+            }
+        }, landing.Landed);
     }
 
     /// <summary>A program's end until the console has all it wrote and says it ended: background work, so a screenshot or
@@ -239,7 +252,8 @@ public sealed class ProcessRunner : IDisposable
             }
         }
 
-        /// <summary>The console says it ended; an end heard only after this holds nothing.</summary>
+        /// <summary>The console says it ended, or never will, its dispatcher gone (a test's, once over); an end heard only
+        /// after this holds nothing.</summary>
         public void Landed()
         {
             lock (gate)
@@ -252,7 +266,7 @@ public sealed class ProcessRunner : IDisposable
     }
 
     /// <summary>Ends the process and all it started, and on macOS and Linux what it left holding its output after it ended,
-    /// which keeps the console running until then.</summary>
+    /// which the console would otherwise end only after its grace.</summary>
     public void Stop()
     {
         UiThread.Check();
@@ -268,13 +282,19 @@ public sealed class ProcessRunner : IDisposable
         }
     }
 
-    /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end.</summary>
-    private static async Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream)
+    /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end; once let
+    /// go of (its program ended, and what holds the stream is out of the kill's reach), what still comes is nobody's,
+    /// since the console may be another program's by then.</summary>
+    private static async Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream, CancellationToken letGo)
     {
         char[] buffer = new char[8192];
         int read;
-        while ((read = await reader.ReadAsync(buffer)) > 0)
+        while ((read = await reader.ReadAsync(buffer, letGo)) > 0)
         {
+            if (letGo.IsCancellationRequested)
+            {
+                return;
+            }
             sink.Write(buffer.AsSpan(0, read), stream);
         }
         sink.End(stream);

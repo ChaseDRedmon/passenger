@@ -765,11 +765,54 @@ public sealed class ContainersTests
         }
     }
 
+    [AvaloniaFact]
+    public void A_log_whose_command_ends_leaving_a_job_on_its_output_says_it_finished_and_ends_the_job()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        string folder = TestFolders.Create("ctr-held-");
+        string job = Path.Combine(folder, "job");
+        // Its logs end at once, leaving a job of its own on the same output, as a helper a program starts may.
+        (string cli, _) = StandInEngine(folder, up: true, logs: $"sleep 600 & echo $! > '{job}'; echo 'the last line before the end'; exit 0");
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-held-window-"));
+        Ui.Settle();
+        try
+        {
+            ContainersView view = Shown(window);
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == "solo"), "solo's row");
+            OutputView console = view.Log.Console;
+            Ui.WaitFor(() => Text(console).Contains("Process finished with exit code 0", StringComparison.Ordinal),
+                $"the log's command said to have ended, the window quiet, though a job it left held its output: [{Text(console)}]", TimeSpan.FromSeconds(20));
+            Assert.Contains("the last line before the end", Text(console), StringComparison.Ordinal);
+            int left = int.Parse(File.ReadAllText(job).Trim(), CultureInfo.InvariantCulture);
+            Ui.WaitFor(() => !Alive(left), $"the job (process {left}) that held the log's output, ended with the command's group");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static bool Alive(int id)
+        {
+            try
+            {
+                using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(id);
+                return !process.HasExited;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+        }
+    }
+
     /// <summary>A docker of the test's own whose engine is running or not as its <c>state</c> file says ("up" or "down"):
     /// a Linux server at <paramref name="host"/> with no Compose v2 and no buildx, holding a container of a Compose project
     /// "shop" (service web, port 8080) and a stopped one of its own whose id begins as web's, whose events go on while it is
-    /// up. The CLI and the state file.</summary>
-    internal static (string Cli, string State) StandInEngine(string folder, bool up, string host = "unix:///nowhere/docker.sock")
+    /// up, and whose logs are what <paramref name="logs"/> (a shell command) writes. The CLI and the state file.</summary>
+    internal static (string Cli, string State) StandInEngine(string folder, bool up, string host = "unix:///nowhere/docker.sock",
+        string logs = "echo 'hello from the stand-in web'")
     {
         string state = Path.Combine(folder, "state");
         File.WriteAllText(state, up ? "up" : "down");
@@ -790,7 +833,7 @@ public sealed class ContainersTests
             "  ps) echo '{\"ID\":\"5a5d0c0ffee1\",\"Names\":\"shop-web-1\",\"Image\":\"busybox:1.37\",\"State\":\"running\",\"Status\":\"Up 5 minutes\",\"Ports\":\"0.0.0.0:8080->80/tcp\",\"Labels\":\"com.docker.compose.project=shop,com.docker.compose.service=web\"}'",
             "    echo '{\"ID\":\"5a5d0c0ffee2\",\"Names\":\"solo\",\"Image\":\"busybox:1.37\",\"State\":\"exited\",\"Status\":\"Exited (0) 2 minutes ago\",\"Ports\":\"\",\"Labels\":\"\"}' ;;",
             "  images|volume|network) ;;",
-            "  logs) echo 'hello from the stand-in web' ;;",
+            $"  logs) {logs} ;;",
             "  events) while [ \"$(cat \"$here/state\")\" = up ]; do sleep 0.2; done ;;",
             "  *) exit 1 ;;",
             "esac",

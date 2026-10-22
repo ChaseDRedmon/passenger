@@ -197,12 +197,7 @@ public static class ChildProcesses
                 // It ended, or closed its input, before reading all it was given: its exit says how it went.
             }
             await process.WaitForExitAsync(ending.Token);
-            if (!await EndsWithin(read, cancel))
-            {
-                // A job left running in the background holds the output open for as long as it lives; it is in the child's group.
-                KillTree(process);
-                await EndsWithin(read, cancel);
-            }
+            await OutputEndsAsync(process, read, cancel);
         }
         catch (OperationCanceledException) when (ending.IsCancellationRequested)
         {
@@ -223,6 +218,20 @@ public static class ChildProcesses
         // What a job out of the kill's reach still holds (on Windows, which ends a tree, one whose parent has gone) is let go.
         Forget(read);
         return new ChildResult(process.ExitCode, output.Text, errors.Text);
+    }
+
+    /// <summary>Whether the reads of a child that has exited end: what is in the pipes is read at once, and a job it left
+    /// holding them open (a hook's <c>daemon &amp;</c>, a program's helper) is given <see cref="OutputGrace"/>, then ended with
+    /// the child's group, and given it again. False when something out of the kill's reach (on Windows, which ends a tree,
+    /// one whose parent has gone) still holds them: its output is the caller's to let go.</summary>
+    public static async Task<bool> OutputEndsAsync(Process process, Task read, CancellationToken cancel = default)
+    {
+        if (await EndsWithin(read, cancel))
+        {
+            return true;
+        }
+        KillTree(process);
+        return await EndsWithin(read, cancel);
     }
 
     /// <summary>Whether a child's reads, the child exited, end within <see cref="OutputGrace"/>.</summary>
