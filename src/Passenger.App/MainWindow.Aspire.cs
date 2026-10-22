@@ -172,14 +172,7 @@ public partial class MainWindow
                 BackgroundWork.Track(next.Debug.ChooseAsync(tab));
             }
         };
-        next.Aspire.RestartResource = (app, service) => RestartAspireAfterEditAsync(next, app, service);
-        next.Aspire.RestartBuiltResource = async (app, service, cancel) =>
-        {
-            AspireSelection selected = await OwnedAspireSelectionAsync(next, app, service, cancel);
-            AspireResourceCommand restart = selected.Resource.Commands.First(command => command.Name is "restart" or "resource-restart" && command.Enabled);
-            await ExecuteAspireCommandAsync(next, selected, restart.Name, () => !app.Stopping, cancel);
-            return session == next && !next.IsEnded;
-        };
+        next.Aspire.RestartCommand = (app, service, build, cancel) => RestartAspireCommandAsync(next, app, service, build, cancel);
         next.Aspire.ProfileService = async (app, service, plan, cancel) =>
         {
             if (session != next || next.IsEnded || profiler is not { } commands)
@@ -387,6 +380,9 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The Aspire window's (and an agent's) Debug or Attach of a resource: its live Debug tab chosen when it has one,
+    /// else the run of services' Debug (restarted held, attached as it starts) or Attach (as it runs) of that service of
+    /// the AppHost the window runs. Null once done, else why not (said too).</summary>
     private async Task<string?> DebugAspireServiceAsync(ProjectSession current, AspireSelection selection, bool attach, CancellationToken cancel = default)
     {
         using IDisposable held = BackgroundWork.Scope();
@@ -405,40 +401,16 @@ public partial class MainWindow
                 ShowToolWindow(ToolWindowIds.Debug);
                 return null;
             }
-            if (!attach)
-            {
-                return await RestartAspireServiceAsync(current, selection, debugging: true, cancel);
-            }
-            if (service.ProcessId is not int process)
-            {
-                return "The selected service has not started a .NET process yet";
-            }
             AspireAppRun app = current.Aspire.FindApp(selection.AppHostPath)
                 ?? throw new InvalidOperationException("The selected AppHost is no longer running");
-            DebugLaunch launched = await current.Debug.AttachAdditionalAsync(process, service.DebugName, cancel, tab =>
+            string name = ((IRunService)service).Name;
+            string? problem = attach ? await buildRun.AttachServiceAsync(app, name) : await buildRun.DebugServiceAsync(app, name);
+            if (problem is null && session == current && app.ServiceNamed(name) is AspireResourceRun now)
             {
-                tab.Group = app.Group;
-                tab.App = service.Inspection;
-                service.DebugTab = tab;
-                tab.RestartFor = outcome => service.DebugTab == tab && !service.Stopping.IsCancellationRequested
-                    ? current.Aspire.RestartResourcesAsync(outcome.Restart.Count > 0 ? outcome.Restart : [service.DebugName]) : Task.FromResult(false);
-                tab.StateChanged += (_, _) =>
-                {
-                    if (tab.Session is { State: DebugState.Ended } && service.DebugTab == tab)
-                    {
-                        service.DebugTab = null;
-                    }
-                };
-            });
-            if (session != current || current.IsEnded)
-            {
-                await current.Debug.StopAsync(launched.Tab);
-                return "The solution was closed";
+                current.Aspire.SelectService(now);
+                ShowToolWindow(ToolWindowIds.Debug);
             }
-            current.Aspire.SelectService(service);
-            ShowToolWindow(ToolWindowIds.Debug);
-            Say($"Attached to {service.Plan.Name}");
-            return null;
+            return problem;
         }
         catch (Exception error) when (AspireFailure(error))
         {
@@ -450,6 +422,8 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The Aspire window's (and an agent's) Profile of a resource: the run of services' Profile of that service of the
+    /// AppHost the window runs, recorded as it runs. Null once it records, else why not (said too).</summary>
     private async Task<string?> ProfileAspireServiceAsync(ProjectSession current, AspireSelection selection)
     {
         using IDisposable held = BackgroundWork.Scope();
@@ -461,12 +435,10 @@ public partial class MainWindow
             }
             AspireResourceRun service = current.Aspire.FindService(selection)
                 ?? throw new InvalidOperationException("Start this AppHost through Passenger before profiling its .NET services");
-            if (service.ProcessId is not int process || profiler is null)
-            {
-                return "The selected service has not started a .NET process yet";
-            }
+            AspireAppRun app = current.Aspire.FindApp(selection.AppHostPath)
+                ?? throw new InvalidOperationException("The selected AppHost is no longer running");
             current.Aspire.SelectService(service);
-            return await profiler.AttachAsync(process, service.Plan.Name, service.Plan.Built ?? service.Plan.Program);
+            return await buildRun.ProfileServiceAsync(app, ((IRunService)service).Name);
         }
         catch (Exception error) when (AspireFailure(error))
         {
@@ -478,6 +450,25 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The run of services' profile of a service as it runs, where its kind runs it: an Aspire service on this
+    /// machine, a container run's in its container. Null once it records, else why not.</summary>
+    private Task<string?> ProfileRunServiceAsync(ServiceRun run, IRunService service, CancellationToken stop)
+    {
+        if (profiler is not { } commands)
+        {
+            return Task.FromResult<string?>("The profiler is not available");
+        }
+        return service switch
+        {
+            AspireResourceRun { ProcessId: int process } aspire => commands.AttachAsync(process, aspire.Plan.Name, aspire.Plan.Built ?? aspire.Plan.Program),
+            Containers.DotnetService dotnet => commands.AttachServiceAsync(dotnet, run.Name),
+            _ => Task.FromResult<string?>($"{service.Name} has no program to profile"),
+        };
+    }
+
+    /// <summary>The Aspire window's (and an agent's) Debug or Run without Debugger of a resource that does not run now (one
+    /// the window ran before): the choice kept, and its AppHost asked to start it; one that runs goes through the run of
+    /// services (Run without Debugger restarting it unheld). Null once asked, else why not (said too).</summary>
     private async Task<string?> RestartAspireServiceAsync(ProjectSession current, AspireSelection selection, bool debugging, CancellationToken cancel = default)
     {
         using IDisposable held = BackgroundWork.Scope();
@@ -486,6 +477,11 @@ public partial class MainWindow
             if (session != current || current.IsEnded)
             {
                 return "The solution was closed";
+            }
+            if (current.Aspire.FindService(selection) is { } running && current.Aspire.FindApp(selection.AppHostPath) is { } app)
+            {
+                return debugging ? await DebugAspireServiceAsync(current, selection, attach: false, cancel)
+                    : await buildRun.RunServiceAsync(app, ((IRunService)running).Name);
             }
             current.Aspire.SetDebugMode(selection, debugging);
             AspireResourceCommand command = selection.Resource.Commands.FirstOrDefault(candidate => candidate.Name is "restart" or "resource-restart" && candidate.Enabled)
@@ -509,40 +505,51 @@ public partial class MainWindow
         }
     }
 
-    private async Task<bool> RestartAspireAfterEditAsync(ProjectSession current, AspireAppRun app, AspireResourceRun service)
+    /// <summary>How an Aspire service restarts, the run of services' restart of it (<see cref="AspireAppRun.RestartAsync"/>):
+    /// its AppHost's own commands, its stop, its project's build here and its start where <paramref name="build"/> asks it
+    /// (an edit's, never building over its running files), else its restart (or start, stopped); done once asked, throwing
+    /// why not.</summary>
+    private async Task RestartAspireCommandAsync(ProjectSession current, AspireAppRun app, AspireResourceRun service, bool build, CancellationToken cancel)
     {
+        // By its name and project, whether it runs or not: a session ended first may have ended its program with it.
+        IReadOnlyList<AspireResource> resources = await ReadAspireResourcesAsync(app.Configuration.Project, cancel);
+        if (session != current || current.IsEnded || app.Stopping)
+        {
+            throw new InvalidOperationException("The selected AppHost is no longer running");
+        }
+        string name = ((IRunService)service).Name;
+        AspireSelection selected = new(app.Configuration.Project, resources.SingleOrDefault(candidate => candidate.Source is { } source && PathNames.Same(source, service.Project)
+                && (candidate.DisplayName == name || candidate.Name == name || candidate.Name.StartsWith(name + "-", StringComparison.Ordinal)))
+            ?? throw new InvalidOperationException($"{name} is not one resource of {app.Configuration.Name}"));
+        AspireResource resource = selected.Resource;
+        if (!build)
+        {
+            AspireResourceCommand again = resource.Commands.FirstOrDefault(command => command.Name is "restart" or "resource-restart" && command.Enabled)
+                ?? resource.Commands.FirstOrDefault(command => command.Name is "start" or "resource-start" && command.Enabled)
+                ?? throw new InvalidOperationException($"{resource.DisplayName} advertises no enabled restart or start command");
+            await ExecuteAspireCommandAsync(current, selected, again.Name, () => !app.Stopping, cancel);
+            return;
+        }
+        AspireResourceCommand stop = resource.Commands.FirstOrDefault(command => command.Name is "stop" or "resource-stop" && command.Enabled)
+            ?? throw new InvalidOperationException($"{resource.DisplayName} advertises no enabled stop command");
+        await ExecuteAspireCommandAsync(current, selected, stop.Name, () => !app.Stopping, cancel);
         if (session != current || current.IsEnded)
         {
-            return false;
+            throw new InvalidOperationException("The solution was closed");
         }
-        try
+        if (await buildRun.BuildBeforeLaunchAsync(new BuildStep(service.Project, service.Plan.Framework)) is { Succeeded: false } failed)
         {
-            AspireSelection selected = await OwnedAspireSelectionAsync(current, app, service, CancellationToken.None);
-            AspireResource resource = selected.Resource;
-            AspireResourceCommand stop = resource.Commands.First(command => command.Name is "stop" or "resource-stop" && command.Enabled);
-            await ExecuteAspireCommandAsync(current, selected, stop.Name, () => !app.Stopping, CancellationToken.None);
-            if (session != current || current.IsEnded || await buildRun.BuildBeforeLaunchAsync(new BuildStep(service.Project, service.Plan.Framework)) is { Succeeded: false })
-            {
-                return false;
-            }
-            AspireResource fresh = (await ReadAspireResourcesAsync(app.Configuration.Project, CancellationToken.None))
-                .Single(candidate => candidate.Name == resource.Name && candidate.Uid == resource.Uid
-                    && AspireJson.String(candidate.Data, "type") == AspireJson.String(resource.Data, "type")
-                    && candidate.Source is { } source && PathNames.Same(source, service.Project));
-            AspireResourceCommand start = fresh.Commands.FirstOrDefault(command => command.Name is "start" or "resource-start" && command.Enabled)
-                ?? fresh.Commands.First(command => command.Name is "restart" or "resource-restart" && command.Enabled);
-            await ExecuteAspireCommandAsync(current, new(app.Configuration.Project, fresh), start.Name,
-                () => !app.Stopping && current.Aspire.FindApp(app.Configuration.Project) == app, CancellationToken.None);
-            return session == current && !current.IsEnded;
+            throw new InvalidOperationException(failed.Message);
         }
-        catch (Exception error) when (AspireFailure(error))
-        {
-            if (session == current)
-            {
-                Say($"Could not restart {service.Plan.Name}: {error.Message}");
-            }
-            return false;
-        }
+        AspireResource fresh = (await ReadAspireResourcesAsync(app.Configuration.Project, cancel))
+            .Single(candidate => candidate.Name == resource.Name && candidate.Uid == resource.Uid
+                && AspireJson.String(candidate.Data, "type") == AspireJson.String(resource.Data, "type")
+                && candidate.Source is { } source && PathNames.Same(source, service.Project));
+        AspireResourceCommand start = fresh.Commands.FirstOrDefault(command => command.Name is "start" or "resource-start" && command.Enabled)
+            ?? fresh.Commands.FirstOrDefault(command => command.Name is "restart" or "resource-restart" && command.Enabled)
+            ?? throw new InvalidOperationException($"{resource.DisplayName} advertises no enabled start command");
+        await ExecuteAspireCommandAsync(current, new(app.Configuration.Project, fresh), start.Name,
+            () => !app.Stopping && current.Aspire.FindApp(app.Configuration.Project) == app, cancel);
     }
 
     private async Task<AspireSelection> OwnedAspireSelectionAsync(ProjectSession current, AspireAppRun app, AspireResourceRun service, CancellationToken cancel)

@@ -1160,7 +1160,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     /// (<paramref name="why"/>, else that their build changed). A service whose container was made held, or unheld, other
     /// than as it is now chosen is made anew from the override, as are all of them in images mode, from an image built again
     /// from its Dockerfile.</summary>
-    public override async Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null)
+    public override async Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null, bool build = false)
     {
         if (services.Count == 0)
         {

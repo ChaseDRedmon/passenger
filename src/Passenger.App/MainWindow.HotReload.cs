@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Passenger.App.Debugging;
+using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
 
@@ -213,21 +214,19 @@ public partial class MainWindow
         {
             return false;
         }
-        HashSet<string> aspire = current.Aspire.Apps.SelectMany(app => app.Services).Select(service => service.DebugName).ToHashSet(StringComparer.Ordinal);
-        string[] local = names.Where(aspire.Contains).ToArray();
-        string[] containers = names.Where(name => !aspire.Contains(name)).ToArray();
+        // Each run of services restarts its own, a container run's and an Aspire AppHost's the same way.
         bool restarted = names.Count > 0;
-        if (local.Length > 0)
+        foreach (ServiceRun run in buildRun.ServiceRuns.ToList())
         {
-            restarted &= await current.Aspire.RestartResourcesAsync(local);
-        }
-        if (session != current || current.IsEnded)
-        {
-            return false;
-        }
-        if (containers.Length > 0)
-        {
-            restarted &= await buildRun.RestartServicesForEditAsync(outcome, containers);
+            string[] its = [.. names.Where(name => run.Services.Any(service => run.SessionName(service) == name))];
+            if (its.Length > 0)
+            {
+                restarted &= await buildRun.RestartServicesForEditAsync(outcome, its);
+            }
+            if (session != current || current.IsEnded)
+            {
+                return false;
+            }
         }
         return restarted;
     }
