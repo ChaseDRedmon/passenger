@@ -382,8 +382,11 @@ public sealed class IdeErrorsTests : IDisposable
         public Task<Passenger.Roslyn.Extension.ProjectInfoResult> InfoAsync(string path, CancellationToken cancel) => feed.InfoAsync(path, cancel);
     }
 
+    /// <summary>Call Hierarchy asked of a server that stops before it answers says so, and asked while the next one starts
+    /// says it needs the server; once it is back, the Hierarchy window shown before it ended still opens a row, its callers
+    /// asked of the server running now, and Call Hierarchy works again.</summary>
     [AvaloniaFact]
-    public void The_hierarchy_window_shown_before_the_language_server_started_again_still_opens_a_row_after_it()
+    public void Call_hierarchy_asked_while_the_language_server_starts_again_says_why_and_the_window_shown_before_still_opens_a_row_after_it()
     {
         MainWindow window = OpenProgram(Calls);
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "static void Ot");
@@ -392,26 +395,6 @@ public sealed class IdeErrorsTests : IDisposable
         Assert.Null(shown.Result);
         HierarchyRow caller = Assert.Single(window.Hierarchy.Rows, r => r.Depth == 1);
         Assert.Contains("Helper", caller.Node.Item.Name, StringComparison.Ordinal);
-
-        int server = window.CSharpService!.Session!.Server.ProcessId;
-        Process.GetProcessById(server).Kill();
-        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != server,
-            $"the language server to be started again ({window.CSharpService.State})");
-
-        // Its callers are asked of the server running now: the one the window was shown with is gone.
-        Task opening = window.Hierarchy.ExpandAsync(caller);
-        Ui.WaitFor(() => opening.IsCompleted, "the caller's row to open");
-        Assert.True(opening.IsCompletedSuccessfully, $"Opening a row of the Hierarchy window after the language server started again failed: {opening.Exception?.InnerException}");
-        Assert.True(caller.IsExpanded, "The caller's row did not open");
-        Assert.All(caller.Children!, c => Assert.Contains("Main", c.Item.Name, StringComparison.Ordinal));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Call_hierarchy_asked_while_the_language_server_starts_again_says_why_it_cannot_and_works_once_it_is_back()
-    {
-        MainWindow window = OpenProgram(Calls);
-        Ui.PlaceAfter(window.EditorArea.CodeEditor, "static void Ot");
         int first = window.CSharpService!.Session!.Server.ProcessId;
 
         // Asked of a server that stops before it answers, as one that crashes or is ended for hanging does.
@@ -436,8 +419,15 @@ public sealed class IdeErrorsTests : IDisposable
         Assert.True(starting.IsCompleted, "Call Hierarchy waited for a server that is not there");
         Assert.StartsWith("Call Hierarchy needs the C# language server: ", starting.Result, StringComparison.Ordinal);
         Assert.Equal(starting.Result, window.Status);
-
         Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true }, $"the language server to be started again ({window.CSharpService.State})");
+
+        // The row shown before: its callers are asked of the server running now, the one the window was shown with gone.
+        Task opening = window.Hierarchy.ExpandAsync(caller);
+        Ui.WaitFor(() => opening.IsCompleted, "the caller's row to open");
+        Assert.True(opening.IsCompletedSuccessfully, $"Opening a row of the Hierarchy window after the language server started again failed: {opening.Exception?.InnerException}");
+        Assert.True(caller.IsExpanded, "The caller's row did not open");
+        Assert.All(caller.Children!, c => Assert.Contains("Main", c.Item.Name, StringComparison.Ordinal));
+
         Task<string?> again = window.ShowCallHierarchyAsync();
         Ui.WaitFor(() => again.IsCompleted, "the call hierarchy from the new server");
         Assert.Null(again.Result);

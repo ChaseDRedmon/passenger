@@ -396,7 +396,7 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
     [AvaloniaFact]
     public void A_project_file_saved_has_the_solution_view_and_the_language_server_take_what_it_says_now()
     {
-        MainWindow window = Open("App/App.csproj", autosaves: true);
+        MainWindow window = Open("App/App.csproj", autosaves: true, languageServer: true);
         CodeEditor editor = window.EditorArea.CodeEditor;
         Assert.DoesNotContain("Passenger.Sample", Children(window, "Dependencies"));
         Assert.True(window.CSharpService?.Session is not null, "No language server started");
@@ -414,10 +414,11 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.Close();
     }
 
-    /// <summary>A window on the solution, on the server the class's last window left.</summary>
-    private MainWindow Open(string file, bool autosaves = false)
+    /// <summary>A window on the solution, with no C# language server unless asked for, since the project files' help is the
+    /// MSBuild host's; asked for, on the server the class's last window left.</summary>
+    private MainWindow Open(string file, bool autosaves = false, bool languageServer = false)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves, WarmServer = shop.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves, WarmServer = shop.Server, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
         window.OpenFile(Path.Combine(folder, file));
@@ -462,7 +463,8 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
     private void Write(string relative, string text) => shop.Write(relative, text);
 
     /// <summary>The solution of App and Core over Directory.Build.props, its packages from a stand-in feed on loopback (for
-    /// the audit too) into a package folder of its own, restored once for every test, and the warm server they share on it.</summary>
+    /// the audit too) into a package folder of its own, restored once for every test, and the server of the one test that
+    /// asks the C# language server what it loaded.</summary>
     public sealed class Shop : SharedProject
     {
         private readonly StandInFeed feed = new();

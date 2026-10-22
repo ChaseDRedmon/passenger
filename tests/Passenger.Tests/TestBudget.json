@@ -4,7 +4,7 @@
   "classes": {
     "CodeAssistTests": 480,
     "CodeAssistResponsivenessTests": 90,
-    "LongFileAssistTests": 150,
+    "LongFileAssistTests": 120,
     "DebuggerTests": 420,
     "HotReloadTests": 180,
     "HotReloadEditsTests": 240,
@@ -61,13 +61,13 @@
     "RazorTests": 90,
     "WebLanguagesTests": 120,
     "EslintPrettierTests": 90,
-    "NewSolutionTests": 120,
+    "NewSolutionTests": 90,
     "TemplateFamiliesTests": 90,
     "XamlTests": 150,
     "WpfXamlTests": 90,
     "WindowsOnlyProjectsTests": 90,
     "WpfPreviewTests": 90,
-    "XamlEditingTests": 120,
+    "XamlEditingTests": 90,
     "ProjectFileHelpTests": 90
   }
 }

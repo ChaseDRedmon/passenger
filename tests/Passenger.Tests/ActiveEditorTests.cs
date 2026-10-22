@@ -20,25 +20,10 @@ namespace Passenger.Tests;
 /// <summary>Rider's View, Active Editor, through the window: Soft-Wrap (a Markdown or text file opens wrapped, as Settings'
 /// masks say), each row from a word, the line's later rows from its indent, its number beside its first row only, and
 /// every key, click and mark finding the row it is on; Show Whitespaces' dots and arrows; and Increase, Decrease and Reset
-/// Font Size and Cmd+wheel (Ctrl+wheel elsewhere) changing the font Settings keeps.</summary>
-[Collection(Alone.Name)]
-public sealed class ActiveEditorTests : IDisposable
+/// Font Size and Cmd+wheel (Ctrl+wheel elsewhere) changing the font Settings keeps. What a key costs in a long wrapped
+/// file is ActiveEditorResponsivenessTests'.</summary>
+public sealed class ActiveEditorTests : ActiveEditorFolders
 {
-    /// <summary>Sixty words of six letters, a space between each: a line that wraps in any editor this wide.</summary>
-    private static readonly string Words = string.Join(' ', Enumerable.Range(0, 60).Select(i => $"word{i:00}"));
-
-    private static readonly string Notes = "# Notes\n\n" + Words + "\n\n    " + Words + "\nlast\n        a " + new string('x', 400) + "\n"
-        + string.Join(' ', Enumerable.Range(0, 60).Select(i => $"café{i:00}")) + "\n";
-
-    private readonly string folder = TestFolders.Create("active-editor-");
-    private readonly string settings = TestFolders.Create("active-editor-settings-");
-
-    public void Dispose()
-    {
-        TestFolders.Delete(folder);
-        TestFolders.Delete(settings);
-    }
-
     [AvaloniaFact]
     public void A_Markdown_file_opens_wrapped_at_the_editors_width_each_row_from_a_word_and_its_number_by_its_first_row_only()
     {
@@ -421,7 +406,13 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.Equal(15, again.EditorArea.CodeEditor.FontSize);
         again.Close();
     }
+}
 
+/// <summary>A key in a long soft-wrapped file costs the line it changed, never a wrap of the whole file, and about what it
+/// costs with soft wrap off. Held to times, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class ActiveEditorResponsivenessTests : ActiveEditorFolders
+{
     /// <summary>Twenty thousand lines of prose, each wrapping onto rows: a key costs the line it changed, never a wrap of the
     /// whole file, and about what it costs with soft wrap off.</summary>
     [AvaloniaFact]
@@ -484,11 +475,31 @@ public sealed class ActiveEditorTests : IDisposable
         Assert.True(largeBytes <= smallBytes + (16 * 1024),
             $"A key in 2,000 members allocated {largeBytes / 1024:N0} KB on the UI thread, {(largeBytes - smallBytes) / 1024:N0} KB more than in 20: it copied what every line or region has");
     }
+}
+
+/// <summary>The folders an Active Editor test writes its files and keeps its settings in, its texts, and the helpers that
+/// open, click and measure them.</summary>
+public abstract class ActiveEditorFolders : IDisposable
+{
+    /// <summary>Sixty words of six letters, a space between each: a line that wraps in any editor this wide.</summary>
+    protected static readonly string Words = string.Join(' ', Enumerable.Range(0, 60).Select(i => $"word{i:00}"));
+
+    protected static readonly string Notes = "# Notes\n\n" + Words + "\n\n    " + Words + "\nlast\n        a " + new string('x', 400) + "\n"
+        + string.Join(' ', Enumerable.Range(0, 60).Select(i => $"café{i:00}")) + "\n";
+
+    protected readonly string folder = TestFolders.Create("active-editor-");
+    protected readonly string settings = TestFolders.Create("active-editor-settings-");
+
+    public void Dispose()
+    {
+        TestFolders.Delete(folder);
+        TestFolders.Delete(settings);
+    }
 
     /// <summary>What a key typed at the top of an open C# file of members, each under a comment that wraps, costs with soft
     /// wrap on: the characters it wrapped and the bytes it allocated on the UI thread, its parse landing included, each key's
     /// average; and the bytes turning soft wrap on allocated, which wraps every line.</summary>
-    private (long Wrapped, long Bytes, long WrapAll) SoftWrappedKeys(string name, int members)
+    protected (long Wrapped, long Bytes, long WrapAll) SoftWrappedKeys(string name, int members)
     {
         StringBuilder text = new("class Many\n{\n    int Typed()\n    {\n        int value = 1;\n        return value;\n    }\n\n");
         for (int i = 0; i < members; i++)
@@ -525,10 +536,10 @@ public sealed class ActiveEditorTests : IDisposable
 
     /// <summary>Keys typing, deleting and moving through rows, which leave the text as it was: six edits of the caret's line
     /// and six moves.</summary>
-    private static readonly string[] Timed = ["x", "y", "LEFT", "RIGHT", "DOWN", "UP", "BACK_SPACE", "BACK_SPACE", "meta RIGHT", "meta LEFT", "z", "BACK_SPACE"];
+    protected static readonly string[] Timed = ["x", "y", "LEFT", "RIGHT", "DOWN", "UP", "BACK_SPACE", "BACK_SPACE", "meta RIGHT", "meta LEFT", "z", "BACK_SPACE"];
 
     /// <summary>The timed keys at an offset, each timed.</summary>
-    private static void Keys(EditorRig rig, int offset, List<double> times)
+    protected static void Keys(EditorRig rig, int offset, List<double> times)
     {
         rig.PlaceCaret(offset);
         Ui.Settle();
@@ -547,13 +558,13 @@ public sealed class ActiveEditorTests : IDisposable
         }
     }
 
-    private static double Median(List<double> times)
+    protected static double Median(List<double> times)
     {
         List<double> sorted = [.. times.Order()];
         return sorted[sorted.Count / 2];
     }
 
-    private MainWindow Open(string name, string text)
+    protected MainWindow Open(string name, string text)
     {
         string path = Path.Combine(folder, name);
         File.WriteAllText(path, text);
@@ -566,15 +577,15 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>Where an offset's caret is drawn in the content, the scroll counted out: its row's top and its x.</summary>
-    private static Point At(CodeEditor editor, int offset) => editor.PointOf(offset) + editor.ScrollOffset;
+    protected static Point At(CodeEditor editor, int offset) => editor.PointOf(offset) + editor.ScrollOffset;
 
-    private static Point Caret(CodeEditor editor) => At(editor, editor.Selections.Primary.Caret);
+    protected static Point Caret(CodeEditor editor) => At(editor, editor.Selections.Primary.Caret);
 
-    private static double CharWidth(CodeEditor editor, int offset) => At(editor, offset + 1).X - At(editor, offset).X;
+    protected static double CharWidth(CodeEditor editor, int offset) => At(editor, offset + 1).X - At(editor, offset).X;
 
     /// <summary>The offsets a line's rows after its first start at: where a character is drawn a row below the one before.
     /// Read with no caret on the line, whose place there would be the end of the row before.</summary>
-    private static List<int> RowStarts(CodeEditor editor, LineSpan line)
+    protected static List<int> RowStarts(CodeEditor editor, LineSpan line)
     {
         List<int> starts = [];
         for (int offset = line.Start + 1; offset < line.End; offset++)
@@ -588,10 +599,10 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>The right edge of the view's text, where the vertical scrollbar begins.</summary>
-    private static double TextEdge(CodeEditor editor) =>
+    protected static double TextEdge(CodeEditor editor) =>
         editor.GetVisualChildren().OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Vertical).Bounds.Left;
 
-    private static void Click(MainWindow window, CodeEditor editor, Point inEditor)
+    protected static void Click(MainWindow window, CodeEditor editor, Point inEditor)
     {
         Point at = editor.TranslatePoint(inEditor, window)!.Value;
         window.MouseDown(at, MouseButton.Left);
@@ -600,7 +611,7 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>The middle of a space's dot, as Show Whitespaces draws it, in the window.</summary>
-    private static Point SpaceDot(MainWindow window, CodeEditor editor, int offset)
+    protected static Point SpaceDot(MainWindow window, CodeEditor editor, int offset)
     {
         double middle = Math.Floor(editor.PointOf(offset).Y + (editor.LineHeight / 2));
         double x = Math.Round(((editor.PointOf(offset).X + editor.PointOf(offset + 1).X) / 2) - 1);
@@ -608,7 +619,7 @@ public sealed class ActiveEditorTests : IDisposable
     }
 
     /// <summary>A point on a tab's arrow's shaft, halfway across the tab.</summary>
-    private static Point TabShaft(MainWindow window, CodeEditor editor, int offset)
+    protected static Point TabShaft(MainWindow window, CodeEditor editor, int offset)
     {
         double middle = Math.Floor(editor.PointOf(offset).Y + (editor.LineHeight / 2));
         double x = (editor.PointOf(offset).X + editor.PointOf(offset + 1).X) / 2;
@@ -617,7 +628,7 @@ public sealed class ActiveEditorTests : IDisposable
 
     /// <summary>The colours drawn in the gutter beside the row an offset is on, from the gutter's left to the change bars:
     /// its ground alone where nothing is drawn there.</summary>
-    private static HashSet<Color> GutterBeside(MainWindow window, CodeEditor editor, int offset)
+    protected static HashSet<Color> GutterBeside(MainWindow window, CodeEditor editor, int offset)
     {
         double top = editor.PointOf(offset).Y;
         double right = editor.GutterColumnPoint(GutterColumn.Changes, 0).X - 3;
@@ -644,7 +655,7 @@ public sealed class ActiveEditorTests : IDisposable
         return colours;
     }
 
-    private static Color Token(MainWindow window, string key) =>
+    protected static Color Token(MainWindow window, string key) =>
         Application.Current!.TryFindResource(key, window.ActualThemeVariant, out object? brush) && brush is ISolidColorBrush solid
             ? solid.Color
             : throw new InvalidOperationException($"The {window.ActualThemeVariant} theme has no {key}");

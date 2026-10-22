@@ -16,10 +16,9 @@ namespace Passenger.Tests;
 /// <summary>The files beside the C# in colour, as Rider colours them: a project file, settings with comments, a CI
 /// workflow, a README and a script each open with their tokens in their kinds' colours, in either theme; typing keeps
 /// the colours right however far a comment or a code fence it opens or closes reaches; Comment with Line Comment and
-/// with Block Comment write each language's own comments; a tag's name lights up with its pair's; and a key in a long
-/// file costs the lines it changed.</summary>
-[Collection(Alone.Name)]
-public sealed class FileColoursTests : IDisposable
+/// with Block Comment write each language's own comments; and a tag's name lights up with its pair's. How long a key in a
+/// long file takes is FileColoursResponsivenessTests'.</summary>
+public sealed class FileColoursTests : FileColoursFolder
 {
     private const string Project = """
         <?xml version="1.0" encoding="utf-8"?>
@@ -104,10 +103,6 @@ public sealed class FileColoursTests : IDisposable
         done
 
         """;
-
-    private readonly string folder = TestFolders.Create("colours-");
-
-    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void A_project_file_settings_a_workflow_a_readme_and_a_script_each_show_their_tokens_in_Riders_colours()
@@ -418,53 +413,6 @@ public sealed class FileColoursTests : IDisposable
         window.Close();
     }
 
-    /// <summary>A key in a file of 20,000 lines of XML, or 5,000 of Markdown, has the grammar read the line it changed,
-    /// off the UI thread, and the UI thread do what a key in a short file of the language costs it; a comment opened at the
-    /// top is read to the end of the file and lands whole.</summary>
-    [AvaloniaFact]
-    public void A_key_in_twenty_thousand_lines_of_XML_or_five_thousand_of_Markdown_reads_the_line_it_changed()
-    {
-        string large = Groups(1000);
-        Assert.True(large.Count(c => c == '\n') > 20_000);
-        StringBuilder md = new("# Notes\n\n");
-        for (int i = 0; md.ToString().Count(c => c == '\n') < 5000; i++)
-        {
-            md.Append(System.Globalization.CultureInfo.InvariantCulture, $"## Section {i}\n\nSome **bold** and *italic* text with `code` and a [link](https://example.com/{i}).\n\n");
-            md.Append("- one item\n- another item\n\n```json\n{ \"a\": 1 }\n```\n\n> quoted\n\n");
-        }
-        string notes = md.ToString();
-        MainWindow window = Window();
-
-        foreach ((string file, string text, string at, string small, string smallAt) in new[]
-        {
-            ("Large.props", large, "File500_3.cs", "<Project>\n  <ItemGroup>\n    <Compile Include=\"File0.cs\" />\n  </ItemGroup>\n</Project>\n", "File0.cs"),
-            ("Notes.md", notes, "Section 250", "# Notes\n\n## Section 1\n\nSome **bold** text.\n", "Section 1"),
-        })
-        {
-            (double keyLong, double readLong, double lines, TextMateHighlighter colours) = Keys(window, file, text, at);
-            (double keyShort, _, _, _) = Keys(window, "Small" + Path.GetExtension(file), small, smallAt);
-            Assert.True(lines <= 2, $"A key in {file} had the grammar read {lines:F1} lines");
-            Assert.True(keyLong <= Math.Max(4 * keyShort, keyShort + 2), $"A key in {file} took the UI thread {keyLong:F2} ms, against {keyShort:F2} ms in a short file");
-            TestContext.Current.TestOutputHelper?.WriteLine(
-                $"{file}: {text.Count(c => c == '\n'):N0} lines; a key {keyLong:F2} ms on the UI thread ({keyShort:F2} ms in a short file), "
-                + $"{readLong:F2} ms off it reading {lines:F1} lines; opening it read {colours.Worked.Lines:N0} lines");
-        }
-
-        // A comment opened at the top of the XML reaches its last line once the pass lands, read in one key's passes.
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Open(window, "Large.props", large);
-        TextMateHighlighter highlighter = (TextMateHighlighter)window.EditorArea.Active!.Highlighter!;
-        editor.Selections = SelectionSet.Single(large.IndexOf('\n') + 1);
-        editor.Focus();
-        (long before, _, TimeSpan time) = highlighter.Worked;
-        window.KeyTextInput("<!--");
-        Ui.Settle();
-        Assert.Equal(TokenKind.Comment, KindOf(editor, "</Project>"));
-        (long after, _, TimeSpan took) = highlighter.Worked;
-        TestContext.Current.TestOutputHelper?.WriteLine($"Opening a comment at the top: {after - before:N0} lines read in {(took - time).TotalMilliseconds:F0} ms");
-        window.Close();
-    }
-
     /// <summary>The caret moved onto a tag's name finds its pair by reading the tags between them where they stand, near the
     /// caret only, as every move asks: onto the root element's start tag or its end tag in 1,900 lines of XML, a move and
     /// the pair it lights up allocate on the UI thread what they do in a hundred lines, where every tag read on the way made
@@ -530,11 +478,72 @@ public sealed class FileColoursTests : IDisposable
         Assert.Equal(0, editor.Selections.Primary.Caret);
         window.Close();
     }
+}
+
+/// <summary>A key in a long file of a language TextMate colours costs the UI thread what one in a short file does. Held to a
+/// time, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class FileColoursResponsivenessTests : FileColoursFolder
+{
+    /// <summary>A key in a file of 20,000 lines of XML, or 5,000 of Markdown, has the grammar read the line it changed,
+    /// off the UI thread, and the UI thread do what a key in a short file of the language costs it; a comment opened at the
+    /// top is read to the end of the file and lands whole.</summary>
+    [AvaloniaFact]
+    public void A_key_in_twenty_thousand_lines_of_XML_or_five_thousand_of_Markdown_reads_the_line_it_changed()
+    {
+        string large = Groups(1000);
+        Assert.True(large.Count(c => c == '\n') > 20_000);
+        StringBuilder md = new("# Notes\n\n");
+        for (int i = 0; md.ToString().Count(c => c == '\n') < 5000; i++)
+        {
+            md.Append(System.Globalization.CultureInfo.InvariantCulture, $"## Section {i}\n\nSome **bold** and *italic* text with `code` and a [link](https://example.com/{i}).\n\n");
+            md.Append("- one item\n- another item\n\n```json\n{ \"a\": 1 }\n```\n\n> quoted\n\n");
+        }
+        string notes = md.ToString();
+        MainWindow window = Window();
+
+        foreach ((string file, string text, string at, string small, string smallAt) in new[]
+        {
+            ("Large.props", large, "File500_3.cs", "<Project>\n  <ItemGroup>\n    <Compile Include=\"File0.cs\" />\n  </ItemGroup>\n</Project>\n", "File0.cs"),
+            ("Notes.md", notes, "Section 250", "# Notes\n\n## Section 1\n\nSome **bold** text.\n", "Section 1"),
+        })
+        {
+            (double keyLong, double readLong, double lines, TextMateHighlighter colours) = Keys(window, file, text, at);
+            (double keyShort, _, _, _) = Keys(window, "Small" + Path.GetExtension(file), small, smallAt);
+            Assert.True(lines <= 2, $"A key in {file} had the grammar read {lines:F1} lines");
+            Assert.True(keyLong <= Math.Max(4 * keyShort, keyShort + 2), $"A key in {file} took the UI thread {keyLong:F2} ms, against {keyShort:F2} ms in a short file");
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"{file}: {text.Count(c => c == '\n'):N0} lines; a key {keyLong:F2} ms on the UI thread ({keyShort:F2} ms in a short file), "
+                + $"{readLong:F2} ms off it reading {lines:F1} lines; opening it read {colours.Worked.Lines:N0} lines");
+        }
+
+        // A comment opened at the top of the XML reaches its last line once the pass lands, read in one key's passes.
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Open(window, "Large.props", large);
+        TextMateHighlighter highlighter = (TextMateHighlighter)window.EditorArea.Active!.Highlighter!;
+        editor.Selections = SelectionSet.Single(large.IndexOf('\n') + 1);
+        editor.Focus();
+        (long before, _, TimeSpan time) = highlighter.Worked;
+        window.KeyTextInput("<!--");
+        Ui.Settle();
+        Assert.Equal(TokenKind.Comment, KindOf(editor, "</Project>"));
+        (long after, _, TimeSpan took) = highlighter.Worked;
+        TestContext.Current.TestOutputHelper?.WriteLine($"Opening a comment at the top: {after - before:N0} lines read in {(took - time).TotalMilliseconds:F0} ms");
+        window.Close();
+    }
+}
+
+/// <summary>The folder a colours test writes its files to, and the helpers that open them in a window and read their colours.</summary>
+public abstract class FileColoursFolder : IDisposable
+{
+    protected readonly string folder = TestFolders.Create("colours-");
+
+    public void Dispose() => TestFolders.Delete(folder);
 
     /// <summary>What moving the caret onto the brace a JSON file opens with, and to just after the one it closes with, cost
     /// on the UI thread, each from a word beside it: the bytes allocated (the least of a few moves) and the lines the pair
     /// searches read (the most), each move lighting up the pair or, too far apart, none.</summary>
-    private (long Bytes, long Lines) BracketMoves(MainWindow window, string file, string text, bool paired)
+    protected (long Bytes, long Lines) BracketMoves(MainWindow window, string file, string text, bool paired)
     {
         CodeEditor editor = Open(window, file, text);
         TextMateHighlighter colours = (TextMateHighlighter)window.EditorArea.Active!.Highlighter!;
@@ -562,7 +571,7 @@ public sealed class FileColoursTests : IDisposable
     }
 
     /// <summary>A JSON file of items, one to a line, in an array under the brace the file opens with.</summary>
-    private static string Items(int count)
+    protected static string Items(int count)
     {
         StringBuilder json = new("{\n  \"items\": [\n");
         for (int i = 0; i < count; i++)
@@ -574,7 +583,7 @@ public sealed class FileColoursTests : IDisposable
 
     /// <summary>What moving the caret onto the root element's start tag's name, and onto its end tag's, and the pair it
     /// lights up allocate on the UI thread, each from a blank line beside it: the least of a few moves, each finding its pair.</summary>
-    private (long Start, long End) TagMoves(MainWindow window, string file, string text)
+    protected (long Start, long End) TagMoves(MainWindow window, string file, string text)
     {
         CodeEditor editor = Open(window, file, text);
         int start = text.IndexOf("<Project", StringComparison.Ordinal) + 1;
@@ -602,7 +611,7 @@ public sealed class FileColoursTests : IDisposable
 
     /// <summary>A project file of item groups, twenty lines each, each under a comment, with items that close themselves, an
     /// item with an element inside, and attributes with a bracket in their values.</summary>
-    private static string Groups(int count)
+    protected static string Groups(int count)
     {
         StringBuilder xml = new("<Project Sdk=\"Microsoft.NET.Sdk\">\n");
         for (int i = 0; i < count; i++)
@@ -620,7 +629,7 @@ public sealed class FileColoursTests : IDisposable
 
     /// <summary>A file opened in the window and typed in at a place: the median time a key takes the UI thread, the time
     /// the grammar took for it off the UI thread, and the lines it read for it.</summary>
-    private (double Key, double Read, double Lines, TextMateHighlighter Colours) Keys(MainWindow window, string file, string text, string at)
+    protected (double Key, double Read, double Lines, TextMateHighlighter Colours) Keys(MainWindow window, string file, string text, string at)
     {
         CodeEditor editor = Open(window, file, text);
         TextMateHighlighter colours = (TextMateHighlighter)window.EditorArea.Active!.Highlighter!;
@@ -645,7 +654,7 @@ public sealed class FileColoursTests : IDisposable
     }
 
     /// <summary>What the key left for the UI thread to do (its frame, drawn with the colours carried), done.</summary>
-    private static void Dispatcher(MainWindow window)
+    protected static void Dispatcher(MainWindow window)
     {
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
@@ -653,7 +662,7 @@ public sealed class FileColoursTests : IDisposable
         _ = window;
     }
 
-    private MainWindow Window()
+    protected MainWindow Window()
     {
         MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
         window.Show();
@@ -662,7 +671,7 @@ public sealed class FileColoursTests : IDisposable
 
     /// <summary>A file written to the folder and opened, with no folder opened, so no language server starts; once its
     /// colours have landed.</summary>
-    private CodeEditor Open(MainWindow window, string name, string text)
+    protected CodeEditor Open(MainWindow window, string name, string text)
     {
         string path = Path.Combine(folder, name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -678,7 +687,7 @@ public sealed class FileColoursTests : IDisposable
 
     /// <summary>The kind every character of a stretch of the editor's text is coloured as (its first occurrence), or
     /// null when they are not all one.</summary>
-    private static TokenKind? KindOf(CodeEditor editor, string stretch, bool settle = true)
+    protected static TokenKind? KindOf(CodeEditor editor, string stretch, bool settle = true)
     {
         if (settle)
         {
@@ -703,14 +712,14 @@ public sealed class FileColoursTests : IDisposable
     }
 
     /// <summary>Every span of the editor's text, as text, to compare with the same text opened afresh.</summary>
-    private static string Colours(CodeEditor editor)
+    protected static string Colours(CodeEditor editor)
     {
         Ui.Settle();
         TextSnapshot text = editor.Document.Snapshot;
         return string.Join(", ", editor.Highlighter!.GetSpans(text, 0, text.Length).Select(s => $"{s.Kind} {text.GetText(s.Start, s.Length)}"));
     }
 
-    private static (int Touched, int Matching)? PairAt(CodeEditor editor, int caret)
+    protected static (int Touched, int Matching)? PairAt(CodeEditor editor, int caret)
     {
         editor.Selections = SelectionSet.Single(caret);
         Ui.Settle();
@@ -718,12 +727,12 @@ public sealed class FileColoursTests : IDisposable
     }
 
     /// <summary>A point inside the box drawn behind the character at an offset: at its top, above the glyph.</summary>
-    private static Point InBox(MainWindow window, CodeEditor editor, int offset) =>
+    protected static Point InBox(MainWindow window, CodeEditor editor, int offset) =>
         editor.TranslatePoint(new Point(editor.PointOf(offset + 1).X - 2, editor.PointOf(offset).Y + 1), window)!.Value;
 
     /// <summary>The colour of the most ink in a stretch of text as drawn: of every pixel in its boxes, the one farthest
     /// from the editor's background, which is where a glyph's stroke covers the pixel whole.</summary>
-    private static Color Ink(MainWindow window, CodeEditor editor, int start, int length)
+    protected static Color Ink(MainWindow window, CodeEditor editor, int start, int length)
     {
         Ui.Settle();
         Color background = Token(window.ActualThemeVariant, "Passenger.Editor.Background");
@@ -754,10 +763,10 @@ public sealed class FileColoursTests : IDisposable
         return inkiest;
     }
 
-    private static double Distance(Color a, Color b) =>
+    protected static double Distance(Color a, Color b) =>
         Math.Sqrt(Math.Pow(a.R - b.R, 2) + Math.Pow(a.G - b.G, 2) + Math.Pow(a.B - b.B, 2));
 
-    private static Color Token(ThemeVariant theme, string key) =>
+    protected static Color Token(ThemeVariant theme, string key) =>
         Application.Current!.TryFindResource(key, theme, out object? brush) && brush is ISolidColorBrush solid
             ? solid.Color
             : throw new InvalidOperationException($"The {theme} theme has no {key}");

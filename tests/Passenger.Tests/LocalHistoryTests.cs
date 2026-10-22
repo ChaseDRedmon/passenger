@@ -467,9 +467,12 @@ public sealed class LocalHistoryTests : IDisposable
         Assert.False(window.EditorArea.Active!.IsModified, "The save did not write the file");
     }
 
+    /// <summary>A window on the folder with a file open and the keys in it; with no C# language server, which Local History
+    /// asks nothing of, so a folder holding a project starts and restores none.</summary>
     private MainWindow Open(string file, string? state = null, HistoryKeeping? keeping = null)
     {
-        MainWindow window = state is null ? new() { Width = 1200, Height = 800 } : new() { Width = 1200, Height = 800, StateFolder = state, HistoryKeeping = keeping! };
+        MainWindow window = state is null ? new() { Width = 1200, Height = 800, StartsLanguageServer = false }
+            : new() { Width = 1200, Height = 800, StateFolder = state, HistoryKeeping = keeping!, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(Path.Combine(folder, file));

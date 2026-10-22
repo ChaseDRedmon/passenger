@@ -14,14 +14,13 @@ namespace Passenger.Tests;
 
 /// <summary>A file is one file however its path is spelled. A repository opened by a lower-case path where case is ignored
 /// (on Windows also by its 8.3 short names, elsewhere through a link) shows its changed file coloured, diffs the open file
-/// itself, commits it and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names; a
-/// project the solution names in other letter case than its folder is the one its files build in and take their namespace
-/// from; a sibling folder whose name begins with the open folder's is not inside it. Debugged, so run alone.</summary>
+/// itself, commits it and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names.
+/// Debugged, so run alone; the paths a project's and a folder's names spell are ProjectPathsTests'.</summary>
 [Collection(Alone.Name)]
 public sealed class PathsTests : IDisposable
 {
     /// <summary>Why a spelling in other letter case is not tried on Linux.</summary>
-    private const string CaseTold = "Linux's file systems tell letter case apart, so a path in other letter case is another path, which is not there";
+    internal const string CaseTold = "Linux's file systems tell letter case apart, so a path in other letter case is another path, which is not there";
 
     private readonly string root = PathNames.Canonical(TestFolders.Create("paths-"));
 
@@ -95,57 +94,6 @@ public sealed class PathsTests : IDisposable
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void A_project_the_solution_names_in_other_letter_case_than_its_folder_builds_from_its_file_and_gives_new_classes_its_namespace()
-    {
-        Assert.SkipWhen(PathNames.Comparison == StringComparison.Ordinal, CaseTold);
-        string folder = Path.Combine(root, "Store");
-        // The solution has the project's folder in lower case, which builds alike where case is ignored.
-        Write(folder, "Store.slnx", "<Solution>\n  <Project Path=\"src/shop/Shop.csproj\" />\n</Solution>\n");
-        Write(folder, "src/Shop/Shop.csproj",
-            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
-        string program = Write(folder, "src/Shop/Program.cs", "Console.WriteLine(\"Shop\");\n");
-        string models = Path.Combine(folder, "src", "Shop", "Models");
-        Directory.CreateDirectory(models);
-        Restore.Run(Path.Combine(folder, "Store.slnx"));
-        MainWindow window = Ui.OpenFolder(folder);
-        window.OpenFile(program);
-        Ui.Settle();
-
-        // The Explorer shows the open file in its project.
-        Assert.True(window.ExplorerView.Tree.Rows.Any(r => r.Path == program), "The Explorer could not show the open file in its project");
-
-        // Build Selected Projects, nothing chosen in the Explorer: the open file's project.
-        window.Perform(AppActions.BuildSelected);
-        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
-        Assert.True(File.Exists(Path.Combine(folder, "src", "Shop", "bin", "Debug", TestProjects.Framework, "Shop.dll")), "Build Selected Projects did not build the open file's project");
-
-        // New Class in a folder of it: the project's namespace, then the folder's.
-        Assert.Null(window.CreateClass(models, "Order"));
-        Assert.Equal("namespace Shop.Models;\n\npublic class Order\n{\n}\n", File.ReadAllText(Path.Combine(models, "Order.cs")));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_file_in_a_sibling_folder_whose_name_begins_with_the_open_folders_is_not_shown_as_inside_it()
-    {
-        string app = Path.Combine(root, "app");
-        string inside = Write(app, "Inside.cs", "class Inside { }\n");
-        string outside = Write(Path.Combine(root, "app2"), "Outside.cs", "class Outside { }\n");
-        MainWindow window = Ui.OpenFolder(app);
-        window.OpenFile(outside);
-        window.OpenFile(inside);
-        Ui.Settle();
-
-        // Recent Files names where each file is: Outside.cs by its own folder, not as ../app2 under the open one.
-        Passenger.App.Navigation.SymbolPopup recent = window.ShowRecentFiles();
-        Ui.WaitFor(() => recent.Rows.Count > 0, "the recent files");
-        Assert.Equal(Path.Combine(root, "app2"), Assert.Single(recent.Rows, r => r.Name == "Outside.cs").Where);
-        Assert.Null(window.ExplorerView.Tree.Reveal(outside));
-        window.Close();
-    }
-
     /// <summary>Another spelling of an existing folder's path: all in lower case, or with Windows' 8.3 short names (through
     /// a symbolic link elsewhere, the other way another name reaches the same folder).</summary>
     private string Spelled(string path, Spelling spelling)
@@ -168,7 +116,7 @@ public sealed class PathsTests : IDisposable
         return spelled;
     }
 
-    private static string Write(string folder, string relative, string text)
+    internal static string Write(string folder, string relative, string text)
     {
         // The full path's separators are the system's, as the IDE's own paths are.
         string path = Path.GetFullPath(Path.Combine(folder, relative));
@@ -181,4 +129,65 @@ public sealed class PathsTests : IDisposable
 
     [DllImport("kernel32.dll", EntryPoint = "GetShortPathNameW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetShortPathName(string path, [Out] char[] shortPath, uint length);
+}
+
+/// <summary>A project the solution names in other letter case than its folder is the one its files build in and take their
+/// namespace from, and a sibling folder whose name begins with the open folder's is not inside it.</summary>
+public sealed class ProjectPathsTests : IDisposable
+{
+    private readonly string root = PathNames.Canonical(TestFolders.Create("paths-"));
+
+    public void Dispose() => TestFolders.Delete(root);
+
+    [AvaloniaFact]
+    public void A_project_the_solution_names_in_other_letter_case_than_its_folder_builds_from_its_file_and_gives_new_classes_its_namespace()
+    {
+        Assert.SkipWhen(PathNames.Comparison == StringComparison.Ordinal, PathsTests.CaseTold);
+        string folder = Path.Combine(root, "Store");
+        // The solution has the project's folder in lower case, which builds alike where case is ignored.
+        PathsTests.Write(folder, "Store.slnx", "<Solution>\n  <Project Path=\"src/shop/Shop.csproj\" />\n</Solution>\n");
+        PathsTests.Write(folder, "src/Shop/Shop.csproj",
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+        string program = PathsTests.Write(folder, "src/Shop/Program.cs", "Console.WriteLine(\"Shop\");\n");
+        string models = Path.Combine(folder, "src", "Shop", "Models");
+        Directory.CreateDirectory(models);
+        Restore.Run(Path.Combine(folder, "Store.slnx"));
+        // The project's files and the build are the MSBuild host's and dotnet's: no C# language server.
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        window.OpenFile(program);
+        Ui.Settle();
+
+        // The Explorer shows the open file in its project.
+        Assert.True(window.ExplorerView.Tree.Rows.Any(r => r.Path == program), "The Explorer could not show the open file in its project");
+
+        // Build Selected Projects, nothing chosen in the Explorer: the open file's project.
+        window.Perform(AppActions.BuildSelected);
+        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
+        Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
+        Assert.True(File.Exists(Path.Combine(folder, "src", "Shop", "bin", "Debug", TestProjects.Framework, "Shop.dll")), "Build Selected Projects did not build the open file's project");
+
+        // New Class in a folder of it: the project's namespace, then the folder's.
+        Assert.Null(window.CreateClass(models, "Order"));
+        Assert.Equal("namespace Shop.Models;\n\npublic class Order\n{\n}\n", File.ReadAllText(Path.Combine(models, "Order.cs")));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_in_a_sibling_folder_whose_name_begins_with_the_open_folders_is_not_shown_as_inside_it()
+    {
+        string app = Path.Combine(root, "app");
+        string inside = PathsTests.Write(app, "Inside.cs", "class Inside { }\n");
+        string outside = PathsTests.Write(Path.Combine(root, "app2"), "Outside.cs", "class Outside { }\n");
+        MainWindow window = Ui.OpenFolder(app);
+        window.OpenFile(outside);
+        window.OpenFile(inside);
+        Ui.Settle();
+
+        // Recent Files names where each file is: Outside.cs by its own folder, not as ../app2 under the open one.
+        Passenger.App.Navigation.SymbolPopup recent = window.ShowRecentFiles();
+        Ui.WaitFor(() => recent.Rows.Count > 0, "the recent files");
+        Assert.Equal(Path.Combine(root, "app2"), Assert.Single(recent.Rows, r => r.Name == "Outside.cs").Where);
+        Assert.Null(window.ExplorerView.Tree.Reveal(outside));
+        window.Close();
+    }
 }
