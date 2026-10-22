@@ -1930,6 +1930,11 @@ the package cache), which only running an AppHost needs, are downloaded only whe
 property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a
 Directory.Build.targets that takes them out of its AppHosts' references after the AppHost SDK adds them, and a test that
 runs an AppHost skips saying so (`AspireApp.Unavailable`);
+`AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
+project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
+stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key), so its console, resources and
+prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
+(BannedSymbols);
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests`, `AspireTelemetryTests` and `AspireClientTests` speak to the
 execution server, a stand-in dashboard and a stand-in CLI (a shell script, so skipped on Windows) on loopback, and

@@ -69,6 +69,7 @@
     "WpfPreviewTests": 90,
     "XamlEditingTests": 90,
     "ProjectFileHelpTests": 90,
-    "AspireOrchestrationTests": 120
+    "AspireOrchestrationTests": 120,
+    "AspireStandInTests": 90
   }
 }

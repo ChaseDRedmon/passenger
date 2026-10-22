@@ -258,6 +258,22 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Assert.Equal(expected, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
     }
 
+    /// <summary>Chooses a resource in the Aspire window's Resources page by a click on its name, as a person does.</summary>
+    private static void ChooseResource(MainWindow window, string name)
+    {
+        FindAction(window, "Show Aspire Resources");
+        Ui.WaitFor(() => ResourceName(window, name) is { IsEffectivelyVisible: true }, $"{name}'s row in the Aspire window");
+        Ui.Click(ResourceName(window, name)!);
+        Assert.Equal(name, window.Aspire.SelectedResource?.DisplayName);
+    }
+
+    private static TextBlock? ResourceName(MainWindow window, string name) => window.Aspire.ResourceList.GetVisualDescendants().OfType<TreeViewItem>()
+        .FirstOrDefault(item => item.Tag is AspireResource resource && resource.DisplayName == name)
+        ?.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(text => text.Text == name);
+
+    private static Button? CommandButton(MainWindow window, string title) => window.Aspire.GetVisualDescendants().OfType<Button>()
+        .FirstOrDefault(button => button.Content is TextBlock text && text.Text == title);
+
     private static void FindAction(MainWindow window, string title)
     {
         Ui.Run(window, AppActions.FindAction);
@@ -398,17 +414,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     }
 
     [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
-    public void Native_logs_find_merged_service_output_and_hiding_the_pane_cancels_display_without_a_CLI_refresh()
+    public void A_services_health_and_address_show_and_the_merged_console_finds_a_request_of_each_service()
     {
         MainWindow window = OpenRunning();
-        List<string> started = [];
-        EventHandler<ChildStart> observe = (_, child) =>
-        {
-            lock (started)
-            {
-                started.Add(child.Command);
-            }
-        };
         try
         {
             FindAction(window, "Show Aspire Resources");
@@ -421,13 +429,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 || Equals(ToolTip.GetTip(button), endpoint.AbsoluteUri.TrimEnd('/')));
             Ui.Click(portLink);
             Assert.Contains(window.Browsed, browsed => browsed == endpoint);
-            List<CancellationToken> streams = [];
-            var native = window.Aspire.ConsoleProvider!;
-            window.Aspire.ConsoleProvider = (selection, cancel) =>
-            {
-                streams.Add(cancel);
-                return native(selection, cancel);
-            };
             FindAction(window, "Show Aspire Console");
             using HttpClient http = Client();
             Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(Resource(window, "webfrontend")), "/passenger-test")), "merged-log HTTP traffic"));
@@ -439,25 +440,10 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 && !window.Aspire.Find.CountText.StartsWith("0", StringComparison.Ordinal),
                 "real Find to select a merged console match");
             Ui.Press(window, "ESCAPE");
-            Assert.NotEmpty(streams);
-            CancellationToken[] active = streams.Where(token => !token.IsCancellationRequested).ToArray();
-            Assert.NotEmpty(active);
-            ChildProcesses.Started += observe;
-            Ui.Click(window.Aspire.Console.Editor);
-            Ui.Run(window, AppActions.HideToolWindow);
-            Ui.WaitFor(() => active.All(token => token.IsCancellationRequested), "hiding Aspire to cancel every display stream");
-            Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(Resource(window, "webfrontend")), "/passenger-test")), "traffic while Aspire is hidden"));
-            Ui.Settle();
-            lock (started)
-            {
-                Assert.DoesNotContain(started, command => command.Contains("aspire", StringComparison.OrdinalIgnoreCase)
-                    && (command.Contains("resource", StringComparison.OrdinalIgnoreCase) || command.Contains("telemetry", StringComparison.OrdinalIgnoreCase)));
-            }
             Assert.True(window.IsRunning);
         }
         finally
         {
-            ChildProcesses.Started -= observe;
             window.Close();
         }
     }
@@ -593,9 +579,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             Ui.WaitFor(() => window.Aspire.GetVisualDescendants().OfType<Button>().Any(button => button.Content is TextBlock { Text: "Passenger interaction" }),
                 "the real AppHost's advertised command");
             Ui.Click(window.Aspire.GetVisualDescendants().OfType<Button>().Single(button => button.Content is TextBlock { Text: "Passenger interaction" }));
-            AspireInteractionDialog confirmation = Interaction(window, "Restart API?");
+            AspireInteractionDialog confirmation = AspireStandInTests.Interaction(window, "Restart API?");
             Ui.Click(confirmation.Secondary);
-            AspireInteractionDialog form = Interaction(window, "API settings");
+            AspireInteractionDialog form = AspireStandInTests.Interaction(window, "API settings");
             TextBox input = Assert.IsType<TextBox>(form.InputControls["value"]);
             Ui.Click(input);
             Ui.Press(form, "control A");
@@ -645,14 +631,13 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         int[] owned = OwnedPids(window);
         Assert.True(Processes.IsRunning(oldPid) && Processes.IsRunning(webPid), "The API and frontend must be real Passenger-owned processes");
         Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(web), "/passenger-test")), "the frontend's cross-service HTTP response"));
-        window.Aspire.SelectResource(api.Name);
+        ChooseResource(window, "apiservice");
         FindAction(window, "Show Aspire Structured logs");
         RefreshUntil(window, () => window.Aspire.StructuredLogs.Items.OfType<AspireStructuredLog>()
             .Any(log => log.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal)), "the API's structured request log");
         AspireStructuredLog log = window.Aspire.StructuredLogs.Items.OfType<AspireStructuredLog>()
             .First(item => item.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal));
-        window.Aspire.StructuredLogs.SelectedItem = log;
-        Ui.Settle();
+        ClickListItem(window, window.Aspire.StructuredLogs, log);
         Assert.False(string.IsNullOrWhiteSpace(log.TraceId), "The structured log must retain its trace correlation");
         Assert.False(string.IsNullOrWhiteSpace(log.SpanId), "The structured log must retain its span correlation");
         Assert.Contains(window.Aspire.GetVisualDescendants().OfType<Passenger.App.ToolWindows.OutputView>(),
@@ -661,16 +646,16 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         FindAction(window, "Show Aspire Traces");
         RefreshUntil(window, () => window.Aspire.TraceList.Items.OfType<AspireTrace>().Any(trace =>
             trace.TraceId == log.TraceId && trace.Spans.Select(span => span.Source).Distinct().Count() >= 2), "the API and frontend spans in one trace");
-        window.Aspire.TraceList.SelectedItem = window.Aspire.TraceList.Items.OfType<AspireTrace>().First(trace => trace.TraceId == log.TraceId);
-        Ui.Settle();
+        ClickListItem(window, window.Aspire.TraceList, window.Aspire.TraceList.Items.OfType<AspireTrace>().First(trace => trace.TraceId == log.TraceId));
         Assert.True(window.Aspire.SpanList.Items.Count >= 2, "The native trace hierarchy must show cross-service spans");
 
-        window.Aspire.ShowPage("Console");
+        FindAction(window, "Show Aspire Console");
         Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("Passenger request", StringComparison.Ordinal), "the API's live console output");
         api = Resource(window, "apiservice");
         AspireResourceCommand restart = Assert.Single(api.Commands, command => command.Name is "restart" or "resource-restart");
-        window.Aspire.SelectResource(api.Name);
-        Ui.Await(Complete(window.Aspire.ExecuteSelectedCommandAsync(restart.Name)), "the native advertised restart command");
+        ChooseResource(window, "apiservice");
+        Ui.WaitFor(() => CommandButton(window, restart.DisplayName) is { IsEffectivelyVisible: true, IsEnabled: true }, $"the API's {restart.DisplayName} command");
+        Ui.Click(CommandButton(window, restart.DisplayName)!);
         RefreshUntil(window, () => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice"
             && window.AspireRuntime.FindService(new(project.Host, resource))?.ProcessId is int pid && pid != oldPid), "the restarted API's new PID");
         Ui.WaitFor(() => !Processes.IsRunning(oldPid), "the old API process to exit");
@@ -879,12 +864,12 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         string? duplicate = Ui.Await(window.RunAsync(), "a second run of the same AppHost");
         Assert.Contains("already running", duplicate, StringComparison.OrdinalIgnoreCase);
         Assert.Single(window.AspireRuntime.Apps);
-        Ui.Launched(window, window.DebugAspireResourceAsync(project.Host, api.Name, attach: true), "Attach to the selected API");
+        ChooseResource(window, "apiservice");
+        FindAction(window, "Attach to Aspire Resource");
+        Ui.WaitFor(() => Service(window, api).DebugTab?.IsLive == true, $"Attach to the chosen API ({window.Status})");
         Assert.Equal(apiPid, Service(window, api).ProcessId);
-        Assert.True(Service(window, api).DebugTab?.IsLive);
         Assert.Null(Service(window, web).DebugTab);
-        window.Aspire.SelectResource(api.Name);
-        window.ShowToolWindow(ToolWindowIds.Aspire);
+        ChooseResource(window, "apiservice");
         Button noDebug = window.GetVisualDescendants().OfType<Button>().Single(button => ActionButtons.GetAction(button) == AppActions.AspireRun);
         Ui.WaitFor(() => noDebug.IsEffectivelyVisible && noDebug.IsEnabled, "the selected resource's Run without debugger action");
         Ui.Click(noDebug);
@@ -893,8 +878,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Ui.WaitFor(() => !Processes.IsRunning(apiPid), "the attached API process to exit during restart");
         Assert.True(Processes.IsRunning(webPid), "Run without debugger must leave the sibling frontend alive");
         web = Resource(window, "webfrontend");
-        Ui.Launched(window, window.ProfileAspireResourceAsync(project.Host, web.Name), "Profile the selected frontend");
-        Assert.Equal(webPid, window.Profiling?.ProcessId);
+        ChooseResource(window, "webfrontend");
+        FindAction(window, "Profile Aspire Resource");
+        Ui.WaitFor(() => window.Profiling?.ProcessId == webPid, $"Profile to record the chosen frontend ({window.Status})");
         using HttpClient http = Client();
         Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(web), "/passenger-test")), "the profiled frontend's cross-service request"));
         Passenger.App.Profiling.SnapshotRead snapshot = Ui.Await(window.SnapshotAsync(), "the selected frontend's profiling snapshot", TimeSpan.FromMinutes(2));
@@ -911,9 +897,11 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         {
             AspireResource api = Resource(window, "apiservice");
             AspireResourceRun service = Service(window, api);
-            Ui.Launched(window, window.DebugAspireResourceAsync(project.Host, api.Name, attach: true), "attaching the Aspire API");
+            ChooseResource(window, "apiservice");
+            FindAction(window, "Attach to Aspire Resource");
+            Ui.WaitFor(() => service.DebugTab?.IsLive == true, $"Attach to the chosen API ({window.Status})");
             DebugTab apiTab = Assert.IsType<DebugTab>(service.DebugTab);
-            window.Aspire.SelectResource(api.Name);
+            ChooseResource(window, "apiservice");
             Assert.Same(service, window.AspireRuntime.SelectedService);
 
             LaunchPlan plan = new()
@@ -1114,99 +1102,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     }
 
     [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
-    public void The_native_console_deduplicates_overlapping_batches_and_cancels_the_previous_generation()
-    {
-        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the console protocol backend");
-        backend.PushResource(new Resource { Name = "apiservice", DisplayName = "apiservice", Uid = "first", ResourceType = "Project", State = "Running" });
-        MainWindow window = OpenInteractionWindow(backend);
-        try
-        {
-            FindAction(window, "Show Aspire Console");
-            Ui.WaitFor(() => backend.Consoles.Length == 1, "the native console subscription");
-            AspireInteractionHost.ConsoleSubscription old = Assert.Single(backend.Consoles);
-            Assert.Equal("apiservice", old.ResourceName);
-            old.Push(Line(1), Line(2));
-            old.Push(Line(2), Line(3));
-            Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("line 3", StringComparison.Ordinal), "both overlapping wire batches");
-            Assert.Equal(1, window.Aspire.Console.Document.Snapshot.ToString().Split('\n').Count(line => line.Trim() == "[apiservice] line 2"));
-            Assert.False(old.Closed.Task.IsCompleted);
-            backend.PushResource(new Resource { Name = "apiservice", DisplayName = "apiservice", Uid = "second", ResourceType = "Project", State = "Running" });
-            Ui.WaitFor(() => old.Closed.Task.IsCompleted && backend.Consoles.Length == 2, "the old HTTP/2 console subscription to be canceled and replaced");
-            AspireInteractionHost.ConsoleSubscription next = backend.Consoles[1];
-            next.Push(new ConsoleLogLine { Text = "new generation", LineNumber = 1 });
-            old.Push(new ConsoleLogLine { Text = "stale generation", LineNumber = 4 });
-            Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("new generation", StringComparison.Ordinal), "the replacement generation's wire output");
-            Assert.DoesNotContain("stale generation", window.Aspire.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
-            Assert.DoesNotContain("line 2", window.Aspire.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
-            next.Push(
-                new ConsoleLogLine { Text = $"{project.ApiProgram}(3,4): error ASPIRETEST: request source", LineNumber = 2 },
-                new ConsoleLogLine { Text = "See https://example.com/aspire/help.", LineNumber = 3 });
-            Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("https://example.com/aspire/help", StringComparison.Ordinal), "the native console's source and web links");
-            ClickConsoleLink(window, "example.com");
-            Assert.Equal("https://example.com/aspire/help", Assert.Single(window.Browsed).AbsoluteUri);
-            ClickConsoleLink(window, project.ApiProgram);
-            Ui.WaitFor(() => window.EditorArea.Active is { } active && PathNames.Same(project.ApiProgram, active.Path)
-                && window.EditorArea.CodeEditor.CaretPosition == new TextPosition(2, 3), "the console source link navigation");
-            Assert.Equal(PathNames.Canonical(project.ApiProgram), window.EditorArea.Active?.Path);
-            Assert.Equal(new TextPosition(2, 3), window.EditorArea.CodeEditor.CaretPosition);
-            Assert.Single(window.Browsed);
-            Assert.Empty(backend.Errors);
-        }
-        finally
-        {
-            window.Close();
-            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the console backend to stop");
-        }
-
-        static ConsoleLogLine Line(int number) => new() { Text = $"line {number}", LineNumber = number };
-    }
-
-    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
-    public void A_background_resource_update_preserves_the_selected_parent_and_its_expanded_native_hierarchy()
-    {
-        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the resource hierarchy backend");
-        backend.PushResource(new Resource
-        {
-            Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running",
-            HealthReports = { new HealthReport { Key = "ready", Status = HealthStatus.Healthy } },
-        });
-        Resource worker = new()
-        {
-            Name = "worker", DisplayName = "worker", Uid = "worker", ResourceType = "Executable", State = "Running",
-            Relationships = { new ResourceRelationship { Type = "Parent", ResourceName = "apiservice" } },
-        };
-        backend.PushResource(worker);
-        MainWindow window = OpenInteractionWindow(backend);
-        try
-        {
-            FindAction(window, "Show Aspire Resources");
-            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Count == 2, "the native parent and child snapshot");
-            TreeViewItem parent = window.Aspire.ResourceList.Items.OfType<TreeViewItem>().Single();
-            Assert.Equal("apiservice", Assert.IsType<AspireResource>(parent.Tag).Name);
-            Assert.Equal("worker", Assert.IsType<AspireResource>(Assert.Single(parent.Items.OfType<TreeViewItem>()).Tag).Name);
-            Ui.Click(parent.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
-            Ui.Press(window, "RIGHT");
-            Ui.WaitFor(() => parent.IsExpanded, "real keyboard input to expand the resource hierarchy");
-            Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
-            Assert.Contains(parent.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "worker");
-            worker.State = "Stopped";
-            backend.PushResource(worker);
-            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.Name == "worker" && resource.State == "Stopped"),
-                "the background child's live update");
-            Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
-            parent = window.Aspire.ResourceList.Items.OfType<TreeViewItem>().Single();
-            Assert.True(parent.IsExpanded);
-            Assert.Contains(parent.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "Healthy");
-            Assert.Empty(backend.Errors);
-        }
-        finally
-        {
-            window.Close();
-            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the resource hierarchy backend to stop");
-        }
-    }
-
-    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Disconnecting_a_Dcp_create_while_the_window_is_stalled_cannot_start_a_late_service_after_close()
     {
         string marker = project.PathOf("canceled-dcp-request.pid");
@@ -1274,229 +1169,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Assert.Throws<HttpRequestException>(() => closed.GetAwaiter().GetResult());
     }
 
-    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
-    public void A_native_confirmation_cancel_and_server_updated_form_send_the_current_dialog_response()
-    {
-        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the test interaction backend");
-        MainWindow window = OpenInteractionWindow(backend);
-        try
-        {
-            backend.Push(new WatchInteractionsResponseUpdate
-            {
-                InteractionId = 1,
-                Title = "Restart API?",
-                Message = "Confirm restart",
-                ShowSecondaryButton = true,
-                Notification = new InteractionNotification { Intent = MessageIntent.Confirmation },
-            });
-            AspireInteractionDialog confirmation = Interaction(window, "Restart API?");
-            Ui.Click(confirmation.Secondary);
-            Ui.WaitFor(() => backend.Answers.Length == 1, "the native confirmation answer on the wire");
-            WatchInteractionsRequestUpdate canceled = Assert.Single(backend.Answers);
-            Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.Notification, canceled.KindCase);
-            Assert.False(canceled.Notification.Result);
-            CompleteInteraction(backend, window, 1);
-
-            backend.Push(Form("before"));
-            AspireInteractionDialog form = Interaction(window, "API settings");
-            TextBox input = Assert.IsType<TextBox>(form.InputControls["value"]);
-            Ui.Click(input);
-            Ui.WaitFor(() => backend.Answers.Any(answer => answer.InteractionId == 2
-                && answer.KindCase == WatchInteractionsRequestUpdate.KindOneofCase.InputsDialog
-                && answer.ResponseUpdate && answer.InputsDialog.InputItems[0].Value == "before"),
-                "the initial native form value on the wire");
-            int baseline = backend.Answers.Length;
-            AspireInteractionHost.WireBarrier sending = backend.HoldNextAnswer();
-            string firstValue = new string('x', 256 * 1024) + "typed while connected";
-            ReplaceDuringWork(form, firstValue);
-            Ui.PumpUntil(() => sending.Entered.Task.IsCompleted, "the input write to reach the held HTTP/2 frame");
-            Assert.Equal(baseline, backend.Answers.Length);
-            WatchInteractionsResponseUpdate update = Form("server update");
-            update.InputsDialog.InputItems[0].ValidationErrors.Add("Choose another value");
-            backend.Push(update);
-            Ui.PumpUntil(() => form.Problem.Text?.Contains("Choose another value", StringComparison.Ordinal) == true,
-                "the server update while the first response is still in flight");
-            input = Assert.IsType<TextBox>(form.InputControls["value"]);
-            Assert.Equal(firstValue, input.Text);
-            Ui.Click(input, settle: false);
-            ReplaceDuringWork(form, "superseded value");
-            ReplaceDuringWork(form, "latest value");
-            sending.Release.TrySetResult();
-            Ui.WaitFor(() => backend.Answers.Length == baseline + 2, "the first update and its coalesced latest value");
-            WatchInteractionsRequestUpdate[] updates = backend.Answers.Skip(baseline).ToArray();
-            Assert.Equal(firstValue, updates[0].InputsDialog.InputItems[0].Value);
-            Assert.Equal("latest value", updates[1].InputsDialog.InputItems[0].Value);
-            Assert.All(updates, answer =>
-            {
-                Assert.Equal(2, answer.InteractionId);
-                Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.InputsDialog, answer.KindCase);
-                Assert.True(answer.ResponseUpdate);
-            });
-            Ui.Click(form.Primary);
-            Ui.WaitFor(() => backend.Answers.Length == baseline + 3, "the final form response");
-            Assert.False(backend.Answers[^1].ResponseUpdate);
-            Assert.Equal("latest value", backend.Answers[^1].InputsDialog.InputItems[0].Value);
-            CompleteInteraction(backend, window, 2);
-            Assert.Empty(backend.Errors);
-        }
-        finally
-        {
-            window.Close();
-            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the interaction backend to stop");
-        }
-    }
-
-    [AvaloniaTheory(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
-    [InlineData("close")]
-    [InlineData("escape")]
-    [InlineData("dismiss")]
-    public void An_unsupported_terminal_prompt_is_canceled_without_ending_ordinary_interactions(string action)
-    {
-        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the terminal interaction backend");
-        MainWindow window = OpenInteractionWindow(backend);
-        try
-        {
-            WatchInteractionsResponseUpdate update = new()
-            {
-                InteractionId = 900,
-                Title = "Open a terminal",
-                PrimaryButtonText = "Open terminal",
-                PromptTerminal = new InteractionPromptTerminal { TerminalId = "terminal-before" },
-            };
-            backend.Push(update);
-            AspireInteractionDialog terminal = Interaction(window, "Open a terminal");
-            Assert.Equal("Close", terminal.Primary.Content);
-            Assert.Contains(terminal.GetVisualDescendants().OfType<TextBlock>(), block =>
-                block.Text?.Contains("Terminal interactions are not supported", StringComparison.Ordinal) == true);
-            update.PromptTerminal.TerminalId = "terminal-current";
-            update.Title = "Current terminal request";
-            backend.Push(update);
-            Ui.WaitFor(() => terminal.Title?.EndsWith(" · " + update.Title, StringComparison.Ordinal) == true,
-                "the current terminal request to arrive over the wire");
-            switch (action)
-            {
-                case "close":
-                    Ui.Click(terminal.Primary);
-                    break;
-                case "escape":
-                    Ui.Press(terminal, "ESCAPE");
-                    break;
-                default:
-                    terminal.Close();
-                    break;
-            }
-            Ui.WaitFor(() => backend.Answers.Length == 1, "the terminal cancellation response");
-            WatchInteractionsRequestUpdate rejected = Assert.Single(backend.Answers);
-            Assert.Equal(900, rejected.InteractionId);
-            Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.PromptTerminal, rejected.KindCase);
-            Assert.Equal("terminal-current", rejected.PromptTerminal.TerminalId);
-            Assert.True(rejected.PromptTerminal.HasResult);
-            Assert.False(rejected.PromptTerminal.Result);
-            Assert.False(backend.Disconnected.Task.IsCompleted);
-            CompleteInteraction(backend, window, 900);
-
-            backend.Push(new WatchInteractionsResponseUpdate
-            {
-                InteractionId = 901,
-                Title = "Continue normally",
-                MessageBox = new InteractionMessageBox { Intent = MessageIntent.Confirmation },
-            });
-            AspireInteractionDialog ordinary = Interaction(window, "Continue normally");
-            Ui.Click(ordinary.Primary);
-            Ui.WaitFor(() => backend.Answers.Length == 2, "the ordinary response after terminal cancellation");
-            Assert.Equal(901, backend.Answers[1].InteractionId);
-            Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.MessageBox, backend.Answers[1].KindCase);
-            Assert.True(backend.Answers[1].MessageBox.Result);
-            Assert.False(backend.Disconnected.Task.IsCompleted);
-            CompleteInteraction(backend, window, 901);
-            Assert.Empty(backend.Errors);
-        }
-        finally
-        {
-            window.Close();
-            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the terminal backend to stop");
-        }
-    }
-
-    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
-    public void A_server_form_update_rejects_an_in_flight_file_upload_and_a_new_upload_submits_the_current_file()
-    {
-        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the upload interaction backend");
-        MainWindow window = OpenInteractionWindow(backend);
-        try
-        {
-            backend.Push(FileForm());
-            AspireInteractionDialog dialog = Interaction(window, "Upload API settings");
-            PickUploadFile(window, dialog, project.ApiProgram);
-            Ui.PumpUntil(() => backend.FirstUpload.Entered.Task.IsCompleted, "the chosen file's upload to reach the held server reply");
-            UploadFileChunk[] oldUpload = Assert.Single(backend.Uploads);
-            Assert.Equal(3, oldUpload[0].InteractionId);
-            Assert.Equal("attachment", oldUpload[0].InputName);
-            Assert.Equal(Path.GetFileName(project.ApiProgram), oldUpload[0].FileName);
-            Assert.Equal(File.ReadAllBytes(project.ApiProgram), oldUpload.SelectMany(chunk => chunk.Data.ToByteArray()).ToArray());
-            WatchInteractionsResponseUpdate update = FileForm();
-            update.Message = "The server replaced this file input";
-            backend.Push(update);
-            Ui.PumpUntil(() => dialog.GetVisualDescendants().OfType<TextBlock>().Any(block => block.Text == update.Message),
-                "the replacement file form while the original upload is held");
-            Assert.Same(window, dialog.Owner);
-            backend.FirstUpload.Release.TrySetResult();
-            Ui.WaitFor(() => dialog.Problem.IsEffectivelyVisible && dialog.Problem.Text!.Contains("Choose the file again", StringComparison.Ordinal),
-                "the stale upload rejection in the real owned modal");
-            Ui.Click(dialog.Primary);
-            Ui.WaitFor(() => backend.Answers.Length == 1, "the unchanged file input response");
-            WatchInteractionsRequestUpdate rejected = Assert.Single(backend.Answers);
-            Assert.Equal(string.Empty, Assert.Single(rejected.InputsDialog.InputItems).Value);
-            Assert.DoesNotContain("stale-file-id", rejected.ToString(), StringComparison.Ordinal);
-
-            PickUploadFile(window, dialog, project.WebProgram);
-            Ui.WaitFor(() => Equals(((Button)dialog.InputControls["attachment"]).Content, "1 file(s) uploaded"), "a fresh upload to finish");
-            Assert.Equal(2, backend.Uploads.Length);
-            Assert.Equal(File.ReadAllBytes(project.WebProgram), backend.Uploads[1].SelectMany(chunk => chunk.Data.ToByteArray()).ToArray());
-            Ui.Click(dialog.Primary);
-            Ui.WaitFor(() => backend.Answers.Length == 2, "the current uploaded file response");
-            Assert.False(backend.Answers[^1].ResponseUpdate);
-            string value = Assert.Single(backend.Answers[^1].InputsDialog.InputItems).Value;
-            using JsonDocument references = JsonDocument.Parse(value);
-            JsonElement reference = Assert.Single(references.RootElement.EnumerateArray());
-            Assert.Equal("current-file-id", reference.GetProperty("Id").GetString());
-            Assert.Equal(Path.GetFileName(project.WebProgram), reference.GetProperty("Name").GetString());
-            Assert.DoesNotContain("stale-file-id", backend.Answers[^1].ToString(), StringComparison.Ordinal);
-            CompleteInteraction(backend, window, 3);
-            Assert.Empty(backend.Errors);
-        }
-        finally
-        {
-            window.Close();
-            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the upload backend to stop");
-        }
-
-        static WatchInteractionsResponseUpdate FileForm() => new()
-        {
-            InteractionId = 3,
-            Title = "Upload API settings",
-            InputsDialog = new InteractionInputsDialog
-            {
-                InputItems = { new InteractionInput { Name = "attachment", Label = "Settings file", InputType = InputType.File } },
-            },
-        };
-    }
-
-    /// <summary>Chooses a file for the prompt's file input as a person does in the window's file dialog, which the test
-    /// answers for (<see cref="MainWindow.PickFiles"/>): one file, asked for by the input's label.</summary>
-    private static void PickUploadFile(MainWindow window, AspireInteractionDialog dialog, string path)
-    {
-        List<(string Title, bool Several)> asked = [];
-        window.PickFiles = (title, _, several) =>
-        {
-            asked.Add((title, several));
-            return Task.FromResult<IReadOnlyList<string>>([path]);
-        };
-        Ui.Click(dialog.InputControls["attachment"], settle: false);
-        Ui.PumpUntil(() => asked.Count == 1, "the file input to ask for a file");
-        Assert.Equal(("Settings file", false), asked[0]);
-    }
-
     private MainWindow OpenRunning()
     {
         MainWindow window = project.OpenHost();
@@ -1504,53 +1176,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Ui.Run(window, AppActions.RunProgram);
         WaitNativeServices(window);
         return window;
-    }
-
-    private MainWindow OpenInteractionWindow(AspireInteractionHost backend)
-    {
-        MainWindow window = project.OpenHost();
-        try
-        {
-            Choose(window);
-            window.AspireRuntime.ConnectInteractions = async (app, cancel) => await AspireInteractions.StartAsync(
-                backend.Endpoint, backend.ApiKey, window, app.Configuration.Name, cancel);
-            Ui.Run(window, AppActions.RunProgram);
-            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1,
-                "the official AppHost's production interaction factory to connect");
-            Assert.True(PathNames.Same(project.Host, Assert.Single(window.AspireRuntime.Apps).Configuration.Project));
-            return window;
-        }
-        catch
-        {
-            window.Close();
-            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the failed interaction fixture to stop");
-            throw;
-        }
-    }
-
-    private static AspireInteractionDialog Interaction(MainWindow window, string title)
-    {
-        Ui.WaitFor(() => window.OwnedWindows.OfType<AspireInteractionDialog>().Any(dialog => dialog.IsVisible && dialog.Title?.EndsWith(" · " + title, StringComparison.Ordinal) == true),
-            $"the AppHost's {title} interaction");
-        AspireInteractionDialog dialog = Assert.Single(window.OwnedWindows.OfType<AspireInteractionDialog>(), dialog => dialog.Title?.EndsWith(" · " + title, StringComparison.Ordinal) == true);
-        Assert.Same(window, dialog.Owner);
-        return DialogButtonsTests.Check(dialog);
-    }
-
-    private static void CompleteInteraction(AspireInteractionHost backend, MainWindow window, int id)
-    {
-        backend.Push(new WatchInteractionsResponseUpdate { InteractionId = id, Complete = new InteractionComplete() });
-        Ui.WaitFor(() => !window.OwnedWindows.OfType<AspireInteractionDialog>().Any(dialog => dialog.InteractionId == id),
-            "the server-completed interaction to close");
-    }
-
-    private static void ReplaceDuringWork(TopLevel window, string text)
-    {
-        Avalonia.Input.RawInputModifiers modifiers = OperatingSystem.IsMacOS()
-            ? Avalonia.Input.RawInputModifiers.Meta : Avalonia.Input.RawInputModifiers.Control;
-        window.KeyPress(Avalonia.Input.Key.A, modifiers, Avalonia.Input.PhysicalKey.None, null);
-        window.KeyRelease(Avalonia.Input.Key.A, modifiers, Avalonia.Input.PhysicalKey.None, null);
-        window.KeyTextInput(text);
     }
 
     private void Choose(MainWindow window)
@@ -1673,29 +1298,4 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
         return Ui.Await(http.SendAsync(request), "the running AppHost's DCP HTTP response");
     }
-
-    private static void ClickConsoleLink(MainWindow window, string text)
-    {
-        Passenger.Editor.CodeEditor editor = window.Aspire.Console.Editor;
-        int offset = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(offset >= 0, $"The native Aspire console has no {text} link");
-        int line = editor.Document.Snapshot.GetLineFromOffset(offset);
-        editor.ScrollTo(new Vector(0, Math.Max(0, line * editor.LineHeight - editor.Bounds.Height / 3)));
-        Ui.Settle();
-        Point at = editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2);
-        window.MouseMove(editor.TranslatePoint(at, window)!.Value);
-        Ui.WaitFor(() => editor.HoveredLink is { } link && link.Range.Start <= offset && offset < link.Range.End,
-            $"the native console link hit for {text}");
-        Ui.Click(editor, at);
-    }
-
-    private static WatchInteractionsResponseUpdate Form(string value) => new()
-    {
-        InteractionId = 2,
-        Title = "API settings",
-        InputsDialog = new InteractionInputsDialog
-        {
-            InputItems = { new InteractionInput { Name = "value", Label = "Value", InputType = InputType.Text, Value = value, UpdateStateOnChange = true } },
-        },
-    };
 }

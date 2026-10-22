@@ -15,6 +15,9 @@ using Passenger.App.Aspire.Protocol;
 
 namespace Passenger.Tests;
 
+/// <summary>A stand-in for an AppHost's resource service on loopback (HTTP/2 gRPC frames), which a test drives: the resources,
+/// consoles and prompts it pushes, the answers and uploads the window sends. It admits only the key the IDE gave the stand-in
+/// AppHost, which that program writes to <see cref="KeyFile"/> as it starts.</summary>
 internal sealed class AspireInteractionHost : IAsyncDisposable
 {
     private const string Service = "/aspire.v1.DashboardService/";
@@ -27,9 +30,10 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     private readonly ConcurrentQueue<ConsoleSubscription> consoles = new();
     private WireBarrier? nextAnswer;
 
-    private AspireInteractionHost(WebApplication server)
+    private AspireInteractionHost(WebApplication server, string keyFile)
     {
         this.server = server;
+        KeyFile = keyFile;
         server.MapPost(Service + "GetApplicationInformation", Guard(async context =>
         {
             await ReadFrameAsync(context.Request.Body, context.RequestAborted);
@@ -52,7 +56,8 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         server.MapPost(Service + "UploadFile", Guard(UploadAsync));
     }
 
-    public string ApiKey { get; } = Guid.NewGuid().ToString("N");
+    /// <summary>Where the stand-in AppHost writes the resource service key the IDE gave it.</summary>
+    public string KeyFile { get; }
     public Uri Endpoint { get; private set; } = null!;
     public TaskCompletionSource Connected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource Disconnected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -71,7 +76,7 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         });
     }
 
-    public static async Task<AspireInteractionHost> StartAsync()
+    public static async Task<AspireInteractionHost> StartAsync(string keyFile)
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -81,7 +86,7 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
             options.Limits.Http2.InitialStreamWindowSize = 65_535;
             options.Limits.Http2.InitialConnectionWindowSize = 65_535;
         });
-        AspireInteractionHost host = new(builder.Build());
+        AspireInteractionHost host = new(builder.Build(), keyFile);
         try
         {
             await host.server.StartAsync();
@@ -118,7 +123,10 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     {
         context.Response.ContentType = "application/grpc";
         context.Response.DeclareTrailer("grpc-status");
-        if (context.Request.Headers["x-resource-service-api-key"] != ApiKey)
+        // The IDE asks as soon as it has started the AppHost, which may not have written its key yet.
+        string? key = await Waiting.UntilAsync(() => File.Exists(KeyFile), TimeSpan.FromSeconds(30), context.RequestAborted)
+            ? await File.ReadAllTextAsync(KeyFile, context.RequestAborted) : null;
+        if (key is not { Length: > 0 } || context.Request.Headers["x-resource-service-api-key"] != key)
         {
             await context.Response.StartAsync(context.RequestAborted);
             context.Response.AppendTrailer("grpc-status", "16");

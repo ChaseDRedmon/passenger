@@ -20,3 +20,8 @@ M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.TimeProvider,System.T
 M:Passenger.App.Screenshot.Pump(System.TimeSpan);A test waits for what it checks (Ui.WaitFor, Ui.PumpUntil), and time the window must run for is Ui.Hold's
 F:Avalonia.Controls.Button.ClickEvent;A test clicks as a person does (Ui.Click, Ui.Choose), which a hidden, disabled or covered control refuses
 F:Avalonia.Controls.MenuItem.ClickEvent;A test chooses a menu item by clicks (Ui.Choose, Ui.ChooseFromMenu), which a disabled or hidden item refuses
+M:Passenger.App.MainWindow.DebugAspireResourceAsync(System.String,System.String,System.Boolean,System.Threading.CancellationToken);An Aspire resource is debugged or attached to through the Aspire window's actions on the resource chosen in it
+M:Passenger.App.MainWindow.ProfileAspireResourceAsync(System.String,System.String,System.Threading.CancellationToken);An Aspire resource is profiled through the Aspire window's Profile on the resource chosen in it
+M:Passenger.App.Aspire.AspireView.ExecuteSelectedCommandAsync(System.String);A resource's command is run by a click on its button in the Aspire window
+P:Passenger.App.Aspire.AspireView.ConsoleProvider;The Aspire console's streams are seen at a stand-in resource service (AspireInteractionHost), never by swapping the window's provider
+P:Passenger.App.Aspire.AspireController.ConnectInteractions;The window connects to an AppHost's resource service as it does for a person's, a stand-in's through a stand-in AppHost's launch profile (StandInAppHost)
