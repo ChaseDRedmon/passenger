@@ -804,12 +804,12 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     public async Task<string?> UpAsync(CancellationToken cancel, Func<Task, CancellationToken, Task<string?>>? alongside = null)
     {
         Stamp();
-        List<string> words = [.. Plan.Compose, "up", "--detach", "--wait", "--remove-orphans"];
+        List<string> words = [.. Plan.Compose, "up", "--detach", "--wait"];
         if (Plan.Mode == ContainerMode.Images)
         {
             words.Add("--build");
         }
-        words.AddRange(Plan.Start);
+        words.AddRange(Plan.Start.Count > 0 ? ["--", .. Plan.Start] : []);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         Task<ChildResult> coming = StreamAsync(words, ending.Token);
         if (alongside is not null)
@@ -850,7 +850,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     {
         try
         {
-            ProcessStartInfo start = engine.Command([.. Plan.Compose, "watch", "--no-up", .. Plan.Watched], Plan.Folder);
+            ProcessStartInfo start = engine.Command([.. Plan.Compose, "watch", "--no-up", "--", .. Plan.Watched], Plan.Folder);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
             Process started = ChildProcesses.Start(start);
@@ -893,9 +893,15 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     /// <summary>The <c>docker compose logs -f</c> words that follow every service's output into the Run console.</summary>
     public IReadOnlyList<string> Logs => [.. Plan.Compose, "logs", "--follow", "--no-color", "--tail", "all"];
 
+    /// <summary>The workspace folder whose label is on what the run made (<see cref="FolderContainers"/>), by which Stop
+    /// finds what is its own to take down.</summary>
+    public string? LabelledFor { get; init; }
+
     /// <summary>Takes it down: Compose's watch ended, then, once <paramref name="first"/> is done (its debugged services'
-    /// sessions ended, so no debugger loses its container under it), <c>docker compose down</c> (volumes kept), or only the
-    /// .NET services stopped and removed when backing services are kept; once, whoever asks. Off the UI thread.</summary>
+    /// sessions ended, so no debugger loses its container under it), the containers and networks it made, by this machine's,
+    /// process's and folder's labels (volumes kept, and never the person's own of the same Compose project, which
+    /// <c>docker compose down --remove-orphans</c> would take), or only its .NET services' when backing services are kept;
+    /// once, whoever asks. Off the UI thread.</summary>
     public Task StopAsync(Task? first = null)
     {
         if (stopping is not null)
@@ -907,27 +913,14 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             ChildProcesses.Kill(watch);
             watching = null;
         }
-        IReadOnlyList<string> words = Plan.KeepBacking && Plan.Backing.Count > 0
-            ? [.. Plan.Compose, "rm", "--stop", "--force", .. Plan.Dotnet.Select(d => d.Service)]
-            : [.. Plan.Compose, "down", "--remove-orphans"];
+        IReadOnlyList<string>? only = Plan.KeepBacking && Plan.Backing.Count > 0 ? [.. Plan.Dotnet.Select(d => d.Service)] : null;
         stopping = BackgroundWork.Run(async () =>
         {
-            try
+            if (first is not null)
             {
-                if (first is not null)
-                {
-                    await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(10)));
-                }
-                ChildResult result = await engine.RunAsync(words, ContainerEngine.AskLimit * 3);
-                if (!result.Succeeded)
-                {
-                    IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed: {ContainerEngine.Said(result)}");
-                }
+                await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(10)));
             }
-            catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
-            {
-                IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed: {failed.Message}");
-            }
+            await FolderContainers.TakeDownAsync(engine, Plan.Compose, LabelledFor, $"as {Plan.Name} stopped", only);
         });
         return stopping;
     }
@@ -988,9 +981,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         async Task<string?> RestartEachAsync(CancellationToken stop)
         {
             foreach ((List<string> named, IReadOnlyList<string> words) in ((List<string>, IReadOnlyList<string>)[])[
-                (kept, [.. Plan.Compose, "restart", .. kept]),
+                (kept, [.. Plan.Compose, "restart", "--", .. kept]),
                 // As deployed, a service's image is built again from its Dockerfile and its container made anew from it.
-                (made, [.. Plan.Compose, "up", "--detach", .. Plan.Mode == ContainerMode.Images ? (string[])["--build"] : [], "--no-deps", "--force-recreate", .. made])])
+                (made, [.. Plan.Compose, "up", "--detach", .. Plan.Mode == ContainerMode.Images ? (string[])["--build"] : [], "--no-deps", "--force-recreate", "--", .. made])])
             {
                 if (named.Count == 0)
                 {
@@ -1071,7 +1064,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             return null;
         }
-        ChildResult published = await engine.RunAsync([.. Plan.Compose, "port", service, port.ToString(CultureInfo.InvariantCulture)], cancel: cancel);
+        ChildResult published = await engine.RunAsync([.. Plan.Compose, "port", "--", service, port.ToString(CultureInfo.InvariantCulture)], cancel: cancel);
         string answer = published.Output.Trim().Split('\n')[0].Trim();
         int colon = answer.LastIndexOf(':');
         if (!published.Succeeded || colon < 0)

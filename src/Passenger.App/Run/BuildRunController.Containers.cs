@@ -164,7 +164,7 @@ public sealed partial class BuildRunController
             parts.Views.Debug.ShowTab(console: true);
         }
         parts.Say($"Bringing {chosen.Name} up…");
-        ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Profiler = profile };
+        ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Profiler = profile, LabelledFor = session.Folder };
         run.Brought(holding);
         run.ProblemFound += (_, problem) =>
         {
@@ -357,7 +357,7 @@ public sealed partial class BuildRunController
         while (true)
         {
             bool ended = up.IsCompleted;
-            ChildResult found = await engine.RunAsync([.. plan.Compose, "ps", "-q", service], cancel: stop);
+            ChildResult found = await engine.RunAsync([.. plan.Compose, "ps", "-q", "--", service], cancel: stop);
             if (found.Succeeded && found.Output.Trim().Split('\n')[0].Trim() is { Length: > 0 } container)
             {
                 return container;

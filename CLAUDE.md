@@ -580,7 +580,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   --detach --wait` streamed into the Run console, then `logs --follow` through the session's `Runner` (so Run's Stop,
   `IsRunning` and its end are the log's), Compose's own watch for other services that declare one, Rerun's restart of the
   services whose build changed (`Changed`, by the output's stamps), and
-  `StopAsync` (`down`, or `rm --stop` of the .NET services when backing services are kept, which then go with the folder).
+  `StopAsync` (`FolderContainers.TakeDownAsync`: the containers and networks of its project carrying this machine's, process's and
+  folder's labels, the .NET services' alone when backing services are kept, which then go with the folder; never `down` or
+  `--remove-orphans`, which would take the person's own of the project). A service's name follows `--` in every command.
   `ContainerPaths` maps an image's paths (its Dockerfile's COPY of the context into WORKDIR, and `/_/`) to the workspace's
   and back (a container's path never to a file outside the folder it maps to: a `..`, a `//` or a rooted rest gives
   none), for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
@@ -1326,7 +1328,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `net.passenger-ide.machine`, a hash of the machine's name and id, `net.passenger-ide.process`, the process's id and start
   time, and the folder's), its folder's `ProjectSession.Containers` removes what it started as the folder ends (of a
   Compose project only the containers and networks this process's labels are on, never `down`, which would take the
-  person's own of it), the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the process's own on macOS and
+  person's own of it, as a run's Stop takes its own: `FolderContainers.TakeDownAsync`), the watchdog's last command (`ChildProcesses.AtIdeEnd`) removes the process's own on macOS and
   Linux however it ends, reaching the engine the IDE's commands reach (the CLI's DOCKER_* variables as the IDE has them,
   the context by name, told again when it changes), and the next start (`ContainerLabels.RemoveLeftoversAsync`) removes
   those of its state and machine whose process is gone, once the state has labelled anything

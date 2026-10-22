@@ -57,65 +57,74 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
         {
             return Task.CompletedTask;
         }
-        string[] ours = ["--filter", $"label={ContainerLabels.Machine}={ContainerLabels.MachineValue}", "--filter", $"label={ContainerLabels.Process}={ContainerLabels.ProcessValue}",
-            .. folder is null ? Array.Empty<string>() : ["--filter", $"label={ContainerLabels.Folder}={ContainerLabels.FolderValue(folder)}"]];
         // Not held: nothing it does is drawn, and the process waits for it once the window's loop has stopped.
         return Task.Run(async () =>
         {
-            List<Task> ending = [.. downing.Select(project => DownAsync(project, ours))];
+            List<Task> ending = [.. downing.Select(project => TakeDownAsync(Engine, project, folder, "as the folder closed"))];
             if (removing.Length > 0)
             {
-                ending.Add(Quietly(["rm", "-f", .. removing]));
+                ending.Add(Quietly(Engine, ["rm", "-f", .. removing], "as the folder closed"));
             }
             await Task.WhenAll(ending);
         });
+    }
 
-        async Task DownAsync(IReadOnlyList<string> compose, string[] labels)
+    /// <summary>Takes down what this process's <c>up</c> made of a Compose project (its <c>compose -p NAME …</c> words) for
+    /// a folder: the containers (of the services given, else every one) and the networks this machine's, process's and
+    /// folder's labels are on, never the person's own of the same project, as <c>docker compose down</c> would take. What fails
+    /// is the IDE's error, said with <paramref name="when"/>.</summary>
+    public static async Task TakeDownAsync(ContainerEngine engine, IReadOnlyList<string> compose, string? folder, string when, IReadOnlyList<string>? services = null)
+    {
+        int named = compose.ToList().IndexOf("-p");
+        if (named < 0 || named + 1 >= compose.Count)
         {
-            int named = compose.ToList().IndexOf("-p");
-            if (named < 0 || named + 1 >= compose.Count)
+            return;
+        }
+        string[] filters = ["--filter", $"label={ComposeLabels.Project}={compose[named + 1]}", "--filter", $"label={ContainerLabels.Machine}={ContainerLabels.MachineValue}",
+            "--filter", $"label={ContainerLabels.Process}={ContainerLabels.ProcessValue}",
+            .. folder is null ? Array.Empty<string>() : ["--filter", $"label={ContainerLabels.Folder}={ContainerLabels.FolderValue(folder)}"]];
+        // Several filters of one label key are any of them to the engine, so each service is asked apart.
+        IEnumerable<string[]> asked = services is { Count: > 0 } ? services.Select(s => (string[])[.. filters, "--filter", $"label={ComposeLabels.Service}={s}"]) : [filters];
+        foreach (string[] each in asked)
+        {
+            if (await IdsAsync(["ps", "-aq", .. each]) is { Length: > 0 } made)
             {
-                return;
+                await Quietly(engine, ["rm", "-f", .. made], when);
             }
-            string[] filters = ["--filter", $"label={ComposeLabels.Project}={compose[named + 1]}", .. labels];
-            if (await IdsAsync(["ps", "-aq", .. filters]) is { Length: > 0 } made)
-            {
-                await Quietly(["rm", "-f", .. made]);
-            }
-            if (await IdsAsync(["network", "ls", "-q", .. filters]) is { Length: > 0 } networks)
-            {
-                await Quietly(["network", "rm", .. networks]);
-            }
+        }
+        if (services is not { Count: > 0 } && await IdsAsync(["network", "ls", "-q", .. filters]) is { Length: > 0 } networks)
+        {
+            await Quietly(engine, ["network", "rm", .. networks], when);
         }
 
         async Task<string[]> IdsAsync(IReadOnlyList<string> words)
         {
             try
             {
-                Core.ChildResult listed = await Engine.RunAsync(words, ContainerEngine.AskLimit);
+                Core.ChildResult listed = await engine.RunAsync(words, ContainerEngine.AskLimit);
                 return listed.Succeeded ? listed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
             }
             catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
             {
-                IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed as the folder closed: {failed.Message}");
+                IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed {when}: {failed.Message}");
                 return [];
             }
         }
+    }
 
-        async Task Quietly(IReadOnlyList<string> words)
+    private static async Task Quietly(ContainerEngine engine, IReadOnlyList<string> words, string when)
+    {
+        try
         {
-            try
+            Core.ChildResult result = await engine.RunAsync(words, ContainerEngine.AskLimit * 3);
+            if (!result.Succeeded)
             {
-                Core.ChildResult result = await Engine.RunAsync(words, ContainerEngine.AskLimit * 3);
-                if (!result.Succeeded)
-                {
-                    IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed as the folder closed: {ContainerEngine.Said(result)}");
-                }
+                IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed {when}: {ContainerEngine.Said(result)}");
             }
-            catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
-            {
-                IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed as the folder closed: {failed.Message}");
-            }
+        }
+        catch (Exception failed) when (failed is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
+        {
+            IdeErrors.Write($"Containers: {ContainerEngine.Words(words)} failed {when}: {failed.Message}");
         }
     }
 }

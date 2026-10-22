@@ -80,6 +80,36 @@ public sealed class ContainerRunsTests
         window.Close();
     }
 
+    /// <summary>A container of the person's own in the same Compose project, which Passenger never made, outlives the run's
+    /// start and its Stop: only what carries this process's labels is taken down, never an orphan of the project.</summary>
+    [AvaloniaFact]
+    public void A_persons_own_container_of_the_same_Compose_project_outlives_a_runs_start_and_Stop()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Shop("own");
+        string own = $"{project}-own";
+        Docker.Run("run", "-d", "--name", own, "--label", Docker.RunLabel, "--label", $"com.docker.compose.project={project}",
+            "--label", "com.docker.compose.service=notes", "--label", "com.docker.compose.oneoff=False", Docker.Image, "sleep", "600");
+        MainWindow window = Open(folder);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            Launched(window, "the Compose application to come up beside the person's own container");
+            Assert.Equal("running", Docker.State(own));
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label={ContainerLabels.Process}").Length == 0,
+                "Stop to take the run's containers down", TimeSpan.FromMinutes(2));
+            Assert.Equal("running", Docker.State(own));
+            Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Docker.Run("rm", "-f", own);
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void In_images_mode_a_container_path_in_the_runs_output_links_to_the_workspace_file()
     {
