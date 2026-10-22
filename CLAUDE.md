@@ -560,7 +560,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`RestartAsync`), how a hold chosen takes effect at their next start (`HoldsChangedAsync`), where a service's program is
   for the debugger and the profiler (`ProgramAsync`, a `ServiceProgram`: its id there, the adapter's `AdapterPlace`, the
   profiler's `ProfilePlace`; `ServiceUnreachedException` saying why not), whether an edit's restart builds here first
-  (`BuildsBeforeRestart`) and which failures are its own to say (`Refused`).
+  (`BuildsBeforeRestart`) and which failures are its own to say (`Refused`). Both kinds already share how a run is started
+  (`RunStart`: Run, Debug, Run with Hot Reload, Profile), its certificate (`BuildRunController.Certificate.cs`) and one start
+  at a time of what it starts (`TakeStartAsync`, a `StartUnderWay` in `ProjectSession.Starting`, which the folder's end
+  ends): a start of a container configuration, or of an AppHost a start under way also starts, ends that one first, as
+  Stop does (Debug pressed as Run brings it up), and goes on once it has.
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -732,7 +736,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ContainerRun.upEnded`) and looks again 2 s later, since the engine can finish a container it was making as `up` ended;
   `StopAsync` cancels the run's own token whoever asks, so its `up`, publish and restarts end with it whatever began them;
   an attach whose container was reached after the Stop, or after its folder was left, starts no session (nor does the
-  debugger once disposed). One container start at a time (`ProjectSession.ContainerStarting`, a `StartUnderWay`): a start
+  debugger once disposed). One container start at a time (`ProjectSession.Starting`, a `StartUnderWay`, the model's `TakeStartAsync`): a start
   ends one under way first (Debug pressed as Run comes up) and waits for its end and its run's take-down, a start that fails
   takes down its own run alone (`StopContainersAsync(run)`), and the folder's end ends it, its `up` waited for before the
   folder's containers are taken down (`FolderContainers.EndAsync(upEnded)`); a stop as the certificate is checked, made or
@@ -842,7 +846,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   transport allowed, and the services it starts are told HTTP as a container's are (`DevelopmentCertificate.OverHttp`).
   `AspireInteractions` is one
   authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`, its C# checked in beside it): its resources,
-  their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`), the display's streams followed only
+  their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`, closed with their window or the IDE's quit, still answered, so none holds the window and the AppHost open), the display's streams followed only
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
