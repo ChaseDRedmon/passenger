@@ -311,10 +311,11 @@ public sealed class TemplateFamiliesTests : IDisposable
         return dialog;
     }
 
-    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen.</summary>
+    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen; with no C# language server,
+    /// which the templates ask nothing of and which would restore each test project made from nuget.org.</summary>
     private MainWindow Started()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
