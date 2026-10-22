@@ -23,6 +23,9 @@
     <!-- What Passenger and its inspectors say to each other, and the app's end of the socket, one definition for all. -->
     <Compile Include="../Passenger.Inspector/Protocol.cs" Link="Protocol.cs" />
     <Compile Include="../Passenger.Inspector/Connection.cs" Link="Connection.cs" />
+    <!-- The failed bindings told and counted, and a failure's nearest names, as the Avalonia inspector has them. -->
+    <Compile Include="../Passenger.Inspector/BindingFailures.cs" Link="BindingFailures.cs" />
+    <Compile Include="../Passenger.Core/Spelling.cs" Link="Spelling.cs" />
     <!-- A property breakpoint's hit count is kept here, where its changes are seen, in the debugger's own words. -->
     <Compile Include="../Passenger.Dap/HitCondition.cs" Link="HitCondition.cs" />
   </ItemGroup>

@@ -29,5 +29,7 @@
   <ItemGroup>
     <!-- A property breakpoint's hit count is kept here, where its changes are seen, in the debugger's own words. -->
     <Compile Include="../Passenger.Dap/HitCondition.cs" Link="HitCondition.cs" />
+    <!-- A failed binding's nearest names, measured as the rest of Passenger measures a misspelling. -->
+    <Compile Include="../Passenger.Core/Spelling.cs" Link="Spelling.cs" />
   </ItemGroup>
 </Project>
