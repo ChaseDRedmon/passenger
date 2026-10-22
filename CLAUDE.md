@@ -204,10 +204,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   own rolling-forward one for a library or a project before .NET 8); JSON lines over stdio (`Protocol.cs`, compiled
   into both), each frame a PNG at 96 DPI with the elements' boxes from `VisualDiagnostics.GetXamlSourceInfo`, placed in
   an XML reader's lines (`ServerLines.OfXml`, a lone '\r' ending one, as `LooseXaml` blanks by them). The file
-  loads as loose XAML (`LooseXaml`: the root of its tag's type, x:Class, events, EventSetters and x:Code blanked);
-  App.xaml's resources become the application's; `pack://application:,,,/` is the project's through WPF's private
-  resource-assembly fields. A WPF control with no code-behind has no constructor calling `InitializeComponent`, so it
-  draws empty where it is used, in the app and its preview alike.
+  loads as loose XAML (`LooseXaml`: the root of its tag's type, x:Class, events, EventSetters, x:Code and a root
+  window's Visibility blanked); App.xaml's resources become the application's; `pack://application:,,,/` is the
+  project's through WPF's private resource-assembly fields. A WPF control with no code-behind has no constructor calling
+  `InitializeComponent`, so it draws empty where it is used, in the app and its preview alike. A window is drawn as
+  itself and never shown (`Surface`): WPF makes its window as it does before a Show (`WindowInteropHelper.EnsureHandle`,
+  sized as asked even past the screens), Window's private `UpdateVisibilityProperty` makes it Visible as Show does
+  first, and it is that window's root visual, so its content finds it as in the app (an ancestor binding of its type,
+  `Window.GetWindow`, its own style, template and triggers); the frame is its client area under a drawn title bar as
+  tall as the system's caption (none without one, or under a WindowChrome), a maximized or minimized window drawn
+  normal. Its limits: it is of its tag's type, never its x:Class (an ancestor binding naming that finds nothing); it
+  counts as not yet shown (`Activate` and `DragMove` throw as before a Show); one whose style sets its Visibility, which
+  would show it, is closed unshown and refused. A page is the content of a frameless window of the previewer's own
+  (AncestorType=Page and Window resolve, `Window.GetWindow` finds that window, the page's WindowTitle and sizes go to
+  it), with no NavigationService.
   `Features` also has `XamlFormatter`/`XamlFormatSettings` (Rider's XML formatter, which is XAML's, at Rider's
   defaults, read from .editorconfig by Rider's `xml_*` keys or their `resharper_` forms and `max_line_length`; XAML
   Styler's attribute order and empty-element options as `xaml_enable_attribute_reordering`,

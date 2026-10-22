@@ -5,9 +5,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Diagnostics;
-using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Xaml;
 using System.Xml;
@@ -36,7 +34,7 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
     private int answering;
     private string? applicationText;
     private string? applicationProblem;
-    private Shown? shown;
+    private Surface? shown;
 
     /// <summary>A request read: drawn once the application's thread is free, unless a newer one comes first.</summary>
     public void Take(WpfPreviewRequest request)
@@ -143,25 +141,17 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
             {
                 return Nothing(request, $"A {root.GetType().Name} has nothing to draw");
             }
-            HwndSource? window = Host(surface.Root);
-            shown = new Shown(surface, window);
+            shown = surface;
+            surface.Place();
             Settle();
-            if (window is null)
-            {
-                // Laid out alone: again, at the size its bindings and loading have given it.
-                surface.Root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-                surface.Root.Arrange(new Rect(surface.Root.DesiredSize));
-            }
-            surface.Root.UpdateLayout();
-            Size size = new(surface.Root.ActualWidth, surface.Root.ActualHeight);
+            double scale = Math.Clamp(request.Scale, 0.25, 4);
+            surface.Lay(scale);
+            Size size = surface.Size;
             if (size.Width < 1 || size.Height < 1)
             {
                 return Nothing(request, "Nothing to draw: the root is 0 × 0 (sized to content with none, and no d:DesignWidth and d:DesignHeight)");
             }
-            double scale = Math.Clamp(request.Scale, 0.25, 4);
-            int width = (int)Math.Ceiling(size.Width * scale);
-            int height = (int)Math.Ceiling(size.Height * scale);
-            if (width > Largest || height > Largest)
+            if (size.Width * scale > Largest || size.Height * scale > Largest)
             {
                 return Error(request.Sequence, $"The design is too large to draw: {size.Width:0} × {size.Height:0}");
             }
@@ -169,7 +159,7 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
             {
                 Kind = WpfPreviewKinds.Frame,
                 Sequence = request.Sequence,
-                Png = Render(surface.Root, width, height, scale),
+                Png = surface.Render(scale),
                 Scale = scale,
                 Elements = Boxes(surface, baseUri),
                 Note = notes.Count == 0 ? null : string.Join("; ", notes),
@@ -302,86 +292,42 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
     /// <summary>Whether a place is in the file drawn: not another file's (a user control's own XAML, read from its BAML).</summary>
     private static bool Ours(XamlSourceInfo place, Uri baseUri) => place.SourceUri is null || place.SourceUri == baseUri;
 
-    /// <summary>The surface in a window of its own that is never shown, so it is laid out, styled and loaded as an app's
-    /// content is; none when the system gives no such window, and the surface is laid out alone.</summary>
-    private static HwndSource? Host(FrameworkElement surface)
-    {
-        try
-        {
-            HwndSourceParameters parameters = new("Passenger WPF preview")
-            {
-                // A popup never shown, off every screen, never activated and never in the taskbar.
-                WindowStyle = unchecked((int)0x80000000),
-                ExtendedWindowStyle = 0x08000080,
-                PositionX = -32000,
-                PositionY = -32000,
-                Width = 1,
-                Height = 1,
-            };
-            return new HwndSource(parameters) { SizeToContent = SizeToContent.WidthAndHeight, RootVisual = surface };
-        }
-        catch (System.ComponentModel.Win32Exception error)
-        {
-            Console.Error.WriteLine($"No window to lay the preview out in: {error.Message}");
-            return null;
-        }
-    }
-
     /// <summary>Lets the dispatcher run what the surface's layout, bindings and Loaded queued, before it is drawn.</summary>
     private void Settle() => dispatcher.Invoke(static () => { }, DispatcherPriority.ContextIdle);
 
-    /// <summary>The surface drawn at a scale, as a PNG whose pixels are at 96 DPI (the pane sizes it by the scale).</summary>
-    private static byte[] Render(FrameworkElement surface, int width, int height, double scale)
-    {
-        RenderTargetBitmap rendered = new(width, height, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
-        rendered.Render(surface);
-        int stride = width * 4;
-        byte[] pixels = new byte[stride * height];
-        rendered.CopyPixels(pixels, stride, 0);
-        BitmapSource plain = BitmapSource.Create(width, height, 96, 96, PixelFormats.Pbgra32, null, pixels, stride);
-        PngBitmapEncoder png = new();
-        png.Frames.Add(BitmapFrame.Create(plain));
-        using MemoryStream bytes = new();
-        png.Save(bytes);
-        return bytes.ToArray();
-    }
-
-    /// <summary>The boxes of the file's own elements as drawn: the root's (a window's or page's is the whole frame), then
-    /// every element of the visual tree the file made, parents before children. What a template or another file's XAML
-    /// made inside them is theirs.</summary>
+    /// <summary>The boxes of the file's own elements as drawn: a window's (the whole frame, its title bar included), then
+    /// every element of the visual tree the file made, parents before children, below the title bar. What a template or
+    /// another file's XAML made inside them is theirs.</summary>
     private static List<WpfPreviewBox> Boxes(Surface surface, Uri baseUri)
     {
         List<WpfPreviewBox> boxes = [];
-        FrameworkElement root = surface.Root;
-        // A window or page is not in the tree drawn: its box is the surface's.
-        bool drawnItself = surface.Loaded is Visual drawn && drawn.IsDescendantOf(root);
-        if (!drawnItself && VisualDiagnostics.GetXamlSourceInfo(surface.Loaded) is { } top && Ours(top, baseUri))
+        if (surface.Loaded is Window && VisualDiagnostics.GetXamlSourceInfo(surface.Loaded) is { } top && Ours(top, baseUri))
         {
-            boxes.Add(new WpfPreviewBox(top.LineNumber, top.LinePosition, 0, 0, root.ActualWidth, root.ActualHeight));
+            boxes.Add(new WpfPreviewBox(top.LineNumber, top.LinePosition, 0, 0, surface.Size.Width, surface.Size.Height));
         }
-        Walk(root, root, baseUri, boxes);
+        Walk(surface.Drawn, surface.Drawn, surface.Top, baseUri, boxes);
         return boxes;
     }
 
-    private static void Walk(Visual node, FrameworkElement root, Uri baseUri, List<WpfPreviewBox> boxes)
+    private static void Walk(Visual node, FrameworkElement root, double top, Uri baseUri, List<WpfPreviewBox> boxes)
     {
-        if (node is UIElement { IsVisible: true } element && VisualDiagnostics.GetXamlSourceInfo(node) is { } place && Ours(place, baseUri)
-            && node is not FrameworkElement { TemplatedParent: not null })
+        if (node != root && node is UIElement { IsVisible: true } element && VisualDiagnostics.GetXamlSourceInfo(node) is { } place
+            && Ours(place, baseUri) && node is not FrameworkElement { TemplatedParent: not null })
         {
             Rect box = element.TransformToAncestor(root).TransformBounds(new Rect(element.RenderSize));
-            boxes.Add(new WpfPreviewBox(place.LineNumber, place.LinePosition, box.X, box.Y, box.Width, box.Height));
+            boxes.Add(new WpfPreviewBox(place.LineNumber, place.LinePosition, box.X, top + box.Y, box.Width, box.Height));
         }
         int count = VisualTreeHelper.GetChildrenCount(node);
         for (int i = 0; i < count; i++)
         {
             if (VisualTreeHelper.GetChild(node, i) is Visual child)
             {
-                Walk(child, root, baseUri, boxes);
+                Walk(child, root, top, baseUri, boxes);
             }
         }
     }
 
-    /// <summary>The last drawing let go: its window destroyed and its root (a window that was never shown) closed.</summary>
+    /// <summary>The last drawing let go.</summary>
     private void LetGo()
     {
         if (shown is not { } last)
@@ -389,27 +335,7 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
             return;
         }
         shown = null;
-        if (last.Window is { } window)
-        {
-            window.RootVisual = null;
-            window.Dispose();
-        }
-        Close(last.Surface.Loaded);
-    }
-
-    private static void Close(object root)
-    {
-        if (root is Window window)
-        {
-            try
-            {
-                window.Close();
-            }
-            catch (InvalidOperationException error)
-            {
-                Console.Error.WriteLine($"A preview's window did not close: {error.Message}");
-            }
-        }
+        last.Close();
     }
 
     private static WpfPreviewReply Nothing(WpfPreviewRequest request, string why) =>
@@ -479,6 +405,4 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
     [GeneratedRegex(@"\s*Line \d+, position \d+\.?$")]
     private static partial Regex XmlPlace();
 
-    /// <summary>What a drawing holds until the next: its surface and the window it is laid out in.</summary>
-    private sealed record Shown(Surface Surface, HwndSource? Window);
 }

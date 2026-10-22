@@ -10,6 +10,8 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- The user32 calls that let a window be laid out at its size unshown (Surface.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>Passenger.WpfPreview</RootNamespace>
     <!-- Run through dotnet exec on the project's runtime configuration; its own (a class library has none, nor does a
          project older than .NET 8 run this) rolls forward to the newest runtime the machine has. -->

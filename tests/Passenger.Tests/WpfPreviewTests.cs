@@ -17,7 +17,8 @@ namespace Passenger.Tests;
 /// merged brushes and heading style, a <c>d:DataContext</c> view model, a button template drawing its background) built and
 /// previewed: the window with App.xaml's resources, an edit followed, broken XAML's error with its line over the last frame,
 /// a user control at its design size with its design-time data and inside a window, an element chosen by a click or the
-/// caret. Elsewhere they skip, as WPF draws only on Windows (<see cref="WpfXamlTests"/> checks what the pane says there).</summary>
+/// caret, content finding the window or page it is drawn in. Elsewhere they skip, as WPF draws only on Windows
+/// (<see cref="WpfXamlTests"/> checks what the pane says there).</summary>
 public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
 {
     private const string OnlyOnWindows = "WPF draws only on Windows, so its previewer runs only there";
@@ -181,6 +182,62 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         window.Close();
     }
 
+    /// <summary>The window is drawn as itself, never shown, so what its content finds of it as the app runs is found in the
+    /// preview too, where its content was drawn outside any window and found nothing.</summary>
+    [AvaloniaFact]
+    public void Content_previewed_in_a_window_finds_the_window_its_binding_shows_the_title_and_window_get_window_answers()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("WindowFinder.xaml", WindowFinder);
+        app.Write("WindowFinder.xaml.cs", WindowFinderCodeBehind);
+        string titled = app.Write("Titled.xaml", Titled);
+        MainWindow window = app.Open(titled);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        FindsItsHolder(window, preview, editor, pane, "Window");
+        window.Close();
+    }
+
+    /// <summary>A page is drawn in a window, as an app's page is, so its content finds the page and that window.</summary>
+    [AvaloniaFact]
+    public void Content_previewed_in_a_page_finds_the_page_and_the_window_the_page_is_in()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("WindowFinder.xaml", WindowFinder);
+        app.Write("WindowFinder.xaml.cs", WindowFinderCodeBehind);
+        string paged = app.Write("Paged.xaml", Paged);
+        MainWindow window = app.Open(paged);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        FindsItsHolder(window, preview, editor, pane, "Page");
+        window.Close();
+    }
+
+    /// <summary>The title bound through <c>AncestorType</c> drawn as wide as the same words written out, and the user control
+    /// whose Loaded asks <c>Window.GetWindow</c> drawn in the colour that says it found one.</summary>
+    private static void FindsItsHolder(MainWindow window, XamlPreview preview, CodeEditor editor, XamlPreviewPane pane, string holder)
+    {
+        PreviewElement bound = ElementOf(preview, editor, "<TextBlock Text=\"{Binding Title");
+        PreviewElement written = ElementOf(preview, editor, $"<TextBlock Text=\"{FinderTitle}\"");
+        Assert.True(written.Box.Width > 20, $"The title written out is drawn {written.Box.Width} wide");
+        Assert.True(Math.Abs(bound.Box.Width - written.Box.Width) < 0.5,
+            $"The title bound through AncestorType={holder} is drawn {bound.Box.Width} wide, the same words written out {written.Box.Width}: the binding did not find the {holder.ToLowerInvariant()}");
+        PreviewElement finder = ElementOf(preview, editor, "<local:WindowFinder");
+        Point inside = pane.Frame.TranslatePoint(new Point(finder.Box.X + 3, finder.Box.Y + 3), window)!.Value;
+        Color drawn = Ui.Pixel(window, inside);
+        Assert.True(drawn == Found, drawn == Missing
+            ? "Window.GetWindow found no window for the control in the preview, as it does in the app"
+            : $"The control that asks Window.GetWindow is drawn {drawn}, neither the colour of a window found nor of none");
+    }
+
     /// <summary>The outline is drawn on the window just around an element's box.</summary>
     private static void OutlineAround(MainWindow window, XamlPreviewPane pane, PreviewElement element)
     {
@@ -294,6 +351,82 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
                 <local:Badge Margin="0,8" />
             </StackPanel>
         </Window>
+
+        """;
+
+    /// <summary>The title of the window and the page that find themselves.</summary>
+    private const string FinderTitle = "Found by its content";
+
+    private static readonly Color Found = Color.Parse("#2E8B57");
+
+    private static readonly Color Missing = Color.Parse("#B22222");
+
+    /// <summary>A user control that asks for its window as it loads, and says whether it found one in its colour.</summary>
+    private const string WindowFinder = """
+        <UserControl x:Class="Gallery.WindowFinder"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border x:Name="Answer" Background="#B22222" Height="30" Padding="8,0">
+                <TextBlock x:Name="Said" Text="No window" VerticalAlignment="Center" Foreground="White" />
+            </Border>
+        </UserControl>
+
+        """;
+
+    private const string WindowFinderCodeBehind = """
+        using System.Windows;
+        using System.Windows.Controls;
+        using System.Windows.Media;
+
+        namespace Gallery;
+
+        public partial class WindowFinder : UserControl
+        {
+            public WindowFinder()
+            {
+                InitializeComponent();
+                Loaded += (_, _) =>
+                {
+                    if (Window.GetWindow(this) is { } window)
+                    {
+                        Answer.Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x8B, 0x57));
+                        Said.Text = "Its window: " + window.Title;
+                    }
+                };
+            }
+        }
+
+        """;
+
+    /// <summary>A window whose content binds its title and asks for it.</summary>
+    private const string Titled = $$$"""
+        <Window x:Class="Gallery.Titled"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:local="clr-namespace:Gallery"
+                Title="{{{FinderTitle}}}" Height="300" Width="400">
+            <StackPanel Margin="12">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" />
+                <TextBlock Text="{{{FinderTitle}}}" HorizontalAlignment="Left" />
+                <local:WindowFinder Margin="0,8" />
+            </StackPanel>
+        </Window>
+
+        """;
+
+    /// <summary>A page whose content binds its title and asks for its window.</summary>
+    private const string Paged = $$$"""
+        <Page x:Class="Gallery.Paged"
+              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:local="clr-namespace:Gallery"
+              Title="{{{FinderTitle}}}" Height="200" Width="360">
+            <StackPanel Margin="12">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Page}}" HorizontalAlignment="Left" />
+                <TextBlock Text="{{{FinderTitle}}}" HorizontalAlignment="Left" />
+                <local:WindowFinder Margin="0,8" />
+            </StackPanel>
+        </Page>
 
         """;
 
