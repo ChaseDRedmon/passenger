@@ -44,12 +44,44 @@ public sealed class AspireApp : SharedProject
 
     public static bool IsUnavailable => Unavailable is not null;
 
-    public static string? Unavailable => CliSkipped;
+    public static string? Unavailable => RuntimeDownloaded ? CliSkipped : RuntimeMissing;
+
+    /// <summary>Whether the test project downloaded Aspire's dashboard and orchestrator, which running an AppHost needs: only
+    /// where PassengerAspireRuntime was true as it restored (Passenger.Tests.csproj); elsewhere a folder's AppHosts restore
+    /// without them (<see cref="UseFeed"/>).</summary>
+    public static bool RuntimeDownloaded => AvaloniaApp.Metadata("AspireRuntime") == "true";
+
+    /// <summary>The target that takes the dashboard and orchestrator out of an AppHost's references once the AppHost SDK's
+    /// AddReferenceToDashboardAndDCP has added them, before restore or a build collects them.</summary>
+    private const string LeftOut = """
+          <Target Name="PassengerTestsLeaveOutAspireRuntime" AfterTargets="AddReferenceToDashboardAndDCP">
+            <ItemGroup>
+              <PackageReference Remove="@(PackageReference)" Condition="$([System.String]::Copy('%(Identity)').StartsWith('Aspire.Dashboard.Sdk.')) or $([System.String]::Copy('%(Identity)').StartsWith('Aspire.Hosting.Orchestration.'))" />
+            </ItemGroup>
+          </Target>
+
+        """;
+
+    public const string RuntimeMissing ="Runs an AppHost, whose dashboard and orchestrator the tests download only where PassengerAspireRuntime is true: restore and build them with it set";
 
     /// <summary>A folder's restores from the run's local feed alone (<see cref="AvaloniaApp.UseFeed"/>), with Aspire's AppHost
-    /// SDK in it: the rest of an AppHost's graph is in the package cache the test project's restore filled, never fetched.</summary>
+    /// SDK in it: the rest of an AppHost's graph is in the package cache the test project's restore filled, never fetched.
+    /// Where that restore left out Aspire's dashboard and orchestrator (<see cref="RuntimeDownloaded"/>), the folder's
+    /// Directory.Build.targets takes them out of its AppHosts' references after the SDK adds them, keeping the AppHost
+    /// package the SDK adds with them; a folder with a Directory.Build.targets of its own has it put first.</summary>
     public static void UseFeed(string folder)
     {
+        if (!RuntimeDownloaded)
+        {
+            string targets = Path.Combine(folder, "Directory.Build.targets");
+            string own = File.Exists(targets) ? File.ReadAllText(targets) : "<Project>\n</Project>\n";
+            if (!own.Contains(LeftOut, StringComparison.Ordinal))
+            {
+                int end = own.LastIndexOf("</Project>", StringComparison.Ordinal);
+                Assert.True(end >= 0, $"{targets} is no MSBuild project, so Aspire's runtime could not be left out of its AppHosts");
+                File.WriteAllText(targets, own[..end] + LeftOut + own[end..]);
+            }
+        }
         string version = TemplatesVersion.ToLowerInvariant();
         string sdk = Path.Combine(AvaloniaApp.Metadata("NuGetPackageRoot"), "aspire.apphost.sdk", version, $"aspire.apphost.sdk.{version}.nupkg");
         Assert.True(File.Exists(sdk), $"Aspire.AppHost.Sdk {TemplatesVersion} is missing at {sdk}; restore the test project first");

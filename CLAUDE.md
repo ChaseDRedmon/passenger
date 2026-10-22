@@ -1906,6 +1906,11 @@ so they skip, saying why (`AspireApp.CliSkipped`), until the tests give it a hom
 Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`: the test project's restore puts the
 AppHost's graph in the package cache), while `AspireOrchestrationTests` skip until their solution's net8.0 graph does;
+Aspire's dashboard and orchestrator (`Aspire.Dashboard.Sdk.<rid>`, `Aspire.Hosting.Orchestration.<rid>`, about 900 MB in
+the package cache), which only running an AppHost needs, are downloaded only where `PassengerAspireRuntime` is true (a
+property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a
+Directory.Build.targets that takes them out of its AppHosts' references after the AppHost SDK adds them, and a test that
+runs an AppHost skips saying so (`AspireApp.Unavailable`);
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests`, `AspireTelemetryTests` and `AspireClientTests` speak to the
 execution server, a stand-in dashboard and a stand-in CLI (a shell script, so skipped on Windows) on loopback, and
