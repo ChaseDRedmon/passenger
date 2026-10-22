@@ -63,6 +63,54 @@ public sealed partial class McpTests
         }
     }
 
+    /// <summary>An agent's container_action on a service of the run it debugs goes through the run: restart ends its session,
+    /// restarts it held and attaches again, so it stops in Main again; stop ends its session before its container goes.</summary>
+    [Fact]
+    public async Task An_agents_container_action_on_a_debugged_service_goes_through_the_run()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        CancellationToken test = TestContext.Current.CancellationToken;
+        await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
+        (string shop, string project) = ContainerRunsTests.Shop("agentact");
+        madeFolders.Add(shop);
+        string Started(string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));
+        await using McpClient client = await Start(["--mcp", shop]);
+        try
+        {
+            await Call(client, "breakpoint_set", new() { ["path"] = "Web/Program.cs", ["line"] = 1 });
+            JsonElement stop = await Call(client, "debug_start", new() { ["configuration"] = "Compose: compose.yaml", ["waitSeconds"] = 120 });
+            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.Contains("Program.cs:1:", StringComparison.Ordinal),
+                $"debug_start did not stop in web's Main: {stop}");
+            await Call(client, "debug_continue", new() { ["session"] = "web", ["waitSeconds"] = 2 });
+            string before = await Task.Run(() => Started("web"), test);
+
+            // Restart through the run: web held again and attached again, so Main's breakpoint stops it once more.
+            Assert.Equal($"{project}/web: restart done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/web", ["action"] = "restart" })));
+            Assert.NotEqual(before, await Task.Run(() => Started("web"), test));
+            JsonElement again = default;
+            Assert.True(await Waiting.UntilAsync(async () => (again = await Call(client, "debug_state", new() { ["session"] = "web" })).GetProperty("state").GetString() == "paused",
+                TimeSpan.FromMinutes(1), test), $"web, restarted through the run, did not stop in Main again: {again}");
+            Assert.Contains("Program.cs:1:", again.GetProperty("location").GetString(), StringComparison.Ordinal);
+
+            // Stop through the run: api's session ends before its container goes, which an adapter losing it would make an error.
+            Assert.Equal($"{project}/api: stop done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/api", ["action"] = "stop" })));
+            Assert.Equal("exited", ContainerRunsTests.States(project)["api"]);
+            JsonElement state = await Call(client, "debug_state");
+            Assert.True(!state.TryGetProperty("sessions", out JsonElement sessions) || !sessions.EnumerateArray().Any(s => s.GetString()!.StartsWith("api:", StringComparison.Ordinal)
+                && !s.GetString()!.Contains("ended", StringComparison.Ordinal)), $"api is still debugged after its container stopped: {state}");
+        }
+        finally
+        {
+            await Call(client, "stop");
+            Assert.True(await Waiting.UntilAsync(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2), test),
+                "stop left the configuration's containers behind");
+            foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Docker.Run("rmi", "-f", image);
+            }
+        }
+    }
+
     /// <summary>A compose configuration's debug_start an agent gives up on as its held services come up takes the run down
     /// rather than leaving it up for no one; and a run up as a --mcp IDE's input ends goes with the IDE.</summary>
     [Fact]

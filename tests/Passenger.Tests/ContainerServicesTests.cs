@@ -139,6 +139,41 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         window.Close();
     }
 
+    /// <summary>The Containers window's Stop and Remove of a debugged service go through the run: its session ends before
+    /// its container stops or goes (an adapter losing it would be the IDE's error, which fails the test), the run going on.</summary>
+    [AvaloniaFact]
+    public void Stop_and_Remove_of_a_debugged_service_in_the_Containers_window_end_its_session_first_and_leave_the_run_up()
+    {
+        Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
+        (string folder, string project) = ContainerRunsTests.Shop("svcstop");
+        MainWindow window = ContainerRunsTests.Open(folder);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            Ui.Launched(window, window.DebugAsync(), "web and api to come up under the debugger", TimeSpan.FromMinutes(5));
+            DebugTab web = ContainerRunDebuggingTests.Tab(window, "web");
+            DebugTab api = ContainerRunDebuggingTests.Tab(window, "api");
+            Ui.WaitFor(() => web.Session is { State: DebugState.Running } && api.Session is { State: DebugState.Running }, "web and api to run under the debugger");
+            ContainersView view = Shown(window);
+
+            Act(window, view, project, "api", AppActions.ContainerStop);
+            Ui.WaitFor(() => !api.IsLive && ContainerRunsTests.States(project).GetValueOrDefault("api") == "exited", "api's session to end and its container to stop",
+                TimeSpan.FromMinutes(2));
+            Assert.True(web.IsLive, "Stop of api ended web's session");
+
+            Act(window, view, project, "web", AppActions.ContainerRemove);
+            Ui.WaitFor(() => !web.IsLive && !ContainerRunsTests.States(project).ContainsKey("web"), "web's session to end and its container to go", TimeSpan.FromMinutes(2));
+            Assert.Equal("running", ContainerRunsTests.States(project)["cache"]);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "Stop to take every container down", TimeSpan.FromMinutes(2));
+        }
+        window.Close();
+    }
+
     private static string Source(string folder, string app) => Path.Combine(folder, app, "Program.cs");
 
     private static string Started(string project, string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));

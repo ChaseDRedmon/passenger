@@ -1598,7 +1598,8 @@ aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is
 since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
 solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
 method leads web's own (a web app's idle threads wait in the runtime's code). `ContainerServicesTests` (Alone) act on one
-service of that solution's run from the Containers window's rows and the gutter, the others never restarted;
+service of that solution's run from the Containers window's rows and the gutter, the others never restarted, and Stop and
+Remove a debugged one there (`McpTests.ContainerDebugging.cs`' agent restarts and stops one with `container_action`);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, and
 `McpTests.ContainerDebugging.cs`' agent gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
 run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
