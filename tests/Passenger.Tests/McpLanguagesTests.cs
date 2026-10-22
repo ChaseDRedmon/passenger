@@ -111,6 +111,55 @@ public sealed class McpLanguagesTests : McpRig
         Assert.Single(Directory.GetDirectories(Path.Combine(OwnState, "MetadataAsSource", "Decompiled", "Avalonia.Controls")));
     }
 
+    /// <summary>Aspire's code help for an agent as the window's: a service's connection string to the AppHost line declaring
+    /// the resource, an AppHost's parameter with no value marked and set through its fix with the value given as name (in the
+    /// run's own user secrets, never said back), and a resource renamed in the AppHost and the service that reads it.</summary>
+    [Fact]
+    public async Task An_agent_goes_to_sets_and_renames_aspire_resources_as_the_window_does()
+    {
+        const string secretsId = "passenger-mcp-aspire-host";
+        string secrets = Path.Combine(TestRun.UserSecrets, secretsId, "secrets.json");
+        string shop = Made("mcpaspire-", made =>
+        {
+            AspireCodeHelpTests.Project.WriteTo(made, secretsId);
+            File.WriteAllText(Path.Combine(made, "Host", "Program.cs"), AspireCodeHelpTests.Project.Host.Replace("builder.Build().Run();",
+                "var password = builder.AddParameter(\"password\", secret: true);\nbuilder.Build().Run();", StringComparison.Ordinal));
+            AspireApp.UseFeed(made);
+            Restore.Run(PathNames.Canonical(made));
+        });
+        Directory.CreateDirectory(Path.GetDirectoryName(secrets)!);
+        File.Delete(secrets);
+        try
+        {
+            McpClient client = await Start(["--mcp", shop]);
+            string api = File.ReadAllText(Path.Combine(shop, "Api", "Program.cs"));
+            string host = File.ReadAllText(Path.Combine(shop, "Host", "Program.cs"));
+            JsonElement declared = Assert.Single((await Call(client, "definition", At(api, "Api/Program.cs", "GetConnectionString(\"conn"))).EnumerateArray());
+            Assert.Equal((Path.Combine("Host", "Program.cs"), 4), (declared.GetProperty("path").GetString(), declared.GetProperty("line").GetInt32()));
+
+            Assert.Contains((await Call(client, "diagnostics", new() { ["path"] = "Host/Program.cs" })).EnumerateArray(),
+                d => d.GetProperty("message").GetString()!.StartsWith("Parameter 'password' has no value", StringComparison.Ordinal));
+            Dictionary<string, object?> password = At(host, "Host/Program.cs", "AddParameter(\"pass");
+            const string fix = "Set password in the AppHost's user secrets…";
+            Assert.Contains($"{fix} [quickfix]", Strings(await Call(client, "code_actions", password)));
+            CallToolResult unvalued = await Result(client, "apply_code_action", new(password) { ["title"] = fix });
+            Assert.True(unvalued.IsError == true && Text(unvalued).Contains("give it as name", StringComparison.Ordinal), $"The fix was made with no value: {Text(unvalued)}");
+            string set = (await Call(client, "apply_code_action", new(password) { ["title"] = fix, ["name"] = "agent-secret" })).GetString()!;
+            Assert.Equal("Set password in the AppHost's user secrets", set);
+            Assert.Contains("\"Parameters:password\": \"agent-secret\"", File.ReadAllText(secrets), StringComparison.Ordinal);
+
+            string renamed = (await Call(client, "rename", new(At(api, "Api/Program.cs", "GetConnectionString(\"conn")) { ["newName"] = "store" })).GetString()!;
+            Assert.StartsWith("Renamed connected to store in 2 files", renamed, StringComparison.Ordinal);
+            Assert.Contains("builder.AddConnectionString(\"store\")", File.ReadAllText(Path.Combine(shop, "Host", "Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("GetConnectionString(\"store\")", File.ReadAllText(Path.Combine(shop, "Api", "Program.cs")), StringComparison.Ordinal);
+            await client.DisposeAsync();
+        }
+        finally
+        {
+            File.Delete(secrets);
+        }
+    }
+
     [Fact]
     public async Task An_agent_reads_navigates_renames_and_refactors_wpf_xaml_through_passengers_own_xaml()
     {

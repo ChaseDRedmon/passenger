@@ -145,9 +145,18 @@ public partial class MainWindow
             UpdateDisplay();
         };
         AspireResourceRun? selectedResourceService = null;
+        string? selectedResourceKey = null;
         view.ResourceSelectionChanged += (_, selection) =>
         {
             if (session != next)
+            {
+                return;
+            }
+            string? key = selection is null ? null : $"{selection.AppHostPath}::{selection.Resource.Name}";
+            bool again = key == selectedResourceKey;
+            selectedResourceKey = key;
+            // The same resource raised again (its list read again) takes back no other program's Debug tab chosen since.
+            if (again && next.Aspire.OtherProgramChosen)
             {
                 return;
             }

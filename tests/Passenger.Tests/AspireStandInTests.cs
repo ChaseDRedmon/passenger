@@ -127,6 +127,44 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         string[] Told() => File.ReadAllText(project.UrlsFile).Split('\n');
     }
 
+    /// <summary>Debug pressed while Run brings the AppHost up takes Run's place, as a container run's start does: Run's start
+    /// ends, saying so, and the AppHost comes up once, debugged. Run's start is held at its certificate's check, a stand-in
+    /// that takes its time (<see cref="DevCerts"/>), which trusts nothing on this machine.</summary>
+    [AvaloniaFact]
+    public void Debug_while_Run_brings_the_AppHost_up_takes_its_place()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in dev-certs is a shell script");
+        project.Reset();
+        string standIn = TestFolders.Create("devcerts-");
+        File.WriteAllText(Path.Combine(standIn, "check"), "0");
+        File.WriteAllText(Path.Combine(standIn, "slow"), string.Empty);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend, "https://localhost:7313");
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false, DevCertificates = DevCerts.In(standIn) };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Task<string?> running = window.RunAsync();
+            Ui.PumpUntil(() => window.Actions.Work.Of(AppActions.RunProgram)?.Stage.StartsWith("Checking the HTTPS", StringComparison.Ordinal) == true || running.IsCompleted,
+                "Run to check the development certificate", TimeSpan.FromMinutes(2));
+            Assert.False(running.IsCompleted, $"Run ended before it checked the certificate: {(running.IsCompleted ? running.Result : null)}");
+            File.Delete(Path.Combine(standIn, "slow"));
+            Task<string?> debugging = window.DebugAsync();
+            Assert.Equal($"{StandInAppHost.Configuration} was stopped as it started", Ui.Await(running, "Run's start to end as Debug takes its place"));
+            Ui.Launched(window, debugging, "the AppHost to come up debugged");
+            Assert.Equal(RunStart.Debug, Assert.Single(window.AspireRuntime.Apps).Mode);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>The question a start asked of its certificate, held to the dialogs' rules.</summary>
     internal static CertificateQuestionDialog Question(MainWindow window, Task<string?> running)
     {
@@ -316,6 +354,37 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Assert.Equal("latest value", backend.Answers[^1].InputsDialog.InputItems[0].Value);
             CompleteInteraction(backend, window, 2);
             Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>A prompt the AppHost shows (a real AppHost's own, as the development certificate's notification is) never keeps
+    /// the main window open: the window's close closes it with it, and ends the AppHost as Stop would, where the prompt
+    /// refused to close, which refused the window's close, so the AppHost and all it ran outlived the window.</summary>
+    [AvaloniaFact]
+    public void A_prompt_the_AppHost_shows_closes_with_the_window_whose_close_ends_the_AppHost()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            int host = Assert.Single(window.AspireRuntime.Apps).ProcessId!.Value;
+            backend.Push(new WatchInteractionsResponseUpdate
+            {
+                InteractionId = 7,
+                Title = "No trusted development certificate",
+                MessageBox = new InteractionMessageBox { Intent = MessageIntent.Warning },
+            });
+            Interaction(window, "No trusted development certificate");
+            window.Close();
+            Assert.False(window.IsVisible, "The AppHost's prompt kept the window open as it was closed");
+            Assert.True(window.Ended is not null, "The window's close did not end what its folder runs");
+            Ui.WaitFor(() => !Processes.IsRunning(host), "the window's close to end the AppHost", TimeSpan.FromSeconds(30));
         }
         finally
         {

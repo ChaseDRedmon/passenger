@@ -232,9 +232,10 @@ public sealed class ProjectSession : IAsyncDisposable
     /// down (or the next run comes); its containers are the folder's (<see cref="Containers"/>) until then.</summary>
     public Containers.ContainerRun? ContainerRun { get; set; }
 
-    /// <summary>A container configuration's start under way (Run's, Debug's or Profile's), from its first moment until it is
-    /// up or has given up: the next container start ends it first, and the folder's end ends it, as Stop does.</summary>
-    public Run.StartUnderWay? ContainerStarting { get; set; }
+    /// <summary>The starts of runs of services under way (Run's, Debug's or Profile's of a container configuration or an Aspire
+    /// AppHost), each from its first moment until it is up or has given up: a start of what one starts ends it first, and the
+    /// folder's end ends them all, as Stop does.</summary>
+    public List<Run.StartUnderWay> Starting { get; } = [];
 
     /// <summary>Stop of a container run (the one under way, or <paramref name="which"/>, one a start made): its log no longer
     /// followed, and its containers taken down (the .NET services alone when backing services are kept, which then go with
@@ -724,6 +725,9 @@ public sealed class ProjectSession : IAsyncDisposable
                 // Razor's HTML is the HTML server's to answer.
                 HtmlServer = Web is { } web ? web.HtmlAsync : null,
                 AspireRoleOf = AspireFiles.RoleOf,
+                AspireAppHostOf = path => AspireFiles.AppHostOf(path) is { } host
+                    ? new AspireAppHostSettings(host, Projects.FirstOrDefault(p => PathNames.Same(p.Path, host))?.Property(Passenger.Host.CarriedProperties.UserSecretsId))
+                    : null,
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);
@@ -813,7 +817,10 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder.Stop();
         InTerminal?.Stop();
         ProfileStarting?.Cancel();
-        ContainerStarting?.Work.Cancel();
+        foreach (Run.StartUnderWay start in Starting.ToList())
+        {
+            start.Work.Cancel();
+        }
         // Profile's program ends with the others, its snapshot taken or not, and each run, read by no one now, leaves no
         // port listening.
         Profiled?.Run.Kill();

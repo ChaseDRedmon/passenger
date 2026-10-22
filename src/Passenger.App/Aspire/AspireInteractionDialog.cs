@@ -58,7 +58,9 @@ public sealed class AspireInteractionDialog : Window
             {
                 return;
             }
-            e.Cancel = true;
+            // The window's close, or the IDE's, closes the prompt with it, answered as below: kept open, it would keep the
+            // window open, and with it the AppHost and everything it runs.
+            e.Cancel = e.CloseReason is not (WindowCloseReason.OwnerWindowClosing or WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown);
             if (this.interaction.PromptTerminal is not null)
             {
                 _ = RunActionAsync(() => AnswerAsync(false));

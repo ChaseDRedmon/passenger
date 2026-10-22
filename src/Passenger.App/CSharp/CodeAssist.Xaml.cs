@@ -571,7 +571,7 @@ public sealed partial class CodeAssist
     /// command.</summary>
     private void ApplyFix(XamlFix fix)
     {
-        string? refused = ApplyXamlChanges(fix.Title, [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others]);
+        string? refused = ApplyFileChanges(fix.Title, [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others]);
         Message?.Invoke(this, refused is null ? fix.Title : $"{fix.Title} was not applied: {refused}");
     }
 

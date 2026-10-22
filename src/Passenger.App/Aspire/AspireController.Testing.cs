@@ -32,7 +32,7 @@ public sealed partial class AspireController
             throw new InvalidOperationException("Stop this AppHost before running another integration-test instance of it");
         }
         RunConfiguration configuration = new() { Name = $"Tests: {testProject.Name}", Project = hosts[0].Path, Aspire = true };
-        AspireAppRun app = new(configuration, debug ? AspireRunMode.Debug : AspireRunMode.Run, Guid.NewGuid().ToString("N")) { IsTest = true };
+        AspireAppRun app = new(configuration, debug ? RunStart.Debug : RunStart.Run, Guid.NewGuid().ToString("N")) { IsTest = true };
         apps.Add(app);
         try
         {

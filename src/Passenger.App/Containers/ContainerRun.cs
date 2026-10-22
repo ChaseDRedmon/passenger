@@ -25,18 +25,6 @@ public sealed record DotnetService(string Service, string Project, string Assemb
     string IRunService.Name => Service;
 }
 
-/// <summary>How a container configuration is started: run; debugged, its .NET services (those marked Debug, else every one)
-/// held at their start until a session per service attaches; run with Hot Reload, every .NET service held and attached
-/// to quietly, no breakpoint sent, so the edits reach it through the debugger (dotnet watch would need the SDK in its image);
-/// or profiled, one .NET service (<see cref="ContainerPlan.Profiled"/>) held at its start until the profiler records it there.</summary>
-public enum ContainerStart
-{
-    Run,
-    Debug,
-    HotReload,
-    Profile,
-}
-
 /// <summary>What a container configuration runs, worked out once from Compose's own model of its files: the Compose
 /// words every command takes (<c>compose -p NAME -f … -f override --env-file … --profile …</c>, the override Passenger
 /// wrote into the folder's state last), the services it starts, the .NET ones Passenger builds on the host, those Compose
@@ -678,23 +666,13 @@ public static class ContainerPlans
 
     /// <summary>The folder user secrets are kept in on this machine in place of .NET's own (APPDATA's Microsoft/UserSecrets
     /// on Windows, ~/.microsoft/usersecrets elsewhere): read for that alone, so a test's run never mounts the person's own.</summary>
-    public const string UserSecretsVariable = "PASSENGER_USER_SECRETS";
+    public const string UserSecretsVariable = Workspace.UserSecrets.Variable;
 
     /// <summary>The folder of a project's own user secrets on this machine and its id, when it has an id that names one
     /// folder (no separator, never a dot or two alone) and that folder is there.</summary>
-    private static (string Folder, string Id)? UserSecrets(ProjectModel? project)
-    {
-        if (project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is not { Length: > 0 } id || id is "." or ".."
-            || id.IndexOfAny([.. Path.GetInvalidFileNameChars(), '/', '\\']) >= 0)
-        {
-            return null;
-        }
-        string root = Environment.GetEnvironmentVariable(UserSecretsVariable) is { Length: > 0 } given ? given
-            : OperatingSystem.IsWindows() ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".microsoft", "usersecrets");
-        string folder = Path.Combine(root, id);
-        return Directory.Exists(folder) ? (folder, id) : null;
-    }
+    private static (string Folder, string Id)? UserSecrets(ProjectModel? project) =>
+        project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is { Length: > 0 } id
+            && Workspace.UserSecrets.FolderOf(id) is { } folder && Directory.Exists(folder) ? (folder, id) : null;
 
     private static JsonObject Labels(IReadOnlyList<string> words)
     {

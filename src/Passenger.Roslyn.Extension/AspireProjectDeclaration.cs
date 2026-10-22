@@ -4,10 +4,15 @@ using Microsoft.CodeAnalysis.Extensions;
 
 namespace Passenger.Roslyn.Extension;
 
-/// <summary>Resolves AddProject's actual project metadata instead of navigating to its generated Projects type.</summary>
+/// <summary>Aspire's Go to Declaration: AddProject's actual project rather than its generated Projects type, else the AppHost's
+/// declaration of the resource a service names in a string (a connection string's name, a service it discovers).</summary>
 public sealed class AspireProjectDeclaration : IExtensionDocumentMessageHandler<Caret, AspireProjectTarget>
 {
-    public async Task<AspireProjectTarget> ExecuteAsync(Caret message, ExtensionMessageContext context, Document document, CancellationToken cancellationToken)
+    public async Task<AspireProjectTarget> ExecuteAsync(Caret message, ExtensionMessageContext context, Document document, CancellationToken cancellationToken) =>
+        await ProjectAsync(message, document, cancellationToken).ConfigureAwait(false) is { Path: not null } project ? project
+            : await AspireSource.DeclarationAsync(document, message.At, cancellationToken).ConfigureAwait(false);
+
+    private static async Task<AspireProjectTarget> ProjectAsync(Caret message, Document document, CancellationToken cancellationToken)
     {
         SyntaxNode? root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
         SemanticModel? model = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);

@@ -58,7 +58,7 @@ public partial class MainWindow
     }
 
     internal async Task<bool> StartAspireToolResourceAsync(string target, RunConfiguration configuration,
-        string? arguments, AspireRunMode mode, CancellationToken cancel)
+        string? arguments, RunStart mode, CancellationToken cancel)
     {
         ProjectSession current = session;
         (string? path, string name) = AspireToolTarget(target);
@@ -85,13 +85,13 @@ public partial class MainWindow
         {
             ServiceProjects = resources.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
             ServiceActions = resources.ToDictionary(resource => resource.Name,
-                resource => resource.Name == name && mode != AspireRunMode.Run ? ServiceStart.Debug : ServiceStart.Run, StringComparer.Ordinal),
+                resource => resource.Name == name && mode != RunStart.Run ? ServiceStart.Debug : ServiceStart.Run, StringComparer.Ordinal),
             LaunchService = name,
         };
         // Run mode keeps unproven, dynamically added projects out of the debugger; the proven target overrides it.
-        string? problem = mode == AspireRunMode.Profile
+        string? problem = mode == RunStart.Profile
             ? await buildRun.ProfileAspireAsync(selected, arguments, cancel)
-            : await buildRun.RunAspireAsync(selected, arguments, AspireRunMode.Run, cancel);
+            : await buildRun.RunAspireAsync(selected, arguments, RunStart.Run, cancel);
         if (session != current || current.IsEnded)
         {
             throw new InvalidOperationException("The solution was closed");

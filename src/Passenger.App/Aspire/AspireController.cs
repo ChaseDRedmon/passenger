@@ -14,14 +14,6 @@ using System.Text.Json;
 
 namespace Passenger.App.Aspire;
 
-public enum AspireRunMode
-{
-    Run,
-    Debug,
-    HotReload,
-    Profile,
-}
-
 /// <summary>Owns AppHosts and their DCP-requested service processes for one workspace.</summary>
 public sealed partial class AspireController(ProjectSession workspace, string stateFolder) : IAsyncDisposable
 {
@@ -43,9 +35,14 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     public Func<AspireAppRun, CancellationToken, Task<AspireInteractions?>>? ConnectInteractions { get; set; }
     public Func<AspireAppRun, AspireResourceRun, LaunchPlan, CancellationToken, Task<ProfilingSession>>? ProfileService { get; set; }
 
+    /// <summary>Whether the Debug window's chosen tab is another program's than any service's (a plain launch beside the
+    /// AppHost), which the Aspire window's resources read again do not take back: only a person's choice of a resource does.</summary>
+    public bool OtherProgramChosen { get; private set; }
+
     public void SelectService(AspireResourceRun? service)
     {
         UiThread.Check();
+        OtherProgramChosen = false;
         if (SelectedService != service)
         {
             SelectedService = service;
@@ -53,8 +50,12 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
     }
 
-    public void SelectDebugger(DebugTab? tab) => SelectService(tab is null ? null : apps.SelectMany(app => app.Services)
-        .FirstOrDefault(service => service.DebugTab == tab));
+    public void SelectDebugger(DebugTab? tab)
+    {
+        AspireResourceRun? service = tab is null ? null : apps.SelectMany(app => app.Services).FirstOrDefault(service => service.DebugTab == tab);
+        SelectService(service);
+        OtherProgramChosen = tab is not null && service is null;
+    }
 
     public AspireAppRun? FindApp(string appHost) => apps.FirstOrDefault(app => PathNames.Same(app.Configuration.Project, appHost));
 
@@ -163,7 +164,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     /// <summary>Starts an Aspire configuration's AppHosts, each built first as it says, and once each is connected to answers
     /// null, else why not. <paramref name="https"/> is how its HTTPS is served, as the start worked out before: over HTTP, the
     /// AppHosts' own addresses and the services they start serve HTTP for this run.</summary>
-    public async Task<string?> StartAsync(RunConfiguration configuration, AspireRunMode mode,
+    public async Task<string?> StartAsync(RunConfiguration configuration, RunStart mode,
         Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation = default, HttpsChoice? https = null)
     {
         UiThread.Check();
@@ -210,7 +211,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 AspireAppRun app = await StartAppAsync(chosen, mode, group, build, starting.Token, profileTarget, https, said: started.Count == 0 ? https.Said : []);
                 started.Add(app);
             }
-            if (mode == AspireRunMode.Profile)
+            if (mode == RunStart.Profile)
             {
                 using CancellationTokenSource profiling = CancellationTokenSource.CreateLinkedTokenSource(starting.Token);
                 profiling.CancelAfter(TimeSpan.FromSeconds(60));
@@ -246,7 +247,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
     }
 
-    private async Task<AspireAppRun> StartAppAsync(RunConfiguration configuration, AspireRunMode mode, string group,
+    private async Task<AspireAppRun> StartAppAsync(RunConfiguration configuration, RunStart mode, string group,
         Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation, (string AppHost, string Name)? profileTarget, HttpsChoice https,
         IReadOnlyList<string> said)
     {
@@ -302,7 +303,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 environment[name] = value;
             }
             environment.Remove("DEBUG_SESSION_SERVER_CERTIFICATE");
-            environment["DEBUG_SESSION_RUN_MODE"] = mode == AspireRunMode.Debug ? "Debug" : "NoDebug";
+            environment["DEBUG_SESSION_RUN_MODE"] = mode == RunStart.Debug ? "Debug" : "NoDebug";
             environment["AppHost__FilePath"] = configuration.Project;
             environment["ASPIRE_CLI_TELEMETRY_OPTOUT"] = "1";
             ConfigureResourceService(app, environment);
@@ -651,7 +652,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 environment[name] = value;
             }
         }
-        if (app.Mode == AspireRunMode.HotReload)
+        if (app.Mode == RunStart.HotReload)
         {
             environment[RuntimeVariables.DefaultDiagnosticPortSuspend] = "1";
             environment[RuntimeVariables.ModifiableAssemblies] = "debug";
@@ -674,8 +675,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         try
         {
             bool debugging = app.DebugOverrides.TryGetValue(resource.IdentityKey, out bool overridden) ? overridden
-                : app.Mode != AspireRunMode.Profile && (ResourceAction(app.Configuration, resource) is { } action ? action == ServiceStart.Debug : request.Mode == "Debug");
-            profiling = app.Mode == AspireRunMode.Profile && !apps.Any(candidate => candidate.Group == app.Group && candidate.ProfileClaimed)
+                : app.Mode != RunStart.Profile && (ResourceAction(app.Configuration, resource) is { } action ? action == ServiceStart.Debug : request.Mode == "Debug");
+            profiling = app.Mode == RunStart.Profile && !apps.Any(candidate => candidate.Group == app.Group && candidate.ProfileClaimed)
                 && (app.ProfileTarget is not { } selected || PathNames.Same(selected.AppHost, app.Configuration.Project)
                     && resource.ResourceName == selected.Name && app.Configuration.ServiceProjects.TryGetValue(selected.Name, out string? selectedProject)
                     && PathNames.Same(selectedProject, resource.Project));
@@ -684,7 +685,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                 app.ProfileClaimed = true;
                 debugging = false;
             }
-            resource.Inspection = debugging || app.Mode != AspireRunMode.HotReload ? LiveApp.For(plan, workspace.Overlays) : null;
+            resource.Inspection = debugging || app.Mode != RunStart.HotReload ? LiveApp.For(plan, workspace.Overlays) : null;
             if (resource.Inspection is { } inspection)
             {
                 inspection.BindingFailed += (_, _) => Changed?.Invoke(this, EventArgs.Empty);
@@ -728,7 +729,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                     throw new LaunchException(refused);
                 }
                 resource.ProcessId = runner.ProcessId;
-                if (app.Mode == AspireRunMode.HotReload && resource.ProcessId is int process)
+                if (app.Mode == RunStart.HotReload && resource.ProcessId is int process)
                 {
                     using CancellationTokenSource attaching = CancellationTokenSource.CreateLinkedTokenSource(cancellation, resource.Stopping.Token, app.Lifetime.Token);
                     if (await workspace.Debug.AttachForHotReloadAsync(process, resource.DebugName, cancellation: attaching.Token) is { } failed)
@@ -1098,7 +1099,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
 
 public sealed class AspireAppRun
 {
-    internal AspireAppRun(RunConfiguration configuration, AspireRunMode mode, string group)
+    internal AspireAppRun(RunConfiguration configuration, RunStart mode, string group)
     {
         Configuration = configuration;
         Mode = mode;
@@ -1107,7 +1108,7 @@ public sealed class AspireAppRun
     }
 
     public RunConfiguration Configuration { get; }
-    public AspireRunMode Mode { get; }
+    public RunStart Mode { get; }
     public string Group { get; }
     public bool IsTest { get; internal init; }
 

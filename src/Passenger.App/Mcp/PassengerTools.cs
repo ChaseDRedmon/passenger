@@ -187,6 +187,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync(cancel);
+        // Aspire's own, as the editor marks them: a service's missing references, an AppHost's parameters with no value.
+        if (Session.CSharp?.For(document) is { } csharp)
+        {
+            found = [.. found, .. await csharp.AspireFindingsAsync(lsp, cancel)];
+        }
         TextSnapshot answered = lsp.Text.Snapshot;
         return (IReadOnlyList<Finding>)[.. found.Select(d =>
         {
@@ -221,7 +226,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "no source, and says so. From XAML: the C# or XAML declaring a type, property, event, resource or element, a library's " +
         "type decompiled (read-only), or a theme's XAML through its Source Link. In the web languages, their server's; in " +
         "package.json, a dependency's package and an npm run's script; in a compose file, a build's Dockerfile and project, a " +
-        "service, volume, network, config or secret named, a variable's .env line, an env_file. In an MSBuild file: where a property was set (the one " +
+        "service, volume, network, config or secret named, a variable's .env line, an env_file; in Aspire's C#, AddProject's project and " +
+        "a resource name a service reads (a connection string's, https+http://api) to its AppHost declaration. In an MSBuild file: where a property was set (the one " +
         "in force first), an item type or target defined, or the files an import or SDK brings in.")]
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
@@ -230,6 +236,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         if (await ComposeDefinition(served, offset, cancel) is { } composed)
         {
             return composed;
+        }
+        if (await AspireDefinition(served, offset, cancel) is { } aspire)
+        {
+            return aspire;
         }
         switch (served)
         {
@@ -298,7 +308,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
         "Renames the symbol at a position everywhere it is used, as Rename does, and saves the files. A type's files named " +
-        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false. In XAML: an element's name and its " +
+        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false; an Aspire resource's name in a string, " +
+        "where its AppHost declares it and its services read it. In XAML: an element's name and its " +
         "code-behind field's uses. In the web languages, their server's; in JSON a property, and in package.json's scripts " +
         "every npm run of one. MSBuild files have none.")]
     public Task<string> Rename(string path, int line, int column, string newName,
@@ -318,6 +329,17 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         ServerServed server = (ServerServed)served;
         LspDocument lsp = server.Lsp;
+        if (server.Web is null && Session.AspireFiles.RoleOf(served.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireResourceAtAsync(lsp, offset) is { } resource)
+        {
+            RefactorOutcome made = await window.Assist.RenameResourceAsync(served.Document, offset, resource, newName, patience);
+            if (made.Problem is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            Editors.SaveAll();
+            return $"{made.Said}: {string.Join(", ", made.Files.Select(f => Relative(f.Path)).Distinct())}";
+        }
         (string Type, IReadOnlyList<string> Files)? named = server.Web is null && Session.CSharp?.Session?.Folder is { } folder
             ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
         DateTime asked = DateTime.UtcNow;
@@ -358,6 +380,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
         int offset = Offset(served.Document, line, column);
+        await AspireMarked(served, cancel);
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         return (IReadOnlyList<string>)[.. window.Assist.OwnFixes(served.Document, offset).Select(f => $"{f.Title} [quickfix]"),
             .. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
@@ -368,7 +391,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Applies the fix or refactoring with this title at a position (or over a selection to endLine:endColumn), as choosing " +
         "it from Alt+Enter does, and saves the files; of one that offers choices, choice names the one (as code_actions lists " +
         "them). XAML's Extract Resource and Extract Style take name as the new key or style's name (else their dialog's), " +
-        "replace every use of the value and extract the element's properties that are not bindings.")]
+        "replace every use of the value and extract the element's properties that are not bindings. An Aspire parameter's Set… " +
+        "takes name as its value.")]
     public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
         string? choice = null,
         string? name = null,
@@ -384,9 +408,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         ServerServed server = (ServerServed)served;
         int offset = Offset(served.Document, line, column);
+        await AspireMarked(served, cancel);
         if (window.Assist.OwnFixes(served.Document, offset).FirstOrDefault(f => f.Title == title) is { } own)
         {
-            return await ApplyOwnFix(served.Document, own, patience);
+            return await ApplyOwnFix(served.Document, own, patience, name);
         }
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         if (linted.FirstOrDefault(f => f.Title == title) is { } lint)
@@ -600,7 +625,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
             AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
             using LaunchBuild resourceBuild = new(Builds);
-            (Aspire.AspireSelection target, bool started) = await PrepareAspireResource(resource, configuration, Aspire.AspireRunMode.Run, arguments, cancel);
+            (Aspire.AspireSelection target, bool started) = await PrepareAspireResource(resource, configuration, RunStart.Run, arguments, cancel);
             if (!started && await window.RunAspireToolResourceAsync(target, "run", cancel) is { } problem)
             {
                 throw new InvalidOperationException(WithBuildErrors(problem, resourceBuild.Ended));

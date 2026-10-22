@@ -37,8 +37,20 @@ public partial class MainWindow
             if (aspireContainerOwnership is null)
             {
                 CancellationTokenSource lifetime = new();
-                Closing += (_, _) => lifetime.Cancel();
-                Closed += (_, _) => lifetime.Dispose();
+                bool closed = false;
+                // A window closed already, closed again (a test's finally), asks nothing of the source it let go of.
+                Closing += (_, _) =>
+                {
+                    if (!closed)
+                    {
+                        lifetime.Cancel();
+                    }
+                };
+                Closed += (_, _) =>
+                {
+                    closed = true;
+                    lifetime.Dispose();
+                };
                 aspireContainerOwnership = new(StateFolder, Engine, lifetime.Token);
             }
             return aspireContainerOwnership;

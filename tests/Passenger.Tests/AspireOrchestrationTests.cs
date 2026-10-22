@@ -65,6 +65,45 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         window.Close();
     }
 
+    /// <summary>The backing services a service's packages point to, found as Add > Docker Compose finds them, join the AppHost
+    /// with it: a Postgres server and the database its connection string names, a Redis by its connection string's name, each
+    /// referenced and waited for by the service under the name it reads, Aspire's hosting integrations referenced at the
+    /// AppHost's own version; one undo takes it all back.</summary>
+    [AvaloniaFact]
+    public void Orchestration_adds_the_backing_services_a_service_reads_and_references_them_by_its_connection_strings_names()
+    {
+        project.Write("Plain/Plain.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>"
+            + "<ItemGroup><PackageReference Include=\"Npgsql\" Version=\"9.0.3\" /><PackageReference Include=\"StackExchange.Redis\" Version=\"2.8.16\" /></ItemGroup></Project>");
+        project.Write("Plain/appsettings.json", "{\n  \"ConnectionStrings\": {\n    \"shopdb\": \"Host=localhost;Database=shop;Username=app;Password=app\",\n    \"cache\": \"localhost:6379\"\n  }\n}\n");
+        MainWindow window = Open();
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        Ui.WaitFor(() => window.WorkspaceModel!.Projects.Any(p => p.Name == "Plain" && p.Packages.Any(q => q.Name == "Npgsql")), "Plain's packages to be evaluated");
+        Dictionary<string, byte[]> before = Snapshot();
+        Assert.Equal("Added Aspire orchestration.", Add(window, "Plain", existing: true));
+        string host = File.ReadAllText(project.PathOf("Host/Program.cs"));
+        foreach (string line in new[]
+        {
+            "var postgres = builder.AddPostgres(\"postgres\");",
+            "var shopdb = postgres.AddDatabase(\"shopdb\", \"shop\");",
+            "var cache = builder.AddRedis(\"cache\");",
+            "var plain = builder.AddProject(\"plain\", \"../Plain/Plain.csproj\").WithReference(shopdb).WaitFor(shopdb).WithReference(cache).WaitFor(cache);",
+        })
+        {
+            Assert.True(host.Contains(line, StringComparison.Ordinal), $"The AppHost lacks {line}:\n{host}");
+        }
+        string hostProject = File.ReadAllText(project.PathOf("Host/Host.csproj"));
+        foreach (string package in new[] { "Aspire.Hosting.PostgreSQL", "Aspire.Hosting.Redis" })
+        {
+            Assert.True(hostProject.Contains($"<PackageReference Include=\"{package}\" Version=\"{AspireApp.TemplatesVersion}\" />", StringComparison.Ordinal),
+                $"The AppHost does not reference {package} at its own Aspire version:\n{hostProject}");
+        }
+        Ui.Run(window, AppActions.FocusExplorer);
+        Ui.Run(window, EditorActions.Undo);
+        Ui.Run(window, AppActions.SaveAll);
+        AssertSnapshot(before);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Reordered_named_AddProject_arguments_do_not_add_the_same_resource_twice()
     {

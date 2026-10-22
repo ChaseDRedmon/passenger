@@ -86,7 +86,7 @@ public sealed partial class CodeAssist
             IReadOnlyList<ResourcePlace> places = await BackgroundWork.Run(() => XamlRefactorings.Places(file, styles: false, texts));
             dialog = new ExtractResourceDialog(value, places, key => XamlRefactorings.KeyProblem(file, key), (key, place, everywhere) =>
             {
-                string? refused = ApplyXamlChanges(name, XamlRefactorings.ExtractResource(file, value, key, place, everywhere));
+                string? refused = ApplyFileChanges(name, XamlRefactorings.ExtractResource(file, value, key, place, everywhere));
                 if (refused is null)
                 {
                     int replaced = everywhere ? value.Uses.Count : 1;
@@ -127,7 +127,7 @@ public sealed partial class CodeAssist
             IReadOnlyList<ResourcePlace> places = await BackgroundWork.Run(() => XamlRefactorings.Places(file, styles: source.ByClass, texts));
             dialog = new ExtractStyleDialog(source, places, styleName => XamlRefactorings.StyleNameProblem(file, source, styleName), (styleName, chosen, place) =>
             {
-                string? refused = ApplyXamlChanges(name, XamlRefactorings.ExtractStyle(file, source, styleName, chosen, place));
+                string? refused = ApplyFileChanges(name, XamlRefactorings.ExtractStyle(file, source, styleName, chosen, place));
                 if (refused is null)
                 {
                     Message?.Invoke(this, $"Extracted {Core.Plural.Of(chosen.Count, "property", "properties")} of {source.ElementName} to style '{styleName}' in {place.Title}");
@@ -170,9 +170,9 @@ public sealed partial class CodeAssist
         return path => open.TryGetValue(path, out string? text) ? text : File.Exists(path) ? ReadText(path) : null;
     }
 
-    /// <summary>A XAML refactoring's or fix's changes made as one command (Undo takes back every file, a file made
-    /// included): each file's edits made from its text as it is now, open or on disk. Null once made; else why not.</summary>
-    internal string? ApplyXamlChanges(string name, IReadOnlyList<XamlFileChange> changes)
+    /// <summary>A refactoring's or fix's changes to files made as one command (XAML's, an Aspire parameter's value set; Undo takes back
+    /// every file, a file made included): each file's edits made from its text as it is now, open or on disk. Null once made; else why not.</summary>
+    internal string? ApplyFileChanges(string name, IReadOnlyList<XamlFileChange> changes)
     {
         List<object> documentChanges = [];
         foreach (XamlFileChange change in changes)
