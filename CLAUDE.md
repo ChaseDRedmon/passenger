@@ -1884,8 +1884,9 @@ Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpWpfAp
 `PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
 the self-contained one at the tests' own target, whose runtime pack for this system the tests' project downloads
 (`Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)` at the SDK's bundled version), so its restore finds it
-in the package cache. `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
-a callback from List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
+in the package cache. `DecompiledSymbolsTests` and `DecompiledSymbolsTimingTests` (Alone: the session's answers during a
+decompile) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in a callback from
+List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
 (`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
@@ -1965,7 +1966,8 @@ once it lets them in and the person answers its questions (`McpWindowDebuggingTe
 what it tests is held to a time, as `McpAttachTimingTests` hold the joins and calls given up), and `McpProcessesTests`
 (`McpBuildNodesTests` for the MSBuild nodes a build leaves, which the machine's other builds would sway), `McpIdeTests`
 (`McpIdeProfilingTests` for Attach Profiler's samples), `McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`,
-`McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving the window's own steps to the window's tests.
+`McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving
+the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
 client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
 (headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through
