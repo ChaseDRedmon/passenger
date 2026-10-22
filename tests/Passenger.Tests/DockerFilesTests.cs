@@ -56,9 +56,11 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             Ui.WaitFor(() => window.Assist.CompletionLabels.Any(l => l.StartsWith("WORKDIR", StringComparison.Ordinal)), "the Dockerfile server's instructions as one is typed");
             Ui.Press(window, "ESCAPE");
 
+            // The typed WORK's error, carried through the text replaced, covers it all until the server's push for the new text lands.
             editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, Shop.OpsDockerfile + "FROMM scratch\n")]);
-            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the error under the instruction Docker has not");
-            Marker error = document.Markers.First(m => m.Kind == MarkerKind.Error);
+            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error && m.Message.Contains("FROMM", StringComparison.Ordinal)),
+                $"the error under the instruction Docker has not, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]");
+            Marker error = document.Markers.First(m => m.Kind == MarkerKind.Error && m.Message.Contains("FROMM", StringComparison.Ordinal));
             Assert.Equal("FROMM", editor.Document.Snapshot.GetText(error.Range.Start, error.Range.Length));
             Assert.Contains("Unknown instruction: FROMM", error.Message, StringComparison.Ordinal);
         }
