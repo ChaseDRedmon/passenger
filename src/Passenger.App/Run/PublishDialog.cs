@@ -277,9 +277,17 @@ public sealed class PublishDialog : Window
         profileBox.SelectedItem = profileBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (i.Tag as PublishProfileFile)?.Name == name || name is null && i.Tag is null);
     }
 
+    /// <summary>Why a publish cannot start now (another build runs), which keeps the dialog open saying so; null when it can.</summary>
+    public Func<string?>? Busy { get; init; }
+
     /// <summary>Publish: the profile saved, then the dialog closed with the publish to run. Null once closed, else why not.</summary>
     public async Task<string?> PublishAsync()
     {
+        if (Busy?.Invoke() is { } busy)
+        {
+            Say(busy);
+            return busy;
+        }
         if (await SaveProfileAsync() is { } refused)
         {
             return refused;

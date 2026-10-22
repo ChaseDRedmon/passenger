@@ -337,8 +337,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
     /// <summary>A project's Publish... in its Explorer menu: whether it can be chosen, and its tip.</summary>
     private static (bool Enabled, string? Tip) MenuItem(MainWindow window, string project)
     {
-        ExplorerNode row = Row(window, project);
-        Point at = Centre(window, row);
+        Point at = Centre(window, project);
         window.MouseDown(at, MouseButton.Right);
         window.MouseUp(at, MouseButton.Right);
         Ui.Settle();
@@ -351,31 +350,35 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         return found;
     }
 
-    private static ExplorerNode Row(MainWindow window, string project)
+    /// <summary>Where a project's row of the Explorer is, its solution folder opened: found again until it is drawn, since the
+    /// rows are made again as the projects' evaluations land (a restore's too, later on a slow machine).</summary>
+    private static Point Centre(MainWindow window, string project)
     {
-        ExplorerTree tree = window.ExplorerView.Tree;
-        if (tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.SolutionFolder && r.Name == "src" && !r.IsExpanded) is { } src)
+        Control? item = null;
+        Ui.WaitFor(() =>
         {
-            tree.Expand(src);
-            Ui.Settle();
-        }
-        return tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.Project && r.Name == project)
-            ?? throw new InvalidOperationException($"The Explorer shows no project {project}: [{string.Join(", ", tree.Rows.Select(r => r.Name))}]");
-    }
-
-    private static Point Centre(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        return item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
+            ExplorerTree tree = window.ExplorerView.Tree;
+            if (tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.SolutionFolder && r.Name == "src" && !r.IsExpanded) is { } src)
+            {
+                tree.Expand(src);
+            }
+            if (tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.Project && r.Name == project) is not { } row
+                || window.ExplorerView.GetVisualDescendants().OfType<ListBox>().FirstOrDefault(l => ReferenceEquals(l.ItemsSource, tree.Rows)) is not { } rows)
+            {
+                return false;
+            }
+            rows.ScrollIntoView(row);
+            item = rows.ContainerFromItem(row);
+            return item is not null;
+        }, $"the Explorer to show the project {project}", TimeSpan.FromMinutes(1));
+        Control shown = item ?? throw new InvalidOperationException($"The Explorer does not show the project {project}");
+        return shown.TranslatePoint(new Point(shown.Bounds.Width / 2, shown.Bounds.Height / 2), window)!.Value;
     }
 
     /// <summary>Clicks a project's row of the Explorer, as a person chooses one before pressing a key.</summary>
     private static void Choose(MainWindow window, string project)
     {
-        Point at = Centre(window, Row(window, project));
+        Point at = Centre(window, project);
         window.MouseDown(at, MouseButton.Left);
         window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
