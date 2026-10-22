@@ -771,6 +771,43 @@ window or takes the focus; it shows everything but the system's own window chrom
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
+  Podman (#403), on rootless Podman 5.7 in the Ubuntu VM, both ways a person sets it up: Docker's CLI and Compose v2 on
+  Podman's socket (DOCKER_HOST or a context, as Podman Desktop does), and Podman alone, a `docker` that is Podman's own
+  command (podman-docker, or a link ahead on the PATH where it conflicts with Docker's CLI) whose `podman compose` runs
+  Docker's Compose v2 as its provider (Python's podman-compose does not serve: said as no Compose). On Docker's CLI,
+  Compose builds through buildx, whose builder there is a BuildKit container it starts and keeps (buildx_buildkit_default,
+  Compose's and buildx's own doing); Podman's own Compose builds with Buildah through the API. The state knows it
+  (`EngineState.IsPodman`: the server's Podman Engine component, or `PodmanCli`, a client that words its system as
+  OsArch) and whether it is `Rootless` (info). Podman's own command answers in its own JSON, which every reader takes
+  beside Docker's (`ContainerInfo.IdOf`, `First`, `ReadLabels`, `ContainerPort.Read`: ids as Id or id, names and tags as
+  lists, labels and ports as objects; events' Status, ID and Attributes at the top), has no server apart in its version
+  (the client's is the engine's, its OsArch the processor), no -L on cp (it follows a link itself), stats over several
+  lines (asked as a line of Docker's names), its info over many lines (read whole), a start time in Go's words (asked as
+  JSON), and its compose needs the API socket (said when it is not running), names its provider on every command
+  (`PODMAN_COMPOSE_WARNING_LOGS=false`) and adds a line of its own after the provider's error, which every reader of
+  Compose's error passes over (`ContainerEngine.ProviderFailed`).
+  Through Docker's CLI, Podman's list words no health and gives no address on a published port, so Docker's CLI shows
+  none (both read through inspect, `ContainerSnapshot.InspectedAsync`), and its stats cut each name's first letter (each
+  reading named by the id asked). A .NET service run as the person on rootless Podman takes `userns_mode: keep-id`, without
+  which its user is a subordinate id that reads none of what is kept for the person (the build under a 0750 home, the
+  certificate, user secrets: exit code 155, the dotnet host finding no app). Podman has no BuildKit, and Docker's buildx
+  on it would start a BuildKit container of its own: a Dockerfile goes unchecked, said once in the status bar and
+  Problems' Containers tab as one opens with the setting on (`EngineChecks.Limited`, `EngineState.Limit`). A stopped
+  Podman is said as Podman, its socket or machine to start. So a compose file or a Dockerfile runs, debugs (two services
+  at once), Hot Reloads and profiles on Podman as on Docker (ContainerRunsTests, ContainerRunDebuggingTests,
+  ContainerProfilingTests and the Mcp container classes pass with Podman alone; through Docker's CLI all but those its
+  own test images held up, last run before `Docker.Load`). Still open on Podman: a service the debugger could not attach
+  to after its restart, which Stop then does not take down (both ways), and with Podman alone a service's Debug taking
+  the run down and tools from a downloaded release, or copied in for a build naming Windows paths, ending in "exec format
+  error" (ContainerServicesTests, ContainerDebuggingTests). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
+  relabelling (`:z`) or `label=disable`, untested on Ubuntu's AppArmor; rootless Docker, whose user mapping is the same
+  with no keep-id. Docker's CLI 29 `docker run` on Podman 5.7's socket makes a container of one process (pids.max 1;
+  Compose's get Podman's 2048), so the tests' own runs take `Docker.AnyPids`, their own builds `Docker.Load` (buildx's
+  BuildKit container keeps a build in its cache), and they compare an image Passenger tagged by its short name
+  (`Docker.Short`: Podman names one built here docker.io/library/…) and a command without Podman's init
+  (`Docker.WithoutInit`), read a published port however Compose words its address (":port" there), and take the
+  container's own log line over Buildah's echo of the CMD it builds. Every `docker rm -f` waits Podman's 10 s for a
+  container that ignores SIGTERM, where Docker kills at once.
 - `src/Passenger.App/Aspire` (#338): Aspire's AppHosts run with Passenger as their IDE. `AspireController`
   (`ProjectSession.Aspire`) owns the folder's AppHosts and the project resources their orchestrator asks the IDE to start,
   through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
