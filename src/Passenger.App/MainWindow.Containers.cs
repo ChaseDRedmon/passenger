@@ -101,23 +101,30 @@ public partial class MainWindow
     }
 
     /// <summary>The engine's state, said in the status bar while it cannot serve (with where a click starts it, or shows
-    /// what to do) and listed in Problems' Containers tab, which empties once it can.</summary>
-    private void ShowEngine(EngineState state)
+    /// what to do) and listed in Problems' Containers tab, which empties once it can; when a Dockerfile went unchecked, what
+    /// the engine cannot check of it too (Podman's missing BuildKit, while Settings would check with it).</summary>
+    private void ShowEngine(EngineState state, bool dockerfile = false)
     {
         UiThread.Check();
+        string where = state.Context ?? state.EngineName;
         if (state.Problem is not { } problem)
         {
-            Bottom.Problems.ShowContainers([]);
+            bool limited = dockerfile && settings.BuildKitChecks && state.Limit is not null;
+            Bottom.Problems.ShowContainers(limited ? [new Problem(ProblemSeverity.Warning, state.Limit!, null, null, new TextPosition(0, 0), where)] : []);
+            if (limited)
+            {
+                status.Say(state.Limit!, ProblemSeverity.Warning, StatusPlace.Problems(Dock, Bottom.Problems, ProblemsTab.Containers));
+            }
             return;
         }
-        Bottom.Problems.ShowContainers([new Problem(ProblemSeverity.Warning, problem, null, null, new TextPosition(0, 0), state.Context ?? "Docker")]);
+        Bottom.Problems.ShowContainers([new Problem(ProblemSeverity.Warning, problem, null, null, new TextPosition(0, 0), where)]);
         status.Say(problem, ProblemSeverity.Warning, EnginePlace(state));
     }
 
-    /// <summary>Where a click on the engine's problem goes: Docker Desktop started, where it is installed and the engine is
+    /// <summary>Where a click on the engine's problem goes: Docker Desktop started, where it is installed and Docker is
     /// not running; otherwise Problems' Containers tab, which says what to do.</summary>
     private StatusPlace EnginePlace(EngineState state) =>
-        state.Status == EngineStatus.NotRunning && EngineState.DesktopApp is { } desktop
+        state is { Status: EngineStatus.NotRunning, IsPodman: false } && EngineState.DesktopApp is { } desktop
             ? new StatusPlace("start Docker Desktop", () => StartDesktop(desktop))
             : StatusPlace.Problems(Dock, Bottom.Problems, ProblemsTab.Containers);
 
@@ -155,6 +162,13 @@ public partial class MainWindow
                 if (session == next)
                 {
                     Bottom.Problems.ShowContainerFiles(web.Checks.Problems);
+                }
+            };
+            web.Checks.Limited += (_, state) =>
+            {
+                if (session == next)
+                {
+                    ShowEngine(state, dockerfile: true);
                 }
             };
         }
