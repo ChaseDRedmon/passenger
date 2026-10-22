@@ -42,13 +42,22 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     }
 
     [AvaloniaFact]
-    public void A_connection_warning_offers_a_native_reference_fix_and_undo_restores_the_sources()
+    public void Connection_completion_offers_only_connected_resources_and_a_connection_warning_offers_a_native_reference_fix_undo_takes_back()
     {
         string host = File.ReadAllText(project.PathOf("Host/Program.cs"));
         string service = File.ReadAllText(project.PathOf("Api/Program.cs"));
         MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
         window.Confirm = (_, _, _) => Task.FromResult(true);
         WaitForMissing(window, "api", "db");
+
+        // Completion of a connection's name offers only the resources the AppHost connects the service to.
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("connected"), "the connected database name to be offered");
+        Assert.DoesNotContain("db", window.Assist.CompletionLabels);
+        Assert.DoesNotContain("worker", window.Assist.CompletionLabels);
+        Ui.Press(window, "ESCAPE");
+
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"d");
         Ui.Run(window, AppActions.QuickFix);
         Choose(window, "Add WithReference(db) to api");
@@ -64,20 +73,6 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         Ui.Settle();
         Assert.Equal(service, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
         WaitForMissing(window, "api", "db");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Connection_completion_offers_only_connected_connection_resources()
-    {
-        MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
-        WaitForMissing(window, "api", "db");
-        Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"");
-        Ui.Run(window, AppActions.Complete);
-        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("connected"), "the connected database name to be offered");
-        Assert.DoesNotContain("db", window.Assist.CompletionLabels);
-        Assert.DoesNotContain("worker", window.Assist.CompletionLabels);
-        Ui.Press(window, "ESCAPE");
         window.Close();
     }
 

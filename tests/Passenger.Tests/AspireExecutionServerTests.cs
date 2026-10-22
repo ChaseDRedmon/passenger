@@ -258,10 +258,10 @@ public sealed class AspireExecutionServerTests
         notifications.Abort();
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Body_total_deadline_elapsed_rejects_fixed_and_chunked_trickles_after_ten_real_seconds(bool chunked)
+    /// <summary>A body trickled a byte every four seconds, fixed in length on one connection and chunked on another at the same
+    /// time, is refused once the ten seconds the server gives a whole body have passed, and nothing is launched.</summary>
+    [Fact]
+    public async Task Body_total_deadline_elapsed_rejects_fixed_and_chunked_trickles_after_ten_real_seconds()
     {
         int calls = 0;
         await using AspireExecutionServer server = await AspireExecutionServer.StartAsync((launch, _) =>
@@ -269,17 +269,22 @@ public sealed class AspireExecutionServerTests
             Interlocked.Increment(ref calls);
             return Task.FromResult(new AspireProjectSession(launch.SessionId, 1));
         }, (_, _) => Task.CompletedTask, Cancel);
-        using Wire wire = await Wire.Connect(server.Port);
-        string framing = chunked ? "Transfer-Encoding: chunked\r\n" : "Content-Length: 100\r\n";
-        await wire.Write(Head(server, "PUT", $"/run_session?api-version={Version(server)}", "Content-Type: application/json\r\nExpect: 100-continue\r\n" + framing));
-        Assert.Equal(100, await wire.Status());
+        using Wire fixedLength = await Wire.Connect(server.Port);
+        using Wire chunked = await Wire.Connect(server.Port);
+        foreach ((Wire wire, string framing) in new[] { (fixedLength, "Content-Length: 100\r\n"), (chunked, "Transfer-Encoding: chunked\r\n") })
+        {
+            await wire.Write(Head(server, "PUT", $"/run_session?api-version={Version(server)}", "Content-Type: application/json\r\nExpect: 100-continue\r\n" + framing));
+            Assert.Equal(100, await wire.Status());
+        }
         for (int i = 0; i < 3; i++)
         {
-            await wire.Write(chunked ? "1\r\nx\r\n" : "x");
+            await fixedLength.Write("x");
+            await chunked.Write("1\r\nx\r\n");
             await Waiting.ForAsync(TimeSpan.FromSeconds(4),
                 "Trickle body bytes at four-second intervals across the production's ten-second total deadline", Cancel);
         }
-        Assert.Equal(408, await wire.Status());
+        Assert.Equal(408, await fixedLength.Status());
+        Assert.Equal(408, await chunked.Status());
         Assert.Equal(0, Volatile.Read(ref calls));
     }
 

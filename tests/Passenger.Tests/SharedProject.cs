@@ -1,13 +1,15 @@
 using Passenger.App;
 using Passenger.App.CSharp;
+using Passenger.Core;
 
 namespace Passenger.Tests;
 
 /// <summary>A small project a test class's windows share, restored once, and the warm language server they share on it:
 /// each window takes up the server the last one left running (<see cref="WarmServer"/>) rather than start its own. Each
 /// test starts on the project as written (<see cref="Reset"/>, from its class's constructor): what a test changed is put
-/// back and what it added removed, and a server that saw any change, even one undone since, or that a failed test left
-/// (<see cref="OpenWindows"/>), is ended, so the next window starts one that loads the files as written.</summary>
+/// back and what it added removed; a server that saw a file come or go, or a project file change, even one undone since,
+/// or that a failed test left (<see cref="OpenWindows"/>), is ended, so the next window starts one that loads the files as
+/// written, while one whose documents a test only rewrote is kept once it holds them as written again.</summary>
 public abstract class SharedProject : IDisposable
 {
     /// <summary>The project's own files as written, by path, outside what restores and builds write (bin and obj).</summary>
@@ -82,16 +84,19 @@ public abstract class SharedProject : IDisposable
     }
 
     /// <summary>The project as written for the test about to run: what a test before it changed on disk written back, what
-    /// it added removed, and the shared server ended if any of the files changed since it last loaded them.</summary>
+    /// it added removed. The shared server is ended if a file came or went, or a file it holds no document of changed (a
+    /// project file); one whose documents a test only rewrote is kept once it holds them as written again, which it reads
+    /// through its own watcher (<see cref="WarmServer.HoldsAsync"/>), and ended if it does not within <see cref="Rereading"/>.</summary>
     public void Reset()
     {
-        bool touched = changed;
+        bool structure = changed;
+        HashSet<string> rewritten = new(StringComparer.Ordinal);
         foreach (string file in Directory.EnumerateFiles(Folder, "*", SearchOption.AllDirectories).Where(Own).ToList())
         {
             if (!written.ContainsKey(file))
             {
                 File.Delete(file);
-                touched = true;
+                structure = true;
             }
         }
         foreach (string folder in Directory.EnumerateDirectories(Folder, "*", SearchOption.AllDirectories).Where(Own).OrderByDescending(f => f.Length).ToList())
@@ -99,26 +104,54 @@ public abstract class SharedProject : IDisposable
             if (!folders.Contains(folder))
             {
                 Directory.Delete(folder, recursive: true);
-                touched = true;
+                structure = true;
             }
         }
         foreach ((string file, byte[] content) in written)
         {
-            if (!File.Exists(file) || !File.ReadAllBytes(file).AsSpan().SequenceEqual(content))
+            if (!File.Exists(file))
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(file)!);
                 File.WriteAllBytes(file, content);
-                touched = true;
+                structure = true;
+            }
+            else if (!File.ReadAllBytes(file).AsSpan().SequenceEqual(content))
+            {
+                File.WriteAllBytes(file, content);
+                rewritten.Add(file);
             }
         }
-        touched |= !Stamps().OrderBy(s => s.Key, StringComparer.Ordinal).SequenceEqual(stamps.OrderBy(s => s.Key, StringComparer.Ordinal));
-        if (touched)
+        List<string> retimed = [];
+        foreach ((string path, DateTime stamp) in Stamps())
+        {
+            if (!stamps.TryGetValue(path, out DateTime before) || before != stamp)
+            {
+                // A file written and put back by its test; or a folder's time.
+                if (written.ContainsKey(path))
+                {
+                    rewritten.Add(path);
+                }
+                else
+                {
+                    retimed.Add(path);
+                }
+            }
+        }
+        // A folder's time is a file that came or went there, but for the temporary file a save writes beside a file and
+        // renames over it (AtomicFile), which no project globs: a folder none of whose files was rewritten had one come and go.
+        structure |= retimed.Any(folder => !rewritten.Any(file => PathNames.Same(Path.GetDirectoryName(file)!, folder)));
+        bool kept = !structure && (rewritten.Count == 0
+            || Task.Run(() => Server.HoldsAsync(rewritten.ToDictionary(file => file, File.ReadAllText, StringComparer.Ordinal), Rereading.Scaled())).GetAwaiter().GetResult());
+        if (!kept)
         {
             Drop();
-            stamps = Stamps();
-            changed = false;
         }
+        stamps = Stamps();
+        changed = false;
     }
+
+    /// <summary>How long a kept server has to read again the files a test rewrote, through its own watcher.</summary>
+    private static readonly TimeSpan Rereading = TimeSpan.FromSeconds(10);
 
     /// <summary>Ends the shared server and removes the project; a fixture that holds more (a stand-in feed) ends it too.</summary>
     public virtual void Dispose()

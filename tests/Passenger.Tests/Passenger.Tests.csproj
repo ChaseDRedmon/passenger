@@ -33,11 +33,25 @@
     <PackageDownload Include="Avalonia.Templates" Version="[$(AvaloniaTemplatesVersion)]" />
     <PackageDownload Include="Aspire.ProjectTemplates" Version="[$(AspireTemplatesVersion)]" />
     <PackageDownload Include="Aspire.AppHost.Sdk" Version="[$(AspireTemplatesVersion)]" />
-    <PackageDownload Include="Aspire.Dashboard.Sdk.$(NETCoreSdkRuntimeIdentifier)" Version="[$(AspireTemplatesVersion)]" />
-    <PackageDownload Include="Aspire.Hosting.Orchestration.$(NETCoreSdkRuntimeIdentifier)" Version="[$(AspireTemplatesVersion)]" />
     <AssemblyMetadata Include="NuGetPackageRoot" Value="$(NuGetPackageRoot)" />
     <AssemblyMetadata Include="AvaloniaTemplatesVersion" Value="$(AvaloniaTemplatesVersion)" />
     <AssemblyMetadata Include="AspireTemplatesVersion" Value="$(AspireTemplatesVersion)" />
+  </ItemGroup>
+
+  <!-- Aspire's dashboard and orchestrator (DCP) for this machine, about 900 MB in the package cache (#400), which only a test
+       that runs an AppHost needs: downloaded where PassengerAspireRuntime is true (a property, or an environment variable of
+       that name, which the person or CI sets). Without them every AppHost the run restores leaves them out
+       (SkipAddAspireDefaultReferences, TestRun), and a test that would run one skips, saying how to have them
+       (AspireApp.Unavailable). -->
+  <PropertyGroup>
+    <PassengerAspireRuntime Condition="'$(PassengerAspireRuntime)' != 'true'">false</PassengerAspireRuntime>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(PassengerAspireRuntime)' == 'true'">
+    <PackageDownload Include="Aspire.Dashboard.Sdk.$(NETCoreSdkRuntimeIdentifier)" Version="[$(AspireTemplatesVersion)]" />
+    <PackageDownload Include="Aspire.Hosting.Orchestration.$(NETCoreSdkRuntimeIdentifier)" Version="[$(AspireTemplatesVersion)]" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="AspireRuntime" Value="$(PassengerAspireRuntime)" />
   </ItemGroup>
 
   <!-- The official container-free net10.0 starter's graph, available in the package cache before tests run.

@@ -1027,10 +1027,12 @@ public static class Ui
         return (top, point);
     }
 
-    /// <summary>A person's window shown on a folder, once the folder's opening work has landed.</summary>
-    public static Passenger.App.MainWindow OpenFolder(string folder, double width = 1200, double height = 800)
+    /// <summary>A person's window shown on a folder, once the folder's opening work has landed; without the C# language
+    /// server for a test that asks nothing of C# (<see cref="Passenger.App.MainWindow.StartsLanguageServer"/>), which then
+    /// waits for no server's start, load or restore.</summary>
+    public static Passenger.App.MainWindow OpenFolder(string folder, double width = 1200, double height = 800, bool languageServer = true)
     {
-        Passenger.App.MainWindow window = new() { Width = width, Height = height };
+        Passenger.App.MainWindow window = new() { Width = width, Height = height, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(folder);
         Settle();
@@ -1593,23 +1595,32 @@ public static class Restore
 /// fixture).</summary>
 public sealed class RestoredFolders : IDisposable
 {
-    /// <summary>How many are made and restored at once.</summary>
+    /// <summary>The most made and restored at once.</summary>
     private const int Batch = 4;
 
     private readonly Queue<string> ready = new();
 
+    /// <summary>The tests that have taken a folder, by id.</summary>
+    private readonly HashSet<string> takers = new(StringComparer.Ordinal);
+
     /// <summary>A folder whose name starts with <paramref name="name"/>, written by <paramref name="write"/> (which gives what
     /// to restore in it) and restored; from a test class's constructor or its test, since those made with it for later
-    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>).</summary>
+    /// tests are none of this test's own (<see cref="TestFolders.Unowned"/>). A batch is as many as the class has tests yet
+    /// to take one (<see cref="StillToTake"/>), four at most, so a class of three tests restores three.</summary>
     public string Take(string name, Func<string, string> write)
     {
+        int left = StillToTake();
+        if (TestContext.Current.Test?.UniqueID is { } test)
+        {
+            takers.Add(test);
+        }
         if (ready.Count == 0)
         {
             List<string> made = [];
             try
             {
                 List<string> targets = [];
-                for (int i = 0; i < Batch; i++)
+                for (int i = 0; i < Math.Min(Batch, left); i++)
                 {
                     string folder = TestFolders.Unowned(name);
                     made.Add(folder);
@@ -1628,6 +1639,22 @@ public sealed class RestoredFolders : IDisposable
             made.ForEach(ready.Enqueue);
         }
         return ready.Dequeue();
+    }
+
+    /// <summary>How many of the class's tests have yet to take a folder, this one among them: its tests (a theory's inline
+    /// rows each, its other data a batch's worth) less those that took one. At least one; an overcount restores a folder
+    /// no test takes, an undercount (a test taking two) only restores again later.</summary>
+    private int StillToTake()
+    {
+        if (TestContext.Current.TestClass is not Xunit.v3.IXunitTestClass { Class: { } type })
+        {
+            return Batch;
+        }
+        int tests = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(method => method.GetCustomAttributes().Any(attribute => attribute is Xunit.v3.IFactAttribute))
+            .Sum(method => method.GetCustomAttributes().OfType<Xunit.v3.IDataAttribute>().Sum(data => data is InlineDataAttribute ? 1 : Batch) is var rows and > 0 ? rows : 1);
+        string? test = TestContext.Current.Test?.UniqueID;
+        return Math.Max(1, tests - takers.Count(taker => taker != test));
     }
 
     public void Dispose()

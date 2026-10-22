@@ -181,14 +181,18 @@ jobs:
           fi
 
       # The deal goes in the log. Before any test runs, what each shard's settings select is listed and every test of
-      # the suite must be in exactly one. The suite's listing and the shards' settings go with the results: the summary
-      # checks the results against the listing, and a person sees what each shard ran. A listing that names no test, or
-      # says discovery failed (xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo, xunit #3576), is
-      # listed again, and the step fails with what dotnet printed only when the last of three tries is no better.
+      # the suite must be in exactly one: by the first shard alone, since every shard deals the same from the same suite
+      # and the filters select alike everywhere, while each listing costs a VSTest start and a discovery (the summary's
+      # cover finds a shard that listed a different suite). The suite's listing and the shards' settings go with the
+      # results: the summary checks the results against the listing, and a person sees what each shard ran. A listing
+      # that names no test, or says discovery failed (xunit 3.2's runner can spoil its answer to the adapter's
+      # -assemblyInfo, xunit #3576), is listed again, and the step fails with what dotnet printed only when the last of
+      # three tries is no better.
       - name: Deal the tests to the shards
         env:
           SYSTEM: ${{ matrix.system }}
           SHARDS: ${{ matrix.shards }}
+          SHARD: ${{ matrix.shard }}
         run: |
           python=python3
           [ "$RUNNER_OS" != Windows ] || python=python
@@ -196,6 +200,7 @@ jobs:
           mkdir -p "$results/shards"
           "$python" -I tools/test-shards.py list "$results/suite.txt"
           "$python" -I tools/test-shards.py split "$results/suite.txt" --system "$SYSTEM" --of "$SHARDS" --out "$results/shards"
+          [ "$SHARD" = 1 ] || exit 0
           for number in $(seq 1 "$SHARDS"); do
             "$python" -I tools/test-shards.py list "$results/shards/listed-$number.txt" \
               --settings "$results/shards/shard-$number.runsettings"
