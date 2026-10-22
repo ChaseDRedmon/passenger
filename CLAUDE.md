@@ -307,7 +307,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   set for Compose's interpolation; `$$VAR` is no variable), an env_file to its file, an image to its registry's page
   through `CodeAssist.Browse`), tried before the
   server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`; a Dockerfile's FROM image that names no
-  stage goes to its page too (`CodeAssist.FromImageAt`). The Structure window shows the web servers'
+  stage goes to its page too (`CodeAssist.FromImageAt`). `ComposeNames` is completion of the file's own names, from the
+  same outline, where a service names one (the place read by indentation as typed, half a line too, `ComposeSpot`): its
+  other services under depends_on (a list or a mapping), links, volumes_from, network_mode's `service:` and extends (the
+  services of the file an extends names), its volumes under a service's volumes (a short entry's source, a long one's),
+  its networks, secrets and configs under theirs; never the service itself nor a name its list holds on another line.
+  `CodeAssist.ComposeCompletionAsync` lists them before the server's items, which are kept but for one of the same label
+  or one that would replace another stretch than the name's. The Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
   The Dockerfile server completes a FROM image's tags by asking Docker Hub itself, only while Settings' Complete image
   tags from Docker Hub (its Docker page) is on: it runs with Passenger's preload (`node --require` of `Web/docker-hub.cjs`,

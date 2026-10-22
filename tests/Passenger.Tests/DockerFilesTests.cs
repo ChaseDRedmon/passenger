@@ -19,7 +19,8 @@ namespace Passenger.Tests;
 
 /// <summary>Dockerfiles and compose files through the window, on a solution of an ASP.NET Core app using Npgsql, a worker
 /// and a library: a Dockerfile completes and is checked by the Dockerfile server, a compose file by the YAML server with
-/// the Compose specification's schema, and Go to Declaration in a compose file goes where Passenger finds each name leads;
+/// the Compose specification's schema, completes the names the file declares where a service names them, and Go to
+/// Declaration in a compose file goes where Passenger finds each name leads;
 /// Add > Docker Support writes a project's Dockerfile and the context's .dockerignore, or sets the SDK's container
 /// properties, and Add > Docker Compose the solution's compose.yaml, each one command Undo takes back. The servers' tests
 /// skip, saying why, without a Node.js that runs them; the folder is never restored (its nuget.config names no feed that
@@ -227,6 +228,132 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             window.Close();
             app.Reset();
         }
+    }
+
+    /// <summary>Where a service names something the file declares, completion lists those names first, read from the file's
+    /// own model: its other services under depends_on (a list or a mapping), links, volumes_from, network_mode's service:
+    /// and extends (the services of the file an extends names), its volumes under a service's volumes (a short entry's source
+    /// or a long one's), its networks, secrets and configs under theirs; never the service itself, nor a name its list holds
+    /// already, nor names of another kind, and none where no name is typed (an image).</summary>
+    [AvaloniaFact]
+    public void A_compose_file_completes_the_names_it_declares_where_a_service_names_them_and_no_others()
+    {
+        Shop.SkipWithoutNode(yaml: true);
+        string compose = app.PathOf("ops2/compose.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(compose)!);
+        File.WriteAllText(compose, Names);
+        MainWindow window = app.Open("ops2/compose.yaml");
+        try
+        {
+            Offers(window, "      - api\n    links", "      - api\n      - ‸\n    links", ["cache"]);
+            Offers(window, "      - api\n    links", "      - api\n      - ca‸\n    links", ["cache"]);
+            Offers(window, "        condition: service_started\n", "        condition: service_started\n      w‸\n", ["web"]);
+            Offers(window, "    links: [api]", "    links: [api, ‸]", ["cache"]);
+            Offers(window, "    volumes_from:\n      - api", "    volumes_from:\n      - api\n      - ‸", ["cache"]);
+            Offers(window, "    network_mode: service:api", "    network_mode: service:‸", ["api", "web"]);
+            Offers(window, "      service: base", "      service: ‸", ["base"], "service in ../ops/common.yaml");
+            Offers(window, "      - pgdata:/srv", "      - ‸:/srv", ["pgdata"]);
+            Offers(window, "        source: uploads", "        source: ‸", ["uploads"]);
+            Offers(window, "      front:\n    secrets", "      front:\n      ‸\n    secrets", ["back"]);
+            Offers(window, "      - token\n", "      - token\n      - ‸\n", ["signing"]);
+            Offers(window, "      - source: nginx", "      - source: ‸", ["nginx", "proxy"]);
+            Offers(window, "    image: nginx:1.27", "    image: ‸", []);
+
+            // Chosen, a name goes in for what was typed of it.
+            Offers(window, "    volumes_from:\n      - api", "    volumes_from:\n      - api\n      - ca‸", ["cache"], chosen: "    volumes_from:\n      - api\n      - cache\n");
+        }
+        finally
+        {
+            window.Close();
+            app.Reset();
+        }
+    }
+
+    /// <summary>A compose file whose services name each kind of thing it declares, for completion to be asked in.</summary>
+    private const string Names = """
+        services:
+          web:
+            image: nginx:1.27
+            depends_on:
+              - api
+            links: [api]
+            volumes_from:
+              - api
+            volumes:
+              - pgdata:/srv
+              - type: volume
+                source: uploads
+                target: /cache
+            networks:
+              front:
+            secrets:
+              - token
+            configs:
+              - source: nginx
+          api:
+            image: busybox:1.37
+            extends:
+              file: ../ops/common.yaml
+              service: base
+          cache:
+            image: redis:7
+            network_mode: service:api
+            depends_on:
+              api:
+                condition: service_started
+        volumes:
+          pgdata:
+          uploads:
+        networks:
+          front:
+          back:
+        secrets:
+          token:
+            file: ./token.txt
+          signing:
+            file: ./signing.txt
+        configs:
+          nginx:
+            file: ./nginx.conf
+          proxy:
+            file: ./proxy.conf
+
+        """;
+
+    /// <summary>The file's own names completion lists with the caret at ‸ in <paramref name="typed"/>, typed in place of
+    /// <paramref name="written"/>: <paramref name="expected"/>, in order, each said to be its kind (or <paramref name="said"/>);
+    /// with <paramref name="chosen"/>, the first is chosen and the text then holds it.</summary>
+    private static void Offers(MainWindow window, string written, string typed, string[] expected, string? said = null, string? chosen = null)
+    {
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Contains(written, Names, StringComparison.Ordinal);
+        string text = Names.Replace(written, typed.Replace("‸", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+        editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, text)]);
+        editor.Selections = SelectionSet.Single(Names.IndexOf(written, StringComparison.Ordinal) + typed.IndexOf('‸', StringComparison.Ordinal));
+        Ui.Settle();
+        Ui.Run(window, AppActions.Complete);
+        string[] kinds = ["service", "volume", "network", "secret", "config"];
+        string[] Own() => [.. window.Assist.CompletionDetails.Where(d => kinds.Any(k => d.Detail == k || d.Detail.StartsWith(k + " in ", StringComparison.Ordinal))).Select(d => d.Label)];
+        if (expected.Length > 0)
+        {
+            Ui.WaitFor(() => Own().Length > 0, $"the file's names after '{typed}'");
+            Assert.Equal(expected, Own());
+            Assert.Equal(expected, window.Assist.CompletionLabels.Take(expected.Length));
+            string kind = said ?? window.Assist.CompletionDetails[0].Detail;
+            Assert.All(window.Assist.CompletionDetails.Take(expected.Length), d => Assert.Equal(kind, d.Detail));
+        }
+        else
+        {
+            Ui.Settle();
+            Assert.True(Own().Length == 0, $"'{typed}' offered the file's names [{string.Join(", ", Own())}]");
+        }
+        if (chosen is null)
+        {
+            Ui.Press(window, "ESCAPE");
+            return;
+        }
+        Ui.Press(window, "ENTER");
+        Assert.Contains(chosen, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
     }
 
     [AvaloniaFact]

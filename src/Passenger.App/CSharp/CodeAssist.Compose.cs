@@ -82,6 +82,36 @@ public sealed partial class CodeAssist
     [System.Text.RegularExpressions.GeneratedRegex(@"^\s*FROM\s+(?:--\S+\s+)*(?<image>[^\s]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromLine();
 
+    /// <summary>The names a compose file offers where one is typed (<see cref="ComposeNames"/>: its services, volumes,
+    /// networks, configs and secrets, read from the YAML server's outline of the text as it stands), as completion lists
+    /// them before the server's own, with where the name they complete begins; null where none are typed.</summary>
+    private async Task<(int Start, IReadOnlyList<CompletionItem> Items)?> ComposeCompletionAsync(WebDocument web, LspDocument lsp, TextSnapshot text, int caret)
+    {
+        // The outline is asked for only where a name of the file's is typed.
+        if (editors.Active is not { } document || !IsComposeFile(web, document) || ComposeNames.Spot(text, caret) is not { } spot
+            || ComposeNames.Takes(spot) is not (_, int start))
+        {
+            return null;
+        }
+        IReadOnlyList<DocumentSymbol> outline = await lsp.OutlineAsync();
+        IReadOnlyList<ComposeName> names = ComposeNames.At(document.Path, text, outline, spot, ServerPlaces.Texts(editors));
+        if (names.Count == 0)
+        {
+            return null;
+        }
+        return (start, [.. names.Select(n => new CompletionItem
+        {
+            Label = n.Name,
+            Kind = ComposeItemKind,
+            Detail = n.File is null ? n.Kind : $"{n.Kind} in {n.File}",
+            // Before the server's items alike matched, which sort by their own words.
+            SortText = " " + n.Name,
+        })]);
+    }
+
+    /// <summary>The kind a compose file's own names are listed as: a variable's, the file's own declarations.</summary>
+    private const int ComposeItemKind = 6;
+
     /// <summary>Whether a file is a compose file the YAML server reads, whose declarations Passenger finds first.</summary>
     private static bool IsComposeFile(WebDocument web, OpenDocument document) =>
         web.Kind == WebServerKind.Yaml && ComposeDeclarations.IsCompose(document.Path);

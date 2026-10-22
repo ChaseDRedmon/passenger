@@ -519,8 +519,18 @@ public sealed partial class CodeAssist
         TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
+            Web.WebDocument? web = WebCurrent;
+            // A compose file's own names where one is typed, merged with the server's by label, ahead of them.
+            (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;
             (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token, incomplete);
-            if (cancel.IsCancellationRequested || list is null || list.Items.Count == 0)
+            IReadOnlyList<CompletionItem> served = list?.Items ?? [];
+            if (named is { } own)
+            {
+                HashSet<string> labels = [.. own.Items.Select(i => i.Label)];
+                // A server's item that would replace another stretch than the name's could not go in where the name does.
+                served = [.. served.Where(i => !labels.Contains(i.Label) && (i.TextEdit is not { } replaced || lsp.OffsetOf(replaced.Range.Start) == own.Start))];
+            }
+            if (cancel.IsCancellationRequested || (served.Count == 0 && named is null))
             {
                 if (!cancel.IsCancellationRequested)
                 {
@@ -528,10 +538,9 @@ public sealed partial class CodeAssist
                 }
                 return;
             }
-            Web.WebDocument? web = WebCurrent;
-            int start = list.Items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
+            int start = named?.Start ?? (served.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
                 ? lsp.OffsetOf(edit.Range.Start)
-                : lsp.IsRazor ? RazorWordStart(caret, list.Items) : web is not null ? WebWordStart(web, caret) : WordStart(caret);
+                : lsp.IsRazor ? RazorWordStart(caret, served) : web is not null ? WebWordStart(web, caret) : WordStart(caret));
             // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share: C#'s.
             TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
             templatesOffered.Clear();
@@ -545,10 +554,10 @@ public sealed partial class CodeAssist
             {
                 postfixOffered[new CompletionItem { Label = postfix.Name, Kind = 15, Detail = postfix.Example, SortText = "~" + postfix.Name }] = (postfix, target);
             }
-            open = new Completion([.. list.Items, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
-                list.ItemDefaults?.CommitCharacters ?? [], list.IsIncomplete)
+            open = new Completion([.. named?.Items ?? [], .. served, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
+                list?.ItemDefaults?.CommitCharacters ?? [], list?.IsIncomplete ?? false)
             {
-                Tail = web is not null ? Tail(asked, list.Items, caret) : string.Empty,
+                Tail = web is not null ? Tail(asked, served, caret) : string.Empty,
                 Lead = web is not null && start < caret && caret <= asked.Length ? asked.GetText(start, caret - start) : string.Empty,
             };
             Filter();
