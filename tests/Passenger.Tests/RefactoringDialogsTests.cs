@@ -13,8 +13,8 @@ namespace Passenger.Tests;
 
 /// <summary>Rider's refactorings that ask their options in a dialog, each through its own keys and its dialog's controls on
 /// a real project, computed by Passenger's extension in the real language server: Change Signature, Extract Interface,
-/// Move to Another File and Move to Namespace. Each leaves a project that builds, and Undo takes each back whole.</summary>
-public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, IDisposable
+/// Move to Another File, Move to Namespace, Pull Members Up and Push Members Down; Undo takes each back whole.</summary>
+public sealed class RefactoringDialogsTests
 {
     private const string Calc = "namespace Shop;\n\npublic static class Calc\n{\n    public static int Scale(int value, int factor, int unused) => value * factor;\n\n"
         + "    public static int Twice(int value) => Scale(value, 2, 0);\n}\n";
@@ -38,28 +38,42 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
 
     private const string Cat = "namespace Shop;\n\npublic class Cat : Animal\n{\n    public bool Purrs => true;\n}\n";
 
-    private readonly string folder;
+    private string folder = string.Empty;
 
-    public RefactoringDialogsTests(RestoredFolders folders) => folder = PathNames.Canonical(folders.Take("refactorings-", made =>
+    /// <summary>Every dialog's refactoring made in one window on one project, each through its own keys or menu item and
+    /// its dialog's controls, and each taken back whole by Undo before the next: the project and its language server are
+    /// made once, and no refactoring touches a closed file another wrote a moment before (which a refactoring refuses,
+    /// WorkspaceEdits.StaleAsync). Each file a refactoring changes is checked whole.</summary>
+    [AvaloniaFact]
+    public void Each_refactoring_dialog_changes_every_file_it_must_and_undo_takes_each_back_whole()
     {
-        string project = PathNames.Canonical(made);
-        File.WriteAllText(Path.Combine(project, "Shop.csproj"), TestProjects.Library("<Nullable>enable</Nullable>"));
+        folder = PathNames.Canonical(TestFolders.Create("refactorings-"));
+        File.WriteAllText(PathOf("Shop.csproj"), TestProjects.Library("<Nullable>enable</Nullable>"));
         (string Name, string Text)[] files = [("Calc.cs", Calc), ("Till.cs", Till), ("Order.cs", Order), ("OrderBook.cs", OrderBook),
             ("Report.cs", Report), ("Shapes.cs", Shapes), ("Animal.cs", Animal), ("Dog.cs", Dog), ("Cat.cs", Cat)];
         foreach ((string name, string text) in files)
         {
-            File.WriteAllText(Path.Combine(project, name), text);
+            File.WriteAllText(PathOf(name), text);
         }
-        return project;
-    }));
-
-    public void Dispose() => TestFolders.Delete(folder);
-
-    [AvaloniaFact]
-    public void Change_signature_adds_removes_and_reorders_parameters_and_every_call_passes_its_arguments_in_the_new_order()
-    {
+        ChildResult restored = Restore.Run(folder);
+        Assert.True(restored.Succeeded, $"The project did not restore:\n{restored.Output}{restored.Error}");
         MainWindow window = Open("Calc.cs");
         List<(string Title, string Text)> asked = Answer(window);
+
+        ChangeSignature(window, asked);
+        ExtractInterface(window, asked);
+        MoveToNamespace(window, asked);
+        MoveToAnotherFile(window, asked);
+        PushMembersDown(window, asked);
+        PullMembersUp(window, asked);
+        window.Close();
+    }
+
+    /// <summary>Change Signature adds, removes and reorders parameters, and every call passes its arguments in the new order.</summary>
+    private void ChangeSignature(MainWindow window, List<(string Title, string Text)> asked)
+    {
+        asked.Clear();
+        window.OpenFile(PathOf("Calc.cs"));
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "int Sca");
         Ui.Run(window, AppActions.ChangeSignature);
         ChangeSignatureDialog dialog = Shown<ChangeSignatureDialog>(window, "Change Signature");
@@ -91,7 +105,6 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal(calc, window.EditorArea.Active?.Text.Snapshot.ToString());
         Assert.Equal(till, File.ReadAllText(PathOf("Till.cs")));
         Assert.StartsWith("Changed the signature of Calc.Scale in 2 files", window.Status, StringComparison.Ordinal);
-        Builds(window, "Change Signature");
 
         // Undo in the editor takes back the declaration and every call at once, asked first.
         window.EditorArea.CodeEditor.Focus();
@@ -99,14 +112,13 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal([("Undo", "Undo Change Signature? It changes Calc.cs and Till.cs.")], asked);
         Assert.Equal(Calc, window.EditorArea.Active?.Text.Snapshot.ToString());
         Assert.Equal(Till, File.ReadAllText(PathOf("Till.cs")));
-        window.Close();
     }
 
-    [AvaloniaFact]
-    public void Extract_interface_makes_the_interface_of_the_members_chosen_in_a_file_of_its_own_and_the_class_implements_it()
+    /// <summary>Extract Interface makes the interface of the members chosen in a file of its own, and the class implements it.</summary>
+    private void ExtractInterface(MainWindow window, List<(string Title, string Text)> asked)
     {
-        MainWindow window = Open("Order.cs");
-        List<(string Title, string Text)> asked = Answer(window);
+        asked.Clear();
+        window.OpenFile(PathOf("Order.cs"));
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ord");
         // Rider gives it no keys: it is Refactor, Extract Interface... in the menu.
         Assert.True(window.RunFromMenu(AppActions.ExtractInterface), window.Status);
@@ -126,21 +138,19 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Contains(window.ExplorerView.Tree.Rows, r => r.Path == extracted);
         // The language server finds the new file: the class's own shows no error for the interface it now implements.
         Ui.WaitFor(() => window.CSharpService!.For(window.EditorArea.Active!)!.Diagnostics.All(d => d.Severity != 1), "the language server to take IOrder.cs in");
-        Builds(window, "Extract Interface");
 
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, EditorActions.Undo);
         Assert.Equal([("Undo", "Undo Extract Interface? It changes Order.cs and IOrder.cs.")], asked);
         Assert.False(File.Exists(extracted), "Undo left IOrder.cs");
         Assert.Equal(Order, window.EditorArea.Active?.Text.Snapshot.ToString());
-        window.Close();
     }
 
-    [AvaloniaFact]
-    public void Move_to_another_file_takes_a_type_out_of_a_file_of_several_with_the_usings_it_needs()
+    /// <summary>Move to Another File takes a type out of a file of several with the usings it needs.</summary>
+    private void MoveToAnotherFile(MainWindow window, List<(string Title, string Text)> asked)
     {
-        MainWindow window = Open("Shapes.cs");
-        List<(string Title, string Text)> asked = Answer(window);
+        asked.Clear();
+        window.OpenFile(PathOf("Shapes.cs"));
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Circ");
         Ui.Run(window, AppActions.Move);
         Assert.Equal(["Move to Another File…", "Move to Namespace…"], window.Assist.Offered);
@@ -155,21 +165,19 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
             File.ReadAllText(moved).ReplaceLineEndings("\n"));
         Assert.Equal("using System;\n\nnamespace Shop;\n\npublic class Square\n{\n    public int Side;\n}\n", window.EditorArea.Active?.Text.Snapshot.ToString());
         Assert.Equal("Moved class Circle to Circle.cs", window.Status);
-        Builds(window, "Move to Another File");
 
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, EditorActions.Undo);
         Assert.Equal([("Undo", "Undo Move to Another File? It changes Shapes.cs and Circle.cs.")], asked);
         Assert.False(File.Exists(moved), "Undo left Circle.cs");
         Assert.Equal(Shapes, window.EditorArea.Active?.Text.Snapshot.ToString());
-        window.Close();
     }
 
-    [AvaloniaFact]
-    public void Move_to_namespace_changes_a_type_s_namespace_and_gives_the_files_that_use_it_a_using_of_the_new_one()
+    /// <summary>Move to Namespace changes a type's namespace and gives the files that use it a using of the new one.</summary>
+    private void MoveToNamespace(MainWindow window, List<(string Title, string Text)> asked)
     {
-        MainWindow window = Open("Order.cs");
-        List<(string Title, string Text)> asked = Answer(window);
+        asked.Clear();
+        window.OpenFile(PathOf("Order.cs"));
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ord");
         Ui.Run(window, AppActions.Move);
         Ui.Press(window, "DOWN");
@@ -186,7 +194,6 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal("using Sales;\n\n" + OrderBook, File.ReadAllText(PathOf("OrderBook.cs")));
         Assert.Equal(Report.Replace("using Shop;\n", "using Sales;\nusing Shop;\n", StringComparison.Ordinal), File.ReadAllText(PathOf("Report.cs")));
         Assert.StartsWith("Moved class Order to namespace Sales in 3 files", window.Status, StringComparison.Ordinal);
-        Builds(window, "Move to Namespace");
 
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, EditorActions.Undo);
@@ -194,14 +201,14 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal(Order, window.EditorArea.Active?.Text.Snapshot.ToString());
         Assert.Equal(OrderBook, File.ReadAllText(PathOf("OrderBook.cs")));
         Assert.Equal(Report, File.ReadAllText(PathOf("Report.cs")));
-        window.Close();
     }
 
-    [AvaloniaFact]
-    public void Pull_members_up_moves_the_members_chosen_into_the_base_class_with_the_usings_they_need()
+    /// <summary>Pull Members Up moves the members chosen into the base class with the usings they need. Animal.cs is open
+    /// here, from Push Members Down before it, so its change is the editor's.</summary>
+    private void PullMembersUp(MainWindow window, List<(string Title, string Text)> asked)
     {
-        MainWindow window = Open("Dog.cs");
-        List<(string Title, string Text)> asked = Answer(window);
+        asked.Clear();
+        window.OpenFile(PathOf("Dog.cs"));
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Do");
         // Rider gives it no keys: it is Refactor, Pull Members Up... in the menu.
         Assert.True(window.RunFromMenu(AppActions.PullMembersUp), window.Status);
@@ -216,23 +223,21 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal("using System.Text;\n\nnamespace Shop;\n\npublic class Dog : Animal\n{\n}\n", window.EditorArea.Active?.Text.Snapshot.ToString());
         Assert.Equal("using System.Text;\n\nnamespace Shop;\n\npublic class Animal\n{\n    public string Name = \"\";\n\n    public virtual string Sound() => \"...\";\n\n"
             + "    public int Legs => 4;\n\n    public string Describe()\n    {\n        StringBuilder text = new();\n        text.Append(Name).Append(' ').Append(Legs);\n"
-            + "        return text.ToString();\n    }\n}\n", File.ReadAllText(PathOf("Animal.cs")).ReplaceLineEndings("\n"));
+            + "        return text.ToString();\n    }\n}\n", OpenText(window, "Animal.cs").ReplaceLineEndings("\n"));
         Assert.Equal("Pulled 2 members of Dog up to Animal", window.Status);
-        Builds(window, "Pull Members Up");
 
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, EditorActions.Undo);
-        Assert.Equal([("Undo", "Undo Pull Members Up? It changes Dog.cs and Animal.cs.")], asked);
+        Assert.Equal([("Undo", "Undo Pull Members Up? It changes Animal.cs and Dog.cs.")], asked);
         Assert.Equal(Dog, window.EditorArea.Active?.Text.Snapshot.ToString());
-        Assert.Equal(Animal, File.ReadAllText(PathOf("Animal.cs")));
-        window.Close();
+        Assert.Equal(Animal, OpenText(window, "Animal.cs"));
     }
 
-    [AvaloniaFact]
-    public void Push_members_down_copies_a_member_into_each_inheritor_and_made_abstract_leaves_it_abstract_in_the_base_class()
+    /// <summary>Push Members Down copies a member into each inheritor, and made abstract leaves it abstract in the base class.</summary>
+    private void PushMembersDown(MainWindow window, List<(string Title, string Text)> asked)
     {
-        MainWindow window = Open("Animal.cs");
-        List<(string Title, string Text)> asked = Answer(window);
+        asked.Clear();
+        window.OpenFile(PathOf("Animal.cs"));
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Anim");
         Assert.True(window.RunFromMenu(AppActions.PushMembersDown), window.Status);
         MembersMoveDialog dialog = Shown<MembersMoveDialog>(window, "Push Members Down");
@@ -249,7 +254,6 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal(Cat.Replace("    public bool Purrs => true;\n", "    public bool Purrs => true;\n\n    public override string Sound() => \"...\";\n", StringComparison.Ordinal),
             File.ReadAllText(PathOf("Cat.cs")).ReplaceLineEndings("\n"));
         Assert.Equal("Pushed 1 member of Animal down to 2 classes", window.Status);
-        Builds(window, "Push Members Down");
 
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, EditorActions.Undo);
@@ -257,8 +261,11 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Assert.Equal(Animal, window.EditorArea.Active?.Text.Snapshot.ToString());
         Assert.Equal(Dog, File.ReadAllText(PathOf("Dog.cs")));
         Assert.Equal(Cat, File.ReadAllText(PathOf("Cat.cs")));
-        window.Close();
     }
+
+    /// <summary>The text of a file open in the window, failing when it is not open.</summary>
+    private static string OpenText(MainWindow window, string name) =>
+        (window.EditorArea.Documents.FirstOrDefault(d => d.Name == name) ?? throw new Xunit.Sdk.XunitException($"{name} is not open")).Text.Snapshot.ToString();
 
     private MainWindow Open(string file)
     {
@@ -286,15 +293,6 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         Ui.Click(dialog.NextButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem.Length > 0, "the refactoring to be made");
         Assert.False(dialog.IsVisible, $"The dialog stayed open: {dialog.Problem}");
-    }
-
-    /// <summary>Saves every file and builds the project with the .NET command line, as a person would check it.</summary>
-    private void Builds(MainWindow window, string after)
-    {
-        Assert.True(window.EditorArea.SaveAll(), "The files could not be saved");
-        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", folder, "--no-restore", "-nologo", "-v:q"]), limit: TimeSpan.FromMinutes(3)),
-            "the project to build", TimeSpan.FromMinutes(4));
-        Assert.True(built.Succeeded, $"The project does not build after {after}:\n{built.Output}{built.Error}");
     }
 
     /// <summary>Agrees to every question the window asks, keeping each one's title and text in order.</summary>
