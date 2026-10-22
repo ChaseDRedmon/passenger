@@ -336,7 +336,7 @@ def main():
         for number, (hand, total) in enumerate(zip(hands, totals), 1):
             members = [name for unit in hand for name in units[unit]]
             lanes = [unit for unit in hand if unit.startswith("[")]
-            print(f"  Process {number}: {plural(len(members), 'class')}, about {total / 60:.0f} minutes by CI's times"
+            print(f"  Process {number}: {plural(len(members), 'class')}, about {total / 60:.1f} minutes by CI's times"
                   + (f", with {', '.join(lanes)}" if lanes else ""), flush=True)
             processes.append(Process(f"Process {number}", members, given, os.path.join(RESULTS, f"process-{number}"),
                                      side_by_side, shown=False))
