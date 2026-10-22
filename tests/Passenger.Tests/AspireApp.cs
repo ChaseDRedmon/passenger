@@ -105,11 +105,12 @@ public sealed class AspireApp : SharedProject
         AvaloniaApp.UseFeed(folder);
     }
 
-    public string Host => PathOf($"First/{Name}.AppHost/{Name}.AppHost.csproj");
-    public string CompanionHost => PathOf($"Second/{CompanionName}.AppHost/{CompanionName}.AppHost.csproj");
-    public string ApiProgram => PathOf($"First/{Name}.ApiService/Program.cs");
-    public string ApiProject => PathOf($"First/{Name}.ApiService/{Name}.ApiService.csproj");
-    public string WebProgram => PathOf($"First/{Name}.Web/Program.cs");
+    // By their real paths, as the IDE names them (macOS's temporary folder is reached through a link).
+    public string Host => PathNames.Canonical(PathOf($"First/{Name}.AppHost/{Name}.AppHost.csproj"));
+    public string CompanionHost => PathNames.Canonical(PathOf($"Second/{CompanionName}.AppHost/{CompanionName}.AppHost.csproj"));
+    public string ApiProgram => PathNames.Canonical(PathOf($"First/{Name}.ApiService/Program.cs"));
+    public string ApiProject => PathNames.Canonical(PathOf($"First/{Name}.ApiService/{Name}.ApiService.csproj"));
+    public string WebProgram => PathNames.Canonical(PathOf($"First/{Name}.Web/Program.cs"));
 
     public MainWindow OpenHost() => Open(PathOf($"First/{Name}.AppHost/AppHost.cs"));
 

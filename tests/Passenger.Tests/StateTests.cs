@@ -28,24 +28,6 @@ public sealed class StateTests : IDisposable
         TestFolders.Delete(settings);
     }
 
-    [Theory]
-    [InlineData(4)]
-    [InlineData(5)]
-    public void Project_caches_before_Aspire_metadata_are_invalidated_after_the_publish_upgrade(int version)
-    {
-        JsonObject document = new()
-        {
-            ["sdk"] = "kept-sdk",
-            ["projects"] = new JsonObject { ["Host.csproj"] = new JsonObject() },
-        };
-        foreach (Action<JsonObject> upgrade in ProjectModelCache.Upgrades.Skip(version))
-        {
-            upgrade(document);
-        }
-        Assert.False(document.ContainsKey("projects"));
-        Assert.Equal("kept-sdk", document["sdk"]!.GetValue<string>());
-    }
-
     [AvaloniaFact]
     public void A_settings_file_a_crash_cut_short_is_set_aside_said_in_the_status_bar_and_logged_and_never_written_over()
     {

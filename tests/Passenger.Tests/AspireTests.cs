@@ -454,6 +454,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         MainWindow window = OpenRunning();
         try
         {
+            Roomy(window);
             using HttpClient http = Client();
             Uri request = new(HttpUrl(Resource(window, "webfrontend")), "/passenger-test");
             Assert.Equal("5", Ui.Await(http.GetStringAsync(request), "the first cross-service trace"));
@@ -497,7 +498,18 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Assert.True(index >= 0);
         ListBoxItem row = Assert.IsType<ListBoxItem>(list.ContainerFromIndex(0));
         string geometry = $"index={index}, depth={(item as AspireView.SpanRow)?.Depth}, selectedBefore={Identity(list.SelectedItem)}";
-        Ui.Click(row, settle: false);
+        try
+        {
+            Ui.Click(row, settle: false);
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            // What covers the row says why: its list too short for it, or a pane over it.
+            Point? at = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window);
+            Visual? hit = at is { } p ? window.GetVisualAt(p) : null;
+            string chain = string.Join(" < ", hit?.GetSelfAndVisualAncestors().Take(8).Select(v => $"{v.GetType().Name}{(v is Control c && c.Classes.Count > 0 ? "." + string.Join(".", c.Classes) : "")}[{v.Bounds}]") ?? []);
+            throw new InvalidOperationException($"{error.Message}\nrow={row.Bounds} at={at} list={list.Bounds} listVisible={list.IsEffectivelyVisible}\nhit: {chain}", error);
+        }
         Press(Avalonia.Input.Key.Home);
         for (int step = 0; step < index; step++)
         {
@@ -631,7 +643,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         int[] owned = OwnedPids(window);
         Assert.True(Processes.IsRunning(oldPid) && Processes.IsRunning(webPid), "The API and frontend must be real Passenger-owned processes");
         Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(web), "/passenger-test")), "the frontend's cross-service HTTP response"));
-        ChooseResource(window, "apiservice");
+        Roomy(window);
         FindAction(window, "Show Aspire Structured logs");
         RefreshUntil(window, () => window.Aspire.StructuredLogs.Items.OfType<AspireStructuredLog>()
             .Any(log => log.Data.GetRawText().Contains("Passenger request", StringComparison.Ordinal)), "the API's structured request log");
@@ -670,7 +682,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     [AvaloniaFact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_discovered_single_file_AppHost_runs_through_the_native_window_and_stops_its_listener()
     {
-        string file = project.Write("apphost.cs", $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\n#:property AspireUseCliBundle=false\nusing Aspire.Hosting;\nusing Microsoft.Extensions.Hosting;\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n");
+        string file = PathNames.Canonical(project.Write("apphost.cs", $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\n#:property AspireUseCliBundle=false\nusing Aspire.Hosting;\nusing Microsoft.Extensions.Hosting;\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n"));
         project.Write("apphost.run.json", JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["$schema"] = "https://json.schemastore.org/launchsettings.json",
@@ -744,7 +756,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     public void A_single_file_AppHost_beside_a_project_is_refused_before_starting_a_process()
     {
         Directory.CreateDirectory(project.PathOf("Loose"));
-        string file = project.Write("Loose/apphost.cs", $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n");
+        string file = PathNames.Canonical(project.Write("Loose/apphost.cs", $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n"));
         project.Write("Loose/Sibling.csproj", TestProjects.Library());
         MainWindow window = project.OpenHost();
         Ui.WaitFor(() => window.Configurations.Any(configuration => PathNames.Same(configuration.Project, file)), "SDK directive discovery beside a project");
@@ -818,7 +830,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     public void A_saved_linked_configuration_survives_single_file_discovery_and_stops_both_real_apps()
     {
         string settings = TestFolders.Create("aspire-state-");
-        string single = project.Write("OtherDiscovered.cs", $"// discovered independently of the project host\n  #:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n");
+        string single = PathNames.Canonical(project.Write("OtherDiscovered.cs", $"// discovered independently of the project host\n  #:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n"));
         MainWindow window = Keeping(settings);
         Choose(window);
         RunConfiguration linked = window.Configuration! with { Name = "Both starters", Generated = false, LinkedAppHosts = [project.CompanionHost] };
@@ -1172,6 +1184,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>
 
     private MainWindow OpenRunning()
     {
+        // An AppHost an earlier test left running holds the ports this one's would listen on, and its services would answer.
+        Assert.True(Waiting.Until(() => Leftovers().Length == 0, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1)),
+            $"An earlier test left its AppHost's programs running:\n{string.Join("\n", Leftovers())}");
         MainWindow window = project.OpenHost();
         Choose(window);
         Ui.Run(window, AppActions.RunProgram);
@@ -1278,6 +1293,26 @@ public sealed class AspireTests : IClassFixture<AspireApp>
 
     private static AspireResource Resource(MainWindow window, string name) => Assert.Single(window.Aspire.ResourceSnapshots, resource => resource.DisplayName == name);
     private AspireResourceRun Service(MainWindow window, AspireResource resource) => Assert.IsType<AspireResourceRun>(window.AspireRuntime.FindService(new(project.Host, resource)));
+    /// <summary>Each program of the fixture's AppHosts now running: a service or AppHost by its folder, the orchestrator by the
+    /// run's Aspire home its notification socket is in.</summary>
+    private string[] Leftovers()
+    {
+        string folder = PathNames.Canonical(project.Folder);
+        return [.. Processes.Listed().Where(process => process.Value.Contains(AspireCli.Home, StringComparison.Ordinal)
+            || process.Value.Contains(folder, StringComparison.Ordinal) && (process.Value.Contains("dotnet run", StringComparison.Ordinal)
+                || process.Value.Contains("/bin/Debug/", StringComparison.Ordinal)))
+            .Select(process => $"{process.Key}: {process.Value}")];
+    }
+
+    /// <summary>The Aspire window given the room its lists need, as a person makes it: a resource chosen in it, and the window
+    /// maximized (Maximize Tool Window), since its lists share a short bottom panel with their details.</summary>
+    private static void Roomy(MainWindow window)
+    {
+        ChooseResource(window, "apiservice");
+        Ui.Run(window, AppActions.MaximizeToolWindow);
+        Ui.WaitFor(() => window.Aspire.Bounds.Height > 400, "the Aspire window maximized");
+    }
+
     private static int[] OwnedPids(MainWindow window) => [.. window.AspireRuntime.Apps.SelectMany(app =>
         new[] { app.ProcessId, app.Runner.ProcessId }.Concat(app.Services.Select(service => service.ProcessId))).OfType<int>().Distinct()];
     private static Uri HttpUrl(AspireResource resource) => resource.Data.GetProperty("urls").EnumerateArray()

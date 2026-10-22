@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -350,6 +351,69 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
                 InputItems = { new InteractionInput { Name = "attachment", Label = "Settings file", InputType = InputType.File } },
             },
         };
+    }
+
+    /// <summary>A folder's projects kept by a Passenger from before evaluations said which are AppHosts (the cache's version 5,
+    /// whose entries say nothing of it) are evaluated again as the folder opens, so its AppHost has its Aspire configuration,
+    /// rather than shown as a plain program from the cache until its project changes.</summary>
+    [AvaloniaFact]
+    public void An_AppHost_an_older_Passenger_kept_as_a_plain_project_opens_with_its_Aspire_configuration()
+    {
+        project.Reset();
+        string state = TestFolders.Create("aspire-state-");
+        try
+        {
+            MainWindow first = Keeping(state);
+            try
+            {
+                Ui.WaitFor(() => first.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration),
+                    "the stand-in AppHost's Aspire configuration");
+            }
+            finally
+            {
+                first.Close();
+            }
+            string cache = Directory.EnumerateFiles(state, "projectModels.json", SearchOption.AllDirectories).Single();
+            JsonObject kept = (JsonObject)JsonNode.Parse(File.ReadAllText(cache))!;
+            kept["version"] = 5;
+            int told = 0;
+            foreach ((string _, JsonNode? entry) in (JsonObject)kept["projects"]!)
+            {
+                told += ((JsonObject)entry!).Remove("isAspireHost") ? 1 : 0;
+            }
+            Assert.True(told > 0, $"The kept evaluations never said which project is an AppHost: {File.ReadAllText(cache)[..Math.Min(2000, new FileInfo(cache).Length is var length ? (int)length : 0)]}");
+            File.WriteAllText(cache, kept.ToJsonString());
+
+            MainWindow second = Keeping(state);
+            try
+            {
+                Assert.True(second.Session.Models.Evaluations > 0,
+                    "A folder whose kept evaluations say nothing of AppHosts was shown from them, its AppHost a plain program until it changes");
+                Ui.WaitFor(() => second.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration),
+                    "the AppHost's Aspire configuration after the older Passenger's evaluations");
+            }
+            finally
+            {
+                second.Close();
+            }
+        }
+        finally
+        {
+            TestFolders.Delete(state);
+        }
+    }
+
+    /// <summary>A window on the stand-in AppHost's folder that keeps its state, the folder's projects' evaluations among it, in a
+    /// state folder of the test's, once every project is evaluated; no C# language server.</summary>
+    private MainWindow Keeping(string state)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state, StartsLanguageServer = false };
+        window.Show();
+        window.KeepLayout();
+        window.OpenFolder(project.Folder);
+        Ui.WaitFor(() => window.Session.Models.IsComplete, "every project's evaluation");
+        Ui.Settle();
+        return window;
     }
 
     /// <summary>A window on the stand-in AppHost, run from its Aspire configuration as a person runs it, once the window has
