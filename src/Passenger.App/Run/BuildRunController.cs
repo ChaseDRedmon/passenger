@@ -713,6 +713,12 @@ public sealed partial class BuildRunController
             {
                 parts.Editors.SaveAll();
                 RunConfiguration configuration = arguments is null ? chosen : chosen with { Arguments = arguments };
+                // A start of the same AppHosts under way (Run's, as Debug begins) ends first, as a container start's does.
+                using StartTaken? taken = await TakeStartAsync([configuration.Project, .. configuration.LinkedAppHosts], work);
+                if (taken is null || session.IsEnded)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
                 if (parts.PrepareAspire is { } prepare && await prepare(configuration, work.Stopping) is { } notReady)
                 {
                     return Said(notReady);

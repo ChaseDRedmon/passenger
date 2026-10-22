@@ -5,6 +5,10 @@ using Passenger.Editor;
 
 namespace Passenger.App.Run;
 
+/// <summary>A start of a run of services under way: its action's work, which Stop and the next start of the same end, what it
+/// starts (a container run's one place, or an Aspire configuration's AppHosts), and its end.</summary>
+public sealed record StartUnderWay(Working Work, Task Ended, IReadOnlyCollection<string> Starts);
+
 /// <summary>What is done to a .NET service of a run of services (<see cref="ServiceRun"/>), written once over the model for
 /// every kind of run: the held start's attach (a session per service held, all at once, while the run comes up), Debug
 /// (restarted held and attached, kept for the run's restarts and a Rerun), Attach (as it runs), Run without Debugger (its
@@ -19,6 +23,40 @@ public sealed partial class BuildRunController
 
     /// <summary>The run of services under way, if any: the container run's.</summary>
     public ServiceRun? ServicesRun => Containers;
+
+    /// <summary>One start at a time of what a run starts (<paramref name="starts"/>): a start ends each one under way that
+    /// starts any of the same (Debug pressed as Run brings it up), as Stop ends it, and goes on once it has ended; held in
+    /// <see cref="ProjectSession.Starting"/>, which the folder's end ends, until the start is up or has given up (disposed).
+    /// Null when this start was stopped meanwhile.</summary>
+    private async Task<StartTaken?> TakeStartAsync(IReadOnlyCollection<string> starts, Working work)
+    {
+        while (session.Starting.FirstOrDefault(s => s.Starts.Any(started => starts.Contains(started, PathNames.Comparer))) is { } earlier)
+        {
+            earlier.Work.Cancel();
+            try
+            {
+                await earlier.Ended.WaitAsync(work.Stopping);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
+        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        StartUnderWay mine = new(work, ended.Task, starts);
+        session.Starting.Add(mine);
+        return new StartTaken(session, mine, ended);
+    }
+
+    /// <summary>A start held in the session's starts, let go as it is up or has given up.</summary>
+    private sealed class StartTaken(ProjectSession session, StartUnderWay mine, TaskCompletionSource ended) : IDisposable
+    {
+        public void Dispose()
+        {
+            session.Starting.Remove(mine);
+            ended.TrySetResult();
+        }
+    }
 
     /// <summary>Attaches to each service held at its start, all at once, while its run comes up: null once each is attached
     /// (one whose runtime has its debugger off runs on undebugged, said in <paramref name="notes"/>), else why not.</summary>

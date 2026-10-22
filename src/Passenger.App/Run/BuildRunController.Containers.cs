@@ -6,9 +6,6 @@ using Passenger.Editor;
 
 namespace Passenger.App.Run;
 
-/// <summary>A container configuration's start under way: its action's work, which Stop and the next start end, and its end.</summary>
-public sealed record StartUnderWay(Working Work, Task Ended);
-
 /// <summary>Run of a container configuration: Compose's model of its files read, Passenger's override written, its .NET
 /// services built on the host (fast mode), its services brought up and waited for, their merged log followed in the Run
 /// console, the browser opened once the launched service's published port answers, and the Containers window shown its
@@ -51,43 +48,25 @@ public sealed partial class BuildRunController
     public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work, ServiceProfiler profile) =>
         RunContainersAsync(chosen, work, RunStart.Profile, profile);
 
-    /// <summary>One container start at a time, which the folder's end ends too (<see cref="ProjectSession.ContainerStarting"/>):
-    /// one under way (Run's, as Debug begins) is ended first, as Stop ends it, and this one goes on once it has.</summary>
+    /// <summary>One container start at a time, as one container run is up at a time (<see cref="TakeStartAsync"/>): one under
+    /// way (Run's, as Debug begins) is ended first, as Stop ends it, and this one goes on once it has.</summary>
     private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, RunStart how = RunStart.Run, ServiceProfiler? profile = null)
     {
         using IDisposable held = BackgroundWork.Scope();
-        if (session.ContainerStarting is { } earlier)
+        using StartTaken? taken = await TakeStartAsync([ContainerStarts], work);
+        if (taken is null)
         {
-            earlier.Work.Cancel();
-            try
-            {
-                await earlier.Ended.WaitAsync(work.Stopping);
-            }
-            catch (OperationCanceledException)
-            {
-                return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
-            }
+            return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
         }
         if (session.IsEnded)
         {
             return Left;
         }
-        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        StartUnderWay mine = new(work, ended.Task);
-        session.ContainerStarting = mine;
-        try
-        {
-            return await StartContainersAsync(chosen, work, how, profile);
-        }
-        finally
-        {
-            if (session.ContainerStarting == mine)
-            {
-                session.ContainerStarting = null;
-            }
-            ended.TrySetResult();
-        }
+        return await StartContainersAsync(chosen, work, how, profile);
     }
+
+    /// <summary>What every container start starts, so one ends another under way: the folder's one container run.</summary>
+    private const string ContainerStarts = "the folder's container run";
 
     private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, RunStart how, ServiceProfiler? profile)
     {
