@@ -268,14 +268,15 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             dialog.Accept();
             Ui.Settle();
 
-            Assert.Equal(Shop.Worker.Replace("    <Nullable>enable</Nullable>\r\n", "    <Nullable>enable</Nullable>\r\n"
-                + "    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>\r\n    <ContainerRepository>worker</ContainerRepository>\r\n", StringComparison.Ordinal),
-                File.ReadAllText(worker));
+            // The property commented out stays as it was, setting nothing: the one MSBuild reads goes with the other.
+            string set = Shop.Worker.Replace("    <Nullable>enable</Nullable>\r\n", "    <Nullable>enable</Nullable>\r\n"
+                + "    <EnableSdkContainerSupport>true</EnableSdkContainerSupport>\r\n    <ContainerRepository>worker</ContainerRepository>\r\n", StringComparison.Ordinal);
+            Assert.Equal(set, File.ReadAllText(worker));
             Assert.False(File.Exists(app.PathOf("Worker/Dockerfile")), "The SDK's container support wrote a Dockerfile too");
 
             // Set again, the properties are where they were: nothing is added twice.
             Assert.Null(window.AddDockerSupport(worker, DockerSupportKind.Sdk));
-            Assert.Equal(1, File.ReadAllText(worker).Split("<ContainerRepository>").Length - 1);
+            Assert.Equal(set, File.ReadAllText(worker));
         }
         finally
         {
@@ -324,6 +325,318 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         }
     }
 
+    /// <summary>An Add that changes the project file or the solution open in an editor is one command with what it made:
+    /// Undo puts the open file's text back (the SDK route's, its editor's own step; Add Docker Compose's, with the files it
+    /// made taken away) and Redo makes them all again.</summary>
+    [AvaloniaFact]
+    public void Undo_takes_back_an_adds_change_to_an_open_project_or_solution_with_what_it_made_and_redo_makes_them_again()
+    {
+        string worker = app.PathOf("Worker/Worker.csproj");
+        MainWindow window = app.Open("Worker/Worker.csproj");
+        try
+        {
+            AwaitEvaluated(window);
+            List<string> asked = Answer(window);
+            OpenDocument project = window.EditorArea.Active!;
+            Assert.Null(window.AddDockerSupport(worker, DockerSupportKind.Sdk));
+            string set = File.ReadAllText(worker);
+            Assert.Contains("<ContainerRepository>worker</ContainerRepository>", set, StringComparison.Ordinal);
+            Assert.Equal(Lf(set), Lf(project.Text.Snapshot.ToString()));
+            Ui.Run(window, EditorActions.Undo);
+            Assert.Equal(Lf(Shop.Worker), Lf(project.Text.Snapshot.ToString()));
+            Ui.Run(window, EditorActions.Redo);
+            Assert.Equal(Lf(set), Lf(project.Text.Snapshot.ToString()));
+
+            window.OpenFile(app.PathOf("Shop.slnx"));
+            Ui.Settle();
+            OpenDocument solution = window.EditorArea.Active!;
+            Assert.Null(window.AddDockerCompose([app.PathOf("Api/Api.csproj")], ["postgres"]));
+            string[] made = [app.PathOf("compose.yaml"), app.PathOf("Api/Dockerfile"), app.PathOf(".dockerignore")];
+            string listed = File.ReadAllText(app.PathOf("Shop.slnx"));
+            Assert.Contains("compose.yaml", solution.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+            // From the solution's editor, Undo takes the whole command back: its entry, and the files made.
+            window.OpenFile(app.PathOf("Shop.slnx"));
+            Ui.Settle();
+            Ui.Run(window, EditorActions.Undo);
+            Assert.Equal(["Undo"], asked);
+            Assert.Equal(Lf(Shop.Solution), Lf(solution.Text.Snapshot.ToString()));
+            Assert.True(made.All(m => !File.Exists(m)), $"Undo left [{string.Join(", ", made.Where(File.Exists).Select(Path.GetFileName))}]: {window.Status}");
+
+            window.OpenFile(app.PathOf("Shop.slnx"));
+            Ui.Settle();
+            Ui.Run(window, EditorActions.Redo);
+            Assert.True(made.All(File.Exists), $"Redo did not make [{string.Join(", ", made.Where(m => !File.Exists(m)).Select(Path.GetFileName))}]: {window.Status}");
+            Assert.Equal(Lf(listed), Lf(solution.Text.Snapshot.ToString()));
+        }
+        finally
+        {
+            window.Close();
+            app.Reset();
+        }
+    }
+
+    /// <summary>A project at its build's context's root, beside its solution or opened on its own, is copied into the
+    /// build's work folder (./), and its NuGet.config by the name the disk gives it, since the image's file system tells
+    /// letter case apart; where a Linux engine runs, the image builds from what was written.</summary>
+    [AvaloniaFact]
+    public void Add_docker_support_on_a_project_at_its_contexts_root_copies_it_and_its_nuget_config_as_named_and_the_image_builds()
+    {
+        string beside = Tiny("docker-beside-", solution: true);
+        string alone = Tiny("docker-alone-", solution: false);
+        foreach ((string folder, string opened) in ((string Folder, string Opened)[])[(beside, "Tiny.slnx"), (alone, "Tiny.csproj")])
+        {
+            MainWindow window = OpenOwn(Path.Combine(folder, opened));
+            try
+            {
+                Ui.WaitFor(() => window.Session.Workspace?.Projects is [{ IsEvaluated: true }], "the project evaluated", TimeSpan.FromMinutes(2));
+                Assert.Null(window.AddDockerSupport(Path.Combine(PathNames.Canonical(folder), "Tiny.csproj"), DockerSupportKind.Dockerfile));
+                string written = File.ReadAllText(Path.Combine(folder, "Dockerfile"));
+                Assert.True(written.Contains("COPY [\"NuGet.config\", \"./\"]\nCOPY [\"Tiny.csproj\", \"./\"]\nRUN dotnet restore \"./Tiny.csproj\"\n", StringComparison.Ordinal),
+                    $"Opened as {opened}, the project at the context's root was not copied into the work folder as it is named:\n{written}");
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+        if (Docker.WhyNot is null)
+        {
+            string image = $"ptest{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}tiny";
+            Passenger.Core.ChildResult built = Task.Run(() => Passenger.App.Containers.ContainerEngine.Shared.RunAsync(
+                ["build", "--label", Docker.RunLabel, "-t", image, "-f", Path.Combine(alone, "Dockerfile"), alone], TimeSpan.FromMinutes(10).Scaled())).GetAwaiter().GetResult();
+            try
+            {
+                Assert.True(built.Succeeded, $"The Dockerfile written did not build: {Passenger.App.Containers.ContainerEngine.Said(built)}");
+            }
+            finally
+            {
+                Docker.Ask(["rmi", "-f", image]);
+            }
+        }
+    }
+
+    /// <summary>Add Docker Compose builds a project's own Dockerfile as that Dockerfile is written: from the project's
+    /// folder when its COPY lines read the project's files there, from the solution's when they read them from it, on the
+    /// ports it sets (ASPNETCORE_HTTP_PORTS, else ASP.NET Core's 8080), never its launch profiles'; Passenger's own new
+    /// Dockerfile, from the solution's folder on the launch profiles' port.</summary>
+    [AvaloniaFact]
+    public void Add_docker_compose_builds_a_projects_own_dockerfile_from_the_folder_it_copies_from_on_the_ports_it_sets()
+    {
+        string folder = Fresh("docker-own-",
+            ("Mall.slnx", "<Solution>\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"Shop/Shop.csproj\" />\n  <Project Path=\"Web/Web.csproj\" />\n</Solution>\n"),
+            ("nuget.config", Shop.NuGetConfig),
+            ("Api/Api.csproj", WebProject), ("Api/Program.cs", WebProgram), ("Api/Properties/launchSettings.json", Profile(7001)),
+            ("Api/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base\nWORKDIR /app\nENV ASPNETCORE_HTTP_PORTS=5000\nEXPOSE 5000\n\n"
+                + "FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build\nWORKDIR /src\nCOPY [\"Api.csproj\", \"./\"]\nRUN dotnet restore \"Api.csproj\"\nCOPY . .\n"
+                + "RUN dotnet publish \"Api.csproj\" -c Release -o /app/publish\n\nFROM base AS final\nCOPY --from=build /app/publish .\nENTRYPOINT [\"dotnet\", \"Api.dll\"]\n"),
+            ("Web/Web.csproj", WebProject), ("Web/Program.cs", WebProgram), ("Web/Properties/launchSettings.json", Profile(7002)),
+            ("Web/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base\nWORKDIR /app\n\nFROM mcr.microsoft.com/dotnet/sdk:10.0 AS build\nWORKDIR /src\n"
+                + "COPY [\"nuget.config\", \"./\"]\nCOPY [\"Web/Web.csproj\", \"Web/\"]\nRUN dotnet restore \"Web/Web.csproj\"\nCOPY . .\n"
+                + "RUN dotnet publish \"Web/Web.csproj\" -c Release -o /app/publish\n\nFROM base AS final\nCOPY --from=build /app/publish .\nENTRYPOINT [\"dotnet\", \"Web.dll\"]\n"),
+            ("Shop/Shop.csproj", WebProject), ("Shop/Program.cs", WebProgram), ("Shop/Properties/launchSettings.json", Profile(5080)));
+        MainWindow window = OpenOwn(Path.Combine(folder, "Mall.slnx"));
+        try
+        {
+            AwaitEvaluated(window, 3);
+            string root = PathNames.Canonical(folder);
+            Assert.Null(window.AddDockerCompose([.. ((string[])["Api", "Shop", "Web"]).Select(p => Path.Combine(root, p, $"{p}.csproj"))], []));
+            string compose = File.ReadAllText(Path.Combine(folder, "compose.yaml"));
+            Assert.Equal("services:\n"
+                + "  api:\n    build:\n      context: Api\n      dockerfile: Dockerfile\n    image: api\n    ports:\n      - \"5000:5000\"\n"
+                + "  shop:\n    build:\n      context: .\n      dockerfile: Shop/Dockerfile\n    image: shop\n    ports:\n      - \"5080:5080\"\n"
+                + "  web:\n    build:\n      context: .\n      dockerfile: Web/Dockerfile\n    image: web\n    ports:\n      - \"8080:8080\"\n", compose);
+            Assert.True(File.Exists(Path.Combine(folder, "Shop", "Dockerfile")), "Shop, with no Dockerfile, was given none");
+            if (Docker.WhyNot is null)
+            {
+                Docker.Run("compose", "-f", Path.Combine(folder, "compose.yaml"), "config", "--quiet");
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Each connection string an app has is pointed at the backing service its value is for, its database kept:
+    /// Npgsql's Host= at postgres, made with that database; SqlClient's Server= at SQL Server, whose image makes no
+    /// database, as a comment says; Redis' host:port at redis; SQLite's Data Source= file left as the app has it.</summary>
+    [AvaloniaFact]
+    public void Add_docker_compose_points_each_connection_string_at_the_service_its_value_is_for_and_keeps_its_database()
+    {
+        string folder = Fresh("docker-strings-",
+            ("Orders.slnx", "<Solution>\n  <Project Path=\"Orders/Orders.csproj\" />\n</Solution>\n"),
+            ("nuget.config", Shop.NuGetConfig),
+            ("Orders/Orders.csproj", WebProject.Replace("</Project>", "  <ItemGroup>\n    <PackageReference Include=\"Npgsql\" Version=\"9.0.3\" />\n"
+                + "    <PackageReference Include=\"Microsoft.Data.SqlClient\" Version=\"6.0.2\" />\n    <PackageReference Include=\"StackExchange.Redis\" Version=\"2.8.16\" />\n"
+                + "    <PackageReference Include=\"Microsoft.Data.Sqlite\" Version=\"9.0.0\" />\n  </ItemGroup>\n</Project>", StringComparison.Ordinal)),
+            ("Orders/Program.cs", WebProgram),
+            ("Orders/appsettings.json", "{\n  \"ConnectionStrings\": {\n    \"Main\": \"Host=localhost;Database=orders;Username=app;Password=secret\",\n"
+                + "    \"Reports\": \"Server=localhost;Database=reports;User Id=sa;Password=secret;TrustServerCertificate=True\",\n"
+                + "    \"Cache\": \"localhost:6379,abortConnect=false\",\n    \"Local\": \"Data Source=orders.db\"\n  }\n}\n"));
+        MainWindow window = OpenOwn(Path.Combine(folder, "Orders.slnx"));
+        try
+        {
+            AwaitEvaluated(window, 1);
+            Assert.Null(window.AddDockerCompose([Path.Combine(PathNames.Canonical(folder), "Orders", "Orders.csproj")], ["postgres", "sqlserver", "redis"]));
+            string compose = File.ReadAllText(Path.Combine(folder, "compose.yaml"));
+            Assert.Contains("    environment:\n"
+                + "      ConnectionStrings__Main: \"Host=postgres;Port=5432;Database=orders;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\"\n"
+                + "      ConnectionStrings__Reports: \"Server=sqlserver,1433;Database=reports;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Passenger_dev1};TrustServerCertificate=True\"\n"
+                + "      ConnectionStrings__Cache: \"redis:6379\"\n    depends_on:\n", compose, StringComparison.Ordinal);
+            Assert.DoesNotContain("ConnectionStrings__Local", compose, StringComparison.Ordinal);
+            Assert.Contains("  postgres:\n    image: postgres:17\n    environment:\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}\n      POSTGRES_DB: orders\n",
+                compose, StringComparison.Ordinal);
+            Assert.Contains("  sqlserver:\n    # SQL Server's image makes no database: reports is the app's to make (EF Core's Migrate or EnsureCreated) or yours, with sqlcmd\n",
+                compose, StringComparison.Ordinal);
+            if (Docker.WhyNot is null)
+            {
+                Docker.Run("compose", "-f", Path.Combine(folder, "compose.yaml"), "config", "--quiet");
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A project gets ASP.NET Core's image when the framework reaches it through a project it references (as
+    /// evaluated) or a package (as its restore says), not only through its own SDK.</summary>
+    [AvaloniaFact]
+    public void Add_docker_support_gives_a_project_that_asp_net_core_reaches_through_a_reference_or_a_package_the_aspnet_image()
+    {
+        const string Console = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n";
+        string folder = Fresh("docker-aspnet-",
+            ("Kit.slnx", "<Solution>\n  <Project Path=\"ByPackage/ByPackage.csproj\" />\n  <Project Path=\"ByReference/ByReference.csproj\" />\n  <Project Path=\"Kit/Kit.csproj\" />\n</Solution>\n"),
+            ("nuget.config", "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"kit\" value=\"./feed\" />\n  </packageSources>\n</configuration>\n"),
+            ("Kit/Kit.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <PackageId>Shop.Kit</PackageId>\n"
+                + "    <Version>1.0.0</Version>\n  </PropertyGroup>\n  <ItemGroup>\n    <FrameworkReference Include=\"Microsoft.AspNetCore.App\" />\n  </ItemGroup>\n</Project>\n"),
+            ("Kit/Kit.cs", "namespace Kit;\n\npublic static class Pages\n{\n}\n"),
+            ("ByReference/ByReference.csproj", Console + "  <ItemGroup>\n    <ProjectReference Include=\"..\\Kit\\Kit.csproj\" />\n  </ItemGroup>\n</Project>\n"),
+            ("ByReference/Program.cs", "System.Console.WriteLine(\"By reference\");\n"),
+            ("ByPackage/ByPackage.csproj", Console + "  <ItemGroup>\n    <PackageReference Include=\"Shop.Kit\" Version=\"1.0.0\" />\n  </ItemGroup>\n</Project>\n"),
+            ("ByPackage/Program.cs", "System.Console.WriteLine(\"By package\");\n"));
+        Passenger.Core.ChildResult packed = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
+            Passenger.Core.ChildProcesses.DotnetCommand(["pack", Path.Combine(folder, "Kit", "Kit.csproj"), "-o", Path.Combine(folder, "feed")]), limit: Restore.Limit.Scaled())).GetAwaiter().GetResult();
+        Assert.True(packed.Succeeded, $"Kit did not pack: {packed.Output}{packed.Error}");
+        Restore.Run(Path.Combine(folder, "ByPackage", "ByPackage.csproj"));
+        MainWindow window = OpenOwn(Path.Combine(folder, "Kit.slnx"));
+        try
+        {
+            AwaitEvaluated(window, 3);
+            string root = PathNames.Canonical(folder);
+            foreach (string project in (string[])["ByReference", "ByPackage"])
+            {
+                Assert.Null(window.AddDockerSupport(Path.Combine(root, project, $"{project}.csproj"), DockerSupportKind.Dockerfile));
+                string written = File.ReadAllText(Path.Combine(folder, project, "Dockerfile"));
+                Assert.True(written.Contains("FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base\n", StringComparison.Ordinal),
+                    $"{project}, which ASP.NET Core reaches, was not given the aspnet image:\n{written}");
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Go to Declaration on a build takes the project the final stage's ENTRYPOINT runs (its own, or the stage's it
+    /// is FROM), never an earlier stage's nor a comment's; a variable is Compose's when the .env beside the file sets it, so
+    /// one only a service's env_file sets is said not set for Compose, and $$VAR, a dollar sign written whole, is none.</summary>
+    [AvaloniaFact]
+    public void Go_to_declaration_in_a_compose_file_takes_the_final_stages_entrypoint_and_its_variables_as_compose_reads_them()
+    {
+        Shop.SkipWithoutNode(yaml: true);
+        string compose = app.PathOf("ops2/compose.yaml");
+        const string Text = "services:\n  earlier:\n    build:\n      context: ..\n      dockerfile: ops2/earlier.Dockerfile\n  commented:\n    build:\n      context: ..\n"
+            + "      dockerfile: ops2/commented.Dockerfile\n    env_file:\n      - web.env\n    environment:\n      MODE: ${ASPNETCORE_ENVIRONMENT}\n"
+            + "      LITERAL: $$DB_PASSWORD\n";
+        Directory.CreateDirectory(Path.GetDirectoryName(compose)!);
+        File.WriteAllText(compose, Text);
+        File.WriteAllText(app.PathOf("ops2/.env"), "DB_PASSWORD=secret\n");
+        File.WriteAllText(app.PathOf("ops2/web.env"), "ASPNETCORE_ENVIRONMENT=Development\n");
+        File.WriteAllText(app.PathOf("ops2/earlier.Dockerfile"), "FROM mcr.microsoft.com/dotnet/sdk:10.0 AS tools\nENTRYPOINT [\"dotnet\", \"Lib.dll\"]\n\n"
+            + "FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final\nWORKDIR /app\nENTRYPOINT [\"dotnet\", \"Api.dll\"]\n");
+        File.WriteAllText(app.PathOf("ops2/commented.Dockerfile"), "# ENTRYPOINT [\"dotnet\", \"Worker.dll\"]\nFROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base\n"
+            + "ENTRYPOINT [\"dotnet\", \"Api.dll\"]\n\nFROM base AS final\nWORKDIR /app\n");
+        MainWindow window = app.Open("ops2/compose.yaml");
+        try
+        {
+            Ui.WaitFor(() => window.Session.Workspace?.Projects is { Count: 3 } projects && projects.All(p => p.IsEvaluated), "the solution's projects evaluated", TimeSpan.FromMinutes(2));
+            foreach (string build in (string[])["earlier", "commented"])
+            {
+                GoFrom(window, compose, $"dockerfile: ops2/{build}.Dock");
+                Ui.WaitFor(() => window.Assist.Offered.Count == 2, $"the {build} build's Dockerfile and project offered ({window.Status})");
+                Assert.Equal([$"{build}.Dockerfile", "Api.csproj"], window.Assist.Offered);
+                Ui.Press(window, "ESCAPE");
+            }
+
+            GoFrom(window, compose, "${ASPNETCORE_ENV");
+            Ui.WaitFor(() => window.Status?.Contains("ASPNETCORE_ENVIRONMENT is not set for Compose: web.env sets it in the commented service's container", StringComparison.Ordinal) == true,
+                $"the variable only an env_file sets said not set for Compose, not '{window.Status}'");
+            Assert.Equal(compose, window.EditorArea.Active?.Path);
+
+            GoFrom(window, compose, "$$DB_PASS");
+            Ui.Settle();
+            Assert.True(window.EditorArea.Active?.Path == compose, $"Go to Declaration on $$DB_PASSWORD, which Compose leaves as written, went to {window.EditorArea.Active?.Path}");
+        }
+        finally
+        {
+            window.Close();
+            app.Reset();
+        }
+    }
+
+    private const string WebProject = "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+
+    private const string WebProgram = "var app = WebApplication.Create(args);\napp.Run();\n";
+
+    /// <summary>Launch profiles listening on one HTTP port.</summary>
+    private static string Profile(int port) =>
+        $"{{\n  \"profiles\": {{\n    \"http\": {{\n      \"commandName\": \"Project\",\n      \"applicationUrl\": \"http://localhost:{port}\"\n    }}\n  }}\n}}\n";
+
+    /// <summary>A folder of the test's own holding the files given.</summary>
+    private static string Fresh(string name, params (string Path, string Text)[] files)
+    {
+        string folder = TestFolders.Create(name);
+        foreach ((string path, string text) in files)
+        {
+            string full = Path.Combine(folder, path);
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllText(full, text);
+        }
+        return folder;
+    }
+
+    /// <summary>A console app at its folder's root with a NuGet.config of that spelling (no feed: it restores nothing),
+    /// beside its solution or not.</summary>
+    private static string Tiny(string name, bool solution)
+    {
+        List<(string, string)> files =
+        [
+            ("Tiny.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n"),
+            ("Program.cs", "System.Console.WriteLine(\"Tiny\");\n"),
+            ("NuGet.config", "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <packageSources>\n    <clear />\n  </packageSources>\n</configuration>\n"),
+        ];
+        if (solution)
+        {
+            files.Add(("Tiny.slnx", "<Solution>\n  <Project Path=\"Tiny.csproj\" />\n</Solution>\n"));
+        }
+        return Fresh(name, [.. files]);
+    }
+
+    /// <summary>A window on a folder of the test's own, opened as the solution or project named.</summary>
+    private static MainWindow OpenOwn(string opened)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        window.OpenFolder(opened);
+        Ui.Settle();
+        return window;
+    }
+
+    /// <summary>A text with its line breaks as '\n', as an editor and a file may hold them otherwise.</summary>
+    private static string Lf(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal);
+
     /// <summary>Go to Declaration from just after a stretch of the file, which is opened (again) first.</summary>
     private static void GoFrom(MainWindow window, string file, string after)
     {
@@ -341,8 +654,8 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             + $"{Path.GetFileName(window.EditorArea.Active?.Path)} {window.EditorArea.CodeEditor.CaretPosition.Line + 1}:{window.EditorArea.CodeEditor.CaretPosition.Column + 1} ({window.Status})");
     }
 
-    private static void AwaitEvaluated(MainWindow window) =>
-        Ui.WaitFor(() => window.Session.Workspace?.Projects is { Count: 3 } projects && projects.All(p => p.IsEvaluated), "the solution's projects evaluated", TimeSpan.FromMinutes(2));
+    private static void AwaitEvaluated(MainWindow window, int count = 3) =>
+        Ui.WaitFor(() => window.Session.Workspace?.Projects is { } projects && projects.Count == count && projects.All(p => p.IsEvaluated), "the solution's projects evaluated", TimeSpan.FromMinutes(2));
 
     private static void TypeEach(MainWindow window, string text)
     {
@@ -537,7 +850,9 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         public const string Api = "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\r\n\r\n  <PropertyGroup>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n  </PropertyGroup>\r\n\r\n"
             + "  <ItemGroup>\r\n    <PackageReference Include=\"Npgsql\" Version=\"9.0.3\" />\r\n    <ProjectReference Include=\"..\\Lib\\Lib.csproj\" />\r\n  </ItemGroup>\r\n\r\n</Project>\r\n";
 
-        public const string Worker = "<Project Sdk=\"Microsoft.NET.Sdk\">\r\n\r\n  <PropertyGroup>\r\n    <OutputType>Exe</OutputType>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n"
+        /// <summary>A worker whose image's name was once set, now commented out.</summary>
+        public const string Worker = "<Project Sdk=\"Microsoft.NET.Sdk\">\r\n\r\n  <PropertyGroup>\r\n    <OutputType>Exe</OutputType>\r\n"
+            + "    <!-- <ContainerRepository>shop-worker</ContainerRepository> -->\r\n    <TargetFramework>net10.0</TargetFramework>\r\n"
             + "    <Nullable>enable</Nullable>\r\n  </PropertyGroup>\r\n\r\n</Project>\r\n";
 
         public const string Lib = "<Project Sdk=\"Microsoft.NET.Sdk\">\r\n\r\n  <PropertyGroup>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n  </PropertyGroup>\r\n\r\n</Project>\r\n";
@@ -564,7 +879,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         /// <summary>What Add > Docker Support writes for Api.</summary>
         public const string Dockerfile = "# Built from the solution's folder: docker build -f Api/Dockerfile .\nFROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base\nUSER $APP_UID\n"
             + "WORKDIR /app\nENV ASPNETCORE_HTTP_PORTS=5080\nEXPOSE 5080\n\nFROM mcr.microsoft.com/dotnet/sdk:10.0 AS build\nARG BUILD_CONFIGURATION=Release\nWORKDIR /src\n"
-            + "COPY [\"nuget.config\", \".\"]\nCOPY [\"Api/Api.csproj\", \"Api/\"]\nCOPY [\"Lib/Lib.csproj\", \"Lib/\"]\nRUN dotnet restore \"./Api/Api.csproj\"\nCOPY . .\n"
+            + "COPY [\"nuget.config\", \"./\"]\nCOPY [\"Api/Api.csproj\", \"Api/\"]\nCOPY [\"Lib/Lib.csproj\", \"Lib/\"]\nRUN dotnet restore \"./Api/Api.csproj\"\nCOPY . .\n"
             + "WORKDIR \"/src/Api\"\nRUN dotnet build \"./Api.csproj\" -c $BUILD_CONFIGURATION -o /app/build\n\nFROM build AS publish\nARG BUILD_CONFIGURATION=Release\n"
             + "RUN dotnet publish \"./Api.csproj\" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false\n\nFROM base AS final\nWORKDIR /app\n"
             + "COPY --from=publish /app/publish .\nENTRYPOINT [\"dotnet\", \"Api.dll\"]\n";
@@ -573,7 +888,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         public const string Compose = "services:\n  api:\n    build:\n      context: .\n      dockerfile: Api/Dockerfile\n    image: api\n    ports:\n      - \"5080:5080\"\n"
             + "    environment:\n      ConnectionStrings__Shop: \"Host=postgres;Port=5432;Database=shop;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\"\n"
             + "    depends_on:\n      postgres:\n        condition: service_healthy\n  postgres:\n    image: postgres:17\n    environment:\n"
-            + "      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n"
+            + "      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}\n      POSTGRES_DB: shop\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n    healthcheck:\n"
             + "      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n      interval: 5s\n      timeout: 5s\n      retries: 10\n\nvolumes:\n  postgres-data:\n";
 
         private static readonly (string Path, string Text)[] Files =
@@ -596,8 +911,9 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             ("ops/api.Dockerfile", OpsDockerfile),
         ];
 
-        /// <summary>What the tests' Adds write, taken away again.</summary>
-        private static readonly string[] Made = ["Api/Dockerfile", "Worker/Dockerfile", "Lib/Dockerfile", ".dockerignore", "compose.yaml"];
+        /// <summary>What the tests' Adds write, and the files a test writes beside the fixture's, taken away again.</summary>
+        private static readonly string[] Made = ["Api/Dockerfile", "Worker/Dockerfile", "Lib/Dockerfile", ".dockerignore", "compose.yaml",
+            "ops2/compose.yaml", "ops2/.env", "ops2/web.env", "ops2/earlier.Dockerfile", "ops2/commented.Dockerfile"];
 
         public Shop()
         {
@@ -620,7 +936,10 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             }
             foreach (string made in Made)
             {
-                File.Delete(Path.Combine(Folder, made));
+                if (File.Exists(Path.Combine(Folder, made)))
+                {
+                    File.Delete(Path.Combine(Folder, made));
+                }
             }
         }
 

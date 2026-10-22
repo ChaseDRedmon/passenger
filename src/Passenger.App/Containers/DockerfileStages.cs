@@ -3,10 +3,13 @@ using System.Text.RegularExpressions;
 namespace Passenger.App.Containers;
 
 /// <summary>A stage of a Dockerfile: its name (or its index), the image or stage it is FROM, the ARGs it declares, its last
-/// WORKDIR, the context's folders its COPY lines put in the image (each with where it went), its EXPOSEd ports and the
-/// assembly its <c>ENTRYPOINT ["dotnet", "X.dll"]</c> runs.</summary>
+/// WORKDIR, the context's folders its COPY lines put in the image (each with where it went), its EXPOSEd ports, the
+/// assembly its <c>ENTRYPOINT ["dotnet", "X.dll"]</c> runs (its last ENTRYPOINT's) and the variables its ENV lines set.</summary>
 public sealed record DockerfileStage(string Name, string From, IReadOnlyList<string> Arguments, string? WorkDir, IReadOnlyList<(string Source, string Target)> Copies,
-    IReadOnlyList<int> Exposed, string? EntryAssembly);
+    IReadOnlyList<int> Exposed, string? EntryAssembly)
+{
+    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
+}
 
 /// <summary>A Dockerfile's stages, read as Docker reads its instructions (line continuations joined, comments and parser
 /// directives passed over), enough to choose fast mode's runtime stage, map the container's paths back to the context's
@@ -58,6 +61,7 @@ public sealed partial record DockerfileStages(IReadOnlyList<DockerfileStage> Sta
         List<(string, string)> copies = [];
         List<int> exposed = [];
         string? entry = null;
+        Dictionary<string, string> environment = new(StringComparer.Ordinal);
         foreach (string instruction in Instructions(text))
         {
             Match parts = Instruction().Match(instruction);
@@ -78,6 +82,7 @@ public sealed partial record DockerfileStages(IReadOnlyList<DockerfileStage> Sta
                     copies = [];
                     exposed = [];
                     entry = null;
+                    environment = new(StringComparer.Ordinal);
                     // A stage built on another starts where that one's work folder is.
                     workDir = stages.FirstOrDefault(s => string.Equals(s.Name, from, StringComparison.OrdinalIgnoreCase))?.WorkDir;
                     break;
@@ -111,9 +116,13 @@ public sealed partial record DockerfileStages(IReadOnlyList<DockerfileStage> Sta
                     }
                     break;
                 case "ENTRYPOINT":
-                    if (EntryPoint().Match(instruction) is { Success: true } dll)
+                    // The last one is the one that runs; one of another form names no assembly.
+                    entry = EntryPoint().Match(instruction) is { Success: true } dll ? dll.Groups["assembly"].Value : null;
+                    break;
+                case "ENV":
+                    foreach ((string key, string value) in Variables(rest))
                     {
-                        entry = dll.Groups["assembly"].Value;
+                        environment[key] = value;
                     }
                     break;
             }
@@ -125,7 +134,10 @@ public sealed partial record DockerfileStages(IReadOnlyList<DockerfileStage> Sta
         {
             if (from.Length > 0)
             {
-                stages.Add(new DockerfileStage(name ?? stages.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), from, arguments, workDir, copies, exposed, entry));
+                stages.Add(new DockerfileStage(name ?? stages.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), from, arguments, workDir, copies, exposed, entry)
+                {
+                    Environment = environment,
+                });
             }
         }
     }
@@ -175,12 +187,30 @@ public sealed partial record DockerfileStages(IReadOnlyList<DockerfileStage> Sta
         return [.. Words(trimmed)];
     }
 
+    /// <summary>An ENV line's variables: <c>KEY=value</c> pairs (a value quoted to hold spaces), or the older <c>KEY value</c>.</summary>
+    private static IEnumerable<(string Key, string Value)> Variables(string rest)
+    {
+        if (!Pair().IsMatch(rest))
+        {
+            string[] split = rest.Split([' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries);
+            return split.Length == 2 ? [(split[0], Unquoted(split[1]))] : [];
+        }
+        return Pairs().Matches(rest).Select(pair => (pair.Groups["key"].Value,
+            pair.Groups["value"].Value is { Length: > 1 } quoted && quoted[0] is '"' or '\'' ? quoted[1..^1] : pair.Groups["value"].Value));
+    }
+
     private static IEnumerable<string> Words(string text) => text.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries).Select(Unquoted);
 
     private static string Unquoted(string word) => word.Trim().Trim('"');
 
     [GeneratedRegex(@"^\s*(?<verb>[A-Za-z]+)\s+(?<rest>.*)$")]
     private static partial Regex Instruction();
+
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_.\-]*=")]
+    private static partial Regex Pair();
+
+    [GeneratedRegex(@"(?<key>[A-Za-z_][A-Za-z0-9_.\-]*)=(?<value>""(?:[^""\\]|\\.)*""|'[^']*'|\S*)")]
+    private static partial Regex Pairs();
 
     [GeneratedRegex(@"""((?:[^""\\]|\\.)*)""")]
     private static partial Regex JsonWords();

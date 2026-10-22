@@ -94,7 +94,13 @@ public static partial class ProjectEdits
         foreach (Match group in groups)
         {
             Capture body = group.Groups["body"];
-            if (element.Match(text, body.Index, body.Length) is { Success: true } set)
+            // One commented out sets nothing: the one MSBuild reads is outside every comment.
+            Match set = element.Match(text, body.Index, body.Length);
+            while (set.Success && comments.Any(c => set.Index >= c.Start && set.Index < c.End))
+            {
+                set = set.NextMatch();
+            }
+            if (set.Success)
             {
                 Capture old = set.Groups["value"];
                 if (old.Value != written)

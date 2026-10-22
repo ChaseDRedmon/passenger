@@ -23,6 +23,11 @@ public partial class MainWindow
             status.Text = $"{Path.GetFileName(project)} is not one of the solution's projects";
             return null;
         }
+        if (Unread([model]) is { } unread)
+        {
+            status.Text = unread;
+            return null;
+        }
         DockerProject described = DockerFiles.Describe(model, session.Workspace?.Projects ?? []);
         DockerSupportDialog dialog = new(described.Name, described.ExistingDockerfile is not null);
         _ = ApplyAsync();
@@ -44,6 +49,10 @@ public partial class MainWindow
         if (SolutionProject(project) is not { } model || DockerContext is not { } context)
         {
             return DockerSaid($"{Path.GetFileName(project)} is not one of the solution's projects");
+        }
+        if (Unread([model]) is { } unread)
+        {
+            return DockerSaid(unread);
         }
         DockerProject described = DockerFiles.Describe(model, session.Workspace?.Projects ?? []);
         if (kind == DockerSupportKind.Sdk)
@@ -90,17 +99,24 @@ public partial class MainWindow
         {
             using CommandHistory.Recording made = Editors.Commands.Record("Add Docker Support");
             made.Watch(project.Path);
-            if (!project.Web)
+            try
             {
-                problem = ProjectEdits.SetProperty(project.Path, "EnableSdkContainerSupport", "true");
+                if (!project.Web)
+                {
+                    problem = ProjectEdits.SetProperty(project.Path, "EnableSdkContainerSupport", "true");
+                }
+                problem ??= ProjectEdits.SetProperty(project.Path, "ContainerRepository", project.Service);
             }
-            problem ??= ProjectEdits.SetProperty(project.Path, "ContainerRepository", project.Service);
+            finally
+            {
+                // Open, it takes the text now, inside the command, so the command's undo takes it back too.
+                FollowWritten([project.Path]);
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             problem = error.Message;
         }
-        FollowWritten([project.Path]);
         return problem is null
             ? DockerSaid(null, $"{project.Name} builds its image with the SDK: dotnet publish /t:PublishContainer makes {project.Service}")
             : DockerSaid($"{project.Name} could not be changed: {problem}");
@@ -121,6 +137,11 @@ public partial class MainWindow
             return null;
         }
         IReadOnlyList<ProjectModel> all = session.Workspace?.Projects ?? [];
+        if (Unread(all) is { } unread)
+        {
+            status.Text = unread;
+            return null;
+        }
         List<ProjectModel> running = [.. all.Where(p => p.IsRunnable).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
         if (running.Count == 0)
         {
@@ -164,14 +185,17 @@ public partial class MainWindow
             return DockerSaid($"{solution.Name} has a compose file already: {DockerShown(had)}");
         }
         IReadOnlyList<ProjectModel> all = session.Workspace?.Projects ?? [];
-        List<(DockerProject Project, IReadOnlyList<BackingService> Backing, IReadOnlyList<string> Connections)> composed = [];
-        foreach (string path in projects)
+        List<ProjectModel> chosen = [.. projects.Select(SolutionProject).OfType<ProjectModel>()];
+        if (Unread(chosen) is { } unread)
         {
-            if (SolutionProject(path) is { } model)
-            {
-                IReadOnlyList<BackingService> backing = [.. BackingService.For(model.Packages.Select(p => p.Name)).Where(b => services.Contains(b.Service))];
-                composed.Add((DockerFiles.Describe(model, all), backing, DockerFiles.ConnectionNames(model.Folder)));
-            }
+            return DockerSaid(unread);
+        }
+        List<(DockerProject Project, string? Existing, IReadOnlyList<BackingService> Backing, IReadOnlyList<(string Name, string Value)> Connections)> composed = [];
+        foreach (ProjectModel model in chosen)
+        {
+            IReadOnlyList<BackingService> backing = [.. BackingService.For(model.Packages.Select(p => p.Name)).Where(b => services.Contains(b.Service))];
+            DockerProject described = DockerFiles.Describe(model, all);
+            composed.Add((described, described.ExistingDockerfile, backing, DockerFiles.ConnectionStrings(model.Folder)));
         }
         if (composed.Count == 0)
         {
@@ -188,7 +212,7 @@ public partial class MainWindow
         try
         {
             using CommandHistory.Recording made = Editors.Commands.Record("Add Docker Compose");
-            foreach ((DockerProject project, _, _) in composed.Where(c => c.Project.ExistingDockerfile is null))
+            foreach ((DockerProject project, _, _, _) in composed.Where(c => c.Existing is null))
             {
                 WriteNew(made, project.Dockerfile, DockerFiles.Dockerfile(project, context));
                 dockerfiles.Add(project.Name);
@@ -199,13 +223,20 @@ public partial class MainWindow
             }
             WriteNew(made, compose, DockerFiles.Compose(context, composed));
             made.Watch(solution.Path);
-            problem = SolutionItem(solution, PathNames.Canonical(compose));
+            try
+            {
+                problem = SolutionItem(solution, PathNames.Canonical(compose));
+            }
+            finally
+            {
+                // Open, it takes the text now, inside the command, so the command's undo takes it back too.
+                FollowWritten([solution.Path]);
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             problem = error.Message;
         }
-        FollowWritten([solution.Path]);
         FilesChanged();
         ReloadSolution();
         if (problem is not null)
@@ -242,6 +273,13 @@ public partial class MainWindow
         new[] { "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml" }.Select(n => Path.Combine(folder, n)).FirstOrDefault(File.Exists);
 
     private ProjectModel? SolutionProject(string project) => session.Workspace?.Projects.FirstOrDefault(p => PathNames.Same(p.Path, project));
+
+    /// <summary>Why the files cannot be written yet: a project MSBuild is still evaluating, which has yet to say its image
+    /// (aspnet or runtime), framework and assembly; null once every one has been (or could not be).</summary>
+    private static string? Unread(IEnumerable<ProjectModel> projects) =>
+        projects.FirstOrDefault(p => p.Exists && p.Evaluated is null) is { } unread
+            ? $"{unread.Name} is still being read: Docker's files are written once its image, aspnet or runtime, is known"
+            : null;
 
     /// <summary>A new file written as its folder's .editorconfig asks (its line breaks and charset), watched first so the
     /// command's Undo deletes it.</summary>

@@ -299,8 +299,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   allows (`PASSENGER_SCHEMAS` points the tests at a dead address). `CodeAssist.Web.cs` gives JSON the Go to Declaration
   (package.json dependencies) and property Rename its server lacks. `ComposeDeclarations` is Passenger's own Go to
   Declaration in a compose file (from the YAML server's outline: a build to its Dockerfile and the project its ENTRYPOINT
-  or dotnet publish names, a service, volume, network, config or secret named to its declaration, `${VAR}` to `.env` or
-  an env_file, an env_file to its file, an image to its registry's page through `CodeAssist.Browse`), tried before the
+  or dotnet publish names (the final stage's ENTRYPOINT, through the stage it is FROM, comments passed over), a service,
+  volume, network, config or secret named to its declaration, `${VAR}` to `.env` (one only an env_file sets is said not
+  set for Compose's interpolation; `$$VAR` is no variable), an env_file to its file, an image to its registry's page
+  through `CodeAssist.Browse`), tried before the
   server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`; a Dockerfile's FROM image that names no
   stage goes to its page too (`CodeAssist.FromImageAt`). The Structure window shows the web servers'
   outlines too (a flat `SymbolInformation` list, the Dockerfile server's, read as symbols by `LspDocument.OutlineAsync`).
@@ -795,12 +797,24 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`MainWindow.RenameProject`) renames its file, its solution entry (a .sln's name too) and every reference to it
   following, one command Undo and Redo take whole. `ProjectEdits` puts a project's
   `ProjectReference`s in and takes them out as text, the rest kept byte for byte (never `dotnet add reference`), for
-  Add > Reference (`MainWindow.References.cs`), and sets a property (`SetProperty`) for Add > Docker Support's SDK
-  route. `MainWindow.DockerSupport.cs` is Add > Docker Support on a project (a Dockerfile beside it and a .dockerignore
-  at the context, the solution's folder; or EnableSdkContainerSupport and ContainerRepository) and Add > Docker Compose
-  on the solution (compose.yaml, a Dockerfile for each project chosen without one, the backing services its packages
-  call for with healthchecks and connection strings, listed in Solution Items), the text from `Workspace/DockerFiles`,
-  each Add one `Commands.Record` with every file watched before it is written. `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
+  Add > Reference (`MainWindow.References.cs`), and sets a property (`SetProperty`, one in a comment passed over) for
+  Add > Docker Support's SDK route. `MainWindow.DockerSupport.cs` is Add > Docker Support on a project (a Dockerfile
+  beside it and a .dockerignore at the context, the solution's folder; or EnableSdkContainerSupport and
+  ContainerRepository) and Add > Docker Compose on the solution (compose.yaml, a Dockerfile for each project chosen
+  without one, the backing services its packages call for with healthchecks and connection strings, listed in Solution
+  Items), the text from `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
+  written and an open project or solution file taking its new text inside it (`FollowWritten`), and refused, saying so,
+  while a project is still being evaluated. A project's image is aspnet when it or a project it references has the
+  ASP.NET Core framework reference as evaluated, or its restore's `project.assets.json` says a package or reference
+  brings it, else runtime; the files a restore reads are copied by the names the disk gives them, a project at the
+  context's root into `./`. A Dockerfile a project has is built from the folder its COPY sources are found in (the
+  project's unless more are from the solution's) on the ports it sets (ASPNETCORE_HTTP_PORTS or ASPNETCORE_URLS, else
+  EXPOSE, else 8080 for ASP.NET Core), read through `DockerfileStages`; only Passenger's own new Dockerfile takes the
+  launch profiles' ports. A connection string reaches the backing service its value's shape names
+  (`BackingService.Reached`: Host= postgres, Server= or Data Source= SQL Server but a file's, mongodb://, amqp://, a
+  Redis host:port; one of another shape, SQLite's, is left as the app has it), its database kept and made by
+  POSTGRES_DB (RabbitMQ's virtual host by RABBITMQ_DEFAULT_VHOST), compose.yaml saying in a comment what SQL Server and
+  a second Postgres database leave to the app. `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;

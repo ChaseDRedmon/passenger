@@ -19,9 +19,9 @@ public sealed record ComposeAnswer(IReadOnlyList<ComposePlace> Places, Uri? Page
 /// <summary>Passenger's own Go to Declaration in a compose file, read from the YAML server's outline of it (each key's path
 /// from the top) and the text under the caret: a service's build to its Dockerfile and to the project that Dockerfile
 /// builds; depends_on, extends (another file's too), links, volumes_from and network_mode's service: to the service; a
-/// named volume, network, config or secret to its declaration; a ${VAR} or $VAR to its line in the .env beside the file or
-/// in an env_file; an env_file to its file; an image to its registry's page. Compose's own model is
-/// <c>docker compose config</c>, which needs an engine; this reads only the file, as it is typed.</summary>
+/// named volume, network, config or secret to its declaration; a ${VAR} or $VAR to its line in the .env beside the file
+/// (one an env_file alone sets is said not set for Compose; $$VAR is no variable); an env_file to its file; an image to its
+/// registry's page. Compose's own model needs an engine; this reads only the file, as it is typed.</summary>
 public static partial class ComposeDeclarations
 {
     /// <summary>Whether a file is one Docker Compose reads (<see cref="JsonSchemas.ComposeFiles"/>): compose.yaml,
@@ -127,52 +127,75 @@ public static partial class ComposeDeclarations
         return (word is "-" ? string.Empty : word, start);
     }
 
-    /// <summary>The variable a ${VAR}, ${VAR:-default} or $VAR names around a column; null where there is none.</summary>
+    /// <summary>The variable a ${VAR}, ${VAR:-default} or $VAR names around a column; null where there is none, as after
+    /// <c>$$</c>, Compose's dollar sign written whole (<c>$$VAR</c> is the text $VAR, which Compose leaves to the container).</summary>
     private static string? VariableAt(string line, int column)
     {
         foreach (Match found in Interpolation().Matches(line))
         {
             if (column >= found.Index && column <= found.Index + found.Length)
             {
+                int dollars = 0;
+                while (found.Index - dollars - 1 >= 0 && line[found.Index - dollars - 1] == '$')
+                {
+                    dollars++;
+                }
+                if (dollars % 2 == 1)
+                {
+                    return null;
+                }
                 return found.Groups["braced"].Success ? found.Groups["braced"].Value : found.Groups["bare"].Value;
             }
         }
         return null;
     }
 
-    /// <summary>A variable's line in the .env beside the compose file, which Compose interpolates from, then in the
-    /// env_file of the service it is in, then any other service's.</summary>
+    /// <summary>A variable's line in the .env beside the compose file, which Compose interpolates from; one an env_file sets
+    /// alone is said not to be set for Compose, since an env_file is the service's container's environment, never read
+    /// for the file's own <c>${VAR}</c>s.</summary>
     private static ComposeAnswer Variable(string name, string folder, List<DocumentSymbol> chain, IReadOnlyList<DocumentSymbol> outline,
         ServerLines lines, Func<string, TextSnapshot?> texts)
     {
-        List<string> files = [Path.Combine(folder, ".env")];
+        string env = Path.Combine(folder, ".env");
+        if (SetIn(env, name, texts) is { } set)
+        {
+            return new ComposeAnswer([new ComposePlace(PathNames.Canonical(env), set, $"{name} in .env")], null, $"The variable {name}");
+        }
         IEnumerable<DocumentSymbol> services = outline.FirstOrDefault(s => s.Name == "services")?.Children ?? [];
         // The service the variable is used in first, then the rest.
         foreach (DocumentSymbol service in services.OrderBy(s => chain.Count > 1 && chain[1] == s ? 0 : 1))
         {
-            if (service.Children?.FirstOrDefault(c => c.Name == "env_file") is { } envFile)
-            {
-                files.AddRange(EnvFiles(envFile, lines).Select(f => Path.GetFullPath(Path.Combine(folder, f))));
-            }
-        }
-        List<ComposePlace> found = [];
-        foreach (string file in files.Distinct(StringComparer.FromComparison(PathNames.Comparison)))
-        {
-            if (texts(file) is not { } env)
+            if (service.Children?.FirstOrDefault(c => c.Name == "env_file") is not { } envFile)
             {
                 continue;
             }
-            for (int i = 0; i < env.LineCount; i++)
+            foreach (string file in EnvFiles(envFile, lines))
             {
-                if (EnvLine(name).Match(env.GetLineText(i)) is { Success: true } set)
+                if (SetIn(Path.GetFullPath(Path.Combine(folder, file)), name, texts) is not null)
                 {
-                    found.Add(new ComposePlace(PathNames.Canonical(file), new TextPosition(i, set.Groups["name"].Index), $"{name} in {Path.GetFileName(file)}"));
-                    break;
+                    return ComposeAnswer.None($"{name} is not set for Compose: {file} sets it in the {service.Name} service's container, while Compose "
+                        + "fills in the file's own variables from the .env beside it and the environment it runs in");
                 }
             }
         }
-        return found.Count > 0 ? new ComposeAnswer(found, null, $"The variable {name}")
-            : ComposeAnswer.None($"{name} is set in neither the .env beside the file nor an env_file: Compose takes it from the environment it runs in");
+        return ComposeAnswer.None($"{name} is not set in the .env beside the file: Compose takes it from the environment it runs in");
+    }
+
+    /// <summary>Where an env file sets a variable, or null when it does not (or is not there).</summary>
+    private static TextPosition? SetIn(string file, string name, Func<string, TextSnapshot?> texts)
+    {
+        if (texts(file) is not { } env)
+        {
+            return null;
+        }
+        for (int i = 0; i < env.LineCount; i++)
+        {
+            if (EnvLine(name).Match(env.GetLineText(i)) is { Success: true } set)
+            {
+                return new TextPosition(i, set.Groups["name"].Index);
+            }
+        }
+        return null;
     }
 
     /// <summary>The files an env_file names: one path, a list of paths, or a list of entries with a path each.</summary>
@@ -341,18 +364,17 @@ public static partial class ComposeDeclarations
         return new ComposeAnswer(found, null, "The build's Dockerfile");
     }
 
-    /// <summary>The project a Dockerfile builds: the one whose assembly its ENTRYPOINT runs with dotnet, else the project
+    /// <summary>The project a Dockerfile builds: the one whose assembly the final stage's ENTRYPOINT runs with dotnet (its
+    /// own, else the one of the stage it is built FROM; never a comment's nor an earlier stage's alone), else the project
     /// file its dotnet publish (or build) names, from the build's context.</summary>
     public static string? Built(TextSnapshot dockerfile, string context, IReadOnlyList<ProjectModel> projects)
     {
         string text = dockerfile.ToString();
-        if (EntryPoint().Match(text) is { Success: true } entry)
+        Containers.DockerfileStages stages = Containers.DockerfileStages.Read(text);
+        if (stages.Final is { } final && stages.Lineage(final).Select(s => s.EntryAssembly).FirstOrDefault(a => a is not null) is { } assembly
+            && projects.FirstOrDefault(p => string.Equals(p.Evaluated?.AssemblyName ?? p.Name, assembly, StringComparison.OrdinalIgnoreCase)) is { } running)
         {
-            string assembly = entry.Groups["assembly"].Value;
-            if (projects.FirstOrDefault(p => string.Equals(p.Evaluated?.AssemblyName ?? p.Name, assembly, StringComparison.OrdinalIgnoreCase)) is { } running)
-            {
-                return running.Path;
-            }
+            return running.Path;
         }
         foreach (Match command in Publish().Matches(text))
         {
@@ -413,9 +435,7 @@ public static partial class ComposeDeclarations
 
     private static Regex EnvLine(string name) => new($@"^\s*(?:export\s+)?(?<name>{Regex.Escape(name)})\s*[=:]");
 
-    [GeneratedRegex(@"ENTRYPOINT\s*\[\s*""dotnet""\s*,\s*""(?:[^""]*/)?(?<assembly>[^""/]+)\.dll""", RegexOptions.IgnoreCase)]
-    private static partial Regex EntryPoint();
-
-    [GeneratedRegex(@"dotnet\s+(?:publish|build)\s+""?(?<project>[^""\s]+\.(?:cs|fs|vb)proj)""?", RegexOptions.IgnoreCase)]
+    /// <summary>A dotnet publish or build of a project on a line that is no comment.</summary>
+    [GeneratedRegex(@"^(?![ \t]*#)[^\n]*?dotnet\s+(?:publish|build)\s+""?(?<project>[^""\s]+\.(?:cs|fs|vb)proj)""?", RegexOptions.IgnoreCase | RegexOptions.Multiline)]
     private static partial Regex Publish();
 }
