@@ -43,7 +43,7 @@ public sealed class DebugSession : IDisposable
         }
         // The engine's own log: PASSENGER_ENGINE_LOG=FILE keeps every session's, else the session keeps one for a failed
         // wait to quote, which on a machine no one can debug on (CI's) is all there is to go by.
-        string? kept = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } named ? named : null;
+        string? kept = Environment.GetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EngineLogVariable) is { Length: > 0 } named ? named : null;
         ownLog = kept is null;
         engineLog = kept ?? Path.Combine(TestRun.Root, $"engine-{Guid.NewGuid():N}.log");
         // The symbols it decompiles go where the run's IDE keeps them (its state folder's), unless a test names a folder.

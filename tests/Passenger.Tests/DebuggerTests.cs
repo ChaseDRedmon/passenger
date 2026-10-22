@@ -1365,8 +1365,8 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         // The engine's log is opened as the adapter starts, so a folder in its place kills the adapter with an unhandled
         // exception: its stack trace comes on standard error, read off the UI thread while the session starts.
         string folderForLog = TestFolders.Create("engine-log-");
-        string? engineLog = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG");
-        Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", folderForLog);
+        string? engineLog = Environment.GetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EngineLogVariable);
+        Environment.SetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EngineLogVariable, folderForLog);
         try
         {
             MainWindow window = Open();
@@ -1391,7 +1391,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", engineLog);
+            Environment.SetEnvironmentVariable(Passenger.Dap.AdapterEnvironment.EngineLogVariable, engineLog);
         }
     }
 

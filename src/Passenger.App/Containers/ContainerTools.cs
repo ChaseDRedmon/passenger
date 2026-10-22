@@ -435,17 +435,14 @@ public static class ContainerTools
     private static readonly string[] Unheld =
         ["-e", "DOTNET_DefaultDiagnosticPortSuspend=0", "-e", "DOTNET_DiagnosticPorts=", "-e", "DOTNET_STARTUP_HOOKS=", "-e", "DOTNET_MODIFIABLE_ASSEMBLIES="];
 
-    /// <summary>The adapter's variable for how long an evaluation may run (Passenger.Debugger's).</summary>
-    private const string EvaluationLimit = "PASSENGER_EVAL_TIMEOUT_MS";
-
     /// <summary>The adapter's command in a container, over docker exec's standard input and output: the IDE's evaluation
     /// limit given it as the IDE's own adapter has it.</summary>
     public static IReadOnlyList<string> AdapterCommand(string container, string executable, IReadOnlyList<string> adapterArguments)
     {
         List<string> words = ["exec", "-i", .. Unheld];
-        if (Environment.GetEnvironmentVariable(EvaluationLimit) is { Length: > 0 } limit)
+        if (Environment.GetEnvironmentVariable(Dap.AdapterEnvironment.EvaluationTimeoutVariable) is { Length: > 0 } limit)
         {
-            words.AddRange(["-e", $"{EvaluationLimit}={limit}"]);
+            words.AddRange(["-e", $"{Dap.AdapterEnvironment.EvaluationTimeoutVariable}={limit}"]);
         }
         return [.. words, container, executable, "dap", .. adapterArguments];
     }

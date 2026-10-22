@@ -1269,8 +1269,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   read, a finally) stays pending until the thread gets there, after the program has gone on, inside what it waited for:
   the lock was then never let go, after a normal abort as after a rude one (#238). Keeping the thread suspended instead
   cannot help, since the runtime withdraws a func-eval's abort only as the evaluation ends, which a suspended thread
-  never reaches. One never caught so runs on with the program unaborted, to its own end, its end let go. `Extensions.EvaluationTimeout` (5 s, the
-  adapter's `PASSENGER_EVAL_TIMEOUT_MS`) also sets that window (`AbortWait`, 0.4×). Data breakpoints (Variables' Set Data
+  never reaches. One never caught so runs on with the program unaborted, to its own end, its end let go. `Extensions.EvaluationTimeout` (5 s, or
+  `PASSENGER_EVAL_TIMEOUT_MS`: `Dap.AdapterEnvironment` names it and `PASSENGER_ENGINE_LOG` once for the IDE and the
+  adapter, and a malformed value is fatal as Passenger starts, as it is to the adapter) also sets that window (`AbortWait`, 0.4×). Data breakpoints (Variables' Set Data
   Breakpoint, `ManagedDebugger_DataBreakpoints`, `DebugRegisters`): the runtime watches memory only on Windows x64
   (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
   (`ICorDebugHeapValue4`, the runtime's advice over GC notifications) and sets DR0–DR7 on every thread through both the

@@ -1542,7 +1542,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     {
         ProcessStartInfo start = ChildProcesses.Command(Passenger, arguments, workingDirectory);
         start.Environment["PASSENGER_SETTINGS"] = arguments.Contains("--mcp-attach") ? TestRun.Settings : settings;
-        start.Environment["PASSENGER_ENGINE_LOG"] = EngineLog;
+        start.Environment[global::Passenger.Dap.AdapterEnvironment.EngineLogVariable] = EngineLog;
         foreach ((string name, string? value) in environment ?? new())
         {
             if (value is null)

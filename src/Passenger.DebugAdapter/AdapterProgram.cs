@@ -58,16 +58,16 @@ public static class AdapterProgram
             }
         }
 
-        // How long an evaluation may run before it is stopped, shortened for the tests' run; a value that is no whole number
-        // of milliseconds above 0 is fatal, as a flag's is.
-        if (Environment.GetEnvironmentVariable(Passenger.Debugger.Extensions.EvaluationTimeoutVariable) is { Length: > 0 } timeout)
+        // How long an evaluation may run before it is stopped, shortened for the tests' run; a malformed value is fatal, as a
+        // flag's is (the IDE refuses to start with one, so its own adapters never meet it).
+        try
         {
-            if (!int.TryParse(timeout, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) || milliseconds <= 0)
-            {
-                Console.Error.WriteLine($"{Passenger.Debugger.Extensions.EvaluationTimeoutVariable} must be a whole number of milliseconds above 0, not '{timeout}'");
-                return 2;
-            }
-            Passenger.Debugger.Extensions.EvaluationTimeout = TimeSpan.FromMilliseconds(milliseconds);
+            Passenger.Debugger.Extensions.EvaluationTimeout = AdapterEnvironment.EvaluationTimeout;
+        }
+        catch (FormatException error)
+        {
+            Console.Error.WriteLine(error.Message);
+            return 2;
         }
 
         StreamWriter? logWriter = null;

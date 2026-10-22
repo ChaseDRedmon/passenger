@@ -36,6 +36,7 @@ internal static class Program
             Mcp.McpProxy.CheckVariable();
             _ = MainWindow.WatchSaysLater;
             _ = Mcp.AgentCall.Every;
+            _ = Dap.AdapterEnvironment.EvaluationTimeout;
         }
         catch (FormatException error)
         {

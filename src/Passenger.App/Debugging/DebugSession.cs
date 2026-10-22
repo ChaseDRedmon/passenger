@@ -102,9 +102,9 @@ public sealed class DebugSession
         if (place is not null)
         {
             // The adapter where the program is (in its container): its flags the same, its symbols kept there.
-            // PASSENGER_ENGINE_LOG keeps the engine's log there too, in the container's own temporary folder.
+            // The engine's log, when the IDE keeps it, is kept there too, in the container's own temporary folder.
             start = place.Command(["--interpreter=vscode", $"--symbolCache={place.SymbolCache}", "--remote",
-                .. Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } ? (string[])[$"--engineLogging={ContainerEngineLog}"] : []]);
+                .. AdapterEnvironment.EngineLog is not null ? (string[])[$"--engineLogging={ContainerEngineLog}"] : []]);
         }
         else
         {
@@ -113,9 +113,8 @@ public sealed class DebugSession
             {
                 throw new FileNotFoundException("The debug adapter is not beside the app", path);
             }
-            // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of every session, for a stop or an end that goes wrong.
             List<string> arguments = [path, "--interpreter=vscode", $"--symbolCache={SymbolCache}"];
-            if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
+            if (AdapterEnvironment.EngineLog is { } engineLog)
             {
                 arguments.Add($"--engineLogging={engineLog}");
             }
@@ -475,13 +474,9 @@ public sealed class DebugSession
         End(null);
     }
 
-    /// <summary>How long the adapter's evaluations may run (its PASSENGER_EVAL_TIMEOUT_MS, which it has as the IDE has it, a
-    /// container's adapter given it too); 5 s, its own default, when that is unset or no whole number above 0.</summary>
-    internal static TimeSpan EvaluationLimit =>
-        Environment.GetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS") is { Length: > 0 } given
-        && int.TryParse(given, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) && milliseconds > 0
-            ? TimeSpan.FromMilliseconds(milliseconds)
-            : TimeSpan.FromSeconds(5);
+    /// <summary>How long the adapter's evaluations may run, which it has as the IDE has it (a container's adapter given it
+    /// too): the IDE refuses to start with a malformed value, so this is the adapter's own.</summary>
+    internal static TimeSpan EvaluationLimit => AdapterEnvironment.EvaluationTimeout;
 
     /// <summary>How long Detach waits for the adapter's let-go: an evaluation the stop's read gave up a moment before has the
     /// rest of its time (<see cref="EvaluationLimit"/> at most), then the program is run off its stop in rounds of 3.2 s at

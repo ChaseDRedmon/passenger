@@ -70,6 +70,22 @@ public sealed class CommandLineTests : IDisposable
             $"'passenger {arguments}' was to be refused with exit code 2 saying \"{reason}\"; it exited {code} and wrote:\n{error}");
     }
 
+    /// <summary>A variable the IDE or its debug adapter reads is checked as Passenger starts, before any window or server: a
+    /// malformed evaluation limit had the IDE quietly take 5 s while each adapter it started refused it and exited, so every
+    /// Debug failed with "connection closed".</summary>
+    [Theory]
+    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3s")]
+    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "0")]
+    [InlineData(global::Passenger.App.Mcp.AgentCall.EveryVariable, "-1000")]
+    public async Task A_malformed_variable_ends_Passenger_with_exit_code_2_and_the_reason_before_anything_starts(string variable, string value)
+    {
+        (int code, string error) = await Run(["--mcp", "."], settings, new Dictionary<string, string> { [variable] = value });
+
+        string reason = $"passenger: {variable} takes a whole number of milliseconds above 0, not '{value}'";
+        Assert.True(code == 2 && error.StartsWith(reason, StringComparison.Ordinal),
+            $"Passenger with {variable}={value} was to be refused with exit code 2 saying \"{reason}\"; it exited {code} and wrote:\n{error}");
+    }
+
     [Fact]
     public async Task A_screenshot_named_with_the_file_before_its_folder_and_a_click_at_the_corner_is_taken_at_its_crop()
     {
@@ -245,8 +261,9 @@ public sealed class CommandLineTests : IDisposable
     /// exit code and what it wrote to standard error; one still running after two minutes was not refused.</summary>
     private Task<(int Code, string Error)> Run(string arguments) => Run(arguments.Split(' '), settings);
 
-    /// <summary>Passenger run in the test's folder with these arguments and its state in a folder of their own.</summary>
-    private async Task<(int Code, string Error)> Run(IReadOnlyList<string> arguments, string state)
+    /// <summary>Passenger run in the test's folder with these arguments and its state in a folder of their own, with these
+    /// variables in its environment over the run's.</summary>
+    private async Task<(int Code, string Error)> Run(IReadOnlyList<string> arguments, string state, IReadOnlyDictionary<string, string>? environment = null)
     {
         ProcessStartInfo start = new(Passenger)
         {
@@ -260,6 +277,10 @@ public sealed class CommandLineTests : IDisposable
             start.ArgumentList.Add(argument);
         }
         start.Environment["PASSENGER_SETTINGS"] = state;
+        foreach ((string variable, string value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[variable] = value;
+        }
         using Process process = Process.Start(start)!;
         process.StandardInput.Close();
         Task<string> output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
