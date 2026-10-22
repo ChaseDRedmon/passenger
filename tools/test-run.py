@@ -9,9 +9,12 @@ so several can run at once, as CI's shards do on runners of their own. The run i
 1. Every class outside the Alone collection, dealt to N processes by its seconds (the most any system took for it in
    tests/Passenger.Tests/TestTimes.json, so a class CI skips somewhere, as macOS's container tests, weighs what it costs
    where it runs; one the times lack weighs its budget in TestBudget.json), the heaviest first, each to the lightest
-   process so far. The classes that use the container engine go to one process together (LANES), so the engine's machine
-   works for one test at a time, as in one process. Their limits are scaled by SIDE_BY_SIDE_SCALE, unless
-   PASSENGER_TEST_TIME_SCALE says otherwise, since the processes share the machine.
+   process so far. The classes that run beside the window tests in a process (the debug adapter's protocol tests,
+   DebugSession.Collection, and Beside's) are dealt apart, the heaviest of their hands to the process whose window tests
+   weigh least, since a process takes about as long as the longer of the two. The classes that use the container engine
+   go to one process together (LANES), so the engine's machine works for one test at a time, as in one process. Their
+   limits are scaled by SIDE_BY_SIDE_SCALE, unless PASSENGER_TEST_TIME_SCALE says otherwise, since the processes share the
+   machine.
 2. The Alone classes (a test held to a time, or one that debugs through the window) in one process, once every process of
    the first phase has ended, so nothing runs beside them; their limits as the person's PASSENGER_TEST_TIME_SCALE says.
 
@@ -60,6 +63,8 @@ LANES = {
                                        r"|TakenDown|NoneLeft|Images?)\b|\bContainerPrograms\b|\bStandInEngine\b"
                                        r"|\bContainerEngine\.Shared\b"),
 }
+# The collections that run beside the window tests' own in a process (Collections.cs).
+BESIDE = ("Collection(DebugSession.Collection)", "Collection(Beside.Name)")
 DECLARATION = re.compile(r"^(?P<attributes>(?:\[[^\n]*\][ \t]*\r?\n)*)(?:(?:public|internal|sealed|static|partial|abstract"
                          r"|file)\s+)*class\s+(?P<name>\w+)(?P<rest>[^\n{]*)", re.M)
 NAMESPACE = re.compile(r"^namespace\s+(?P<name>[\w.]+)\s*;", re.M)
@@ -67,7 +72,8 @@ NAMESPACE = re.compile(r"^namespace\s+(?P<name>[\w.]+)\s*;", re.M)
 
 def sources():
     """Each top-level class the test project declares, by its name as a listing's tests give it (without PREFIX): whether
-    its declaration says it is Alone, its bases' simple names, and the lanes its source names."""
+    its declaration says it is Alone or runs beside the window tests, its bases' simple names, and the lanes its source
+    names."""
     declared = {}
     for path in glob.glob(os.path.join(PROJECT, "**", "*.cs"), recursive=True):
         if os.sep + "obj" + os.sep in path or os.sep + "bin" + os.sep in path:
@@ -85,22 +91,22 @@ def sources():
             bases = re.findall(r"\b([A-Z]\w*)", rest.split(":", 1)[1]) if ":" in rest else []
             declared[name] = {
                 "alone": "Collection(Alone.Name)" in declaration["attributes"],
+                "beside": any(collection in declaration["attributes"] for collection in BESIDE),
                 "bases": bases,
                 "lanes": [lane for lane, pattern in LANES.items() if pattern.search(body)],
             }
     return declared
 
 
-def alone(name, declared):
-    """Whether a class runs in the Alone collection: its own declaration says so, or a base class's does. One the sources
-    do not show (a test class nested in another) runs alone, which is never wrong, only slower."""
-    by_simple = {key.rsplit(".", 1)[-1]: value for key, value in declared.items()}
+def declares(name, declared, key, unknown):
+    """Whether a class's declaration, or a base class's, says what key names; unknown for one the sources do not show."""
+    by_simple = {full.rsplit(".", 1)[-1]: value for full, value in declared.items()}
     seen = set()
     entry = declared.get(name)
     if entry is None:
-        return True
+        return unknown
     while entry is not None:
-        if entry["alone"]:
+        if entry[key]:
             return True
         base = next((b for b in entry["bases"] if b in by_simple and b not in seen), None)
         if base is None:
@@ -108,6 +114,17 @@ def alone(name, declared):
         seen.add(base)
         entry = by_simple[base]
     return False
+
+
+def alone(name, declared):
+    """Whether a class runs in the Alone collection: its own declaration says so, or a base class's does. One the sources
+    do not show (a test class nested in another) runs alone, which is never wrong, only slower."""
+    return declares(name, declared, "alone", True)
+
+
+def beside(name, declared):
+    """Whether a class runs beside the window tests in its process (DebugSession.Collection, Beside)."""
+    return declares(name, declared, "beside", False)
 
 
 def weight(name, times, budget):
@@ -307,19 +324,32 @@ def main():
     last = [name for name in classes if alone(name, declared)]
     rest = [name for name in classes if name not in last]
 
-    # The first phase's units: a class on its own, or a lane's classes together.
+    # The first phase's units: a class on its own, or a lane's classes together; those beside the window tests apart.
     units = {}
+    side = set()
     for name in rest:
         lanes = declared.get(name, {}).get("lanes", [])
         unit = f"[{lanes[0]}]" if lanes else name
         units.setdefault(unit, []).append(name)
+        if not lanes and beside(name, declared):
+            side.add(unit)
     unit_weights = {unit: sum(weight(name, times, budget) for name in members) for unit, members in units.items()}
-    hands, totals = shards.deal(unit_weights, min(count, len(units))) if units else ([], [])
+    windowed = {unit: seconds for unit, seconds in unit_weights.items() if unit not in side}
+    besides = {unit: seconds for unit, seconds in unit_weights.items() if unit in side}
+    count = min(count, max(len(windowed), len(besides)))
+    window_hands, window_totals = shards.deal(windowed, count) if count else ([], [])
+    side_hands, side_totals = shards.deal(besides, count) if count else ([], [])
+    # The heaviest hand beside the window tests goes with the lightest hand of them.
+    by_window = sorted(range(count), key=lambda i: window_totals[i])
+    by_side = sorted(range(count), key=lambda i: -side_totals[i])
+    hands = [window_hands[w] + side_hands[b] for w, b in zip(by_window, by_side)]
+    totals = [max(window_totals[w], side_totals[b]) for w, b in zip(by_window, by_side)]
     if arguments.plan:
         for number, (hand, total) in enumerate(zip(hands, totals), 1):
             print(f"\nProcess {number}, about {total / 60:.1f} minutes by CI's times:")
             for unit in hand:
-                print(f"  {unit:<44} {unit_weights[unit]:>7.1f}" + (f"  ({', '.join(units[unit])})" if unit.startswith("[") else ""))
+                print(f"  {unit:<44} {unit_weights[unit]:>7.1f}" + (f"  ({', '.join(units[unit])})" if unit.startswith("[") else "")
+                      + ("  (beside)" if unit in side else ""))
         print(f"\nAlone, after them, about {sum(weight(n, times, budget) for n in last) / 60:.1f} minutes by CI's times:")
         for name in last:
             print(f"  {name:<44} {weight(name, times, budget):>7.1f}" + ("" if name in declared else "  (not in the sources)"))

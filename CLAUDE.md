@@ -1741,7 +1741,11 @@ the stop before waiting for Ended or Paused. A Mac that sleeps during a run fail
 
 What runs beside what is chosen (`Collections.cs`): window tests run one at a time on Avalonia's session thread and, as
 the assembly's one collection, class after class; beside them run only the debug adapter's protocol tests
-(`DebugSession.Collection`). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
+(`DebugSession.Collection`) and `Beside`'s classes, one after another: a class that opens no window, waits on nothing of
+the headless session's, changes nothing the process shares (its PATH, its environment) and holds nothing to a time, so a
+busy machine only lengthens it (`AspireExecutionServerTests`, `AspireTelemetryTests`, `McpLanguagesTests`, whose
+Passengers are processes of their own; not `AspireClientTests`, which changes the PATH, nor `McpTests`, which holds a git
+status to ten seconds). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
 window answers, a profile's samples, the debugger's evaluation limit), or that debugs through the window, goes in
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
@@ -1771,7 +1775,9 @@ tests change their folder throughout (`ExplorerFilesTests`, `PackagesTests`, `Fi
 programs: each test process keeps to a run folder, state, NuGet home, MSBuild node salt, agent sockets and container
 labels of its own (`TestRun`), so the classes outside `Alone` are dealt to N processes at once (by the most any system's
 runs took for each in TestTimes.json, else its budget; N a quarter of the processors, at most 4 and one per 8 GB, else
-`PASSENGER_TEST_PROCESSES` or the recipe's second argument), their limits scaled by 1.5 unless PASSENGER_TEST_TIME_SCALE
+`PASSENGER_TEST_PROCESSES` or the recipe's second argument), those beside the window tests (`DebugSession.Collection`,
+`Beside`) dealt apart, the heaviest of their hands with the lightest hand of window tests, since a process takes about as
+long as the longer of the two, their limits scaled by 1.5 unless PASSENGER_TEST_TIME_SCALE
 says otherwise, the classes that use the container engine together in one (`LANES`), and once every one has ended the
 `Alone` classes run in one process with nothing beside it. A class is Alone by its declaration's `[Collection(Alone.Name)]`
 (or its base class's), which the runner reads from the sources; one it cannot find runs alone. So a class never counts

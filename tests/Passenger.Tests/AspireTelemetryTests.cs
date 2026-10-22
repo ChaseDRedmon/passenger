@@ -6,6 +6,9 @@ using Passenger.App.Aspire;
 
 namespace Passenger.Tests;
 
+/// <summary>The Aspire dashboard's telemetry read from a stand-in dashboard on loopback; with no window, beside the window
+/// tests (<see cref="Beside"/>).</summary>
+[Collection(Beside.Name)]
 public sealed class AspireTelemetryTests
 {
     private const string ApiKey = "synthetic-dashboard-key";

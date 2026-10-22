@@ -9,6 +9,10 @@ using Passenger.App.Aspire;
 
 namespace Passenger.Tests;
 
+/// <summary>Passenger's execution server for Aspire's DCP over raw HTTP and WebSockets on loopback; with no window, beside the
+/// window tests (<see cref="Beside"/>): its trickled bodies wait real seconds, which a busy machine only lengthens past the
+/// server's deadline.</summary>
+[Collection(Beside.Name)]
 public sealed class AspireExecutionServerTests
 {
     private const string Instance = "passenger-tests-abcdefghijkl";

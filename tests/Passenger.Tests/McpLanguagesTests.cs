@@ -9,7 +9,9 @@ namespace Passenger.Tests;
 /// the window's commands are: Avalonia's and WPF's XAML through Passenger's own XAML (the galleries of XamlTests and
 /// WpfXamlTests, each in a folder of the test's own, restored), the web languages through their servers with the
 /// project's own ESLint and Prettier (skipped without a Node.js, as WebLanguagesTests are), a compose file and a
-/// Dockerfile through theirs, MSBuild files through Passenger's own evaluation, and saying plainly what a language lacks.</summary>
+/// Dockerfile through theirs, MSBuild files through Passenger's own evaluation, and saying plainly what a language lacks.
+/// Its Passengers are processes of their own, so it runs beside the window tests (<see cref="Beside"/>).</summary>
+[Collection(Beside.Name)]
 public sealed class McpLanguagesTests : McpRig
 {
     /// <summary>Avalonia's XAML, and a library type it names decompiled once across sessions, another version's decompiled
