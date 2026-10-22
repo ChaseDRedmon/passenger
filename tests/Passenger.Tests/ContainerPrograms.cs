@@ -13,12 +13,16 @@ internal static class ContainerPrograms
     /// <summary>The engine's processor, as .NET names it (x64, arm64).</summary>
     public static string Processor() => Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64";
 
-    /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does.</summary>
+    /// <summary>Each system's publish, once a run: a second, as another test's IDE copies the tools into a container, would
+    /// rewrite them under it, and the IDE would then look for them elsewhere (a download from the run's dead address).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<ChildResult>> Published = new(StringComparer.Ordinal);
+
+    /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does, once a run.</summary>
     public static void Publish(string rid)
     {
         string output = Path.Combine(Debugging.Helpers.Debuggees.Root, "artifacts", "container-tools", rid);
-        ChildResult published = Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"), "-c", "Release", "-r", rid,
-            "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root);
+        ChildResult published = Published.GetOrAdd(rid, _ => new Lazy<ChildResult>(() => Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"),
+            "-c", "Release", "-r", rid, "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
         Assert.True(published.Succeeded, $"Passenger's container tools for {rid} did not publish: {published.Output}{published.Error}");
     }
 

@@ -45,7 +45,7 @@ public sealed partial class McpTests
         await using McpClient client = await Start(["--mcp", shop]);
         try
         {
-            JsonElement profiled = await Call(client, "profile", new() { ["configuration"] = "Compose: compose.yaml", ["seconds"] = 2, ["memory"] = true });
+            JsonElement profiled = await Call(client, "profile", new() { ["configuration"] = "Compose: compose.yaml", ["seconds"] = 2, ["memory"] = true, ["top"] = 200 });
             Assert.True(profiled.GetProperty("samples").GetInt32() > 0, $"The profile of the compose configuration sampled nothing: {profiled.GetRawText()}");
             JsonElement spin = Assert.Single(profiled.GetProperty("hotSpots").EnumerateArray(), h => h.GetProperty("method").GetString()!.StartsWith("Hot.Spin", StringComparison.Ordinal));
             Assert.True(spin.TryGetProperty("source", out JsonElement source) && source.GetString()!.EndsWith($"Program.cs:{ContainerRunProfilingTests.SpinLine}", StringComparison.Ordinal),
