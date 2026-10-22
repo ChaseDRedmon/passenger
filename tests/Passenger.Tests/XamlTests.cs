@@ -1100,10 +1100,14 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.KeyTextInput(" Background=\"#E2A33F\"");
         Ui.WaitFor(() => Below() == orange, "the preview drawing the panel's new background once typing paused", TimeSpan.FromSeconds(30));
 
-        // XAML that does not load leaves the last frame up, the host's reason over it.
+        // XAML that does not load leaves the last frame up, the host's reason over it with its line, the editor's: the host
+        // reads the lone '\r' in the window's tag as an XML reader does, a line's end the editor reads inside the line.
+        Replace(editor, "d:DesignWidth=\"800\" d:DesignHeight", "d:DesignWidth=\"800\"\r d:DesignHeight");
         Replace(editor, "</StackPanel>", "</StackPane>");
         Ui.WaitFor(() => preview.Error is not null, "the previewer saying why the XAML did not load", TimeSpan.FromSeconds(30));
-        Assert.Contains("line 14", preview.Error, StringComparison.Ordinal);
+        Assert.Equal(13, editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("</StackPane>", StringComparison.Ordinal)));
+        Assert.Contains("(line 14, column ", preview.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("15", preview.Error, StringComparison.Ordinal);
         Assert.Equal(orange, Below());
         Replace(editor, "</StackPane>", "</StackPanel>");
         Ui.WaitFor(() => preview.Error is null, "the error gone once the XAML loads again", TimeSpan.FromSeconds(30));

@@ -131,10 +131,10 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
             }
             Uri baseUri = new(request.BaseUri);
             object root = Load(loose.Text, baseUri);
-            List<string> notes = [];
+            List<WpfPreviewNote> notes = [];
             if (applicationProblem is not null)
             {
-                notes.Add(applicationProblem);
+                notes.Add(new WpfPreviewNote(applicationProblem));
             }
             ApplyDesignContexts(root, loose, baseUri, notes);
             if (Surface.For(root, loose) is not { } surface)
@@ -162,7 +162,7 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
                 Png = surface.Render(scale),
                 Scale = scale,
                 Elements = Boxes(surface, baseUri),
-                Note = notes.Count == 0 ? null : string.Join("; ", notes),
+                Notes = notes.Count == 0 ? null : notes,
             };
         }
         catch (Exception error) when (error is not OutOfMemoryException)
@@ -202,8 +202,8 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
         catch (Exception error) when (error is not OutOfMemoryException)
         {
             Application.Current.Resources = new ResourceDictionary();
-            (string message, int? line, _) = Describe(error);
-            return $"App.xaml's resources did not load: {message}{(line is { } at ? $" (App.xaml, line {at})" : string.Empty)}";
+            // The line WPF names is in the dictionary's text made above (its whitespace gone), never App.xaml's: none is said.
+            return $"App.xaml's resources did not load: {Describe(error).Message}";
         }
     }
 
@@ -225,7 +225,7 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
 
     /// <summary>Each element's <c>d:DataContext</c> as its data context, the designer's prefix taken as the previewer's
     /// (<see cref="Design.DesignInstanceExtension"/>); one that does not load is noted and left out.</summary>
-    private void ApplyDesignContexts(object root, LooseXaml loose, Uri baseUri, List<string> notes)
+    private void ApplyDesignContexts(object root, LooseXaml loose, Uri baseUri, List<WpfPreviewNote> notes)
     {
         if (loose.Contexts.Count == 0 || root is not DependencyObject top)
         {
@@ -272,7 +272,7 @@ internal sealed partial class Previewer(Assembly project, TextWriter protocol, D
             }
             catch (Exception error) when (error is not OutOfMemoryException)
             {
-                notes.Add($"d:DataContext on line {context.Line} did not load: {Describe(error).Message}");
+                notes.Add(new WpfPreviewNote($"d:DataContext did not load: {Describe(error).Message}", context.Line));
             }
         }
     }

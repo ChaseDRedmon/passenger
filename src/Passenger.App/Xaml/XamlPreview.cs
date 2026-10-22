@@ -212,6 +212,19 @@ public sealed class XamlPreview : IDisposable
             .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
     }
 
+    /// <summary>Where a previewer says the XAML it was sent did not load, " (line N, column M)" from one, as the editor counts
+    /// that text's lines; empty with no line. Both previewers read the file as an XML reader does, a lone '\r' ending a line,
+    /// so below one theirs run ahead of the editor's (<see cref="Lsp.ServerLines.OfXml"/>).</summary>
+    internal static string Where(TextSnapshot sent, int? line, int? column)
+    {
+        if (line is not int reported || reported < 1)
+        {
+            return string.Empty;
+        }
+        TextPosition at = sent.GetPosition(Lsp.ServerLines.OfXml(sent).OffsetOf(reported - 1, Math.Max(0, (column ?? 1) - 1)));
+        return column is null ? $" (line {at.Line + 1})" : $" (line {at.Line + 1}, column {at.Column + 1})";
+    }
+
     /// <summary>A target framework's .NET version (net8.0-windows is 8.0); null for one before .NET 5 or none.</summary>
     internal static Version? Framework(string? moniker) =>
         moniker is not null && moniker.StartsWith("net", StringComparison.Ordinal) && Version.TryParse(moniker[3..].Split('-')[0], out Version? version) && version.Major >= 5

@@ -63,7 +63,9 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         window.KeyTextInput(" Background=\"#E2A33F\"");
         Ui.WaitFor(() => At(below) == orange, "the preview drawing the panel's new background once typing paused", TimeSpan.FromSeconds(30));
 
-        // XAML that does not load leaves the last frame up, the previewer's reason over it with its line.
+        // XAML that does not load leaves the last frame up, the previewer's reason over it with its line, the editor's: the
+        // previewer's XML reader ends a line at the lone '\r' in the window's tag, which the editor reads inside its line.
+        Replace(editor, "Title=\"Gallery\" Height", "Title=\"Gallery\"\r Height");
         Replace(editor, "</StackPanel>", "</StackPane>");
         int line = editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("</StackPane>", StringComparison.Ordinal)) + 1;
         Ui.WaitFor(() => preview.Error is not null, "the previewer saying why the XAML did not load", TimeSpan.FromSeconds(30));

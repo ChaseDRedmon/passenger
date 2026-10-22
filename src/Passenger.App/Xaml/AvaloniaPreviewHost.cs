@@ -9,6 +9,7 @@ using Avalonia.Remote.Protocol.Designer;
 using Avalonia.Remote.Protocol.Viewport;
 using RemoteFormat = Avalonia.Remote.Protocol.Viewport.PixelFormat;
 using Passenger.Core;
+using Passenger.Text;
 using Passenger.Xaml.Projects;
 
 namespace Passenger.App.Xaml;
@@ -30,6 +31,9 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
     private Stopwatch? starting;
     private bool empty;
     private double drawnAt;
+
+    /// <summary>The texts sent and not yet answered, in order, as the host answers them: what an answer's line is read in.</summary>
+    private readonly Queue<TextSnapshot> unanswered = new();
 
     private AvaloniaPreviewHost(XamlPreview preview, string output)
     {
@@ -94,7 +98,9 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
             return;
         }
         preview.Hold();
-        _ = open.Send(new UpdateXamlMessage { Xaml = preview.Document.Document.Text.Snapshot.ToString(), AssemblyPath = output, XamlFileProjectPath = preview.ProjectPath() });
+        TextSnapshot text = preview.Document.Document.Text.Snapshot;
+        unanswered.Enqueue(text);
+        _ = open.Send(new UpdateXamlMessage { Xaml = text.ToString(), AssemblyPath = output, XamlFileProjectPath = preview.ProjectPath() });
     }
 
     public void Rescale(double scaling)
@@ -136,7 +142,8 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
                 empty = resize.Width < 1 || resize.Height < 1;
                 break;
             case UpdateXamlResultMessage result:
-                preview.Error = result.Error is { Length: > 0 } ? Describe(result) : null;
+                TextSnapshot answered = unanswered.TryDequeue(out TextSnapshot? sent) ? sent : preview.Document.Document.Text.Snapshot;
+                preview.Error = result.Error is { Length: > 0 } ? Describe(result, answered) : null;
                 if (preview.Error is not null)
                 {
                     preview.Let();
@@ -193,13 +200,14 @@ internal sealed class AvaloniaPreviewHost : IPreviewHost
         preview.FrameSize = new Size(frame.Width * 96 / frame.DpiX, frame.Height * 96 / frame.DpiY);
     }
 
-    /// <summary>What the host said of a XAML it could not load, with the line it names.</summary>
-    private static string Describe(UpdateXamlResultMessage result)
+    /// <summary>What the host said of a XAML it could not load, with the line it names in the text it was sent, as the editor
+    /// counts that text's lines (<see cref="XamlPreview.Where"/>), in place of the compiler's its message repeats.</summary>
+    private static string Describe(UpdateXamlResultMessage result, TextSnapshot sent)
     {
         if (result.Exception is { } details)
         {
-            string where = details.LineNumber is { } line ? $" (line {line}{(details.LinePosition is { } column ? $", column {column}" : string.Empty)})" : string.Empty;
-            return $"{details.ExceptionType}: {details.Message}{where}";
+            string message = details.LineNumber is null ? details.Message : XamlDocument.Plain(details.Message);
+            return $"{details.ExceptionType}: {message}{XamlPreview.Where(sent, details.LineNumber, details.LinePosition)}";
         }
         return result.Error.Split('\n')[0].Trim();
     }

@@ -253,12 +253,12 @@ internal sealed class WpfPreviewHost : IPreviewHost
                 // Boxes placed on a text since typed over would land on the wrong elements: the next frame brings them.
                 preview.Elements = sent == preview.Document.Document.Text.Snapshot ? elements : [];
                 preview.Error = null;
-                preview.Status = reply.Note is { } note ? $"Live. {note}" : "Live";
+                preview.Status = reply.Notes is { Count: > 0 } notes
+                    ? $"Live. {string.Join("; ", notes.Select(n => n.Message + XamlPreview.Where(sent ?? preview.Document.Document.Text.Snapshot, n.Line, null)))}"
+                    : "Live";
                 break;
             case WpfPreviewKinds.Error:
-                preview.Error = reply.Line is { } line
-                    ? $"{reply.Message} (line {line}{(reply.Column is { } column ? $", column {column}" : string.Empty)})"
-                    : reply.Message;
+                preview.Error = $"{reply.Message}{XamlPreview.Where(sent ?? preview.Document.Document.Text.Snapshot, reply.Line, reply.Column)}";
                 preview.Status = "The XAML did not load";
                 break;
             default:
