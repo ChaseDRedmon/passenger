@@ -779,6 +779,72 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>The person's window and an agent's windowless Passenger keep one Local History in one state at the same
+    /// time: every label the agent's Passenger puts is in it after the window has pruned the history again and again
+    /// meanwhile, each prune of a long history holding the agent's lines back until it is done. A prune read the log and
+    /// wrote it again with no word to the other Passenger, and the lines it appended in between were gone.</summary>
+    [AvaloniaFact]
+    public void Labels_an_agents_passenger_puts_as_the_persons_window_prunes_the_shared_history_are_all_kept()
+    {
+        // Hours of earlier labels, which both keep, so each prune reads and writes the log at length.
+        string log = Path.Combine(global::Passenger.App.State.ProjectState.FolderOf(settings, PathNames.Canonical(folder)), "localHistory", "changes.log");
+        Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        const int Earlier = 40_000;
+        File.WriteAllText(log, string.Concat(Enumerable.Range(0, Earlier).Select(i =>
+            $"{{\"s\":{(now - 100_000_000) * 1000 + i},\"t\":{now - ((Earlier - i) * 200L)},\"k\":\"label\",\"n\":\"earlier {i}\"}}\n")));
+        McpClient client = Await(Task.Run(() => Start(["--mcp", folder])), "the agent's Passenger starting");
+        long[] clock = [new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero).UtcTicks];
+        global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = () => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero) };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, HistoryKeeping = day };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine(folder, "Helper.cs"));
+        Ui.Settle();
+        try
+        {
+            Assert.Equal(PathNames.Canonical(Path.GetDirectoryName(log)!), PathNames.Canonical(window.LocalHistory!.Root));
+            Await(Task.Run(() => Call(client, "workspace")), "the agent's Passenger to have the folder open");
+            bool saving = true;
+            Task<int> labelling = Task.Run(async () =>
+            {
+                int put = 0;
+                while (Volatile.Read(ref saving) && put < 500)
+                {
+                    put++;
+                    await Call(client, "local_history_label", new() { ["name"] = $"agent {put}" });
+                }
+                return put;
+            });
+            // The person's saves six hours apart on the window's clock: as each day turns the window prunes, dropping its oldest.
+            for (int save = 1; save <= 32; save++)
+            {
+                Interlocked.Add(ref clock[0], TimeSpan.FromHours(6).Ticks);
+                window.EditorArea.CodeEditor.Focus();
+                window.EditorArea.CodeEditor.ApplyEdits([new global::Passenger.Text.TextEdit(0, 0, $"// save {save}\n")]);
+                Ui.Settle();
+                Ui.Run(window, AppActions.Save);
+            }
+            Volatile.Write(ref saving, false);
+            int labels = Await(labelling, "the agent's labels");
+            Ui.Settle();
+            HashSet<string> kept = [.. File.ReadAllLines(log).Select(line => System.Text.Json.Nodes.JsonNode.Parse(line)?["n"]?.GetValue<string>())
+                .OfType<string>().Where(name => name.StartsWith("agent ", StringComparison.Ordinal))];
+            List<string> lost = [.. Enumerable.Range(1, labels).Select(n => $"agent {n}").Where(label => !kept.Contains(label))];
+            Assert.True(lost.Count == 0, $"Of the {labels} labels the agent's Passenger put, the person's window pruning the shared history lost {lost.Count}: {string.Join(", ", lost.Take(20))}");
+            Assert.True(File.ReadAllLines(log).Count(line => line.Contains("\"earlier ", StringComparison.Ordinal)) == Earlier, "The earlier labels, which both keep, were not all kept");
+        }
+        finally
+        {
+            window.Close();
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+        }
+    }
+
     [AvaloniaFact]
     public void An_agents_action_no_action_has_or_one_that_cannot_run_here_is_an_error_saying_why()
     {

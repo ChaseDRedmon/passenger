@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -60,6 +61,10 @@ public sealed class LocalHistory
     /// same folder may have written it for a line it is about to add.</summary>
     private static readonly TimeSpan Orphaned = TimeSpan.FromMinutes(10);
 
+    /// <summary>How long a change to the history waits for another Passenger keeping it in the same state to let go of it:
+    /// past that an append goes on all the same, and a prune waits for its next turn.</summary>
+    private static readonly TimeSpan HeldFor = TimeSpan.FromSeconds(10);
+
     private static readonly Dictionary<string, LocalHistory> Stores = new(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions Compact = new() { WriteIndented = false };
@@ -72,6 +77,7 @@ public sealed class LocalHistory
     private readonly Dictionary<string, int> writing = new(PathNames.Comparer);
     private readonly Queue<Action> jobs = new();
     private readonly string log;
+    private readonly string held;
     private readonly string blobs;
     private readonly string stateFolder;
     private readonly DateTime openedUtc = DateTime.UtcNow;
@@ -92,6 +98,7 @@ public sealed class LocalHistory
         Keeping = keeping;
         Root = Path.Combine(State.ProjectState.FolderOf(stateFolder, folder), "localHistory");
         log = Path.Combine(Root, "changes.log");
+        held = Path.Combine(Root, "changes.lock");
         blobs = Path.Combine(Root, "blobs");
         lastSet = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000;
         // Read first: what is recorded from now on follows what was kept.
@@ -693,7 +700,10 @@ public sealed class LocalHistory
         {
             lines.Append(Line(kept)).Append('\n');
         }
-        File.AppendAllText(log, lines.ToString());
+        using (Hold())
+        {
+            File.AppendAllText(log, lines.ToString());
+        }
         sincePrune += made.Count;
     }
 
@@ -719,16 +729,21 @@ public sealed class LocalHistory
     }
 
     /// <summary>Rider's purge, as the store opens and once a day: the change sets older than <see cref="HistoryKeeping.Days"/>
-    /// of activity go, counting back from the newest, a pause of 12 hours or more counted as nothing; then the oldest go
-    /// until what is left needs no more content than <see cref="HistoryKeeping.Bytes"/>. The log is written again
-    /// without them, and the content nothing names any longer is deleted. What it weighs is the log as it is on disk, not
-    /// only what this store recorded: another Passenger on the folder with the same state (an agent's, over --mcp) appends
-    /// lines of its own, which a rewrite from this store's alone erased, their content with them.</summary>
+    /// of activity go, counting back from the newest, a pause of 12 hours or more counted as nothing, then the oldest until the
+    /// rest needs no more content than <see cref="HistoryKeeping.Bytes"/>; the log is written again without them and content
+    /// nothing names is deleted. It weighs the log on disk, which another Passenger on the same state (an agent's, over --mcp)
+    /// appends to too, held against that one's appends from its read to its last delete (<see cref="Hold"/>).</summary>
     private void Prune()
     {
         DateTimeOffset now = Keeping.Clock();
         prunedOn = DateOnly.FromDateTime(now.LocalDateTime);
         sincePrune = 0;
+        using FileStream? holding = Hold();
+        if (holding is null)
+        {
+            // Held past the wait: the next day's prune, or the next thousand changes', tries again.
+            return;
+        }
         List<(string Line, HistoryEvent? Event)> logged = Logged();
         List<HistoryEvent> all = [.. logged.Select(l => l.Event).OfType<HistoryEvent>()];
         HashSet<string> onDisk = new(all.Select(Key), PathNames.Comparer);
@@ -860,7 +875,19 @@ public sealed class LocalHistory
         string file = BlobPath(hash);
         if (File.Exists(file))
         {
-            return hash;
+            using (Hold())
+            {
+                try
+                {
+                    // Named again: its time says so, so no prune, here or in another Passenger, deletes it as long unnamed.
+                    File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+                    return hash;
+                }
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    // Pruned as unnamed a moment ago: written again.
+                }
+            }
         }
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         using MemoryStream compressed = new();
@@ -873,6 +900,31 @@ public sealed class LocalHistory
     }
 
     private string BlobPath(string hash) => Path.Combine(blobs, hash[..2], hash[2..]);
+
+    /// <summary>The history held against every other Passenger keeping it in the same state (an agent's, over --mcp) while
+    /// this one changes it: the log appended to or written again, content taken up again or deleted. A lock file open
+    /// sharing nothing, waited for on the queue (never the UI thread) up to <see cref="HeldFor"/>; null when not had.</summary>
+    private FileStream? Hold()
+    {
+        Directory.CreateDirectory(Root);
+        long began = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            try
+            {
+                return new FileStream(held, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (Stopwatch.GetElapsedTime(began) < HeldFor)
+            {
+                Thread.Sleep(10);
+            }
+            catch (IOException refused)
+            {
+                IdeErrors.Write($"Local History of {Folder}: another Passenger on the same state held {held} past {HeldFor.TotalSeconds:0} s: {refused.Message}");
+                return null;
+            }
+        }
+    }
 
     /// <summary>A file's bytes when the history keeps its content: text, and not too large; else null.</summary>
     private static byte[]? ReadKept(string file)
