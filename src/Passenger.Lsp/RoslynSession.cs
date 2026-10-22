@@ -649,9 +649,21 @@ public sealed class LspDocument : IDisposable
             changes.Add(new TextDocumentContentChangeEvent(before.RangeOf(range), text));
             last = first - 1;
         }
-        // A server pushing once a text pushes nothing for a change that leaves the text as it was.
-        Sent(e.Version, changed: e.Edits.Any(edit => edit.Text.Length != edit.End - edit.Start || e.Before.GetText(edit.Start, edit.End - edit.Start) != edit.Text));
+        Sent(e.Version, changed: !session.Pushes.EachText || Changes(e));
         Server.Notify("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
+    }
+
+    /// <summary>Whether a change leaves the text otherwise than it was, as a server pushing once a text pushes only then.</summary>
+    private static bool Changes(DocumentChangedEventArgs e)
+    {
+        foreach (TextEdit edit in e.Edits)
+        {
+            if (edit.Text.Length != edit.End - edit.Start || e.Before.GetText(edit.Start, edit.End - edit.Start) != edit.Text)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>A change as the server can be sent it. Roslyn reads a column past a line's end as the end, before its break,
