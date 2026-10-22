@@ -10,11 +10,19 @@ namespace Passenger.Tests;
 /// <summary>The profiler as dotTrace's sampling, from the window: a configuration profiled is caught from its first
 /// instruction to its end, its busy method on the main thread's hot path, its allocations and collections listed, and a
 /// .NET program it starts runs free rather than held at the profiler's port; one that never reaches the profiler is said
-/// to, and a running one's heap is counted by type.</summary>
+/// to, and a running one's heap is counted by type. The tests that start a program which waits on its input and end it
+/// share one (<see cref="Waits"/>), restored and built once.</summary>
 [Collection(Alone.Name)]
-public sealed class ProfilerTests : IDisposable
+public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposable
 {
     private readonly string folder = TestFolders.Create("profile-");
+    private readonly Waits waits;
+
+    public ProfilerTests(Waits waits)
+    {
+        this.waits = waits;
+        waits.Reset();
+    }
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -191,21 +199,14 @@ public sealed class ProfilerTests : IDisposable
     [AvaloniaFact]
     public void Kill_ends_a_profiled_program_that_has_not_reached_the_profiler_at_once()
     {
-        string written = Path.Combine(folder, "unreached.pid");
-        string project = Project("Unreached", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.ReadLine();\n");
-        Directory.CreateDirectory(Path.Combine(project, "Properties"));
-        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
-            "{ \"profiles\": { \"Undiagnosed\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_EnableDiagnostics\": \"0\" } } } }");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        string pids = TestFolders.Create("pids-");
+        MainWindow window = OpenWaits("Unreached: Undiagnosed", pids, undiagnosed: true);
         IReadOnlyList<string> before = Ports();
         Task<string?> started = window.ProfileAsync();
         int program = 0;
         try
         {
-            program = Processes.WrittenId(written, "the program to run as the profiler waits for it");
+            program = Started(pids, "the program to run as the profiler waits for it");
             Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
             Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
                 .Single(b => b.Content as string == "Kill");
@@ -233,21 +234,14 @@ public sealed class ProfilerTests : IDisposable
     [AvaloniaFact]
     public void Closing_the_folder_ends_a_profiled_program_that_has_not_reached_the_profiler()
     {
-        string written = Path.Combine(folder, "closed.pid");
-        string project = Project("Closed", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.ReadLine();\n");
-        Directory.CreateDirectory(Path.Combine(project, "Properties"));
-        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
-            "{ \"profiles\": { \"Undiagnosed\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_EnableDiagnostics\": \"0\" } } } }");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        string pids = TestFolders.Create("pids-");
+        MainWindow window = OpenWaits("Closed: Undiagnosed", pids, undiagnosed: true);
         IReadOnlyList<string> before = Ports();
         Task<string?> started = window.ProfileAsync();
         int program = 0;
         try
         {
-            program = Processes.WrittenId(written, "the program to run as the profiler waits for it");
+            program = Started(pids, "the program to run as the profiler waits for it");
             Assert.False(started.IsCompleted, $"The profiler gave up on the program before the folder was closed: {(started.IsCompleted ? started.Result : null)}");
 
             Assert.Null(window.CloseSolution());
@@ -269,18 +263,14 @@ public sealed class ProfilerTests : IDisposable
     [AvaloniaFact]
     public void Leaving_the_folder_while_a_program_is_profiled_ends_the_program_its_port_and_the_window_s_run()
     {
-        string written = Path.Combine(folder, "left.pid");
-        string project = Project("Left", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.ReadLine();\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        string pids = TestFolders.Create("pids-");
+        MainWindow window = OpenWaits("Left", pids);
         IReadOnlyList<string> before = Ports();
         int program = 0;
         try
         {
             Ui.Launched(window, window.ProfileAsync(), "the build and the start", TimeSpan.FromMinutes(3));
-            program = Processes.WrittenId(written, "the profiled program to start");
+            program = Started(pids, "the profiled program to start");
             Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
             Assert.True(view.IsFollowing, "The profiler window does not follow the run");
             Assert.NotEqual(before, Ports());
@@ -308,15 +298,8 @@ public sealed class ProfilerTests : IDisposable
     public void Profile_again_while_a_profiled_program_starts_starts_no_second_program()
     {
         string pids = TestFolders.Create("pids-");
-        string project = Project("Starting", $"File.WriteAllText(Path.Combine(@\"{pids}\", $\"{{Environment.ProcessId}}.pid\"), \"\");\nConsole.ReadLine();\n");
-        Directory.CreateDirectory(Path.Combine(project, "Properties"));
-        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
-            "{ \"profiles\": { \"Undiagnosed\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_EnableDiagnostics\": \"0\" } } } }");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
-        IReadOnlyList<int> Programs() => [.. Directory.GetFiles(pids, "*.pid").Select(p => int.Parse(Path.GetFileNameWithoutExtension(p), System.Globalization.CultureInfo.InvariantCulture))];
+        MainWindow window = OpenWaits("Starting: Undiagnosed", pids, undiagnosed: true);
+        IReadOnlyList<int> Programs() => ProfilerTests.Programs(pids);
         Task<string?> started = window.ProfileAsync();
         Task<string?>? again = null;
         try
@@ -350,18 +333,13 @@ public sealed class ProfilerTests : IDisposable
             {
                 Ui.PumpUntil(() => again.IsCompleted, "the second profile's start to give up", TimeSpan.FromSeconds(60));
             }
-            TestFolders.Delete(pids);
         }
     }
 
     [AvaloniaFact]
     public void A_memory_snapshot_of_a_program_being_profiled_counts_its_heap_by_type_and_it_runs_on()
     {
-        string project = Project("Spinner", "Console.WriteLine(\"waiting\");\nConsole.WriteLine($\"read {Console.ReadLine()}\");\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        MainWindow window = OpenWaits("Waits for its input", TestFolders.Create("pids-"));
         Task<string?> started = window.ProfileAsync();
         Ui.Launched(window, started, "the build and the start", TimeSpan.FromMinutes(3));
         Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
@@ -389,19 +367,14 @@ public sealed class ProfilerTests : IDisposable
     [AvaloniaFact]
     public void A_profiled_program_goes_on_after_its_snapshot_until_stop_ends_it()
     {
-        string written = Path.Combine(folder, "lasting.pid");
-        string project = Project("Lasting", $"File.WriteAllText(@\"{written}\", Environment.ProcessId.ToString());\nConsole.WriteLine(\"waiting\");\n"
-            + "while (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        string pids = TestFolders.Create("pids-");
+        MainWindow window = OpenWaits("Lasting", pids);
         IReadOnlyList<string> before = Ports();
         int program = 0;
         try
         {
             Ui.Launched(window, window.ProfileAsync(), "the build and the start", TimeSpan.FromMinutes(3));
-            program = Processes.WrittenId(written, "the profiled program to start");
+            program = Started(pids, "the profiled program to start");
             Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
             Ui.WaitFor(() => Shows(run, "waiting"), "the program to wait on its input");
 
@@ -425,9 +398,9 @@ public sealed class ProfilerTests : IDisposable
             Assert.Null(window.Profiling);
 
             // Profiled again and snapshotted, it ends with its folder.
-            File.Delete(written);
+            int first = program;
             Ui.Launched(window, window.ProfileAsync(), "the second start", TimeSpan.FromMinutes(2));
-            program = Processes.WrittenId(written, "the program profiled again to start");
+            Ui.PumpUntil(() => (program = Programs(pids).FirstOrDefault(p => p != first)) > 0, "the program profiled again to start", TimeSpan.FromMinutes(2));
             Passenger.App.Profiling.SnapshotRead again = Ui.Await(window.SnapshotAsync(), "the second snapshot", TimeSpan.FromMinutes(2));
             Assert.True(again.Snapshot is not null, again.Message);
             Assert.True(Processes.IsRunning(program), "The program profiled again ended with its snapshot");
@@ -446,11 +419,7 @@ public sealed class ProfilerTests : IDisposable
     [AvaloniaFact]
     public void Profile_and_Run_each_wait_for_the_Run_console_while_the_other_s_program_has_it()
     {
-        string project = Project("Echo", "Console.WriteLine(\"waiting\");\nwhile (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        MainWindow window = OpenWaits("Echo", TestFolders.Create("pids-"));
         Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
         string name = window.Configuration!.Name;
         try
@@ -697,6 +666,59 @@ public sealed class ProfilerTests : IDisposable
         public void Frame(int frame, double durationMs, double endedMsAgo, int measurePasses, int arrangePasses, double measureMs, double arrangeMs,
             double renderMs, int measures, int arranges) =>
             WriteEvent(3, frame, durationMs, endedMsAgo, measurePasses, arrangePasses, measureMs, arrangeMs, renderMs, measures, arranges);
+    }
+
+    /// <summary>A window on <see cref="Waits"/>, on the server the last window on it left, whose configuration of this name
+    /// (never the project's own, which names its generated one) has the program write its id into <paramref name="pids"/>,
+    /// its runtime's diagnostics off when <paramref name="undiagnosed"/>, so it never reaches the profiler's port.</summary>
+    private MainWindow OpenWaits(string name, string pids, bool undiagnosed = false)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = waits.Server };
+        window.Show();
+        window.OpenFolder(waits.Folder);
+        Ui.Settle();
+        Passenger.App.Run.RunConfiguration configuration = new()
+        {
+            Name = name,
+            Project = Path.Combine(PathNames.Canonical(waits.Folder), "Waits.csproj"),
+            Arguments = $"\"{pids}\"",
+        };
+        if (undiagnosed)
+        {
+            configuration = configuration with { Environment = new Dictionary<string, string> { ["DOTNET_EnableDiagnostics"] = "0" } };
+        }
+        window.SetConfigurations([configuration], name);
+        return window;
+    }
+
+    /// <summary>The ids of the programs of <see cref="Waits"/> that have written theirs into a folder.</summary>
+    private static IReadOnlyList<int> Programs(string pids) =>
+        [.. Directory.GetFiles(pids, "*.pid").Select(p => int.Parse(Path.GetFileNameWithoutExtension(p), System.Globalization.CultureInfo.InvariantCulture))];
+
+    /// <summary>The id of the first program of <see cref="Waits"/> to write its id into a folder, the window's loop running
+    /// meanwhile (not settling, which a profile's start under way would not let it do).</summary>
+    private static int Started(string pids, string what)
+    {
+        int id = 0;
+        Ui.PumpUntil(() => (id = Programs(pids).FirstOrDefault()) > 0, what, TimeSpan.FromMinutes(2));
+        return id;
+    }
+
+    /// <summary>A program that writes its id into the folder its argument names, a file named for it, says it is waiting and
+    /// prints each line it reads until its input ends: the tests that start a program, act on it as it waits and end it.</summary>
+    public sealed class Waits : SharedProject
+    {
+        public Waits()
+            : base("profile-waits-")
+        {
+            File.WriteAllText(PathOf("Waits.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(PathOf("Program.cs"), "File.WriteAllText(Path.Combine(args[0], $\"{Environment.ProcessId}.pid\"), Environment.ProcessId.ToString());\n"
+                + "Console.WriteLine(\"waiting\");\nwhile (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(PathOf("bin"));
+            Prepare();
+        }
     }
 
     /// <summary>A console project restored in the tests' folder, with this as its Program.cs and anything more its project

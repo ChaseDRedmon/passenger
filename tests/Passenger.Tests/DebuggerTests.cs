@@ -17,22 +17,26 @@ namespace Passenger.Tests;
 /// <summary>Debugging from the window, as a person does it: F9 on a line, Alt+F5, the stop shown where
 /// it is with its values, then stepping, resuming and stopping with the keys Rider's keymap gives
 /// them. The tests on Sum as written share it (<see cref="Sum"/>): restored once, its warm language server and the build
-/// the last test left, so each one's Debug finds nothing to compile; a test that changes the program takes a folder of its
-/// own (<see cref="Fresh"/>). Debugged, and the console's answers timed, so run alone.</summary>
+/// the last test left, so each one's Debug finds nothing to compile; those that end a program that would run for ever share
+/// <see cref="Sleeper"/> likewise; a test that changes the program takes a folder of its own (<see cref="Fresh"/>).
+/// Debugged, and the console's answers timed, so run alone.</summary>
 [Collection(Alone.Name)]
-public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixture<RestoredFolders>, IDisposable
+public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixture<DebuggerTests.Sleeper>, IClassFixture<RestoredFolders>, IDisposable
 {
     private readonly Sum sum;
+    private readonly Sleeper sleeper;
     private readonly RestoredFolders folders;
 
     /// <summary>The test's own folder, once it has taken one.</summary>
     private string? fresh;
 
-    public DebuggerTests(Sum sum, RestoredFolders folders)
+    public DebuggerTests(Sum sum, Sleeper sleeper, RestoredFolders folders)
     {
         this.sum = sum;
+        this.sleeper = sleeper;
         this.folders = folders;
         sum.Reset();
+        sleeper.Reset();
     }
 
     public void Dispose()
@@ -425,8 +429,10 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         }
     }
 
+    /// <summary>An exception the runtime throws stops the program at the line that threw it, named there and in the status
+    /// bar, and is listed in Variables as $exception, which opens to its members and a watch reads.</summary>
     [AvaloniaFact]
-    public void An_exception_stop_names_the_exception_at_the_line_that_threw_it()
+    public void An_exception_stop_names_the_exception_at_the_line_that_threw_it_and_lists_it_as_exception_for_a_watch()
     {
         Write("Program.cs", "int[] values = [1, 2];\nint index = 5;\nConsole.WriteLine(values[index]);\n");
         MainWindow window = Open();
@@ -438,18 +444,33 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.StartsWith("IndexOutOfRangeException", thrown.Text, StringComparison.Ordinal);
         Assert.Contains(new LineAnnotation(2, "index: 5", LineAnnotationKind.InlineValue), editor.LineAnnotations);
         Assert.Contains("IndexOutOfRangeException", window.Status, StringComparison.Ordinal);
+
+        WaitDebugging(window, () => Row(window, "$exception") is not null, "the exception in Variables");
+        VariableNode exception = Row(window, "$exception")!;
+        Assert.True(exception.IsException);
+        Assert.Equal("System.IndexOutOfRangeException", exception.Type);
+        Assert.True(exception.HasChildren, "The exception does not open to its members");
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("$exception.Message");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
+        Watched(window.BottomPanel.Debug, "$exception.Message", "\"Index was outside the bounds of the array.\"", "the watch of the exception's message");
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
     }
 
+    /// <summary>One program of calls stepped through: a step over a call lists what it returned at the top of Variables, which
+    /// a watch names and the next step's calls replace; then Smart Step Into marks the next line's calls in the order they
+    /// run, and Enter steps into the one chosen.</summary>
     [AvaloniaFact]
-    public void A_step_over_a_call_lists_what_it_returned_at_the_top_of_Variables_and_a_watch_names_it()
+    public void A_step_over_a_call_lists_what_it_returned_and_smart_step_into_steps_into_the_call_chosen_on_the_next_line()
     {
-        Write("Program.cs", "int total = Add(2, 3);\nConsole.WriteLine(Describe(total));\nConsole.WriteLine(\"done\");\n\n"
-            + "static int Add(int a, int b) => a + b;\nstatic string Describe(int value) => $\"total {value}\";\n");
+        Write("Program.cs", "int total = Add(2, 3);\nConsole.WriteLine(Describe(total));\nint nested = Outer(Inner());\nConsole.WriteLine(nested);\nConsole.WriteLine(\"done\");\n\n"
+            + "static int Add(int a, int b) => a + b;\nstatic string Describe(int value) => $\"total {value}\";\n"
+            + "static int Inner() => 20;\nstatic int Outer(int value)\n{\n    return value + 1;\n}\n");
         MainWindow window = Open();
-        window.EditorArea.CodeEditor.GoTo(new TextPosition(0, 0));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(0, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
         StartDebugging(window);
         WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused && Row(window, "total") is not null, "the stop before the call");
@@ -475,24 +496,12 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.StepOver);
         Shows(view, "Describe() returned", "\"total 5\"", "the next step's value");
         Assert.DoesNotContain(view.Tree.Rows, r => r.Name == "Add() returned");
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
-        window.Close();
-    }
+        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(2, LineMarkKind.ExecutionPoint)), "the step to the line of calls");
 
-    [AvaloniaFact]
-    public void Smart_step_into_marks_the_lines_calls_in_the_order_they_run_and_enter_steps_into_the_one_chosen()
-    {
-        Write("Program.cs", "int nested = Outer(Inner());\nConsole.WriteLine(nested);\nConsole.WriteLine(\"done\");\n\n"
-            + "static int Inner() => 20;\nstatic int Outer(int value)\n{\n    return value + 1;\n}\n");
-        MainWindow window = Open();
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(0, 0));
-        Ui.Run(window, AppActions.ToggleBreakpoint);
-        StartDebugging(window);
-        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused && Row(window, "nested") is not null, "the stop at the line of calls");
-
-        // Shift+F7 marks the calls in the editor, the first chosen; Escape leaves them, and the program where it is.
+        // Shift+F7 marks the calls in the editor, the first chosen; Escape leaves them, and the program where it is. The keys
+        // go to the editor, back from the evaluate box.
+        editor.Focus();
+        Ui.Settle();
         Ui.Run(window, AppActions.SmartStepInto);
         Ui.WaitFor(() => editor.IsChoosing, "the line's calls to be offered");
         Assert.Equal(["Inner", "Outer"], editor.Choices.Select(r => editor.Document.Snapshot.GetText(r.Start, r.Length)));
@@ -500,7 +509,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Press(window, "Escape");
         Assert.False(editor.IsChoosing, "Escape did not leave Smart Step Into");
         Assert.Equal(DebugState.Paused, window.Debugger.Session?.State);
-        Assert.Contains(new LineMark(0, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineMark(2, LineMarkKind.ExecutionPoint), editor.LineMarks);
 
         // The arrows and Tab move the choice, round from the last to the first; Enter steps straight into Outer.
         Ui.Run(window, AppActions.SmartStepInto);
@@ -514,29 +523,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Press(window, "Enter");
         Ui.WaitFor(() => Value(window, "value") == "20", "the stop in Outer, given what Inner returned");
         Assert.False(editor.IsChoosing);
-        Assert.Contains(new LineMark(6, LineMarkKind.ExecutionPoint), editor.LineMarks);
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void An_exception_stop_lists_the_exception_as_exception_and_a_watch_reads_its_message()
-    {
-        Write("Program.cs", "int index = 5;\nthrow new InvalidOperationException($\"bad index {index}\");\n");
-        MainWindow window = Open();
-        StartDebugging(window);
-        WaitDebugging(window, () => Row(window, "$exception") is not null, "the exception in Variables");
-        VariableNode exception = Row(window, "$exception")!;
-        Assert.True(exception.IsException);
-        Assert.Equal("System.InvalidOperationException", exception.Type);
-        Assert.True(exception.HasChildren, "The exception does not open to its members");
-
-        Ui.Run(window, AppActions.Evaluate);
-        window.KeyTextInput("$exception.Message");
-        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
-        Watched(view, "$exception.Message", "\"bad index 5\"", "the watch of the exception's message");
+        Assert.Contains(new LineMark(10, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
@@ -1397,9 +1384,8 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     [AvaloniaFact]
     public void A_debugger_killed_while_its_program_is_paused_takes_the_program_with_it()
     {
-        string started = Path.Combine(Fresh(), "program.pid");
-        Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nConsole.WriteLine(\"stopped here\");\nThread.Sleep(Timeout.Infinite);\n");
-        MainWindow window = Open();
+        string started = Path.Combine(TestFolders.Create("debuggee-"), "program.pid");
+        MainWindow window = OpenSleeper(started, warm: true);
         int debuggee = 0;
         int adapter = 0;
         try
@@ -1431,9 +1417,9 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     [AvaloniaFact]
     public void Closing_the_window_while_debugging_leaves_no_program_debugger_or_language_server_running()
     {
-        string started = Path.Combine(Fresh(), "program.pid");
-        Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
-        MainWindow window = Open();
+        string started = Path.Combine(TestFolders.Create("debuggee-"), "program.pid");
+        // A server of the window's own, which its close is to end, not one it would leave for the next window.
+        MainWindow window = OpenSleeper(started, warm: false);
         int debuggee = 0;
         int adapter = 0;
         int server = window.CSharpService?.Session?.Server.ProcessId ?? throw new InvalidOperationException("The language server did not start");
@@ -1464,8 +1450,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     [Fact]
     public async Task Stop_and_the_windows_close_on_a_program_the_debugger_cannot_end_leave_no_failed_request_once_the_windows_loop_is_gone()
     {
-        string started = Path.Combine(Fresh(), "program.pid");
-        Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        string started = Path.Combine(TestFolders.Create("debuggee-"), "program.pid");
         List<DapException> unheard = [];
         EventHandler<UnobservedTaskExceptionEventArgs> finalized = (_, e) =>
         {
@@ -1487,7 +1472,8 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
                 OpenWindows.Watch();
                 try
                 {
-                    MainWindow window = Open();
+                    // A server of the window's own: nothing it starts on this dispatcher is left for a later window to take up.
+                    MainWindow window = OpenSleeper(started, warm: false);
                     StartDebugging(window);
                     int program = Running(window, started);
                     Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
@@ -2088,6 +2074,38 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
         return path;
+    }
+
+    /// <summary>A window on <see cref="Sleeper"/> with its Program.cs open, which never saves what the test types, a
+    /// configuration of its own (named apart from the project's generated one) giving the program the file to write its id
+    /// to; on the server the last window on it left, or, not <paramref name="warm"/>, one of its own that ends with the
+    /// window.</summary>
+    private MainWindow OpenSleeper(string started, bool warm)
+    {
+        string project = PathNames.Canonical(sleeper.Folder);
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = warm ? sleeper.Server : null };
+        window.Show();
+        window.OpenFolder(sleeper.Folder);
+        window.OpenFile(Path.Combine(project, "Program.cs"));
+        Ui.Settle();
+        window.SetConfigurations([new Passenger.App.Run.RunConfiguration { Name = "Sleeper writing its id", Project = Path.Combine(project, "Sleeper.csproj"), Arguments = $"\"{started}\"" }], "Sleeper writing its id");
+        return window;
+    }
+
+    /// <summary>A program that writes its id to the file its argument names, says so on its second line, where a breakpoint
+    /// stops it, and sleeps for ever: the tests that end such a program share it, built once.</summary>
+    public sealed class Sleeper : SharedProject
+    {
+        public Sleeper()
+            : base("debug-sleeper-")
+        {
+            File.WriteAllText(PathOf("Sleeper.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(PathOf("Program.cs"), "File.WriteAllText(args[0], Environment.ProcessId.ToString());\nConsole.WriteLine(\"stopped here\");\nThread.Sleep(Timeout.Infinite);\n");
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(PathOf("bin"));
+            Prepare();
+        }
     }
 
     /// <summary>Sum as written, a loop adding one to three and the total printed, which the tests that leave it so share.</summary>
