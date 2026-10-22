@@ -118,7 +118,7 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
             // Its line, from the PDB in the container, is the workspace file's.
             MethodCode code = spin.Code ?? throw new Xunit.Sdk.XunitException("web's hot method has no module and token to find its source by");
             IReadOnlyDictionary<MethodCode, (string File, int Line)> sources = Ui.Await(MethodSources.FindAsync(snapshot, [code], CancellationToken.None), "the hot method's source");
-            Assert.True(sources.TryGetValue(code, out (string File, int Line) at), "web's hot method has no source in the PDB in its container");
+            Assert.True(sources.TryGetValue(code, out (string File, int Line) at), $"web's hot method has no source in the PDB in its container: {Asked(snapshot, code)}");
             Assert.Equal((PathNames.Canonical(Path.Combine(folder, "Web", "Program.cs")), SpinLine), (PathNames.Canonical(at.File), at.Line));
 
             // Attach Profiler with the run up records its service as it runs; Stop reads that snapshot before the containers go,
@@ -141,6 +141,17 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
         }
         Ui.WaitFor(() => !window.IsRunning && window.Profiling is null, "the run and its profile to end with Stop");
         window.Close();
+    }
+
+    /// <summary>What the container's tools answer for a method's source, asked by hand, for a failure to say.</summary>
+    private static string Asked(Snapshot snapshot, MethodCode code)
+    {
+        if (snapshot.Place is not { } place)
+        {
+            return "the snapshot names no container";
+        }
+        ChildResult answered = Task.Run(() => ChildProcesses.RunAsync(place.Tools(["sources"]), $"{code.Token}\t{code.ModuleFile}\n", TimeSpan.FromSeconds(30))).GetAwaiter().GetResult();
+        return $"asked {code.Token} in {code.ModuleFile}; exit {answered.ExitCode}: '{answered.Output}' '{answered.Error}'";
     }
 
     /// <summary>ContainerRunsTests' Compose solution, web spinning from its start.</summary>

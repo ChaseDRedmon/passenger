@@ -116,9 +116,9 @@ public sealed class MethodSources : IDisposable
         read.Clear();
     }
 
-    private static (PEReader, MetadataReaderProvider?)? Open(string module)
+    private static (PEReader, MetadataReaderProvider?)? Open(string named)
     {
-        if (!File.Exists(module))
+        if (OnDisk(named) is not { } module)
         {
             return null;
         }
@@ -134,5 +134,41 @@ public sealed class MethodSources : IDisposable
             pe?.Dispose();
             return null;
         }
+    }
+
+    /// <summary>A module's file as it is on disk: the trace can name it in lower case (a container's /passenger/app/web.dll for
+    /// Web.dll), which a file system that tells case apart (Linux's, a container's over it) does not find as named, so each
+    /// part of the path is matched ignoring case where it is not there as written. Null when there is no such file.</summary>
+    private static string? OnDisk(string path)
+    {
+        if (File.Exists(path))
+        {
+            return path;
+        }
+        string? root = Path.GetPathRoot(path);
+        if (string.IsNullOrEmpty(root))
+        {
+            return null;
+        }
+        string at = root;
+        try
+        {
+            foreach (string part in path[root.Length..].Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                string exact = Path.Combine(at, part);
+                at = Directory.Exists(exact) || File.Exists(exact) ? exact
+                    : Directory.EnumerateFileSystemEntries(at).FirstOrDefault(e => string.Equals(Path.GetFileName(e), part, StringComparison.OrdinalIgnoreCase)) is { } found
+                        ? found : string.Empty;
+                if (at.Length == 0)
+                {
+                    return null;
+                }
+            }
+        }
+        catch (Exception unreadable) when (unreadable is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        return File.Exists(at) ? at : null;
     }
 }
