@@ -294,15 +294,17 @@ public sealed class DebugController : IDisposable
     public HotReloadRestart SettingsRestart => (outcome, running) => running ? RestartRunningFor(outcome) : RestartFor(outcome);
 
     /// <summary>A restart for edits Hot Reload cannot apply to the program of <paramref name="applied"/>'s tab, made as
-    /// <paramref name="restart"/> says, only while that tab remains chosen; declined, those edits are not asked about again until the next edit, as
-    /// dotnet watch's No.</summary>
+    /// <paramref name="restart"/> says, the tab chosen again first should another program's stop have taken the window
+    /// meanwhile (the restart acts on the chosen), while it is still debugged and its folder open; declined, those edits are
+    /// not asked about again until the next edit, as dotnet watch's No.</summary>
     private async Task<bool> RestartAsked(HotReloadOutcome outcome, DebugTab? applied, HotReloadRestart restart)
     {
         if (applied is null || !applied.IsLive || disposed || ending || !view.Sessions.Contains(applied))
         {
             return false;
         }
-        if (applied == chosen && await restart(outcome, false))
+        await ChooseAsync(applied);
+        if (applied == chosen && applied.IsLive && !disposed && !ending && await restart(outcome, false))
         {
             return true;
         }
@@ -1428,9 +1430,14 @@ public sealed class DebugController : IDisposable
         if (debugged || running.Count == 0)
         {
             applied = original;
-            if (disposed || ending || chosen != original || original is not { IsLive: true })
+            // Its own program's edits, chosen again should another program's stop have taken the window meanwhile.
+            if (original is { IsLive: true } && chosen != original && view.Sessions.Contains(original) && !disposed && !ending)
             {
-                program = new HotReloadOutcome(HotReloadResult.Failed, "The original debugging session is no longer selected");
+                await ChooseAsync(original);
+            }
+            if (disposed || ending || chosen != original)
+            {
+                program = new HotReloadOutcome(HotReloadResult.Failed, $"{original?.Name ?? "The program"} is no longer debugged");
             }
             else
             {

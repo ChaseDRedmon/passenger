@@ -382,6 +382,45 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         }
     }
 
+    /// <summary>An edit Hot Reload cannot apply restarts its own program, as Settings' always restart says, though another
+    /// program's stop takes the window while it is applied: its tab is chosen again and its program built and debugged anew,
+    /// stopping at its breakpoint, while the other stays paused where it was.</summary>
+    [AvaloniaFact]
+    public void A_rude_edit_restarts_its_own_program_though_another_programs_stop_takes_the_window_as_it_is_applied()
+    {
+        MainWindow window = pair.Open(Counter);
+        try
+        {
+            string folder = PathNames.Canonical(pair.Folder);
+            window.Debugger.Breakpoints.Toggle(Path.Combine(folder, "First", "Program.cs"), 3);
+            window.Debugger.Breakpoints.Toggle(Path.Combine(folder, "Second", "Program.cs"), 3);
+            DebugSession first = Debug(window, "First");
+            DebugSession second = Debug(window, "Second");
+            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Assert.Same(first, window.Debugger.Session);
+
+            window.OpenFile(Counter);
+            Ui.Settle();
+            // A parameter its callers leave out: their unchanged code would call the body the update deletes, so it restarts.
+            Typing.Replace(window, "Next(int value)", "Next(int value, int step = 1)");
+            Assert.True(window.Debugger.HotReload is { Changed: true }, "The edit was not taken for one the first program is to take");
+            Assert.True(window.Perform(AppActions.Resume), $"Resume could not run: {window.Status}");
+            // The second program's tab takes the window as the edit is applied, as its stop would.
+            _ = window.Debugger.ChooseAsync(window.Debugger.Tabs.Single(t => t.Name == "Second"));
+
+            Ui.WaitFor(() => window.LastHotReloadRestart is not null && window.Debugger.SessionNamed("First") is { State: DebugState.Paused } again && again != first,
+                $"the first program to restart for the edit and stop at its breakpoint (the status bar says \"{window.Status}\")", TimeSpan.FromMinutes(2));
+            Assert.True(window.Debugger.LastApplied?.Result == HotReloadResult.RestartNeeded, $"The edit was not told as needing a restart: {window.Debugger.LastApplied?.Said}");
+            Assert.Equal(DebugState.Ended, first.State);
+            Assert.Same(second, window.Debugger.SessionNamed("Second"));
+            Assert.Equal(DebugState.Paused, second.State);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A program's output followed from outside (as a container run's log is) ends with a start that fails, rather
     /// than run for the window's life; and a session whose place stops under it (its container) ends as its program's end,
     /// said so, never as the debugger failing.</summary>
