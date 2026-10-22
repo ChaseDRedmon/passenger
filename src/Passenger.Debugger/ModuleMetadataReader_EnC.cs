@@ -324,6 +324,32 @@ public partial class ModuleMetadataReader
         return method.RelativeVirtualAddress == 0 ? null : _peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes();
     }
 
+    /// <summary>Whether an IL offset of a method at a version lies in one of its catch, finally, fault or filter blocks,
+    /// where the runtime puts off an abort until the block is left. False where the body is not read: an update's, whose
+    /// blocks are not kept, and a module's with no image.</summary>
+    internal bool InHandler(int methodToken, int ilOffset, int? version = null)
+    {
+        if (GenerationOf(methodToken, version) > 0 || _peReader is null)
+        {
+            return false;
+        }
+        MethodDefinitionHandle handle = MetadataTokens.MethodDefinitionHandle(methodToken);
+        if (MetadataTokens.GetRowNumber(handle) > _imageMetadataReader.GetTableRowCount(TableIndex.MethodDef)
+            || _imageMetadataReader.GetMethodDefinition(handle).RelativeVirtualAddress is not (> 0 and int rva))
+        {
+            return false;
+        }
+        foreach (ExceptionRegion region in _peReader.GetMethodBody(rva).ExceptionRegions)
+        {
+            int start = region.Kind is ExceptionRegionKind.Filter ? region.FilterOffset : region.HandlerOffset;
+            if (ilOffset >= start && ilOffset < region.HandlerOffset + region.HandlerLength)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>The string a method returns as a constant (its body <c>ldstr; ret</c>), found by its type's full name and
     /// its name: how the debugger reads what a runtime says of itself without running anything in it. Null when there is
     /// no such method, or it does something else.</summary>

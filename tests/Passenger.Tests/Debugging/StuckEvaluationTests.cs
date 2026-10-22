@@ -138,7 +138,7 @@ public class StuckEvaluationTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(0, program.ExitCode);
     }
 
-    /// <summary>An evaluation that could not be stopped has had its time and its aborts already: a Detach after it never waits
+    /// <summary>An evaluation that could not be stopped has had its time and its abort's window already: a Detach after it never waits
     /// it out again, nor waits for its thread to run off a stop it cannot leave until the evaluation returns, so it is
     /// answered at once, where it took another evaluation limit and the let-go's every round.</summary>
     [Fact]
@@ -165,6 +165,86 @@ public class StuckEvaluationTests(ITestOutputHelper testOutputHelper)
         Assert.True(host.Disconnect(DebugSession.RequestLimit), "The detach was not answered");
         Assert.True(asked.Elapsed < TimeSpan.FromSeconds(1.5).Scaled(),
             $"The detach was answered {asked.Elapsed.TotalSeconds:0.0} s after it was asked: it waited again for an evaluation that had had its time");
+    }
+
+    /// <summary>An evaluation at a stop that takes a lock another thread holds there waits on it until the program goes on,
+    /// and is never aborted there: the abort could take only once the wait ended, after the program had gone on, with the
+    /// lock the evaluation's, and a rude one runs no finally, so the lock was never let go and every thread that wanted it
+    /// waited for good. Once the program goes on the evaluation runs to its end as written, and the lock is every thread's
+    /// again: another thread's evaluation takes it, and so does that thread.</summary>
+    [Fact]
+    public async Task An_evaluation_waiting_on_a_lock_a_paused_thread_holds_leaves_the_lock_free_once_the_program_goes_on()
+    {
+        using DebugSession host = await LaunchCase("locks", Held, Later);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        host.WithEvaluateRequest(host.GetTopStackFrame(stop.ThreadId!.Value).Id, "Locks.Taken", out EvaluateResponse waits);
+        Assert.Contains("could not be stopped", waits.Result, StringComparison.Ordinal);
+
+        host.WithContinueRequest();
+        await TheLockIsFreeOnceTheFirstEvaluationRanToItsEnd(host);
+    }
+
+    /// <summary>As above, the evaluation left to the program by a continue before its time was up, as a stop's reads leave
+    /// theirs: once its time is up it waits still, and is not aborted there, where the abort would take only once the lock
+    /// was its; it runs to its end once the holder lets the lock go.</summary>
+    [Fact]
+    public async Task An_evaluation_a_continue_leaves_waiting_on_a_lock_past_its_time_runs_to_its_end_once_the_lock_is_free()
+    {
+        using DebugSession host = await LaunchCase("locks", Held, Later);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int thread = stop.ThreadId!.Value;
+        Task<EvaluateResponse> waits = host.Send<EvaluateResponse>("evaluate", new EvaluateArguments("Locks.Taken", host.GetTopStackFrame(thread).Id, "watch"));
+        await host.WaitForEvent<OutputEvent>(o => o.Output.Contains("taking the lock", StringComparison.Ordinal));
+
+        await host.Send<ContinueResponse>("continue", new ThreadArguments(thread)).WaitAsync(DebugSession.RequestLimit, TestContext.Current.CancellationToken);
+        Assert.Contains("went on", (await waits).Result, StringComparison.Ordinal);
+        await TheLockIsFreeOnceTheFirstEvaluationRanToItsEnd(host);
+    }
+
+    /// <summary>An evaluation that spins in a finally block past its time is not aborted there, where the runtime would put
+    /// the abort off until the block was left, by then after the program had gone on: it runs to its end once another
+    /// thread lets it out, past the code after the block.</summary>
+    [Fact]
+    public async Task An_evaluation_spinning_in_a_finally_block_runs_to_its_end_once_let_out()
+    {
+        string after = "Console.WriteLine($\"let out, {Turns} turns\");";
+        using DebugSession host = await LaunchCase("finally", "Console.WriteLine(\"a finally next\");", after);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        host.WithEvaluateRequest(host.GetTopStackFrame(stop.ThreadId!.Value).Id, "Finally.Spins", out EvaluateResponse spins);
+        Assert.Contains("could not be stopped, as it runs a catch or finally block", spins.Result, StringComparison.Ordinal);
+
+        host.WithContinueRequest();
+        StoppedEvent letOut = await host.WaitForStoppedEvent();
+        Assert.True(letOut.Reason == "breakpoint" && letOut.ReadStopInfo().line == Line(after),
+            $"The program did not go on past the evaluation's end ({letOut.Reason} at line {letOut.Line})");
+        host.WithEvaluateRequest(host.GetTopStackFrame(letOut.ThreadId!.Value).Id, "Finally.Turns", out EvaluateResponse turns);
+        Assert.True(turns.Result == "1", $"The evaluation let out of its finally block counted {turns.Result} turns: an abort left on it took as it left the block");
+        host.WithContinueRequest();
+        (string output, int? exitCode) = await host.WaitForEnd();
+        Assert.Contains("let out, 1 turns", output, StringComparison.Ordinal);
+        Assert.Equal(0, exitCode);
+    }
+
+    /// <summary>PassengerCases' "locks" case: the stop while another thread holds the lock, and the later thread's.</summary>
+    private const string Held = "Console.WriteLine(\"the lock is held\");";
+    private const string Later = "Console.WriteLine(\"a later thread\");";
+
+    /// <summary>The program, gone on from the stop where an evaluation waited on the lock, stops on its later thread, whose
+    /// evaluation takes the lock (the first evaluation having taken the first turn, this one takes the second), and the
+    /// later thread takes it too.</summary>
+    private static async Task TheLockIsFreeOnceTheFirstEvaluationRanToItsEnd(DebugSession host)
+    {
+        StoppedEvent laterStop = await host.WaitForStoppedEvent();
+        Assert.True(laterStop.Reason == "breakpoint" && laterStop.ReadStopInfo().line == Line(Later),
+            $"The program did not go on to the later thread's breakpoint ({laterStop.Reason} at line {laterStop.Line})");
+        host.WithEvaluateRequest(host.GetTopStackFrame(laterStop.ThreadId!.Value).Id, "Locks.Taken", out EvaluateResponse taken);
+        Assert.True(taken.Result == "2",
+            $"Another thread's evaluation of a getter that takes the lock gave {taken.Result}: the first evaluation never let the lock go, or was aborted before its end");
+
+        host.WithContinueRequest();
+        (string output, int? exitCode) = await host.WaitForEnd();
+        Assert.True(output.Contains("taken again, 3 turns", StringComparison.Ordinal), $"The later thread never had the lock: the program said {output}");
+        Assert.Equal(0, exitCode);
     }
 
     /// <summary>PassengerCases' "reads" case launched with breakpoints on the lines that hold the code given.</summary>

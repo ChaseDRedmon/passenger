@@ -213,31 +213,6 @@ public partial class ManagedDebugger
         set => EvalStatus.ForRead = value;
     }
 
-    /// <summary>Aborts an evaluation left running in the program for a request that left its stop, once the time evaluations
-    /// are given (<see cref="Extensions.EvaluationTimeout"/>) is up, as it would have been had it been waited for: an
-    /// evaluation that never returns would hold its thread for good. Nothing when it has ended by then, or the session has.</summary>
-    private async Task AbortWhenDueAsync(int thread, ICorDebugEval eval, TimeSpan after)
-    {
-        try
-        {
-            await Task.Delay(after > TimeSpan.Zero ? after : TimeSpan.Zero, _ending.Token).ConfigureAwait(false);
-            using (await DapRequestAndRuntimeEventLock.LockAsync(_ending.Token).ConfigureAwait(false))
-            {
-                // Its end may be among the events queued meanwhile, and let go with them.
-                await DrainRuntimeEventQueue().ConfigureAwait(false);
-                if (EvalStatus.Abandoned.TryGetValue(thread, out ICorDebugEval? running) && running == eval)
-                {
-                    _logger?.Invoke($"The evaluation left running on thread {thread} has had its {Extensions.EvaluationTimeout.TotalSeconds:0.#} s, and is aborted");
-                    eval.TryAbort();
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // The session ended first, letting the program go.
-        }
-    }
-
     /// <summary>How often the program has been let go, so an event put off for a decompile is dropped when it was let go
     /// meanwhile (<see cref="AfterDecompiling"/>).</summary>
     private int _continued;
@@ -250,7 +225,12 @@ public partial class ManagedDebugger
         _variableManager = new VariableManager();
         _frameReferenceManager = new FrameReferenceManager();
         _callbacks = new CorDebugManagedCallback();
-        EvalStatus = new EvalStatus { AbortWhenDue = (thread, eval, after) => _ = AbortWhenDueAsync(thread, eval, after) };
+        EvalStatus = new EvalStatus
+        {
+            AbortWhenDue = (thread, eval, after) => _ = AbortWhenDueAsync(thread, eval, after),
+            WhyNoAbortTakes = WhyNoAbortTakes,
+            Log = logger,
+        };
         _asyncStepper = new AsyncStepper(_modules, this);
         // The runtime's callback thread writes, and so does whichever thread hands back an event put off during an evaluation.
         _runtimeEventChannel = Channel.CreateUnbounded<CorDebugManagedCallbackEventArgs>(new UnboundedChannelOptions
@@ -1277,11 +1257,18 @@ internal sealed class EvalStatus
 
     /// <summary>When the time of each evaluation given up for a request that left its stop is up (a <see cref="System.Diagnostics.Stopwatch"/>
     /// timestamp), by its thread, which a let-go waits for it to at most; one that could not be stopped has had its time and
-    /// its aborts already, and has none.</summary>
+    /// its abort's window already, and has none.</summary>
     internal Dictionary<int, long> DueAt { get; } = [];
 
     /// <summary>Aborts an evaluation left running for a request that left its stop once the time it had left is up.</summary>
     internal Action<int, ICorDebugEval, TimeSpan>? AbortWhenDue { get; init; }
+
+    /// <summary>Why an abort asked of an evaluation's thread, the program held, would not take as the thread goes on; null
+    /// when it would (<see cref="ManagedDebugger.WhyNoAbortTakes"/>).</summary>
+    internal required Func<ICorDebugThread, string?> WhyNoAbortTakes { get; init; }
+
+    /// <summary>The engine's log, for what becomes of an evaluation past its time.</summary>
+    internal Action<string>? Log { get; init; }
 
     /// <summary>Why code the debugger would run of itself (a getter, a ToString, a proxy) is not run, until the program
     /// next runs on, as Visual Studio and Rider stop running it once an evaluation has timed out.</summary>

@@ -222,11 +222,12 @@ public static class Extensions
     /// <summary>The variable that gives <see cref="EvaluationTimeout"/> in milliseconds.</summary>
     public const string EvaluationTimeoutVariable = "PASSENGER_EVAL_TIMEOUT_MS";
 
-    /// <summary>How long an abort may take before a rude abort is tried: 2 s of the 5 s.</summary>
-    private static TimeSpan AbortWait => EvaluationTimeout * 0.4;
+    /// <summary>How long an evaluation past its time is looked at for a moment it runs managed code, and how long an abort
+    /// asked then may take, before the evaluation is left to run on to its own end: 2 s of the 5 s.</summary>
+    internal static TimeSpan AbortWait => EvaluationTimeout * 0.4;
 
-    /// <summary>How long a rude abort may take before the evaluation is left to run on: 5 s of the 5 s.</summary>
-    private static TimeSpan RudeAbortWait => EvaluationTimeout;
+    /// <summary>How often an evaluation past its time is looked at, the program held a moment each time.</summary>
+    internal static readonly TimeSpan LookEvery = TimeSpan.FromMilliseconds(25);
 
     /// <summary>Why a read's evaluation did not run, or was left to end in the program: a continue, a step or a stop came for
     /// the program, which does not wait for it (<see cref="ManagedDebugger.Leaving"/>).</summary>
@@ -264,57 +265,88 @@ public static class Extensions
 
         ICorDebugProcess process = thread.Process;
         evalStatus.ThreadId = thread.Id;
-        using CancellationTokenSource reading = new();
-        evalStatus.Reading = reading.Token;
+        CancellationTokenSource reading = new();
+        Task<CorDebugManagedCallbackEventArgs> waiting = Task.FromCanceled<CorDebugManagedCallbackEventArgs>(new CancellationToken(true));
         try
         {
             // Only the evaluation's thread runs, as in Visual Studio: the others' values hold still and none meets a breakpoint unseen.
             process.SetAllThreadsDebugState(CorDebugThreadState.THREAD_SUSPEND, thread);
             process.Continue(false);
-            Task<CorDebugManagedCallbackEventArgs> waiting = processEventsUntilEvalEventFunc();
+            waiting = Read();
             long began = System.Diagnostics.Stopwatch.GetTimestamp();
             bool ended = await Task.WhenAny(waiting, Task.Delay(EvaluationTimeout, leaving)) == waiting;
+            bool lookedAt = !ended && !leaving.IsCancellationRequested;
+            bool asked = false;
+            string? lastWhy = null;
+            if (lookedAt)
+            {
+                // Asked only of a thread caught where the abort takes as it goes on, never left pending (ManagedDebugger_Aborts.cs).
+                long lookUntil = System.Diagnostics.Stopwatch.GetTimestamp() + Ticks(AbortWait);
+                while (!ended && !leaving.IsCancellationRequested && System.Diagnostics.Stopwatch.GetTimestamp() < lookUntil)
+                {
+                    if (await GiveUp() is not null)
+                    {
+                        ended = true;
+                        break;
+                    }
+                    if (process.TryStop(0) is not Cor.S_OK)
+                    {
+                        break;
+                    }
+                    string? why = asked ? null : evalStatus.WhyNoAbortTakes(thread);
+                    if (!asked && why is null)
+                    {
+                        evalStatus.Log?.Invoke($"The evaluation on thread {thread.Id} runs managed code past its time, and is aborted");
+                        eval.TryAbort();
+                        asked = true;
+                        lookUntil = System.Diagnostics.Stopwatch.GetTimestamp() + Ticks(AbortWait);
+                    }
+                    else if (why is not null && why != lastWhy)
+                    {
+                        evalStatus.Log?.Invoke($"The evaluation on thread {thread.Id} is past its time and not aborted: {why}");
+                        lastWhy = why;
+                    }
+                    process.Continue(false);
+                    waiting = Read();
+                    ended = await Task.WhenAny(waiting, Task.Delay(LookEvery, leaving)) == waiting;
+                }
+            }
             if (!ended && leaving.IsCancellationRequested)
             {
                 // Left to a request that leaves the stop, which neither waits on it nor aborts it early (an abort holds the
                 // runtime half a second): the program is taken back to go on with it, its end let go whenever it comes, and
-                // it is aborted only once its time is up, as it would have been. One that ended as it was given up is read.
-                ended = await GiveUp(waiting) is not null;
+                // it is aborted once its time is up, where that takes. One that ended as it was given up is read.
+                ended = await GiveUp() is not null;
                 if (!ended)
                 {
                     process.Stop(0);
                     evalStatus.Abandoned[thread.Id] = eval;
-                    evalStatus.DueAt[thread.Id] = began + (long)(EvaluationTimeout.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+                    evalStatus.DueAt[thread.Id] = began + Ticks(EvaluationTimeout);
                     evalStatus.AbortWhenDue?.Invoke(thread.Id, eval, EvaluationTimeout - System.Diagnostics.Stopwatch.GetElapsedTime(began));
                     throw new ManagedDebugger.EvalException(GaveWay);
                 }
             }
-            if (!ended)
+            if (lookedAt)
             {
-                // Abort, then a rude abort if that does not take; either way the runtime still ends the
-                // evaluation with its callback, which is waited for so no other request reads it.
-                eval.TryAbort();
-                if (await Task.WhenAny(waiting, Task.Delay(AbortWait)) != waiting && eval is ICorDebugEval2 rude)
+                ended = ended || await GiveUp() is not null;
+                bool aborted = ended && eval.TryGetResult(out _) is Cor.CORDBG_S_FUNC_EVAL_ABORTED;
+                if (!ended)
                 {
-                    rude.TryRudeAbort();
-                }
-                bool stopped = await Task.WhenAny(waiting, Task.Delay(RudeAbortWait)) == waiting || await GiveUp(waiting) is not null;
-                if (stopped && eval.TryGetResult(out ICorDebugValue? partial) is Cor.S_OK && partial is ICorDebugHandleValue handle)
-                {
-                    handle.TryDispose();
-                }
-                if (!stopped)
-                {
-                    // Code blocked outside the runtime (a read of input) cannot be stopped: the program is taken back, paused
-                    // as the IDE shows it, and the evaluation runs on with it, its end let go whenever it comes.
+                    // Left to run on in the program, paused as the IDE shows it; its end is let go whenever it comes.
                     process.Stop(0);
                     evalStatus.Abandoned[thread.Id] = eval;
                     evalStatus.DueAt.Remove(thread.Id);
+                    evalStatus.Log?.Invoke(asked ? $"The abort asked of the evaluation on thread {thread.Id} has not taken; it is left to run on"
+                        : $"The evaluation on thread {thread.Id} is left to run on, unaborted");
                 }
                 evalStatus.ImplicitOff = $"Implicit evaluation is disabled: an evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s. It is enabled again once the program runs on";
-                throw new ManagedDebugger.EvalException(stopped
-                    ? $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s and was stopped: it may wait on another thread, which stays paused while it runs"
-                    : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s and could not be stopped: it runs on in the program until it returns, the program paused meanwhile");
+                if (!ended || aborted)
+                {
+                    throw new ManagedDebugger.EvalException(aborted
+                        ? $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s and was stopped: it may wait on another thread, which stays paused while it runs"
+                        : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s and could not be stopped, as {lastWhy ?? "the abort asked of it has not taken"}: it runs on in the program until it returns, the program paused meanwhile");
+                }
+                // It ended of itself as it was looked at: its value is read as any other's.
             }
             CorDebugManagedCallbackEventArgs evalEvent = await waiting;
             if (evalEvent is EvalCompleteCorDebugManagedCallbackEventArgs completeEvent)
@@ -356,13 +388,23 @@ public static class Extensions
         {
             evalStatus.ThreadId = null;
             evalStatus.Reading = default;
+            reading.Dispose();
             // Taken at the next Continue; a process that ended meanwhile has no threads to set.
             process.TrySetAllThreadsDebugState(CorDebugThreadState.THREAD_RUN, thread);
         }
 
+        // Reads the runtime's events, under the request's hold of the engine's lock, until the evaluation's end.
+        Task<CorDebugManagedCallbackEventArgs> Read()
+        {
+            reading.Dispose();
+            reading = new CancellationTokenSource();
+            evalStatus.Reading = reading.Token;
+            return processEventsUntilEvalEventFunc();
+        }
+
         // Ends the wait for the evaluation's event, which reads the runtime's events while the request holds the engine's
         // lock and so must not outlive it; the event, if it came at the last moment.
-        async Task<CorDebugManagedCallbackEventArgs?> GiveUp(Task<CorDebugManagedCallbackEventArgs> waiting)
+        async Task<CorDebugManagedCallbackEventArgs?> GiveUp()
         {
             reading.Cancel();
             try
@@ -375,6 +417,9 @@ public static class Extensions
             }
         }
     }
+
+    /// <summary>A time as <see cref="System.Diagnostics.Stopwatch"/> timestamps count it.</summary>
+    internal static long Ticks(TimeSpan time) => (long)(time.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
 
     public static ICorDebugValue NewBooleanValue(this ICorDebugEval eval, bool value)
     {

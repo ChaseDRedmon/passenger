@@ -123,7 +123,7 @@ public partial class ManagedDebugger
     /// past its startup). The program runs until each has said it ended, every other event let go, then is stopped again:
     /// each is waited for to the end of its own time (<see cref="EvalStatus.DueAt"/>), the wait ending at the latest still
     /// to come or the client's time (<paramref name="until"/>), whichever is first; one that could not be stopped has had its
-    /// time and its aborts already, and is not waited for. None is aborted: an abort fires wherever its thread then is, and
+    /// time and its abort's window already, and is not waited for. None is aborted: an abort fires wherever its thread then is, and
     /// one that landed in the runtime's making of the thread pool's gate thread ended the program ("Failed to create the
     /// thread pool Gate thread").</summary>
     private void EndAbandonedEvaluations(ICorDebugProcess process, long? until)

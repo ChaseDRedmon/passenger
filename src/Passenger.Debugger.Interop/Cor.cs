@@ -12,6 +12,9 @@ public static class Cor
 
     public const int CORDBG_S_FUNC_EVAL_HAS_NO_RESULT = 1250070;
 
+    /// <summary>The evaluation ended, aborted (0x131319).</summary>
+    public const int CORDBG_S_FUNC_EVAL_ABORTED = 1250073;
+
     public const int CORDBG_E_PROCESS_TERMINATED = -2146233599;
 
     public const int CORDBG_E_FUNC_EVAL_BAD_START_POINT = -2146233581;

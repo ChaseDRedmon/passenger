@@ -29,8 +29,8 @@ internal sealed class Connection : IDisposable
 
     /// <summary>Has System.Text.Json make every type the wire carries ready now, before the app's Main, rather than on its
     /// first use, which it does under one lock for all of them. The writer, stopped there by the debugger as it sent the
-    /// failure the app stopped at, held it from the binding values evaluated at that stop (BindingValues.Read), whose abort
-    /// then fired inside it once the app went on and kept it held for good: no request was read again.</summary>
+    /// failure the app stopped at, held it from the binding values evaluated at that stop (BindingValues.Read), which then
+    /// waited on it until the app went on, and showed nothing.</summary>
     private static void Configure()
     {
         foreach (PropertyInfo property in typeof(WireJson).GetProperties(BindingFlags.Public | BindingFlags.Instance))

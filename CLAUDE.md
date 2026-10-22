@@ -1180,10 +1180,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
-  `EvalRefusedException`; a value shown by its ToString then shows its type. An evaluation the engine could not stop runs on with the program, its
-  abort still pending: it fires wherever the thread then is (a rude abort runs no finally), so code evaluated at a stop
-  takes no lock another thread may hold. `Extensions.EvaluationTimeout` (5 s, the
-  adapter's `PASSENGER_EVAL_TIMEOUT_MS`) also sets the abort's wait (0.4×) and the rude abort's (1×). Data breakpoints (Variables' Set Data
+  `EvalRefusedException`; a value shown by its ToString then shows its type. An evaluation past its time is aborted only
+  where the abort takes as its thread goes on (`ManagedDebugger_Aborts.cs`): through the abort's window the program is
+  held a moment every 25 ms (`Extensions.LookEvery`) and the abort asked only of a thread caught in managed code at a
+  safe point, outside any catch or finally (`WhyNoAbortTakes`: no `USER_WAIT_SLEEP_JOIN` or `USER_UNSAFE_POINT`, no frame
+  in a handler); never a rude abort. An abort asked anywhere else (a wait on a lock a paused thread holds, a sleep, a
+  read, a finally) stays pending until the thread gets there, after the program has gone on, inside what it waited for:
+  the lock was then never let go, after a normal abort as after a rude one (#238). Keeping the thread suspended instead
+  cannot help, since the runtime withdraws a func-eval's abort only as the evaluation ends, which a suspended thread
+  never reaches. One never caught so runs on with the program unaborted, to its own end, its end let go. `Extensions.EvaluationTimeout` (5 s, the
+  adapter's `PASSENGER_EVAL_TIMEOUT_MS`) also sets that window (`AbortWait`, 0.4×). Data breakpoints (Variables' Set Data
   Breakpoint, `ManagedDebugger_DataBreakpoints`, `DebugRegisters`): the runtime watches memory only on Windows x64
   (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
   (`ICorDebugHeapValue4`, the runtime's advice over GC notifications) and sets DR0–DR7 on every thread through both the
@@ -1214,7 +1220,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   continue, the steps, pause, disconnect and terminate never queue behind a stop's reads; one that leaves the stop
   (`DebugAdapter.Leave`: continue, the steps, disconnect, terminate) is in line before it calls `ManagedDebugger.Leaving`,
   and the read under way then starts no evaluation and leaves the one it runs to the program (`Abandoned`, aborted only
-  once its time is up, `AbortWhenDueAsync`), since `ICorDebugEval::Abort` answers only after half a second, the program
+  once its time is up and where the abort takes, `AbortWhenDueAsync`), since `ICorDebugEval::Abort` answers only after half a second, the program
   running or stopped, every other call into the runtime waiting meanwhile. The window shows the program running as a
   continue or step is asked (`DebugSession.Resume`; refused, the stop is shown again), asks nothing more of a stop once
   it is gone, and writes each stop's time to its frames and locals to passenger.log (`DebugController.LastStopTimes`).
@@ -1300,8 +1306,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
   default 64. Its wire's types are made ready as it connects, before the app's Main
   (`Connection.Configure`): System.Text.Json readies a type on first use under one lock for all of a context's types,
-  which a thread the debugger stopped can hold from an evaluation at the stop, whose abort, still pending once the app
-  runs on, then fires inside the lock and keeps it for good. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
+  which a thread the debugger stopped can hold from an evaluation at the stop (the binding values), which then waits on
+  it until the app runs on. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
   selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools (`app_*`,
   `Mcp/PassengerTools.App.cs`) ask the same inspector: its windows, the tree with each element's box, text and state,
