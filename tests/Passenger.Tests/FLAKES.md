@@ -118,3 +118,7 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   Downloading Passenger's container tools for linux-arm64". The first attach's download said its stage from a worker,
   posted to the window, and it landed after the attach had ended: `ActionWork.Said` put the ended work back under way, so
   Attach to Process was refused for good. **A race in the IDE**: a stage said after its work ended now leaves it ended.
+- `LongTextTests`' thousand carets, the Mac's full run at 58b8dc3f beside three agents' builds and test runs: a key took
+  17.6 ms in 8,000 methods against 6.1 ms in 1,000 (the bound 17.2). It passed three runs alone straight after, with
+  the load average near 10. Neither: **the machine's load**, not changed; the bound measures the UI thread's work, which
+  the time scale rightly leaves alone.
