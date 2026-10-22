@@ -554,9 +554,9 @@ public sealed partial class CodeAssist
             {
                 ApplyFix(fix);
             }
-            else if (choice?.Value is EditorFix chosen && editors.Active == document)
+            else if (choice?.Value is EditorFix chosen && document is not null)
             {
-                Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
+                ApplyOwnFix(document, chosen);
             }
             else if (choice?.Value is XamlRefactoring refactoring && editors.Active == document)
             {

@@ -338,7 +338,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "The fixes and refactorings offered at a position (Alt+Enter), or over a selection to endLine:endColumn (where Extract " +
         "Method and Introduce Variable are), as 'title [kind]', each followed by the choices it offers (actions nested under " +
         "it, a Fix All's scopes, where a new XAML resource or style goes), which apply_code_action takes as choice. In C#, " +
-        "Razor and the web languages, the language server's, ESLint's fixes first where it checks the file; in XAML, " +
+        "Razor and the web languages, the language server's, ESLint's fixes first where it checks the file (a compose file's " +
+        "names Compose finds undeclared have Passenger's own before them); in XAML, " +
         "Passenger's own: the line's problems' fixes (a binding's missing property or command, a missing converter), Extract " +
         "Resource and Extract Style. MSBuild files have none.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -352,8 +353,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             case MSBuildServed:
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
-        IReadOnlyList<EslintFix> linted = await LintFixes(served, Offset(served.Document, line, column));
-        return (IReadOnlyList<string>)[.. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
+        int offset = Offset(served.Document, line, column);
+        IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
+        return (IReadOnlyList<string>)[.. window.Assist.OwnFixes(served.Document, offset).Select(f => $"{f.Title} [quickfix]"),
+            .. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
             .. (await Actions((ServerServed)served, line, column, endLine, endColumn)).Select(Described)];
     });
 
@@ -376,7 +379,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
         ServerServed server = (ServerServed)served;
-        IReadOnlyList<EslintFix> linted = await LintFixes(served, Offset(served.Document, line, column));
+        int offset = Offset(served.Document, line, column);
+        if (window.Assist.OwnFixes(served.Document, offset).FirstOrDefault(f => f.Title == title) is { } own)
+        {
+            return ApplyOwnFix(served.Document, own);
+        }
+        IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         if (linted.FirstOrDefault(f => f.Title == title) is { } lint)
         {
             return await ApplyLintFix(server, lint);
@@ -386,7 +394,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         LspDocument lsp = server.Lsp;
         IReadOnlyList<CodeAction> actions = await Actions(server, line, column, endLine, endColumn);
         CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
-            ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", [.. linted.Select(f => f.Title), .. actions.Select(a => a.Title)])}");
+            ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ",
+                [.. window.Assist.OwnFixes(served.Document, offset).Select(f => f.Title), .. linted.Select(f => f.Title), .. actions.Select(a => a.Title)])}");
         IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(chosen);
         string? scope = null;
         if (choices.Count > 0)

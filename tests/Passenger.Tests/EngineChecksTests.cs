@@ -22,7 +22,8 @@ namespace Passenger.Tests;
 /// BuildKit's build checks marked beside the Dockerfile server's and listed by file in Problems' Containers tab, gone once
 /// a fix is saved; a compose file's <c>${VAR}</c>s showing what Compose makes of them with the .env beside it, the base
 /// file's values its override changes showing the value Compose ends with, and Compose's error marked where it names it
-/// and listed in Problems; and with no engine running, nothing of it per file. The engine's tests skip, saying why, where
+/// and listed in Problems, a name the file does not declare fixed by Passenger's own fixes; and with no engine running,
+/// nothing of it per file. The engine's tests skip, saying why, where
 /// no Linux engine runs (no Node.js is needed: the markers stand without the files' servers).</summary>
 public sealed class EngineChecksTests
 {
@@ -243,9 +244,10 @@ public sealed class EngineChecksTests
             const string Said = "Compose: service \"web\" depends on undefined service \"cache\": invalid compose project";
             Ui.WaitFor(() => document.Markers.Any(m => m.Message == Said), $"Compose's error marked, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]");
             Marker error = document.Markers.Single(m => m.Message == Said);
-            Assert.Equal((MarkerKind.Error, "depends_on"), (error.Kind, document.Text.Snapshot.GetText(error.Range.Start, error.Range.Length)));
+            // On the name of the service that is not there, which its fixes are offered on.
+            Assert.Equal((MarkerKind.Error, "cache"), (error.Kind, document.Text.Snapshot.GetText(error.Range.Start, error.Range.Length)));
             Problem listed = Assert.Single(window.BottomPanel.Problems.ContainerProblems);
-            Assert.Equal((PathOf(folder, "compose.yaml"), new TextPosition(3, 4), Said), (listed.Path, listed.Position, listed.Message));
+            Assert.Equal((PathOf(folder, "compose.yaml"), new TextPosition(4, 8), Said), (listed.Path, listed.Position, listed.Message));
 
             // The service it depends on added (typed, not saved): Compose reads the text as typed once typing pauses.
             CodeEditor editor = window.EditorArea.CodeEditor;
@@ -257,6 +259,156 @@ public sealed class EngineChecksTests
         {
             window.Close();
         }
+    }
+
+    /// <summary>A name Compose finds a service uses that the file does not declare is marked where it is written, and Show
+    /// Context Actions there offers Passenger's own fixes first: a service depended on that is not there, removed from
+    /// depends_on or changed to the service of a near name; a volume or secret declared at the top level, under its key or
+    /// a key made for it, as the file indents. Each is one undo step, and the marker goes once Compose reads the text again.</summary>
+    [AvaloniaFact]
+    public void A_compose_files_undeclared_names_are_fixed_by_changing_removing_or_declaring_them_each_one_undo_step()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        const string Compose = "services:\n  web:\n    image: busybox:1.37\n    depends_on:\n      - dbb\n      - cache\n  db:\n    image: busybox:1.37\n"
+            + "  cache:\n    image: busybox:1.37\n";
+        string folder = Folder(("compose.yaml", Compose));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+
+            // The service it waits for, misspelt: marked on its name, changed to the near one or taken out of depends_on.
+            Marker misspelt = Marked(window, document, "dbb");
+            Assert.Equal(new TextPosition(4, 8), document.Text.Snapshot.GetPosition(misspelt.Range.Start));
+            Fixes(window, misspelt, ["Remove dbb from depends_on", "Change to db"]);
+            Ui.Press(window, "DOWN");
+            Ui.Press(window, "ENTER");
+            string changed = Compose.Replace("- dbb", "- db", StringComparison.Ordinal);
+            Assert.Equal(changed, editor.Document.Snapshot.ToString());
+            Ui.Run(window, EditorActions.Undo);
+            Assert.Equal(Compose, editor.Document.Snapshot.ToString());
+            Ui.Run(window, EditorActions.Redo);
+            Assert.Equal(changed, editor.Document.Snapshot.ToString());
+            Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("Compose:", StringComparison.Ordinal)), "Compose's error gone once the name is the service's");
+
+            // One with no near name is only taken out.
+            editor.ApplyEdits([new TextEdit(changed.IndexOf("- db", StringComparison.Ordinal) + 2, 2, "queue")]);
+            Marker missing = Marked(window, document, "queue");
+            Fixes(window, missing, ["Remove queue from depends_on"]);
+            Ui.Press(window, "ENTER");
+            Assert.Equal(Compose.Replace("      - dbb\n", string.Empty, StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+            Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("Compose:", StringComparison.Ordinal)), "Compose's error gone once it is taken out");
+
+            // A volume and a secret the file has no key for: each declared at the file's end under a key made for it.
+            string before = editor.Document.Snapshot.ToString();
+            int db = before.IndexOf("  db:", StringComparison.Ordinal);
+            editor.ApplyEdits([new TextEdit(db, 0, "    volumes:\n      - data:/data\n    secrets:\n      - api_key\n")]);
+            Fixes(window, Marked(window, document, "data"), ["Declare data at the top level"]);
+            Ui.Press(window, "ENTER");
+            string declared = editor.Document.Snapshot.ToString();
+            Assert.EndsWith("    image: busybox:1.37\nvolumes:\n  data:\n", declared, StringComparison.Ordinal);
+            Ui.Run(window, EditorActions.Undo);
+            Assert.DoesNotContain("\nvolumes:", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Ui.Run(window, EditorActions.Redo);
+            Assert.Equal(declared, editor.Document.Snapshot.ToString());
+            Fixes(window, Marked(window, document, "api_key"), ["Declare api_key at the top level"]);
+            Assert.Equal("under secrets, read from ./api_key.txt", window.Assist.OfferedDetails[0]);
+            Ui.Press(window, "ENTER");
+            Assert.EndsWith("volumes:\n  data:\nsecrets:\n  api_key:\n    file: ./api_key.txt\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("Compose:", StringComparison.Ordinal)) && window.BottomPanel.Problems.ContainerProblems.Count == 0,
+                $"every Compose error gone once the volume and secret are declared ({string.Join(", ", document.Markers.Select(m => m.Message))})");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A fix is worked out again on the text as it stands when it is chosen: a line added above while its list
+    /// shows still declares the secret where it belongs, under the file's own key and indentation; one the file no longer
+    /// needs (declared by hand meanwhile) is refused, saying so, and changes nothing.</summary>
+    [AvaloniaFact]
+    public void A_compose_fix_is_worked_out_again_as_it_is_chosen_and_refused_once_the_file_no_longer_needs_it()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        const string Compose = "services:\n    web:\n        image: busybox:1.37\n        secrets:\n            - api_key\nsecrets:\n    other:\n        file: ./other.txt\n";
+        string folder = Folder(("compose.yaml", Compose));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Fixes(window, Marked(window, document, "api_key"), ["Declare api_key at the top level"]);
+            editor.ApplyEdits([new TextEdit(0, 0, "# The shop\n")]);
+            Ui.Press(window, "ENTER");
+            Assert.Equal("# The shop\n" + Compose + "    api_key:\n        file: ./api_key.txt\n", editor.Document.Snapshot.ToString());
+
+            Ui.Run(window, EditorActions.Undo);
+            string asked = editor.Document.Snapshot.ToString();
+            Fixes(window, Marked(window, document, "api_key"), ["Declare api_key at the top level"]);
+            editor.ApplyEdits([new TextEdit(asked.Length, 0, "    api_key:\n        environment: API_KEY\n")]);
+            string byHand = editor.Document.Snapshot.ToString();
+            Ui.Press(window, "ENTER");
+            Assert.Equal(byHand, editor.Document.Snapshot.ToString());
+            Assert.Equal("Declare api_key at the top level was not applied: the file changed, so it no longer fits", window.Status);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>An agent's code_actions on Compose's marker list Passenger's own fixes first, and apply_code_action makes one
+    /// on the text as it stands, the file saved. Skipped without a Node.js too, since the agents' code tools serve a compose
+    /// file through its YAML server.</summary>
+    [AvaloniaFact]
+    public void An_agent_lists_a_compose_files_own_fixes_first_and_applies_one_saved()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        DockerFilesTests.Shop.SkipWithoutNode(yaml: true);
+        const string Compose = "services:\n  web:\n    image: busybox:1.37\n    networks:\n      - backend\n";
+        string folder = Folder(("compose.yaml", Compose));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            Marked(window, window.EditorArea.Active!, "backend");
+            Passenger.App.Mcp.PassengerTools agent = new(window);
+            IReadOnlyList<string> actions = Ui.Await(agent.CodeActions("compose.yaml", 5, 9), "the code actions an agent asks for");
+            Assert.Equal("Declare backend at the top level [quickfix]", actions[0]);
+            string applied = Ui.Await(agent.ApplyCodeAction("compose.yaml", 5, 9, "Declare backend at the top level"), "the agent's fix made");
+            Assert.Equal("Applied 'Declare backend at the top level' to compose.yaml", applied);
+            Assert.Equal(Compose + "networks:\n  backend:\n", File.ReadAllText(PathOf(folder, "compose.yaml")));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Compose's marker on a name, once its check has run, with the caret put on it.</summary>
+    private static Marker Marked(MainWindow window, OpenDocument document, string name)
+    {
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.StartsWith("Compose:", StringComparison.Ordinal) && Under(document, m) == name),
+            $"Compose's error marked on {name}, not on [{string.Join(", ", document.Markers.Select(m => $"{Under(document, m)}: {m.Message}"))}]");
+        Marker marker = document.Markers.First(m => m.Message.StartsWith("Compose:", StringComparison.Ordinal) && Under(document, m) == name);
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(marker.Range.Start + 1);
+        return marker;
+    }
+
+    private static string Under(OpenDocument document, Marker marker) =>
+        marker.Range.End <= document.Text.Snapshot.Length ? document.Text.Snapshot.GetText(marker.Range.Start, marker.Range.Length) : string.Empty;
+
+    /// <summary>Show Context Actions on a marker: Passenger's own fixes first, these and no other of its own.</summary>
+    private static void Fixes(MainWindow window, Marker marker, string[] expected)
+    {
+        Assert.Equal(MarkerKind.Error, marker.Kind);
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, $"the fixes of {marker.Message}");
+        string[] own = [.. window.Assist.Offered.Where(o => o.StartsWith("Remove ", StringComparison.Ordinal) || o.StartsWith("Change to ", StringComparison.Ordinal)
+            || o.StartsWith("Declare ", StringComparison.Ordinal))];
+        Assert.Equal(expected, own);
+        Assert.Equal(expected, window.Assist.Offered.Take(expected.Length));
     }
 
     /// <summary>Without a Node.js, a compose file's language server cannot start, but the engine still checks it: each file

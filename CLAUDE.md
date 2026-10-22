@@ -538,7 +538,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   docker-compose.yaml in a folder and the first override beside it; `docker compose --project-directory … -f - [-f
   override] config --format json --no-path-resolution`, the text typed as `-`, again as the other or the .env changes).
   Compose's error is marked where its message names a place (a parser's line, or a model path `ComposeText`, Passenger's
-  reading of block YAML, finds), else on the first line, or listed as the other file's; each `${VAR}` gets a hint of
+  reading of block YAML, finds), else on the first line, or listed as the other file's; a name a service uses that the
+  file does not declare (`ComposeFault`: a volume, network, secret or config, or a service depended on through
+  depends_on, links, volumes_from or network_mode) is marked on the name where it is written, with Passenger's own fixes
+  there (`ComposeFixes`, through `EngineChecks.Fixes` and `CodeAssist.EditorFixes`, first in Show Context Actions and an
+  agent's code_actions): Declare X at the top level (under its key, made at the file's end when it has none, as the file
+  indents; a secret or config read from `./X.txt`), Remove X from depends_on, Change to Y for a declared name an edit or
+  two away; each one edit, worked out again on the text as it stands when chosen (`EditorFix.Again`) and refused, said in
+  the status bar, once it no longer fits. Each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
@@ -553,7 +560,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
   run).
   Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpTests.Containers.cs`, `EngineChecksTests`; not
-  `ContainerConfigurationsTests`, which need no engine) skip saying why unless `docker info`'s
+  `ContainerConfigurationsTests` nor `ContainerDetailsTests`' test of Inspect's unmasked copies, which need no engine,
+  and `EngineChecksTests`' agent's fix, which needs Node.js too) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop: an engine that stops and starts
   again, or has no Compose v2, is `ContainersTests.StandInEngine`'s, a shell script (so skipped on Windows) whose `state`

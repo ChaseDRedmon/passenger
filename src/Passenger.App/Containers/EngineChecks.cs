@@ -118,6 +118,22 @@ public sealed class EngineChecks : IDisposable
 
     internal void Told() => Changed?.Invoke(this, EventArgs.Empty);
 
+    /// <summary>Passenger's own fixes for what the engine found on the line of an offset of an open file: a compose file's
+    /// name a service uses that it does not declare (<see cref="ComposeFixes"/>), each worked out on its text as it stands.</summary>
+    public IReadOnlyList<CSharp.EditorFix> Fixes(OpenDocument document, int offset)
+    {
+        UiThread.Check();
+        if (!checks.TryGetValue(document, out EngineCheck? check) || check.Faults.Count == 0)
+        {
+            return [];
+        }
+        TextSnapshot text = document.Text.Snapshot;
+        int line = text.GetLineFromOffset(Math.Clamp(offset, 0, text.Length));
+        return [.. check.Faults
+            .Where(f => text.GetLineFromOffset(Math.Min(f.Range.Start, text.Length)) <= line && line <= text.GetLineFromOffset(Math.Min(f.Range.End, text.Length)))
+            .SelectMany(f => ComposeFixes.For(text, f.Fault))];
+    }
+
     /// <summary>Follows the engine's state, so a start or stop of it checks every file again (or takes their problems away).</summary>
     private void Follow()
     {
@@ -167,6 +183,9 @@ public sealed class EngineChecks : IDisposable
 /// file read with it (an override), at <see cref="Position"/> only.</summary>
 internal sealed record Finding(ProblemSeverity Severity, string Message, string Path, TextPosition Position, TextRange? Range)
 {
+    /// <summary>What Compose says a service names that the file does not declare, which Passenger's own fixes take.</summary>
+    public ComposeFault? Fault { get; init; }
+
     public Uri? Link { get; init; }
 
     public string? LinkText { get; init; }
@@ -220,6 +239,10 @@ internal abstract class EngineCheck : IDisposable
     public string Folder => Path.GetDirectoryName(Document.Path)!;
 
     public IReadOnlyList<Problem> Problems { get; private set; } = [];
+
+    /// <summary>The names Compose found a service uses that the file does not declare, each where it is marked, carried with
+    /// the text typed after, as the markers are.</summary>
+    public IReadOnlyList<(TextRange Range, ComposeFault Fault)> Faults { get; private set; } = [];
 
     /// <summary>Whether the file is checked again once typing pauses, rather than only as it opens and is saved.</summary>
     protected abstract bool AsTyped { get; }
@@ -310,6 +333,7 @@ internal abstract class EngineCheck : IDisposable
         {
             Document.InlayHints = found.Hints;
         }
+        Faults = [.. found.Findings.Where(f => f is { Range: not null, Fault: not null }).Select(f => (f.Range!.Value, f.Fault!))];
         IReadOnlyList<Problem> problems = [.. found.Findings.Select(f => f.Problem)];
         if (!problems.SequenceEqual(Problems))
         {
@@ -324,6 +348,10 @@ internal abstract class EngineCheck : IDisposable
         {
             // A value ends the text before it: what is typed at it goes before it.
             Document.InlayHints = [.. Document.InlayHints.Select(h => h with { Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: true) })];
+        }
+        if (Faults.Count > 0)
+        {
+            Faults = [.. Faults.Select(f => (TextEditing.MapRange(f.Range, e.Edits), f.Fault))];
         }
         if (AsTyped)
         {
@@ -354,6 +382,7 @@ internal abstract class EngineCheck : IDisposable
             Document.InlayHints = [];
         }
         Problems = [];
+        Faults = [];
     }
 
     /// <summary>A stretch of a line as a marker spans it: from its first character that is no space to its end.</summary>

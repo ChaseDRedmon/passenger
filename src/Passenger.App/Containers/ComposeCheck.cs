@@ -335,14 +335,19 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         }
     }
 
-    /// <summary>A problem where Compose's message puts it: a parser's line and column, a line, or a path of its model found
-    /// in the text (a key, or the scalar a path to a value names); else the first line. Marked when it is the file checked
-    /// (<paramref name="own"/>, <paramref name="text"/> as checked); the other file's (its disk's text) only placed.</summary>
+    /// <summary>A problem where Compose's message puts it: the name a service uses that the file does not declare (its
+    /// <see cref="ComposeFault"/>, which Passenger's own fixes take), a parser's line and column, a line, or a path of its
+    /// model found in the text (a key, or the scalar a path to a value names); else the first line. Marked when it is the
+    /// file checked (<paramref name="own"/>, <paramref name="text"/> as checked); the other file's (its disk's text) only placed.</summary>
     private static Finding Place(string message, string file, bool own, string said, TextSnapshot? text)
     {
         if (text is null)
         {
             return new Finding(ProblemSeverity.Error, message, file, new TextPosition(0, 0), null);
+        }
+        if (ComposeFixes.Read(said) is { } fault && ComposeFixes.Place(text.ToString(), fault) is { } named)
+        {
+            return new Finding(ProblemSeverity.Error, message, file, text.GetPosition(named.Start), own ? named : null) { Fault = own ? fault : null };
         }
         TextRange range = Lines(text, 0, 0);
         if (ParserPlace().Match(said) is { Success: true } parsed)

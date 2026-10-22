@@ -354,6 +354,19 @@ public sealed partial class PassengerTools
         }
     }
 
+    /// <summary>One of Passenger's own fixes made as choosing it makes it: worked out again on the file's text as it stands,
+    /// one undoable edit, the file saved; refused when the text no longer has what it fixes.</summary>
+    private string ApplyOwnFix(OpenDocument document, EditorFix fix)
+    {
+        if (fix.On(document.Text.Snapshot) is not { } now)
+        {
+            throw new InvalidOperationException($"'{fix.Title}' was not applied: the file changed, so it no longer fits");
+        }
+        WorkspaceEdits.ApplyTo(Editors, document, [new TextEdit(now.Range.Start, now.Range.Length, now.Text)]);
+        Editors.SaveAll();
+        return $"Applied '{fix.Title}' to {Relative(document.Path)}";
+    }
+
     /// <summary>One of XAML's fixes or refactorings at a place, as code_actions lists it and apply_code_action makes it.</summary>
     private sealed record XamlAction(string Title, string Kind, IReadOnlyList<string> Choices, object Made);
 
@@ -400,9 +413,7 @@ public sealed partial class PassengerTools
         switch (chosen.Made)
         {
             case EditorFix fix:
-                WorkspaceEdits.ApplyTo(Editors, xaml.Document, [new TextEdit(fix.Range.Start, fix.Range.Length, fix.Text)]);
-                Editors.SaveAll();
-                return $"Applied {what} to {Relative(xaml.Document.Path)}";
+                return ApplyOwnFix(xaml.Document, fix);
             case XamlFix fix:
                 IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
                 refused = window.Assist.ApplyXamlChanges(fix.Title, changes);

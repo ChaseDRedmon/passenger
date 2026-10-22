@@ -16,8 +16,20 @@ using Passenger.Xaml.Features;
 namespace Passenger.App.CSharp;
 
 /// <summary>A fix Passenger offers itself at a place in a file, beside the language server's (a running app's failed binding's
-/// nearest member): what Show Context Actions lists, a quieter detail, and the text it puts in place of a range.</summary>
-public sealed record EditorFix(string Title, string Detail, TextRange Range, string Text);
+/// nearest member, a compose file's undefined name): what Show Context Actions lists, a quieter detail, and the text it puts
+/// in place of a range.</summary>
+public sealed record EditorFix(string Title, string Detail, TextRange Range, string Text)
+{
+    /// <summary>The fix worked out again on the file's text as it stands when it is chosen, null when that text no longer
+    /// has what it fixes; none for a fix made as it was offered.</summary>
+    public Func<TextSnapshot, EditorFix?>? Again { get; init; }
+
+    /// <summary>Where the caret goes in <see cref="Text"/> once it is made: its end when none is given.</summary>
+    public int? Caret { get; init; }
+
+    /// <summary>The fix to make on a text now, worked out again where it can be; null when it no longer fits.</summary>
+    public EditorFix? On(TextSnapshot text) => Again is null ? this : Again(text);
+}
 
 /// <summary>What the language server adds to the editor as you work: completion as you type, a card
 /// when the pointer rests (the diagnostics there and the symbol's description), signature help after
@@ -1120,23 +1132,20 @@ public sealed partial class CodeAssist
 
     internal IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
 
-    /// <summary>Passenger's own fixes at the caret as Rider's list, the one chosen made as one undoable edit; false with none.</summary>
-    private bool ShowOwnFixes(string title)
+    /// <summary>One of Passenger's own fixes made in the file shown, as one undoable edit: worked out again on its text as it
+    /// stands (<see cref="EditorFix.On"/>), and refused, said in the status bar, when the text no longer has what it fixes.</summary>
+    private void ApplyOwnFix(OpenDocument document, EditorFix fix)
     {
-        if (editors.Active is not { } document || OwnFixes(document, Caret) is not { Count: > 0 } fixes)
+        if (editors.Active != document)
         {
-            return false;
+            return;
         }
-        int at = Caret;
-        ShowModal(new ChoicePopup(title, [.. fixes.Select(f => new Choice(f.Title, f.Detail, f))]), at, "Show Context Actions", choice =>
+        if (fix.On(document.Text.Snapshot) is not { } now)
         {
-            if (choice?.Value is EditorFix chosen && editors.Active == document)
-            {
-                Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
-            }
-            return Task.CompletedTask;
-        });
-        return true;
+            Message?.Invoke(this, $"{fix.Title} was not applied: the file changed, so it no longer fits");
+            return;
+        }
+        Editor.ApplyEdits([new TextEdit(now.Range.Start, now.Range.Length, now.Text)], SelectionSet.Single(now.Range.Start + (now.Caret ?? now.Text.Length)));
     }
 
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
@@ -1147,41 +1156,62 @@ public sealed partial class CodeAssist
             return;
         }
         string what = only is null ? "Show Context Actions" : title;
-        if (only is null && ShowOwnFixes(title))
-        {
-            return;
-        }
-        if (Ask(what) is not { } lsp || Current is not { } current || editors.Active is not { } document)
+        // Passenger's own fixes first, which need no server (a compose file's are its container engine's).
+        IReadOnlyList<EditorFix> own = only is null ? OwnFixes(editors.Active, Caret) : [];
+        if (editors.Active is not { } document)
         {
             return;
         }
         Selection primary = Editor.Selections.Primary;
-        int line = lsp.PositionOf(primary.Caret).Line;
-        List<Diagnostic> here = current.Diagnostics
-            .Where(d => d.Range.Start.Line <= line && line <= d.Range.End.Line)
-            .ToList();
-        try
+        IReadOnlyList<EslintFix> linted = [];
+        IReadOnlyList<CodeAction> actions = [];
+        if (Ask(own.Count > 0 ? null : what) is { } lsp && Current is { } current)
         {
-            // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
-            IReadOnlyList<EslintFix> linted = only is null ? await LintFixes(document, primary.Caret) : [];
-            IReadOnlyList<CodeAction> actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
-            if (actions.Count == 0 && linted.Count == 0)
+            int line = lsp.PositionOf(primary.Caret).Line;
+            List<Diagnostic> here = current.Diagnostics
+                .Where(d => d.Range.Start.Line <= line && line <= d.Range.End.Line)
+                .ToList();
+            try
             {
-                Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
-                return;
+                // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
+                linted = only is null ? await LintFixes(document, primary.Caret) : [];
+                actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
             }
-            List<Choice> choices = [.. linted.Select(f => new Choice(f.Title, CodeActionKinds.Shown(f.Action.Kind), f)), .. actions.Select(a => new Choice(a.Title, CodeActionKinds.Shown(a.Kind), a))];
-            ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice => choice?.Value switch
+            catch (LanguageServerFailed failed)
             {
-                EslintFix fix => RunLintFix(document, fix),
-                CodeAction chosen => Carry(document, chosen, primary.Caret, chosen.Title, null),
-                _ => Task.CompletedTask,
-            });
+                if (own.Count == 0)
+                {
+                    Failed(what, failed);
+                    return;
+                }
+            }
         }
-        catch (LanguageServerFailed failed)
+        else if (own.Count == 0)
         {
-            Failed(what, failed);
+            return;
         }
+        if (own.Count == 0 && actions.Count == 0 && linted.Count == 0)
+        {
+            Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
+            return;
+        }
+        List<Choice> choices = [.. own.Select(f => new Choice(f.Title, f.Detail, f)), .. linted.Select(f => new Choice(f.Title, CodeActionKinds.Shown(f.Action.Kind), f)),
+            .. actions.Select(a => new Choice(a.Title, CodeActionKinds.Shown(a.Kind), a))];
+        ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice =>
+        {
+            switch (choice?.Value)
+            {
+                case EditorFix fix:
+                    ApplyOwnFix(document, fix);
+                    return Task.CompletedTask;
+                case EslintFix fix:
+                    return RunLintFix(document, fix);
+                case CodeAction chosen:
+                    return Carry(document, chosen, primary.Caret, chosen.Title, null);
+                default:
+                    return Task.CompletedTask;
+            }
+        });
     }
 
     /// <summary>A code action chosen, carried out: one that offers choices (a fix-all's scopes, the actions nested under
