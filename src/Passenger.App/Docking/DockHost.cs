@@ -467,6 +467,13 @@ public sealed class DockHost : Grid
 
     // Layout.
 
+    /// <summary>The stripes' tips said again with the keymap in force, which a change of keymap or shortcut has replaced.</summary>
+    public void FollowKeys()
+    {
+        leftStripe.Fill(windows);
+        rightStripe.Fill(windows);
+    }
+
     internal void Layout()
     {
         foreach ((ToolAnchor anchor, ToolPane pane) in panes)

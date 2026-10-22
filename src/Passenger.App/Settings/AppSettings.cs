@@ -161,9 +161,24 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// console's text is kept, in KB, the oldest lines dropped past it.</summary>
     public int ConsoleBufferKb { get; init; } = ToolWindows.OutputView.DefaultLimitKb;
 
-    /// <summary>The person's shortcuts over the keymap's, by action, in keymap notation ("meta shift K"); an empty list
-    /// unbinds the action.</summary>
+    /// <summary>The keymap the person's keys follow, Settings' Keymap: Visual Studio's at first, as before there was a
+    /// choice, so a settings.json without one keeps the keys it had.</summary>
+    public Passenger.Editor.KeymapPreset Keymap { get; init; } = Passenger.Editor.KeymapPreset.VisualStudio;
+
+    /// <summary>The person's shortcuts over the Visual Studio keymap's, by action, in keymap notation ("meta shift K"); an
+    /// empty list unbinds the action.</summary>
     public Dictionary<string, string[]> Shortcuts { get; init; } = [];
+
+    /// <summary>The person's shortcuts over the VS Code keymap's, kept apart from Visual Studio's, so a shortcut set over
+    /// one keymap is never put over the other.</summary>
+    public Dictionary<string, string[]> VSCodeShortcuts { get; init; } = [];
+
+    /// <summary>The person's shortcuts over the keymap they chose (a method, so the settings agents list leave it out).</summary>
+    public Dictionary<string, string[]> OwnShortcuts() => Keymap == Passenger.Editor.KeymapPreset.VSCode ? VSCodeShortcuts : Shortcuts;
+
+    /// <summary>These settings with these as the person's shortcuts over the keymap they chose.</summary>
+    public AppSettings WithOwnShortcuts(Dictionary<string, string[]> shortcuts) =>
+        Keymap == Passenger.Editor.KeymapPreset.VSCode ? this with { VSCodeShortcuts = shortcuts } : this with { Shortcuts = shortcuts };
 
     /// <summary>Rider's Live Templates as the person left them, by template: a built-in one's changes (its key the
     /// shortcut it ships with), and the whole of each they added (<see cref="TemplateChange"/>).</summary>
@@ -329,7 +344,9 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),
             IdleSeconds = Math.Clamp(IdleSeconds, MinIdleSeconds, MaxIdleSeconds),
             ConsoleBufferKb = Math.Clamp(ConsoleBufferKb, MinConsoleBufferKb, MaxConsoleBufferKb),
-            Shortcuts = (Shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray()),
+            Keymap = Enum.IsDefined(Keymap) ? Keymap : defaults.Keymap,
+            Shortcuts = Readable(Shortcuts),
+            VSCodeShortcuts = Readable(VSCodeShortcuts),
             LiveTemplates = (LiveTemplates ?? []).Where(t => t.Value is not null).ToDictionary(t => t.Key, t => t.Value.Clamped()),
             PostfixTemplates = PostfixTemplates ?? [],
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
@@ -344,6 +361,9 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
             AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(StringComparer.FromComparison(Passenger.Core.PathNames.Comparison))],
         };
+
+        static Dictionary<string, string[]> Readable(Dictionary<string, string[]>? shortcuts) =>
+            (shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray());
     }
 
     /// <summary>Whether a region of a kind folds as its file opens, as Fold by default says.</summary>

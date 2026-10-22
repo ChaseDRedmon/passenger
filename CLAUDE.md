@@ -139,7 +139,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   pair up, so Enter costs what is around the caret, while HTML still reads from the start.
 - `src/Passenger.Editor`: the `CodeEditor` control (drawing, input, commands, in partial files),
   the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
-  Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
+  Studio keymaps, and its VS Code keymaps for Settings' choice, `KeymapPreset`) and the highlighting contract
+  (`IHighlighter`), with JetBrains Mono embedded.
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
   goes with the text before it, or a value (`InlayHintKind.Value`: what a compose file's `${VAR}` comes to), which goes
   with the text before it as a type does and shows whatever Settings say of the other two; the hints at an offset are a
@@ -726,7 +727,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   `SettingsStore.InForce` (the process's), and its range in `Clamped` when it has one. `SettingsDialog.Keymap.cs` is the Keymap page: Rider's
   Edit Shortcuts menu, the Keyboard Shortcut dialog (chords) and Find Actions by Shortcut; `Keymap.Conflicts` is Rider's
   conflict rule, and a conflict is removed, never kept, since a shortcut runs one action. A chord can't be a native
-  macOS menu key equivalent; in-window menus show it as text.
+  macOS menu key equivalent; in-window menus show it as text. Its drop-down is `AppSettings.Keymap`: Visual Studio's (the
+  default, which a settings.json without one keeps) or VS Code's (`DefaultKeymaps.VSCode`, `AppActions.VSCode`), the
+  person's shortcuts over each kept apart (`Shortcuts`, `VSCodeShortcuts`; `OwnShortcuts()` is the chosen one's), put in
+  force for the process by `AppActions.Choose`. A tool window's button whose tip names its action's keys takes it through
+  `ActionTips`, said again as the window follows a changed keymap (`MainWindow.Follow`, with the stripes' `FollowKeys`).
 - `src/Passenger.App/Updates`: the update check and the update. `Releases` asks GitHub's releases/latest (a GET naming
   Passenger and its version, nothing else) and offers a release newer than `Product.Version`, never a draft or
   pre-release; its files download over HTTPS only (`Downloads.cs`), checked against the SHA-256 the same release gives.
@@ -816,7 +821,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   the spawn on, so the start looks once more after listening: `sh -c "exit 3"` can end first); on Windows PowerShell is
   told `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches
   the person's history. `MainWindow.Terminal.cs` is its
-  tool window and the keys it takes ahead of the IDE's.
+  tool window and the keys it takes ahead of the IDE's (a Ctrl+letter always, the shell's control character, whatever
+  action a keymap gives it).
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows (Problems' File tab lists markers moved by keys once typing
@@ -1448,7 +1454,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **Paths are canonical** (`PathNames.Canonical`, symlinks resolved), because MSBuild and Roslyn
   report resolved paths; a path compared with another must come from the same function.
 - **Shortcuts follow Rider's.** A new action takes the binding Rider's Visual Studio (Windows) or
-  Visual Studio OSX (macOS) keymap gives it; Rider's keymap files are in its jars for reference.
+  Visual Studio OSX (macOS) keymap gives it, and in the VS Code keymap the one its VSCode or VSCode OSX keymap gives it
+  (`plugins/keymap-vscode`), each resolved as IntelliJ does: a keymap's own list (its XML, then the shortcuts plugins'
+  descriptors declare for it), else its parent's ($default, or Mac OS X 10.5+ taking $default's Ctrl as Cmd). A key
+  IntelliJ gives two actions, told apart by where it is pressed, goes to one, said where it is bound. Rider's keymap
+  files are in its jars for reference.
 - Commit messages go through a file (`git commit -F msg.txt`): backticks in a `-m` string are zsh command
   substitution.
 

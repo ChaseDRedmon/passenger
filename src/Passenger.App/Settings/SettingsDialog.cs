@@ -95,7 +95,7 @@ public sealed partial class SettingsDialog : Window
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        AddOptions(actions.Keymap, agents ?? Mcp.AgentSetup.Here(null));
+        AddOptions(agents ?? Mcp.AgentSetup.Here(null));
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search settings", Margin = new Thickness(10, 10, 10, 6) };
         search.TextChanged += (_, _) => Filter();
         pages = new ListBox { Classes = { "tree", "pages" } };
@@ -190,7 +190,8 @@ public sealed partial class SettingsDialog : Window
             option.Row.IsVisible = words.All(w => option.Words.Contains(w, StringComparison.OrdinalIgnoreCase)) && byShortcut(option);
         }
         string? was = Page;
-        string[] listed = [.. Order.Where(p => options.Any(o => o.Page == p && o.Row.IsVisible) || (p == KeymapPage && shortcutFilter is not null))];
+        string[] listed = [.. Order.Where(p => options.Any(o => o.Page == p && o.Row.IsVisible)
+            || (p == KeymapPage && (shortcutFilter is not null || FindsKeymapChoice(words))))];
         // A new list chooses no page for a moment, which would take the Keymap page's top, Find Shortcut with it, away.
         if (!listed.SequenceEqual(Pages))
         {
@@ -212,7 +213,7 @@ public sealed partial class SettingsDialog : Window
         }
     }
 
-    private void AddOptions(Keymap keymap, Mcp.AgentSetup agents)
+    private void AddOptions(Mcp.AgentSetup agents)
     {
         // Each theme has a Dark and a Light, which the next row chooses between, or the system does, as Rider's Sync with OS.
         ComboBox look = new() { ItemsSource = LookChoices.Select(c => c.Name).ToArray(), SelectedIndex = Array.FindIndex(LookChoices, c => c.Look == Working.Look), Classes = { "form" } };
@@ -444,7 +445,7 @@ public sealed partial class SettingsDialog : Window
             "Each program the IDE runs (git, dotnet, the servers) is written to passenger.log with its exit code and time. "
             + "Otherwise only those that fail or take a second or more are.");
 
-        AddKeymap(keymap);
+        AddKeymap();
     }
 
     /// <summary>A page that is one control of its own (the live templates' list and editor), the whole of its width, found

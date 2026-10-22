@@ -9,10 +9,11 @@ using Passenger.Editor;
 
 namespace Passenger.App.Settings;
 
-/// <summary>Settings' Keymap page, as Rider's: every action with its shortcuts, each in a box of its own (a chord as
-/// "⌘K, ⌘C"), an action the person changed in the modified colour. An action's Edit Shortcuts menu (a double-click, a
-/// right-click or its button) has Add Keyboard Shortcut, a Remove for each shortcut and Reset Shortcuts; Find Actions by
-/// Shortcut keeps only the actions a keystroke or chord pressed into it starts.</summary>
+/// <summary>Settings' Keymap page, as Rider's: the keymap chosen at its top (Visual Studio's or VS Code's), every action
+/// with its shortcuts in it, each in a box of its own (a chord as "⌘K, ⌘C"), an action the person changed in the modified
+/// colour. An action's Edit Shortcuts menu (a double-click, a right-click or its button) has Add Keyboard Shortcut, a
+/// Remove for each shortcut and Reset Shortcuts; Find Actions by Shortcut keeps only the actions a keystroke or chord
+/// pressed into it starts.</summary>
 public sealed partial class SettingsDialog
 {
     private const string ConflictWarning = "This shortcut is already assigned to other actions. Do you want to remove the other assignments?";
@@ -24,8 +25,18 @@ public sealed partial class SettingsDialog
     private readonly Popup findPopup = new() { Placement = PlacementMode.BottomEdgeAlignedRight, IsLightDismissEnabled = true };
     private readonly TextBlock filterText = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     private readonly Border filterChip = new() { IsVisible = false, Classes = { "tag" }, Padding = new Thickness(8, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center };
-    private Keymap? defaults;
+    private readonly Dictionary<KeymapPreset, Keymap> defaults = [];
     private Shortcut? shortcutFilter;
+
+    /// <summary>The keymaps Settings offers, in its order.</summary>
+    public static readonly KeymapPreset[] KeymapChoices = [KeymapPreset.VisualStudio, KeymapPreset.VSCode];
+
+    /// <summary>What a search finds the keymap's choice by, beside the keymaps' names.</summary>
+    private const string KeymapWords = "keymap keymaps preset keyboard shortcuts keys bindings visual studio vs code vscode";
+
+    /// <summary>Rider's keymap drop-down at the Keymap page's top: the keymap the person's keys follow, their own shortcuts
+    /// kept over each apart.</summary>
+    public ComboBox KeymapChoice { get; } = new() { Name = "KeymapChoice", Classes = { "form" } };
 
     /// <summary>Rider's Find Actions by Shortcut, the magnifier over a keyboard at the Keymap page's top.</summary>
     public Button FindByShortcut { get; } = new() { Classes = { "tool" } };
@@ -39,8 +50,12 @@ public sealed partial class SettingsDialog
     /// <summary>The shortcut the Keymap page is narrowed to, or null while it lists every action.</summary>
     public Shortcut? ShortcutFilter => shortcutFilter;
 
-    /// <summary>The keymap with nothing of the person's: what Reset Shortcuts gives back.</summary>
-    private Keymap Defaults => defaults ??= AppActions.Keymap(new Dictionary<string, string[]>());
+    /// <summary>The chosen keymap with nothing of the person's: what Reset Shortcuts gives back.</summary>
+    private Keymap Defaults => defaults.TryGetValue(Working.Keymap, out Keymap? made) ? made
+        : defaults[Working.Keymap] = AppActions.Keymap(Working.Keymap, new Dictionary<string, string[]>());
+
+    /// <summary>The chosen keymap with the person's shortcuts over it, as the options now stand.</summary>
+    private Keymap Current => AppActions.Keymap(Working);
 
     /// <summary>An action's row on the Keymap page, whose menu is Rider's Edit Shortcuts.</summary>
     public Control KeymapRow(string action) => keymapRows[action].Row;
@@ -57,10 +72,9 @@ public sealed partial class SettingsDialog
     /// the page says so.</summary>
     public void Rebind(string action, params string[] shortcuts)
     {
-        Keymap before = AppActions.Keymap(Working.Shortcuts);
-        Dictionary<string, string[]> next = Taken(before, action, shortcuts.Select(Shortcut.Parse), keepDefaults: false, out List<string> taken);
+        Dictionary<string, string[]> next = Taken(Current, action, shortcuts.Select(Shortcut.Parse), keepDefaults: false, out List<string> taken);
         next[action] = shortcuts;
-        Working = Working with { Shortcuts = next };
+        Working = Working.WithOwnShortcuts(next);
         ShowShortcuts();
         Say(taken);
     }
@@ -69,10 +83,9 @@ public sealed partial class SettingsDialog
     /// the person gave it to.</summary>
     public void ResetShortcuts(string action)
     {
-        Keymap before = AppActions.Keymap(Working.Shortcuts);
-        Dictionary<string, string[]> next = Taken(before, action, Defaults.ShortcutsFor(action), keepDefaults: true, out List<string> taken);
+        Dictionary<string, string[]> next = Taken(Current, action, Defaults.ShortcutsFor(action), keepDefaults: true, out List<string> taken);
         next.Remove(action);
-        Working = Working with { Shortcuts = next };
+        Working = Working.WithOwnShortcuts(next);
         ShowShortcuts();
         Say(taken);
     }
@@ -82,7 +95,7 @@ public sealed partial class SettingsDialog
     /// Keep is left out: a shortcut here runs one action, and a chord's first key bound alone would run before it.</summary>
     public async Task AddKeyboardShortcut(string action)
     {
-        Keymap current = AppActions.Keymap(Working.Shortcuts);
+        Keymap current = Current;
         KeyboardShortcutDialog dialog = new(actions[action]?.Title ?? action, Where(actions[action]), shortcut =>
             [.. current.Conflicts(action, shortcut).Select(c => c.Action).Distinct().Select(id => (actions[id]?.Title ?? id, Where(actions[id])))]);
         if (await dialog.ShowDialog<Shortcut?>(this) is not { } chosen)
@@ -102,17 +115,17 @@ public sealed partial class SettingsDialog
     }
 
     /// <summary>The Keymap page: its header (the keymap, Find Actions by Shortcut) and a row for every action.</summary>
-    private void AddKeymap(Keymap keymap)
+    private void AddKeymap()
     {
-        AddKeymapHeader(keymap);
+        AddKeymapHeader();
+        Keymap current = Current;
         foreach (IdeAction action in actions.All.OrderBy(a => a.Title, StringComparer.Ordinal))
         {
             WrapPanel keys = new() { Width = 300, VerticalAlignment = VerticalAlignment.Center };
             Button edit = new() { Classes = { "tool" }, Content = Glyph("Icon.More") };
             ToolTip.SetTip(edit, "Edit Shortcuts");
             StackPanel editor = new() { Orientation = Orientation.Horizontal, Spacing = 6, Children = { keys, edit } };
-            string words = string.Join(' ', keymap.ShortcutsFor(action.Id).Select(s => s.Display()));
-            Panel row = (Panel)Add(KeymapPage, action.Title, editor, $"{action.Group} {words} keymap shortcut", action: action.Id);
+            Panel row = (Panel)Add(KeymapPage, action.Title, editor, RowWords(action, current.ShortcutsFor(action.Id).Select(s => s.Display())), action: action.Id);
             // Transparent so a click anywhere along the row is the row's.
             row.Background = Brushes.Transparent;
             ContextMenu menu = new();
@@ -120,13 +133,44 @@ public sealed partial class SettingsDialog
             row.ContextMenu = menu;
             row.DoubleTapped += (_, _) => OpenEditShortcuts(action.Id, menu, row, row);
             edit.Click += (_, _) => OpenEditShortcuts(action.Id, menu, row, edit);
-            keymapRows[action.Id] = new ActionRow(action.Id, row, (TextBlock)row.Children[0], keys);
+            keymapRows[action.Id] = new ActionRow(action, row, (TextBlock)row.Children[0], keys);
         }
         ShowShortcuts();
     }
 
-    private void AddKeymapHeader(Keymap keymap)
+    /// <summary>Rider's keymap drop-down: another keymap shows its own shortcuts with the person's kept over it, and
+    /// Reset Shortcuts gives back its own; what the person set over the one left stays, for when it is chosen again.</summary>
+    private void ChooseKeymap(KeymapPreset chosen)
     {
+        if (chosen == Working.Keymap)
+        {
+            return;
+        }
+        Change(s => s with { Keymap = chosen });
+        Say([]);
+        ShowShortcuts();
+        if (shortcutFilter is null)
+        {
+            // A search's rows are those whose words, the new keymap's shortcuts among them, have what was typed.
+            Filter();
+        }
+    }
+
+    /// <summary>Whether a search's words find the keymap's choice at the Keymap page's top.</summary>
+    private static bool FindsKeymapChoice(string[] words) => words.Length > 0
+        && words.All(w => KeymapWords.Contains(w, StringComparison.OrdinalIgnoreCase)
+            || KeymapChoices.Any(k => DefaultKeymaps.NameOf(k).Contains(w, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>What a search finds an action's row by: its name, group and shortcuts as shown.</summary>
+    private static string RowWords(IdeAction action, IEnumerable<string> shown) => $"{action.Group} {string.Join(' ', shown)} keymap shortcut";
+
+    private void AddKeymapHeader()
+    {
+        KeymapChoice.ItemsSource = KeymapChoices.Select(DefaultKeymaps.NameOf).ToArray();
+        KeymapChoice.SelectedIndex = Array.IndexOf(KeymapChoices, Working.Keymap);
+        KeymapChoice.HorizontalAlignment = HorizontalAlignment.Left;
+        KeymapChoice.SelectionChanged += (_, _) => ChooseKeymap(KeymapChoices[Math.Max(0, KeymapChoice.SelectedIndex)]);
+
         Grid icon = new() { Width = 18, Height = 18 };
         PathIcon keyboard = Glyph("Icon.Keyboard");
         PathIcon magnifier = Glyph("Icon.Search");
@@ -176,7 +220,7 @@ public sealed partial class SettingsDialog
         {
             Spacing = 4,
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { new TextBlock { Text = $"{keymap.Name} keymap" }, keymapNote },
+            Children = { KeymapChoice, keymapNote },
         };
         DockPanel.SetDock(tools, Dock.Right);
         DockPanel.SetDock(findPopup, Dock.Right);
@@ -190,7 +234,7 @@ public sealed partial class SettingsDialog
     /// left out: the keymap binds keys alone.</summary>
     private void FillEditShortcuts(string action, ContextMenu menu)
     {
-        Keymap current = AppActions.Keymap(Working.Shortcuts);
+        Keymap current = Current;
         IReadOnlyList<Shortcut> keys = current.ShortcutsFor(action);
         List<Control> items = [Item("Add Keyboard Shortcut", () => _ = AddKeyboardShortcut(action))];
         if (keys.Count > 0)
@@ -260,7 +304,7 @@ public sealed partial class SettingsDialog
                 }
             }
         }
-        Dictionary<string, string[]> next = new(Working.Shortcuts);
+        Dictionary<string, string[]> next = new(Working.OwnShortcuts());
         foreach ((string other, List<Shortcut> keep) in left)
         {
             next[other] = [.. keep.Select(s => s.Notation())];
@@ -276,13 +320,16 @@ public sealed partial class SettingsDialog
 
     private bool IsChanged(string action, Keymap current) => !current.ShortcutsFor(action).ToHashSet().SetEquals(Defaults.ShortcutsFor(action));
 
+    /// <summary>Each row's shortcuts as the chosen keymap and the person's own over it have them, which a search then
+    /// finds the row by.</summary>
     private void ShowShortcuts()
     {
-        Keymap current = AppActions.Keymap(Working.Shortcuts);
+        Keymap current = Current;
         foreach (ActionRow row in keymapRows.Values)
         {
-            string[] shown = [.. current.ShortcutsFor(row.Action).Select(s => s.Display())];
-            if (!shown.SequenceEqual(ShortcutsShown(row.Action)))
+            string id = row.Action.Id;
+            string[] shown = [.. current.ShortcutsFor(id).Select(s => s.Display())];
+            if (!shown.SequenceEqual(ShortcutsShown(id)))
             {
                 row.Keys.Children.Clear();
                 foreach (string keys in shown)
@@ -291,8 +338,10 @@ public sealed partial class SettingsDialog
                     box.Bind(Border.BackgroundProperty, box.GetResourceObservable("Passenger.Selected"));
                     row.Keys.Children.Add(box);
                 }
+                int option = options.FindIndex(o => o.Page == KeymapPage && o.Action == id);
+                options[option] = options[option] with { Words = $"{KeymapPage} {row.Action.Title} {RowWords(row.Action, shown)}" };
             }
-            row.Title.Classes.Set("shortcutsChanged", IsChanged(row.Action, current));
+            row.Title.Classes.Set("shortcutsChanged", IsChanged(id, current));
         }
         if (shortcutFilter is not null)
         {
@@ -330,7 +379,7 @@ public sealed partial class SettingsDialog
         {
             return _ => true;
         }
-        Keymap current = AppActions.Keymap(Working.Shortcuts);
+        Keymap current = Current;
         return option => option.Action is null || current.ShortcutsFor(option.Action).Any(s => s.StartsWith(filter));
     }
 
@@ -350,5 +399,5 @@ public sealed partial class SettingsDialog
         return icon;
     }
 
-    private sealed record ActionRow(string Action, Control Row, TextBlock Title, WrapPanel Keys);
+    private sealed record ActionRow(IdeAction Action, Control Row, TextBlock Title, WrapPanel Keys);
 }

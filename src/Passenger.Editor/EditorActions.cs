@@ -87,12 +87,40 @@ public static class EditorActions
     public static bool IsMovement(string action) => Movements.Contains(action);
 }
 
-/// <summary>The keymaps Passenger starts with: Rider's Visual Studio keymap on Windows and its
-/// Visual Studio OSX keymap on macOS, for the actions Passenger has, plus the few platform staples
-/// those leave out (Cmd+/ to comment, Cmd+W to close).</summary>
+/// <summary>The keymaps a person chooses between in Settings, Keymap, each the platform's own (macOS's or the others'),
+/// their own shortcuts kept over the one chosen.</summary>
+public enum KeymapPreset
+{
+    /// <summary>Rider's Visual Studio keymaps, which Passenger starts with.</summary>
+    VisualStudio,
+
+    /// <summary>Rider's VS Code keymaps.</summary>
+    VSCode,
+}
+
+/// <summary>The keymaps Passenger has: Rider's Visual Studio keymap on Windows and its Visual Studio OSX keymap on macOS,
+/// for the actions Passenger has, plus the few platform staples those leave out (Cmd+/ to comment, Cmd+W to close); and
+/// Rider's VSCode and VSCode OSX keymaps, a key IntelliJ gives two actions told apart by where it is pressed given to
+/// one (the editor's own).</summary>
 public static class DefaultKeymaps
 {
     public static Keymap ForPlatform() => OperatingSystem.IsMacOS() ? VisualStudioMac() : VisualStudio();
+
+    /// <summary>The editor's part of a keymap, the platform's.</summary>
+    public static Keymap For(KeymapPreset preset) => preset switch
+    {
+        KeymapPreset.VSCode => OperatingSystem.IsMacOS() ? VSCodeMac() : VSCode(),
+        _ => ForPlatform(),
+    };
+
+    /// <summary>A keymap's name as Settings lists it, the platform's (Rider's OSX keymaps are "(macOS)" here).</summary>
+    public static string NameOf(KeymapPreset preset) => (preset, OperatingSystem.IsMacOS()) switch
+    {
+        (KeymapPreset.VSCode, true) => "VS Code (macOS)",
+        (KeymapPreset.VSCode, false) => "VS Code",
+        (_, true) => "Visual Studio (macOS)",
+        _ => "Visual Studio",
+    };
 
     public static Keymap VisualStudioMac() => new Keymap("Visual Studio (macOS)")
         .Bind(EditorActions.Left, "LEFT")
@@ -201,5 +229,113 @@ public static class DefaultKeymaps
         .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
         .Bind(EditorActions.FoldToDefinitions, "control M , O", "control M , control O")
         .Bind(EditorActions.MatchBrace, "control CLOSE_BRACKET")
+        .Bind(EditorActions.Escape, "ESCAPE");
+
+    // Rider's VSCode OSX keymap with what it takes from Mac OS X 10.5+ (Ctrl+B, F, P, N, A and E move as macOS's text does).
+    // Its Comment with Line Comment's Cmd+K chords are VS Code's Add and Remove Line Comment, Comment and Uncomment here;
+    // its Duplicate is EditorDuplicateLines, VS Code's Copy Line Down.
+    public static Keymap VSCodeMac() => new Keymap(NameOf(KeymapPreset.VSCode))
+        .Bind(EditorActions.Left, "LEFT", "control B")
+        .Bind(EditorActions.Right, "RIGHT", "control F")
+        .Bind(EditorActions.Up, "UP", "control P")
+        .Bind(EditorActions.Down, "DOWN", "control N")
+        .Bind(EditorActions.WordLeft, "alt LEFT")
+        .Bind(EditorActions.WordRight, "alt RIGHT")
+        .Bind(EditorActions.LineStart, "meta LEFT", "control A", "HOME")
+        .Bind(EditorActions.LineEnd, "meta RIGHT", "control E", "END")
+        .Bind(EditorActions.TextStart, "meta UP")
+        .Bind(EditorActions.TextEnd, "meta DOWN")
+        .Bind(EditorActions.PageUp, "PAGE_UP")
+        .Bind(EditorActions.PageDown, "PAGE_DOWN")
+        .Bind(EditorActions.ScrollUp, "control PAGE_UP")
+        .Bind(EditorActions.ScrollDown, "control PAGE_DOWN")
+        .Bind(EditorActions.Backspace, "BACK_SPACE", "shift BACK_SPACE")
+        .Bind(EditorActions.Delete, "DELETE")
+        .Bind(EditorActions.DeleteWordLeft, "alt BACK_SPACE")
+        .Bind(EditorActions.DeleteWordRight, "alt DELETE")
+        .Bind(EditorActions.NewLine, "ENTER")
+        .Bind(EditorActions.StartNewLine, "meta ENTER")
+        .Bind(EditorActions.StartNewLineBefore, "meta shift ENTER")
+        .Bind(EditorActions.Indent, "TAB")
+        .Bind(EditorActions.Outdent, "meta OPEN_BRACKET", "shift TAB")
+        .Bind(EditorActions.Duplicate, "alt shift DOWN")
+        .Bind(EditorActions.DeleteLine, "meta shift K")
+        .Bind(EditorActions.MoveLineUp, "alt UP")
+        .Bind(EditorActions.MoveLineDown, "alt DOWN")
+        .Bind(EditorActions.ToggleLineComment, "meta SLASH")
+        .Bind(EditorActions.ToggleBlockComment, "alt shift A")
+        .Bind(EditorActions.Comment, "meta K , meta C")
+        .Bind(EditorActions.Uncomment, "meta K , meta U")
+        .Bind(EditorActions.JoinLines, "control J")
+        .Bind(EditorActions.Undo, "meta Z")
+        .Bind(EditorActions.Redo, "meta shift Z", "alt shift BACK_SPACE")
+        .Bind(EditorActions.Cut, "meta X", "shift DELETE")
+        .Bind(EditorActions.Copy, "meta C", "meta INSERT")
+        .Bind(EditorActions.Paste, "meta V", "shift INSERT")
+        .Bind(EditorActions.SelectAll, "meta A")
+        .Bind(EditorActions.SelectNextOccurrence, "meta D", "meta F3")
+        .Bind(EditorActions.UnselectOccurrence, "meta U")
+        .Bind(EditorActions.SelectAllOccurrences, "meta F2", "meta control G", "meta shift L")
+        .Bind(EditorActions.CaretPerLine, "alt shift I")
+        .Bind(EditorActions.CloneCaretAbove, "meta alt shift UP", "meta alt UP")
+        .Bind(EditorActions.CloneCaretBelow, "meta alt shift DOWN", "meta alt DOWN")
+        .Bind(EditorActions.Fold, "meta alt OPEN_BRACKET")
+        .Bind(EditorActions.Unfold, "meta alt CLOSE_BRACKET")
+        .Bind(EditorActions.FoldAll, "meta K , meta 0")
+        .Bind(EditorActions.UnfoldAll, "meta K , meta J")
+        .Bind(EditorActions.FoldDocComments, "meta K , meta SLASH")
+        .Bind(EditorActions.MatchBrace, "meta shift BACK_SLASH")
+        .Bind(EditorActions.Escape, "ESCAPE");
+
+    // Rider's VSCode keymap with what it takes from $default, Comment, Uncomment and Duplicate as on macOS.
+    public static Keymap VSCode() => new Keymap(NameOf(KeymapPreset.VSCode))
+        .Bind(EditorActions.Left, "LEFT")
+        .Bind(EditorActions.Right, "RIGHT")
+        .Bind(EditorActions.Up, "UP")
+        .Bind(EditorActions.Down, "DOWN")
+        .Bind(EditorActions.WordLeft, "control LEFT")
+        .Bind(EditorActions.WordRight, "control RIGHT")
+        .Bind(EditorActions.LineStart, "HOME")
+        .Bind(EditorActions.LineEnd, "END")
+        .Bind(EditorActions.TextStart, "control HOME")
+        .Bind(EditorActions.TextEnd, "control END")
+        .Bind(EditorActions.PageUp, "PAGE_UP")
+        .Bind(EditorActions.PageDown, "PAGE_DOWN")
+        .Bind(EditorActions.Backspace, "BACK_SPACE", "shift BACK_SPACE")
+        .Bind(EditorActions.Delete, "DELETE")
+        .Bind(EditorActions.DeleteWordLeft, "control BACK_SPACE")
+        .Bind(EditorActions.DeleteWordRight, "control DELETE")
+        .Bind(EditorActions.NewLine, "ENTER")
+        .Bind(EditorActions.StartNewLine, "control ENTER")
+        .Bind(EditorActions.StartNewLineBefore, "control shift ENTER")
+        .Bind(EditorActions.Indent, "TAB")
+        .Bind(EditorActions.Outdent, "control OPEN_BRACKET", "shift TAB")
+        .Bind(EditorActions.Duplicate, "alt shift DOWN")
+        .Bind(EditorActions.DeleteLine, "control shift K")
+        .Bind(EditorActions.MoveLineUp, "alt UP")
+        .Bind(EditorActions.MoveLineDown, "alt DOWN")
+        .Bind(EditorActions.ToggleLineComment, "control SLASH")
+        .Bind(EditorActions.ToggleBlockComment, "alt shift A")
+        .Bind(EditorActions.Comment, "control K , control C")
+        .Bind(EditorActions.Uncomment, "control K , control U")
+        .Bind(EditorActions.JoinLines, "control shift J")
+        .Bind(EditorActions.Undo, "control Z", "alt BACK_SPACE")
+        .Bind(EditorActions.Redo, "control Y", "control shift Z", "alt shift BACK_SPACE")
+        .Bind(EditorActions.Cut, "control X", "shift DELETE")
+        .Bind(EditorActions.Copy, "control C", "control INSERT")
+        .Bind(EditorActions.Paste, "control V", "shift INSERT")
+        .Bind(EditorActions.SelectAll, "control A")
+        .Bind(EditorActions.SelectNextOccurrence, "control D", "control F3")
+        .Bind(EditorActions.UnselectOccurrence, "control U")
+        .Bind(EditorActions.SelectAllOccurrences, "control shift L", "control F2")
+        .Bind(EditorActions.CaretPerLine, "alt shift I")
+        .Bind(EditorActions.CloneCaretAbove, "control alt UP", "control alt shift UP")
+        .Bind(EditorActions.CloneCaretBelow, "control alt DOWN", "control alt shift DOWN")
+        .Bind(EditorActions.Fold, "control shift OPEN_BRACKET")
+        .Bind(EditorActions.Unfold, "control shift CLOSE_BRACKET")
+        .Bind(EditorActions.FoldAll, "control K , control 0")
+        .Bind(EditorActions.UnfoldAll, "control K , control J")
+        .Bind(EditorActions.FoldDocComments, "control K , control SLASH")
+        .Bind(EditorActions.MatchBrace, "control shift BACK_SLASH")
         .Bind(EditorActions.Escape, "ESCAPE");
 }

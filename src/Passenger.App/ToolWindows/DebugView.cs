@@ -206,8 +206,7 @@ public sealed class DebugView : DockPanel
 
         // Rider's toggle under the program's own buttons: pressed while every breakpoint is muted.
         mute = new ToggleButton { Classes = { "tool" }, Content = new PathIcon() };
-        string? muteKeys = AppActions.Keymap().ShortcutsFor(AppActions.MuteBreakpoints).FirstOrDefault()?.Display();
-        ToolTip.SetTip(mute, muteKeys is null ? "Mute Breakpoints" : $"Mute Breakpoints ({muteKeys})");
+        ActionTips.Set(mute, AppActions.MuteBreakpoints, "Mute Breakpoints");
         ((PathIcon)mute.Content).Bind(PathIcon.DataProperty, mute.GetResourceObservable("Icon.MuteBreakpoints"));
         mute.Click += (_, _) => ActionRequested?.Invoke(this, AppActions.MuteBreakpoints);
 
@@ -602,8 +601,7 @@ public sealed class DebugView : DockPanel
     private Button Tool(string action, string icon, string tip)
     {
         Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        string? keys = AppActions.Keymap().ShortcutsFor(action).FirstOrDefault()?.Display();
-        ToolTip.SetTip(button, keys is null ? tip : $"{tip} ({keys})");
+        ActionTips.Set(button, action, tip);
         ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
         button.Click += (_, _) => ActionRequested?.Invoke(this, action);
         tools[action] = button;

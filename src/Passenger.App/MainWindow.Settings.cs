@@ -69,8 +69,17 @@ public partial class MainWindow
     {
         AppSettings before = settings;
         settings = next;
+        Keymap keymap = keys.Keymap;
         keys.Keymap = AppActions.Keymap();
         keys.Reset();
+        if (!ReferenceEquals(keymap, keys.Keymap))
+        {
+            Dock.FollowKeys();
+            foreach (Avalonia.Visual within in (Avalonia.Visual[])[this, .. OwnedWindows])
+            {
+                ActionTips.Follow(within);
+            }
+        }
         if (menuBar is not null)
         {
             BuildMenuBar();

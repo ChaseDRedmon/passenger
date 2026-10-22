@@ -344,8 +344,8 @@ public sealed class TestsView : DockPanel
     /// <summary>A toolbar button that runs one of the window's actions.</summary>
     private Button ActionTool(string action, string icon, string tip)
     {
-        string? keys = AppActions.Keymap().ShortcutsFor(action).FirstOrDefault()?.Display();
-        Button button = Tool(icon, keys is null ? tip : $"{tip} ({keys})", () => ActionRequested?.Invoke(this, action));
+        Button button = Tool(icon, tip, () => ActionRequested?.Invoke(this, action));
+        ActionTips.Set(button, action, tip);
         ActionButtons.Mark(button, action);
         return button;
     }

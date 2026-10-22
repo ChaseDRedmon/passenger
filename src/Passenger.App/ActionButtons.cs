@@ -55,7 +55,9 @@ public static class ActionButtons
         {
             Working? under = actions.Work.Of(actions[id]?.WorkId ?? id);
             button.Classes.Set("working", under is not null);
-            ToolTip.SetTip(button, under is null ? tip : $"{tip}: {under.Stage}");
+            // A tip naming the action's keys names those of the keymap in force now.
+            string? words = ActionTips.Of(button) ?? tip;
+            ToolTip.SetTip(button, under is null ? words : $"{words}: {under.Stage}");
             if (under is not null && shown is null && button.Content is Control icon)
             {
                 // Over the icon, standing out past it without growing the button, so nothing on the toolbar moves.

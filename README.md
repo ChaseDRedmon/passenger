@@ -118,7 +118,8 @@ itself attach as a program the debugger starts does. The program has to run as y
 A text control of its own over an immutable rope: multiple carets, folding, soft wrap, Extend Selection, live, postfix
 and surround templates, inlay hints, the symbol at the caret lit through the file, and splits and tabs in windows of
 their own. A key costs what it changed, not the file's size. Coming from Rider? Passenger ships Rider's Visual Studio
-keymap (Visual Studio OSX on a Mac), chords included, and behaves as a Rider user expects.
+keymap (Visual Studio OSX on a Mac), chords included, and behaves as a Rider user expects. Coming from VS Code? Settings,
+Keymap switches to Rider's VS Code keymap.
 
 C# comes from Roslyn: its parser colours as you type, then the language server gives diagnostics, completion, hovers,
 signature help, quick fixes and refactorings (Change Signature, Extract Interface, Move, Pull Members Up, Safe Delete

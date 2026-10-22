@@ -141,9 +141,9 @@ public sealed class SettingsStore : IDisposable
         {
             Themes.Apply(current, after.Look, after.ColourScheme);
         }
-        if (before is null || !SameShortcuts(before.Shortcuts, after.Shortcuts))
+        if (before is null || before.Keymap != after.Keymap || !SameShortcuts(before.OwnShortcuts(), after.OwnShortcuts()))
         {
-            AppActions.UserShortcuts = after.Shortcuts;
+            AppActions.Choose(after.Keymap, after.OwnShortcuts());
         }
         IdeLog.Traces = after.TraceProtocols;
         IdeLog.Programs = after.LogEveryProgram;
