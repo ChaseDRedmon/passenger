@@ -146,35 +146,68 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         }
     }
 
+    /// <summary>Each launch profile is a generated configuration: one with arguments and variables runs with them in the
+    /// project's folder, arguments given for one run replacing the profile's; a Docker profile is a container configuration
+    /// of its project; and a generated configuration copied is the person's own, the generated one staying as its profile
+    /// makes it.</summary>
     [AvaloniaFact]
     public void A_generated_configuration_copied_is_the_persons_own_and_the_generated_one_stays_as_its_launch_profile_makes_it()
     {
-        Write("Hello/Properties/launchSettings.json",
-            "{ \"profiles\": { \"Greet\": { \"commandName\": \"Project\", \"commandLineArgs\": \"--name Ada\", \"environmentVariables\": { \"GREETING\": \"Hi\" } } } }");
+        Write("Hello/Properties/launchSettings.json", """
+            {
+              // Comments and trailing commas, as Visual Studio writes them.
+              "profiles": {
+                "Greet": { "commandName": "Project", "commandLineArgs": "--name \"Ada Lovelace\"", "environmentVariables": { "GREETING": "Hi" }, },
+                "Docker": { "commandName": "Docker" }
+              }
+            }
+            """);
         MainWindow window = Keeping();
         try
         {
-            Assert.Equal(["Hello: Greet"], Names(window));
+            Assert.Equal(["Hello: Greet", "Hello: Docker"], Names(window));
+            // A Docker profile is a container configuration of its project, which runs, not one greyed.
+            RunConfiguration docker = window.Configurations.Single(c => c.Name == "Hello: Docker");
+            Assert.Equal(RunKind.Dockerfile, docker.Kind);
+            Assert.Null(window.WhyNotHere(docker));
+
+            // A profile that names no working folder runs in the project's, as Run, Debug and Profile all do (one LaunchPlan).
+            Ui.Launched(window, window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the profile's run to end");
+            string profiled = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(profiled.Contains($"Hi [--name|Ada Lovelace] in {project}", StringComparison.Ordinal),
+                $"The program did not get its launch profile's arguments and variable in the project's folder:\n{profiled}");
+            // Arguments given for one run replace the profile's, and its environment stays.
+            Ui.Launched(window, window.RunAsync("one \"two three\""), "the run with arguments of its own to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run with arguments of its own to end");
+            string given = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(given.Contains("Hi [one|two three]", StringComparison.Ordinal), $"The arguments given for one run did not replace the profile's:\n{given}");
+            // Run, Debug and Profile start it in a container (ContainerRunsTests, ContainerRunDebuggingTests, ContainerRunProfilingTests),
+            // which this project, with a Docker profile and no Dockerfile, cannot make: Profile says so rather than profiling it here.
+            Assert.True(window.SelectConfiguration("Hello: Docker"));
+            Assert.Equal("Hello: Docker cannot run: Hello has no Dockerfile", Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
+            Assert.True(window.SelectConfiguration("Hello: Greet"));
+
             Assert.True(window.Perform(AppActions.EditConfigurations));
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Assert.Equal("Hello: Greet", dialog.Chosen?.Name);
             Assert.True(dialog.Chosen!.Generated);
             Assert.False(dialog.NameBox.IsEnabled || dialog.ProfileBox.IsEnabled, "A generated configuration's name or launch profile, what links it to its source, can be changed in place");
             Assert.False(dialog.RemoveButton.IsEnabled, "A generated configuration can be removed, though its project makes it again");
-            Assert.Equal("--name Ada", dialog.ArgumentsBox.Text);
+            Assert.Equal("--name \"Ada Lovelace\"", dialog.ArgumentsBox.Text);
             Assert.Equal("Greet", dialog.ProfileBox.SelectedItem);
 
             Click(dialog.CopyButton);
             Assert.Equal("Hello: Greet (1)", dialog.Chosen?.Name);
             Assert.False(dialog.Chosen!.Generated);
             Assert.True(dialog.ArgumentsBox.IsEnabled, "The copy of a generated configuration cannot be changed");
-            Assert.Equal("--name Ada", dialog.ArgumentsBox.Text);
+            Assert.Equal("--name \"Ada Lovelace\"", dialog.ArgumentsBox.Text);
             Type(dialog.ArgumentsBox, "--name Grace");
             Click(dialog.OkButton);
             Ui.Settle();
 
-            Assert.Equal(["Hello: Greet", "Hello: Greet (1)"], Names(window));
-            Assert.Equal("--name Ada", window.Configurations[0].Arguments);
+            Assert.Equal(["Hello: Greet", "Hello: Docker", "Hello: Greet (1)"], Names(window));
+            Assert.Equal("--name \"Ada Lovelace\"", window.Configurations[0].Arguments);
             Assert.Equal("Hello: Greet (1)", window.Configuration?.Name);
             Ui.Launched(window, window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
