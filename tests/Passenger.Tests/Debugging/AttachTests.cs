@@ -96,6 +96,29 @@ public class AttachTests(ITestOutputHelper testOutputHelper)
         Assert.True(exitCode == told, $"The attached program ended with 42, and the debugger said {(exitCode is int code ? code.ToString() : "nothing")}");
     }
 
+    /// <summary>An attach to a program held at its start that ends before the debugger takes hold of it (Stop or Detach as it
+    /// starts, Run Service without Debugger, an agent's stop) lets the program go, which runs on undebugged rather than wait
+    /// for good for a debugger that is not coming.</summary>
+    [Fact]
+    public async Task A_program_held_at_its_start_runs_on_when_its_attach_ends_before_taking_hold_of_it()
+    {
+        ProcessStartInfo start = Passenger.Core.ChildProcesses.Command(Debuggees.Apphost("PassengerCases"), ["child"]);
+        start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        start.RedirectStandardOutput = true;
+        using Process program = Passenger.Core.ChildProcesses.Start(start);
+        Task<string> written = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, program);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(program.Id)
+            .WaitForInitializedEvent();
+
+        // Disconnected before configurationDone, which would have taken hold of it and let it go.
+        Assert.True(host.Disconnect(DebugSession.RequestLimit), "The disconnect was not answered");
+        Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30).Scaled()), "The program held at its start was left held when its attach ended before it took hold");
+        Assert.Equal("child ran", (await written).Trim());
+    }
+
     [Fact]
     public async Task An_attach_to_a_program_that_is_not_dotnet_fails_its_configurationDone_saying_why()
     {

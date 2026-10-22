@@ -88,6 +88,85 @@ public class StuckEvaluationTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(0, exitCode);
     }
 
+    /// <summary>A program attached to and let go (Detach) a moment after a read of its stop began an evaluation, under the
+    /// run's 3 s evaluation limit: the let-go waits for that evaluation's end alone, never for its whole time nor for the
+    /// threads the wait has run off their stop already, so the detach is answered soon after the evaluation returns, well
+    /// within the time the IDE gives it, and the program runs on to its own end.</summary>
+    [Fact]
+    public async Task A_detach_just_after_an_evaluation_began_waits_for_its_end_alone_and_the_program_runs_on()
+    {
+        ProcessStartInfo start = Passenger.Core.ChildProcesses.Command(Debuggees.Apphost("PassengerCases"), ["lets go"]);
+        start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        start.RedirectStandardOutput = true;
+        using Process program = Passenger.Core.ChildProcesses.Start(start);
+        TaskCompletionSource evaluating = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        System.Text.StringBuilder written = new();
+        program.OutputDataReceived += (_, line) =>
+        {
+            lock (written)
+            {
+                written.AppendLine(line.Data);
+            }
+            if (line.Data == "evaluating")
+            {
+                evaluating.TrySetResult();
+            }
+        };
+        program.BeginOutputReadLine();
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, program);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(program.Id)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest([Line("Thread.Sleep(10); // each turn of the program let go")], Source).WithConfigurationDoneRequest();
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int frame = host.GetTopStackFrame(stop.ThreadId!.Value).Id;
+        Task<EvaluateResponse> slow = host.Send<EvaluateResponse>("evaluate", new EvaluateArguments("LetsGo.Slow", frame, "watch"));
+        await evaluating.Task.WaitAsync(DebugSession.RequestLimit, TestContext.Current.CancellationToken);
+
+        Stopwatch asked = Stopwatch.StartNew();
+        Assert.True(host.Disconnect(DebugSession.RequestLimit), "The detach was not answered");
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(1.5).Scaled(),
+            $"The detach was answered {asked.Elapsed.TotalSeconds:0.0} s after it was asked, where the evaluation it waited for took 0.5 s");
+        Assert.Contains("went on", (await slow).Result, StringComparison.Ordinal);
+        Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30).Scaled()), "The program let go did not run on to its end");
+        program.WaitForExit();
+        lock (written)
+        {
+            Assert.Contains("ran on", written.ToString(), StringComparison.Ordinal);
+        }
+        Assert.Equal(0, program.ExitCode);
+    }
+
+    /// <summary>An evaluation that could not be stopped has had its time and its aborts already: a Detach after it never waits
+    /// it out again, nor waits for its thread to run off a stop it cannot leave until the evaluation returns, so it is
+    /// answered at once, where it took another evaluation limit and the let-go's every round.</summary>
+    [Fact]
+    public async Task A_detach_after_an_evaluation_that_could_not_be_stopped_is_answered_at_once()
+    {
+        ProcessStartInfo start = Passenger.Core.ChildProcesses.Command(Debuggees.Apphost("PassengerCases"), ["reads"]);
+        start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        // An input kept open with nothing in it: the evaluation's read waits on it for good.
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        using Process program = Passenger.Core.ChildProcesses.Start(start);
+        program.BeginOutputReadLine();
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, program);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(program.Id)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest([Line(Stop)], Source).WithConfigurationDoneRequest();
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        host.WithEvaluateRequest(host.GetTopStackFrame(stop.ThreadId!.Value).Id, "Reads.Input", out EvaluateResponse stuck);
+        Assert.Contains("could not be stopped", stuck.Result, StringComparison.Ordinal);
+
+        Stopwatch asked = Stopwatch.StartNew();
+        Assert.True(host.Disconnect(DebugSession.RequestLimit), "The detach was not answered");
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(1.5).Scaled(),
+            $"The detach was answered {asked.Elapsed.TotalSeconds:0.0} s after it was asked: it waited again for an evaluation that had had its time");
+    }
+
     /// <summary>PassengerCases' "reads" case launched with breakpoints on the lines that hold the code given.</summary>
     private Task<DebugSession> LaunchToBreakpoints(params string[] code) => LaunchCase("reads", code);
 

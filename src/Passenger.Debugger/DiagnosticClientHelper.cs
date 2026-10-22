@@ -49,6 +49,27 @@ public static class DiagnosticClientHelper
         }
     }
 
+    /// <summary>Lets go a process's runtime held at its start, when its diagnostic port is there to ask, as an attach would
+    /// have: a runtime already running takes the word as done. Null once asked, else why it could not be.</summary>
+    public static string? Resume(int processId)
+    {
+        try
+        {
+            // Looked for first, as above: a client on Windows waits 30 s on a pipe that does not exist.
+            if (!DiagnosticsClient.GetPublishedProcesses().Contains(processId))
+            {
+                return "it has no diagnostic port open";
+            }
+            Release(new DiagnosticsClient(processId));
+            return null;
+        }
+        catch (Exception error) when (error is ServerNotAvailableException or ServerErrorException or IOException or TimeoutException or UnauthorizedAccessException
+            or InvalidOperationException)
+        {
+            return error.Message;
+        }
+    }
+
     private static void Release(DiagnosticsClient client)
     {
         try

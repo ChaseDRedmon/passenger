@@ -468,9 +468,27 @@ public sealed class DebugSession
             return;
         }
         Detached = true;
-        await EndProcessesAsync(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3), terminate: false);
+        await EndProcessesAsync(LetGoLimit, TimeSpan.FromSeconds(3), terminate: false);
         End(null);
     }
+
+    /// <summary>How long the adapter's evaluations may run (its PASSENGER_EVAL_TIMEOUT_MS, which it has as the IDE has it, a
+    /// container's adapter given it too); 5 s, its own default, when that is unset or no whole number above 0.</summary>
+    internal static TimeSpan EvaluationLimit =>
+        Environment.GetEnvironmentVariable("PASSENGER_EVAL_TIMEOUT_MS") is { Length: > 0 } given
+        && int.TryParse(given, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int milliseconds) && milliseconds > 0
+            ? TimeSpan.FromMilliseconds(milliseconds)
+            : TimeSpan.FromSeconds(5);
+
+    /// <summary>How long Detach waits for the adapter's let-go: an evaluation the stop's read gave up a moment before has the
+    /// rest of its time (<see cref="EvaluationLimit"/> at most), then the program is run off its stop in rounds of 3.2 s at
+    /// most, then detached; within it, the adapter is never killed under a let-go, which would leave the program held.</summary>
+    internal static TimeSpan LetGoLimit => EvaluationLimit + TimeSpan.FromSeconds(5);
+
+    /// <summary>How long the adapter is given to let a program attached to go as the window closes, which waits a few seconds
+    /// for its debugger (<see cref="MainWindow.EndLimit"/>) before the process goes: the let-go keeps within it, its answer and
+    /// the adapter's exit after.</summary>
+    private static readonly TimeSpan ClosingLetGo = TimeSpan.FromSeconds(2);
 
     /// <summary>Takes the exit code of a program in the terminal, which its tab has once its last output is in, when the
     /// adapter could not tell it.</summary>
@@ -493,18 +511,20 @@ public sealed class DebugSession
     public Task CloseAsync()
     {
         UiThread.Check();
-        return State == DebugState.Ended ? Task.CompletedTask : EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2), terminate: !Attached);
+        return State == DebugState.Ended ? Task.CompletedTask
+            : Attached ? EndProcessesAsync(ClosingLetGo + TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1.5), terminate: false, letGoWithin: ClosingLetGo)
+            : EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
     }
 
-    /// <summary>Asks the adapter to end the program (or, detaching, to let it go) and itself, and kills the adapter when it
-    /// has not gone within this ask's limits. It is asked once, by Stop, Detach, the program's end or the window's close,
-    /// whichever comes first: a second disconnect waits on an adapter the first has let go. The answer is awaited, and the
-    /// exit waited for, on the thread pool, never failing, so a window gone meanwhile (a test's, its dispatcher with it)
-    /// leaves no failed request behind.</summary>
-    private Task EndProcessesAsync(TimeSpan answer, TimeSpan exit, bool terminate = true)
+    /// <summary>Asks the adapter to end the program (or, detaching, to let it go, within <paramref name="letGoWithin"/> when
+    /// given) and itself, and kills the adapter when it has not gone within this ask's limits. It is asked once, by Stop,
+    /// Detach, the program's end or the window's close, whichever comes first: a second disconnect waits on an adapter the
+    /// first has let go. The answer is awaited, and the exit waited for, on the thread pool, never failing, so a window gone
+    /// meanwhile (a test's, its dispatcher with it) leaves no failed request behind.</summary>
+    private Task EndProcessesAsync(TimeSpan answer, TimeSpan exit, bool terminate = true, TimeSpan? letGoWithin = null)
     {
         // Not held: the window's end waits for these with no UI thread to come back to (MainWindow.Ended).
-        Task asked = disconnected ??= Task.Run(() => DisconnectAsync(terminate));
+        Task asked = disconnected ??= Task.Run(() => DisconnectAsync(terminate, letGoWithin));
         ending.TrySetResult();
         return Task.Run(async () =>
         {
@@ -517,11 +537,12 @@ public sealed class DebugSession
         });
     }
 
-    private async Task DisconnectAsync(bool terminate)
+    private async Task DisconnectAsync(bool terminate, TimeSpan? letGoWithin)
     {
         try
         {
-            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminate));
+            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminate,
+                LetGoWithin: letGoWithin is { } within ? (int)within.TotalMilliseconds : null));
         }
         catch (DapException)
         {

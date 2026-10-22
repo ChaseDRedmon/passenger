@@ -227,7 +227,22 @@ public partial class ManagedDebugger
         _stopAtEntry = false;
         _hotReload = hotReload;
         _pendingAttachProcessId = processId;
+        Volatile.Write(ref _heldTarget, processId);
         _launched = false;
+    }
+
+    /// <summary>Lets go the runtime of a process an attach was to take hold of and did not (the session ended first, or the
+    /// attach failed), should it be held at its start: it runs on undebugged rather than wait for good for a debugger that
+    /// is not coming. A runtime already running takes the word as done.</summary>
+    private void ReleaseHeldTarget()
+    {
+        int target = Interlocked.Exchange(ref _heldTarget, 0);
+        if (target == 0)
+        {
+            return;
+        }
+        string? why = DiagnosticClientHelper.Resume(target);
+        _logger?.Invoke(why is null ? $"Let process {target} go: the debugger did not take hold of it" : $"Process {target}, not taken hold of, was not let go: {why}");
     }
 
     /// <summary>The client's breakpoints are set: the launch or attach asked for is made.</summary>
@@ -1065,8 +1080,9 @@ public partial class ManagedDebugger
         Dispose();
     }
 
-    /// <summary>Ends the session: the program ends with it when asked, else it is let go to run on.</summary>
-    public void Disconnect(bool terminateDebuggee)
+    /// <summary>Ends the session: the program ends with it when asked, else it is let go to run on, the let-go kept within
+    /// the client's time for it when it gives one (<paramref name="within"/>).</summary>
+    public void Disconnect(bool terminateDebuggee, TimeSpan? within = null)
     {
         _logger?.Invoke($"Disconnect (terminate: {terminateDebuggee})");
 
@@ -1084,7 +1100,7 @@ public partial class ManagedDebugger
                     _logger?.Invoke($"Error stopping process during disconnect: {hResult}");
                 }
             }
-            Dispose(letGo: true);
+            Dispose(letGo: true, within);
         }
     }
 

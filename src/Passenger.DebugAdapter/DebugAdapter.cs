@@ -250,7 +250,7 @@ public sealed class DebugAdapter
             debugger.Ending();
             return Leave(() =>
             {
-                debugger.Disconnect(arguments.TerminateDebuggee ?? false);
+                debugger.Disconnect(arguments.TerminateDebuggee ?? false, arguments.LetGoWithin is int within and > 0 ? TimeSpan.FromMilliseconds(within) : null);
                 return Task.CompletedTask;
             });
         }, then: RequestShutdown);

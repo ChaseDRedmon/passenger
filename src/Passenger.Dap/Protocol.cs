@@ -346,7 +346,10 @@ public sealed record StepInTarget
 
 public sealed record ContinueResponse(bool? AllThreadsContinued = null);
 
-public sealed record DisconnectArguments(bool? Restart = null, bool? TerminateDebuggee = null);
+/// <summary>A disconnect; Passenger's own <paramref name="LetGoWithin"/> is how long, in milliseconds, the client waits for
+/// a program let go (not terminated) to be run off its stop and detached, which the adapter keeps its let-go within: a
+/// window that closes waits less than a Detach does.</summary>
+public sealed record DisconnectArguments(bool? Restart = null, bool? TerminateDebuggee = null, int? LetGoWithin = null);
 
 public sealed record TerminateArguments(bool? Restart = null);
 

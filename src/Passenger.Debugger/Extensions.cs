@@ -284,6 +284,7 @@ public static class Extensions
                 {
                     process.Stop(0);
                     evalStatus.Abandoned[thread.Id] = eval;
+                    evalStatus.DueAt[thread.Id] = began + (long)(EvaluationTimeout.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
                     evalStatus.AbortWhenDue?.Invoke(thread.Id, eval, EvaluationTimeout - System.Diagnostics.Stopwatch.GetElapsedTime(began));
                     throw new ManagedDebugger.EvalException(GaveWay);
                 }
@@ -308,6 +309,7 @@ public static class Extensions
                     // as the IDE shows it, and the evaluation runs on with it, its end let go whenever it comes.
                     process.Stop(0);
                     evalStatus.Abandoned[thread.Id] = eval;
+                    evalStatus.DueAt.Remove(thread.Id);
                 }
                 evalStatus.ImplicitOff = $"Implicit evaluation is disabled: an evaluation took longer than {EvaluationTimeout.TotalSeconds:0.#} s. It is enabled again once the program runs on";
                 throw new ManagedDebugger.EvalException(stopped

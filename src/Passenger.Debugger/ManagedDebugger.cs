@@ -45,6 +45,11 @@ public partial class ManagedDebugger
     private bool _isAttached;
     private int? _pendingAttachProcessId;
 
+    /// <summary>The process an attach is to take hold of, from the attach request until its runtime has been let go (or was
+    /// running already); 0 when there is none. One held at its start (DOTNET_DefaultDiagnosticPortSuspend) waits there for
+    /// the debugger, so an attach that fails, or a session that ends first, lets it go (<see cref="ReleaseHeldTarget"/>).</summary>
+    private int _heldTarget;
+
     /// <summary>Whether the session's program was launched for it (by the adapter, or in the client's terminal) rather than
     /// attached to: only such a program ends with a client that goes without disconnecting (<see cref="Abandon"/>).</summary>
     private bool _launched;
@@ -341,6 +346,7 @@ public partial class ManagedDebugger
     private void LetGoAbandonedEvaluation(CorDebugManagedCallbackEventArgs callbackEvent)
     {
         ICorDebugThread thread = EvaluationThread(callbackEvent)!;
+        EvalStatus.DueAt.Remove(thread.Id);
         if (EvalStatus.Abandoned.Remove(thread.Id, out ICorDebugEval? eval) && eval.TryGetResult(out ICorDebugValue? value) is Cor.S_OK && value is ICorDebugHandleValue handle)
         {
             handle.TryDispose();
@@ -483,13 +489,14 @@ public partial class ManagedDebugger
         try
         {
             _exited.Reset();
-            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, answered => resume(process, answered, _ending.Token), TakeHold,
-                () => process.HasExited, _ending.Token, _logger);
+            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, LetGoAsync, TakeHold, () => process.HasExited, _ending.Token, _logger);
         }
         catch (Exception error)
         {
             process.Dispose();
             _logger?.Invoke($"Attaching to process {processId} failed: {error}");
+            // A program held at its start, which the attach never let go, runs on undebugged rather than wait there for good.
+            ReleaseHeldTarget();
             throw new InvalidOperationException($"Could not attach to process {processId}: {error.Message}", error);
         }
         if (OperatingSystem.IsWindows() && TryHold(process))
@@ -506,6 +513,13 @@ public partial class ManagedDebugger
         _logger?.Invoke($"Attached to process: {processId}");
         OnAttached?.Invoke(processId);
         SendAllBreakpointEvents();
+
+        // Its runtime let go, or running already: nothing of the session's end need let it go again.
+        async Task LetGoAsync(Task answered)
+        {
+            await resume(process, answered, _ending.Token).ConfigureAwait(false);
+            Interlocked.CompareExchange(ref _heldTarget, 0, processId);
+        }
 
         ICorDebugProcess TakeHold(ICorDebug corDebug)
         {
@@ -1040,10 +1054,12 @@ public partial class ManagedDebugger
 
     // Not intended to implement IDisposable - it is intended that this is called via Disconnect()
     // letGo: the program runs on after (a detach), so no thread may be left inside the runtime's handling of a stop.
-    private void Dispose(bool letGo = false)
+    private void Dispose(bool letGo = false, TimeSpan? within = null)
     {
         // A decompile under way is given up, its temporary file deleted, whether or not a process was ever held.
         _ending.Cancel();
+        // An attach asked for and never made (no configurationDone, or it failed) leaves no program held at its start.
+        ReleaseHeldTarget();
         if (_process is null)
         {
             return; // A client may call Terminate, then Disconnect, both of which call Dispose. Dispose only needs to be run once.
@@ -1055,6 +1071,17 @@ public partial class ManagedDebugger
         if (_stopShown && _stoppedInDispatch is int stopped)
         {
             inDispatch.Insert(0, stopped);
+        }
+        // How long the client gives the let-go, from now; and where each held thread stands before anything below runs it,
+        // so one the wait for an evaluation runs off its stop is seen to have moved on.
+        long? letGoBy = within is { } given ? Stopwatch.GetTimestamp() + (long)(given.TotalSeconds * Stopwatch.Frequency) : null;
+        Dictionary<int, ThreadPlace?> heldAt = [];
+        if (!exited && letGo && _process is { } measured)
+        {
+            foreach (int thread in inDispatch)
+            {
+                heldAt.TryAdd(thread, PlaceOf(measured, thread));
+            }
         }
 
         // Dispose modules, which releases PDB files
@@ -1121,10 +1148,13 @@ public partial class ManagedDebugger
         if (!exited && letGo && _process is { } held)
         {
             // An evaluation left running would hold its thread for good once no debugger is there to go on with it.
-            EndAbandonedEvaluations(held);
+            EndAbandonedEvaluations(held, letGoBy);
             exited = _exited.IsSet;
         }
+        // A thread still in an evaluation given up stays there until it returns, so the let-go's rounds never wait on it.
+        HashSet<int> evaluating = [.. EvalStatus.Abandoned.Keys];
         EvalStatus.Abandoned.Clear();
+        EvalStatus.DueAt.Clear();
         EvalStatus.ImplicitOff = null;
         _threads.Clear();
         _deferredEvents.Clear();
@@ -1162,7 +1192,11 @@ public partial class ManagedDebugger
         // Detach from the process, once no thread is left for it to answer; the program may end as it runs off its stop.
         if (!exited && letGo)
         {
-            RunOffDispatch(_process, inDispatch);
+            foreach (int thread in inDispatch)
+            {
+                heldAt.TryAdd(thread, PlaceOf(_process, thread));
+            }
+            RunOffDispatch(_process, heldAt.Where(h => !evaluating.Contains(h.Key)).ToDictionary(), letGoBy);
             exited = _exited.IsSet;
         }
         if (!exited)
@@ -1240,6 +1274,11 @@ internal sealed class EvalStatus
     /// stop: each runs on in the program until it returns, and its end, whenever it comes, is let go rather than taken for
     /// another's.</summary>
     internal Dictionary<int, ICorDebugEval> Abandoned { get; } = [];
+
+    /// <summary>When the time of each evaluation given up for a request that left its stop is up (a <see cref="System.Diagnostics.Stopwatch"/>
+    /// timestamp), by its thread, which a let-go waits for it to at most; one that could not be stopped has had its time and
+    /// its aborts already, and has none.</summary>
+    internal Dictionary<int, long> DueAt { get; } = [];
 
     /// <summary>Aborts an evaluation left running for a request that left its stop once the time it had left is up.</summary>
     internal Action<int, ICorDebugEval, TimeSpan>? AbortWhenDue { get; init; }

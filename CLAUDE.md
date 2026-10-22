@@ -1188,9 +1188,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   it again (`ManagedDebugger_LetGo.cs`): under CET a thread resumes from a breakpoint only through the debugger's
   out-of-process SetThreadContext, which mscordbi's Detach waits for only once it has answered one such flare, so a
   first stop after an attach, detached at, would fault (0xC0000409); and it waits out an evaluation the stop's read left
-  to the program (`EndAbandonedEvaluations`, its own time at most, never aborting it, whose abort could land in the
-  runtime's own work and end the program), since the runtime refuses the detach while one runs and the thread it returns
-  on waits for good for a debugger that went. Symbols for assemblies without their own are
+  to the program (`EndAbandonedEvaluations`: each to the end of its own time, `EvalStatus.DueAt`, one that could not be
+  stopped not at all, never aborting one, whose abort could land in the runtime's own work and end the program), since
+  the runtime refuses the detach while one runs and the thread it returns on waits for good for a debugger that went; a
+  thread that wait ran off its stop is not run off it again (places are measured before), and the whole let-go keeps
+  within the client's time for it (`DisconnectArguments.LetGoWithin`: Detach waits `DebugSession.LetGoLimit`, the
+  evaluation limit and 5 s, never killing the adapter under a let-go; a window's close gives it 2 s, within its
+  `EndLimit`). An attach that ends before it takes hold of a program held at its start (no configurationDone, a failed
+  attach, the session ended) lets that program's runtime go (`ReleaseHeldTarget`, `DiagnosticClientHelper.Resume`), so
+  none is left waiting at its start for a debugger that is not coming. Symbols for assemblies without their own are
   decompiled into the folder the adapter is given (`--symbolCache`; the IDE's `DebugSession.SymbolCache`, the state
   folder's `cache/symbols`) by `Decompilation/SymbolCache`: `NAME/MVID/NAME.<decompiler>-<Format>.pdb` (raise
   `SymbolCache.Format` when `PortablePdbWriter2`'s output moves), written through a temporary file and renamed, one that

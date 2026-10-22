@@ -44,6 +44,11 @@ if (args is ["leaves"])
 	Leaves.Run();
 	return;
 }
+if (args is ["lets go"])
+{
+	LetsGo.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -384,5 +389,29 @@ static class Leaves
 		int turn = 1;
 		Console.WriteLine($"turn {turn}");
 		Console.WriteLine($"counted {Counted}");
+	}
+}
+
+// A program let go a moment after a read of its stop began an evaluation: the let-go waits for that evaluation's end, and
+// the program runs on to its own.
+static class LetsGo
+{
+	public static string Slow
+	{
+		get
+		{
+			Console.WriteLine("evaluating");
+			Thread.Sleep(500);
+			return "slow";
+		}
+	}
+
+	public static void Run()
+	{
+		for (int turn = 1; turn <= 100; turn++)
+		{
+			Thread.Sleep(10); // each turn of the program let go
+		}
+		Console.WriteLine("ran on");
 	}
 }

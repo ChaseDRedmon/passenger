@@ -28,17 +28,14 @@ public partial class ManagedDebugger
     };
 
     /// <summary>Runs the program a moment and stops it again, still held by the debugger, until every thread held inside the
-    /// runtime's handling of a breakpoint or a step's end has moved on (each then answered), the program has ended, or four
-    /// rounds are spent. Its breakpoints, steppers and data breakpoints are gone by now, so none stops it again; the events
-    /// that come meanwhile are let go, and another thread's breakpoint queued behind the stop joins those watched.</summary>
-    private void RunOffDispatch(ICorDebugProcess process, IEnumerable<int> threads)
+    /// runtime's handling of a breakpoint or a step's end has moved on from where it stood (<paramref name="held"/>, measured
+    /// before anything of the let-go ran it, so one already run off its stop is done), each then answered, the program has
+    /// ended, four rounds are spent, or the client's time for the let-go (<paramref name="until"/>, a timestamp) is up. Its
+    /// breakpoints, steppers and data breakpoints are gone by now, so none stops it again; the events that come meanwhile
+    /// are let go, and another thread's breakpoint queued behind the stop joins those watched.</summary>
+    private void RunOffDispatch(ICorDebugProcess process, Dictionary<int, ThreadPlace?> held, long? until)
     {
-        Dictionary<int, ThreadPlace?> held = [];
-        foreach (int thread in threads)
-        {
-            held.TryAdd(thread, PlaceOf(process, thread));
-        }
-        if (held.Count == 0)
+        if (!held.Any(h => h.Value is { } place && PlaceOf(process, h.Key) == place))
         {
             return;
         }
@@ -66,6 +63,16 @@ public partial class ManagedDebugger
             TimeSpan running = TimeSpan.FromMilliseconds(20);
             for (int round = 1; round <= 4; round++, running *= 5)
             {
+                if (until is long by)
+                {
+                    TimeSpan left = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), by);
+                    if (left <= TimeSpan.Zero)
+                    {
+                        _logger?.Invoke("Letting go: the client's time for it is up, with threads still held");
+                        return;
+                    }
+                    running = running < left ? running : left;
+                }
                 // Every hold continued (the stop shown, a pause's, events put off): the runtime resumes the threads it held.
                 for (int holds = 0; holds < 16 && !_exited.IsSet && process.TryIsRunning(out bool isRunning) is Cor.S_OK && !isRunning; holds++)
                 {
@@ -113,16 +120,19 @@ public partial class ManagedDebugger
     /// <summary>Waits out the evaluations given up that still run in the program before it is let go: Detach is refused
     /// while one runs, and one that returns once the debugger has gone holds its thread for good, the runtime waiting for a
     /// debugger to go on with it (a stop's proxy read on the main thread, a moment before Detach, left an app that never got
-    /// past its startup). The program runs until each has said it ended (an evaluation's own time at most), every other event
-    /// let go, then is stopped again. None is aborted: an abort fires wherever its thread then is, and one that landed in the
-    /// runtime's making of the thread pool's gate thread ended the program ("Failed to create the thread pool Gate thread").</summary>
-    private void EndAbandonedEvaluations(ICorDebugProcess process)
+    /// past its startup). The program runs until each has said it ended, every other event let go, then is stopped again:
+    /// each is waited for to the end of its own time (<see cref="EvalStatus.DueAt"/>), the wait ending at the latest still
+    /// to come or the client's time (<paramref name="until"/>), whichever is first; one that could not be stopped has had its
+    /// time and its aborts already, and is not waited for. None is aborted: an abort fires wherever its thread then is, and
+    /// one that landed in the runtime's making of the thread pool's gate thread ended the program ("Failed to create the
+    /// thread pool Gate thread").</summary>
+    private void EndAbandonedEvaluations(ICorDebugProcess process, long? until)
     {
-        if (EvalStatus.Abandoned.Count == 0)
+        Dictionary<int, long> left = EvalStatus.DueAt.Where(d => EvalStatus.Abandoned.ContainsKey(d.Key)).ToDictionary();
+        if (left.Count == 0)
         {
             return;
         }
-        HashSet<int> left = [.. EvalStatus.Abandoned.Keys];
         // Never disposed: a callback under way as the handler is taken off may still add to it.
         BlockingCollection<CorDebugManagedCallbackEventArgs> events = [];
         void Take(object? sender, CorDebugManagedCallbackEventArgs callbackEvent)
@@ -144,20 +154,26 @@ public partial class ManagedDebugger
                 }
             }
             Stopwatch since = Stopwatch.StartNew();
-            TimeSpan limit = Extensions.EvaluationTimeout;
-            while (left.Count > 0 && !_exited.IsSet && since.Elapsed < limit)
+            while (left.Count > 0 && !_exited.IsSet && Waited(left) is { } wait && wait > TimeSpan.Zero)
             {
-                if (events.TryTake(out CorDebugManagedCallbackEventArgs? callbackEvent, limit - since.Elapsed) && !_exited.IsSet)
+                if (events.TryTake(out CorDebugManagedCallbackEventArgs? callbackEvent, wait) && !_exited.IsSet)
                 {
                     if (EvaluationThread(callbackEvent) is { } thread)
                     {
                         left.Remove(thread.Id);
+                        // Its value let go, as its end would have been had the program gone on (LetGoAbandonedEvaluation).
+                        if (EvalStatus.Abandoned.Remove(thread.Id, out ICorDebugEval? ended) && ended.TryGetResult(out ICorDebugValue? value) is Cor.S_OK
+                            && value is ICorDebugHandleValue handle)
+                        {
+                            handle.TryDispose();
+                        }
+                        EvalStatus.DueAt.Remove(thread.Id);
                     }
                     process.TryContinue(false);
                 }
             }
             _logger?.Invoke(left.Count == 0 ? "Letting go: the evaluations given up have ended"
-                : $"Letting go: {left.Count} evaluation{(left.Count == 1 ? string.Empty : "s")} given up did not end within {limit.TotalSeconds:0.#} s");
+                : $"Letting go: {left.Count} evaluation{(left.Count == 1 ? string.Empty : "s")} given up had not ended after {since.Elapsed.TotalSeconds:0.0} s, their time up");
             if (!_exited.IsSet)
             {
                 process.TryStop(0);
@@ -166,6 +182,17 @@ public partial class ManagedDebugger
         finally
         {
             _callbacks.OnAnyEvent -= Take;
+        }
+
+        // To the end of the latest time still to come of those left, or the client's, whichever is first.
+        TimeSpan? Waited(Dictionary<int, long> running)
+        {
+            long by = running.Values.Max();
+            if (until is long client && client < by)
+            {
+                by = client;
+            }
+            return Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), by);
         }
     }
 
