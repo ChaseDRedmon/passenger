@@ -36,7 +36,7 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
     [AvaloniaFact]
     public void A_debugged_apps_view_shows_its_bindings_values_after_them_and_on_hover_paused_and_running_with_a_control_chosen()
     {
-        MainWindow window = new() { Width = 1400, Height = 900 };
+        MainWindow window = new() { Width = 1400, Height = 900, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();

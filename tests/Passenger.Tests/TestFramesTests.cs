@@ -297,7 +297,7 @@ public sealed class TestFramesTests(HeadlessTestsFolder project) : IClassFixture
 
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project.Folder);
         window.Perform(AppActions.ShowTests);

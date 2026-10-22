@@ -35,11 +35,29 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     /// <summary>Where the caption's binding names Nmae, on its start tag's third line, from zero.</summary>
     private TextPosition Misspelt => new(Line("{Binding Nmae}") - 1, Lines()[Line("{Binding Nmae}") - 1].IndexOf("Nmae", StringComparison.Ordinal));
 
+    /// <summary>Run while the temporary folder's path is longer than a Unix socket's address holds (an agent's TMPDIR can
+    /// be), the app gets its inspector all the same, in Passenger's own socket folder: a socket there had failed Run, Debug
+    /// and Profile of every Avalonia or WPF app with an IDE error. macOS and Linux read TMPDIR; Windows reads TMP, so there
+    /// the run is as any other. Then its misspelt binding shows in the Run window, linked, and in Problems with its fix.</summary>
     [AvaloniaFact]
     public void A_running_apps_misspelt_binding_shows_in_run_linked_to_its_line_and_in_problems_once_with_its_count_and_fix()
     {
+        string temp = Path.Combine(TestFolders.Create("long-temp-"), new string('t', 60), new string('u', 60));
+        Directory.CreateDirectory(temp);
         MainWindow window = Opened();
-        Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
+        string? was = Environment.GetEnvironmentVariable("TMPDIR");
+        try
+        {
+            Environment.SetEnvironmentVariable("TMPDIR", temp);
+            Assert.True(OperatingSystem.IsWindows() || Path.GetTempPath().Length > 104, $"The temporary folder {Path.GetTempPath()} was to be too long for a socket");
+            Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
+            Ui.WaitFor(() => window.Session.RunApp is { State: LiveAppState.Connected }, $"the app's inspector to say hello ({window.Status})", TimeSpan.FromMinutes(2));
+            Assert.True(window.Session.RunApp!.SocketPath.Length <= 104, $"The inspector's socket {window.Session.RunApp.SocketPath} is longer than macOS allows");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TMPDIR", was);
+        }
         OutputView run = window.BottomPanel.Run;
         string line = WaitForLine(run, "the Run window to say the caption's binding failed");
 
@@ -90,34 +108,6 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
-    /// <summary>An app run while the temporary folder's path is longer than a Unix socket's address holds (an agent's TMPDIR
-    /// can be) gets its inspector all the same, in Passenger's own socket folder: a socket there had failed Run, Debug and
-    /// Profile of every Avalonia or WPF app with an IDE error. macOS and Linux read TMPDIR; Windows reads TMP, so there the
-    /// run is as any other.</summary>
-    [AvaloniaFact]
-    public void A_running_app_is_inspected_under_a_temporary_folder_too_long_for_a_socket()
-    {
-        string temp = Path.Combine(TestFolders.Create("long-temp-"), new string('t', 60), new string('u', 60));
-        Directory.CreateDirectory(temp);
-        MainWindow window = Opened();
-        string? was = Environment.GetEnvironmentVariable("TMPDIR");
-        try
-        {
-            Environment.SetEnvironmentVariable("TMPDIR", temp);
-            Assert.True(OperatingSystem.IsWindows() || Path.GetTempPath().Length > 104, $"The temporary folder {Path.GetTempPath()} was to be too long for a socket");
-            Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
-            Ui.WaitFor(() => window.Session.RunApp is { State: LiveAppState.Connected }, $"the app's inspector to say hello ({window.Status})", TimeSpan.FromMinutes(2));
-            Assert.Contains("TextBlock#Caption.Text to Nmae", WaitForLine(window.BottomPanel.Run, "the Run window to say the caption's binding failed"), StringComparison.Ordinal);
-            Assert.True(window.Session.RunApp!.SocketPath.Length <= 104, $"The inspector's socket {window.Session.RunApp.SocketPath} is longer than macOS allows");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("TMPDIR", was);
-        }
-        Stop(window);
-        window.Close();
-    }
-
     /// <summary>Avalonia's XAML compiler counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028
     /// or U+2029, so below a lone '\r' in the window's tag and a comment holding all four before the caption on the caption's
     /// own line, the place the app reports runs two lines ahead of the editor's and its column starts after the comment's:
@@ -160,30 +150,6 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.Contains("Text=\"{Binding Name}\"", window.EditorArea.CodeEditor.Document.Snapshot.ToString(), StringComparison.Ordinal);
 
         Stop(window);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_debugged_apps_misspelt_binding_shows_in_the_debug_console_linked_to_its_line_and_in_problems()
-    {
-        MainWindow window = Opened();
-        Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
-        window.BottomPanel.Debug.ShowTab(console: true);
-        OutputView console = window.BottomPanel.Debug.Console;
-        string line = WaitForLine(console, "the Debug window's console to say the caption's binding failed");
-        Assert.StartsWith($"MainWindow.axaml({Misspelt.Line + 1},{Misspelt.Column + 1}): ", line, StringComparison.Ordinal);
-        Ui.ClickLink(console, line);
-        Assert.Equal(Xaml, window.EditorArea.Active?.Path);
-        Assert.Equal(Misspelt, window.EditorArea.CodeEditor.CaretPosition);
-
-        BindingProblem caption = Assert.Single(window.BottomPanel.Problems.BindingProblems);
-        Assert.Equal(("TextBlock#Caption", "Text", "Nmae", Xaml), (caption.Failure.Control, caption.Failure.Property, caption.Failure.Path, caption.Problem.Path));
-        Assert.Equal(["Name"], caption.Failure.Nearest);
-        // The window's bindings that worked said nothing.
-        Assert.DoesNotContain("Greeting", console.Document.Snapshot.ToString(), StringComparison.Ordinal);
-
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
         window.Close();
     }
 
@@ -274,8 +240,10 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
+    /// <summary>A debugged app's misspelt binding shows in the Debug window's console linked to its line, and in Problems;
+    /// XAML Binding Errors' hit count, the third failure, counts on past a property breakpoint set between its hits.</summary>
     [AvaloniaFact]
-    public void Avalonia_binding_errors_hit_count_counts_on_past_a_property_breakpoint_set_between_its_hits_and_stops_on_the_third()
+    public void A_debugged_apps_misspelt_binding_shows_in_the_debug_console_and_binding_errors_hit_count_counts_on_past_a_property_breakpoint()
     {
         MainWindow window = Opened();
         BreakpointStore store = window.Debugger.Breakpoints;
@@ -284,6 +252,19 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         store.Update(store.BindingErrors, enabled: true, suspend: true, condition: null, hitCondition: "3", logMessage: null);
 
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
+        window.BottomPanel.Debug.ShowTab(console: true);
+        OutputView console = window.BottomPanel.Debug.Console;
+        string line = WaitForLine(console, "the Debug window's console to say the caption's binding failed");
+        Assert.StartsWith($"MainWindow.axaml({Misspelt.Line + 1},{Misspelt.Column + 1}): ", line, StringComparison.Ordinal);
+        Ui.ClickLink(console, line);
+        Assert.Equal(Xaml, window.EditorArea.Active?.Path);
+        Assert.Equal(Misspelt, window.EditorArea.CodeEditor.CaretPosition);
+        BindingProblem caption = Assert.Single(window.BottomPanel.Problems.BindingProblems);
+        Assert.Equal(("TextBlock#Caption", "Text", "Nmae", Xaml), (caption.Failure.Control, caption.Failure.Property, caption.Failure.Path, caption.Problem.Path));
+        Assert.Equal(["Name"], caption.Failure.Nearest);
+        // The window's bindings that worked said nothing.
+        Assert.DoesNotContain("Greeting", console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Caption"),
             $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
         Ui.TypeToDebugged(window, "rebind");
@@ -480,7 +461,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     private static int LineIn(string file, string text) => Array.FindIndex(File.ReadAllLines(file), l => l.Contains(text, StringComparison.Ordinal));
 
     /// <summary>The folder opened in a window.</summary>
-    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900);
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900, languageServer: false);
 
     /// <summary>The console's line saying the caption's binding failed (or what else it says), once it has it.</summary>
     private static string WaitForLine(OutputView console, string what, string saying = "binding error")

@@ -253,7 +253,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         window.Close();
     }
 
-    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900);
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900, languageServer: false);
 
     /// <summary>Break When Value Changes from a property's row of a control chosen in the Live Visual Tree: the property
     /// breakpoint it sets, or null when it took the one there away.</summary>

@@ -408,12 +408,12 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         return result;
     }
 
-    private MainWindow Open() => Ui.OpenFolder(folder);
+    private MainWindow Open() => Ui.OpenFolder(folder, languageServer: false);
 
     /// <summary>A window that keeps its state in a folder of the test's own, as the person's does.</summary>
     private MainWindow Keeping(string state)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(folder);

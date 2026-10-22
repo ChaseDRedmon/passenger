@@ -227,7 +227,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
         return console.Document.Snapshot.ToString().Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith(start, StringComparison.Ordinal)).Skip(skipped).FirstOrDefault();
     }
 
-    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900);
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900, languageServer: false);
 
     /// <summary>The line (from one) of MainWindow.axaml holding some text, so a test names what it means rather than a number.</summary>
     private int Line(string text) => Array.FindIndex(File.ReadAllLines(Xaml), l => l.Contains(text, StringComparison.Ordinal)) + 1;
