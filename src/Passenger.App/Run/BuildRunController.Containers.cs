@@ -549,6 +549,8 @@ public sealed partial class BuildRunController
             AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(there.Container, there.Tools, arguments)), ContainerTools.SymbolCache, paths, there.Container)
             {
                 Output = () => engine.Command(["logs", "--follow", "--since", there.Started, there.Container]),
+                // Its container stopped (its own end, the Containers window's Stop) is its program's end, never the debugger's.
+                Running = AdapterPlace.Runs(engine, there.Container),
             };
             run.Debugged.Add(service.Service);
             refused = purpose == ContainerStart.HotReload

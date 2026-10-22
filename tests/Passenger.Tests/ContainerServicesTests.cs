@@ -140,6 +140,14 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Assert.True(read.Snapshot?.HotSpots.Any(h => h.Name.StartsWith("Hot.Spin", StringComparison.Ordinal)) == true, $"web's snapshot has no hot method: {read.Message}");
             Assert.True(window.IsRunning, "web's snapshot took the run down");
             Assert.Equal(apiStarted, Started(project, "api"));
+
+            // api's container stopped from outside, taking docker exec and the debugger in it: its program's end, said so, never
+            // the debugger's failure (an IDE error, which fails the test).
+            string apiContainer = ContainerRunsTests.Container(project, "api");
+            Docker.Run("stop", apiContainer);
+            Ui.WaitFor(() => !api.IsLive, "api's session to end with its container", TimeSpan.FromMinutes(1));
+            Assert.True(window.Status?.StartsWith($"Debugging api ended: {apiContainer}", StringComparison.Ordinal) == true
+                && window.Status.EndsWith(" stopped", StringComparison.Ordinal), $"api's end with its container was said as: {window.Status}");
         }
         finally
         {

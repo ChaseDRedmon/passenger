@@ -1157,7 +1157,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   place's `ContainerPaths` (launch's program and folder, breakpoints, Run to Cursor, Set Next Statement, Hot Reload's
   line updates and active statements, stack frames): a path the map does not cover, or `ContainerPaths.None` (a build of
   this machine's, fast mode), crosses as it is. An adapter there that ends with a failure no one asked for while its
-  place has stopped (`AdapterPlace.Running`, Attach to Process's `AdapterPlace.Runs`: the container stopped, taking
+  place has stopped (`AdapterPlace.Running`, Attach to Process's and a container run's `AdapterPlace.Runs`: the container stopped, taking
   docker exec with it) is the program's end, said so (`DebugSession.Gone`), never the debugger's. A tab's program output
   followed from outside (`AdapterPlace.Output`) ends with its session, its failed start, its tab's close and the folder's
   end. Hot Reload's apply is its own tab's whichever is chosen when it lands (another program's stop takes the window):
