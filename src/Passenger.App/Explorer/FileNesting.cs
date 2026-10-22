@@ -119,12 +119,13 @@ public static partial class FileNesting
         {
             named.TryAdd(Path.GetFileName(file), file);
         }
+        Dictionary<string, string> dependentUpon = project?.DependentUpon() ?? [];
         Dictionary<string, List<string>> candidates = new(StringComparer.Ordinal);
         foreach (string file in files)
         {
             string name = Path.GetFileName(file);
             List<string> found = [];
-            if (project?.DependentUponOf(file) is { } declared && named.TryGetValue(Path.GetFileName(declared), out string? owner)
+            if (dependentUpon.TryGetValue(file, out string? declared) && named.TryGetValue(Path.GetFileName(declared), out string? owner)
                 && PathNames.Same(owner, declared) && owner != file)
             {
                 found.Add(owner);

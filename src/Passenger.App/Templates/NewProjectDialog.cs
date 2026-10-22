@@ -355,8 +355,6 @@ public sealed class NewProjectDialog : Window
     /// null when none.</summary>
     public string? Problem => problem.IsVisible ? problem.Text : null;
 
-    public bool IsCreating => creating is not null;
-
     private bool SolutionNamed => SolutionName.Length > 0 && SolutionName != solutionGiven;
 
     private bool ProjectNamed => ProjectName.Length > 0 && ProjectName != projectGiven;

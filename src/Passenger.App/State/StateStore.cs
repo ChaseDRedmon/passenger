@@ -137,9 +137,10 @@ public sealed class StateStore
 }
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
-/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, whether agents
-/// are let in unasked, what its .http requests may take from the person's computer, the publish profile each project last
-/// published with, and its projects as MSBuild last evaluated and built them at design time.</summary>
+/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, what its
+/// .http requests may take from the person's computer, the publish profile each project last published with, and its
+/// projects as MSBuild last evaluated and built them at design time. The folders agents are let in on unasked are the
+/// settings' (<see cref="AppSettings.AgentFolders"/>), which every window shares.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)

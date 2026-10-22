@@ -39,6 +39,10 @@ public sealed class CSharpService : IAsyncDisposable
     private WorkspaceModel? workspace;
     private bool disposed;
 
+    /// <summary>When the window heard the server had loaded every project (a Stopwatch timestamp), for the start's
+    /// timing.</summary>
+    private (RoslynSession Session, long At)? loadedAt;
+
     /// <summary>A service that starts its own server and ends it with itself, or, given a <see cref="WarmServer"/>, takes
     /// up the server kept there and leaves its own there as it ends.</summary>
     public CSharpService(WarmServer? warm = null) => this.warm = warm;
@@ -645,6 +649,7 @@ public sealed class CSharpService : IAsyncDisposable
                 }
             }
             IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) loaded {loading} in {Since(began)}");
+            loadedAt = (started, Stopwatch.GetTimestamp());
             SetState("C# ready");
             RefreshAll();
             StartAnalysis();
@@ -878,30 +883,30 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    /// <summary>The phases of a start that say when the person can work: the open file in its own project at the server
-    /// (not Miscellaneous Files, whose answers know nothing of the solution), then that project's colours and diagnostics
-    /// for it. Looked for every tenth of a second until then, in the open files' projects as each file finds them as it
-    /// opens and as projects load (<see cref="CSharpDocument.Contexts"/>): a file no project holds costs the server nothing.</summary>
+    /// <summary>The phases of a start that say when the person can work: an open file in its own project at the server
+    /// (not Miscellaneous Files, whose answers know nothing of the solution), then the first colours and diagnostics
+    /// the editor asked for once the server had it there (<see cref="CSharpDocument.Placed"/>, or every project loaded,
+    /// when the editor asks again; <see cref="LspDocument.Coloured"/>). Looked for every tenth of a second, asking the
+    /// server nothing of its own.</summary>
     private async Task TimeActiveFileAsync(RoslynSession started, long began)
     {
         // A wait that never holds a screenshot: a folder may have no C# file open for a long while.
         DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(10);
         while (!disposed && (session is null || session == started) && DateTime.UtcNow < until && !started.Server.HasExited)
         {
-            if (documents.FirstOrDefault(d => d.Value.Lsp is { IsRazor: false } && d.Value.Contexts.Count > 0) is { Key: { } open, Value: { Lsp: { } lsp } features })
+            foreach ((OpenDocument open, CSharpDocument features) in documents)
             {
-                try
+                if (features is not { Lsp: { IsRazor: false } lsp, Placed: { } placed })
                 {
-                    string placed = Since(began);
-                    await lsp.SemanticTokensAsync();
-                    string coloured = Since(began);
-                    await lsp.DiagnosticsAsync();
-                    IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had {open.Name} in {open.ProjectContext ?? features.Contexts[0].Label} {placed}, its colours {coloured} and its diagnostics {Since(began)} after it was started");
-                    return;
+                    continue;
                 }
-                catch (LanguageServerFailed)
+                long inProject = loadedAt is { } loaded && loaded.Session == started ? Math.Min(placed.Asked, loaded.At) : placed.Asked;
+                (long Asked, long Came) coloured = lsp.Coloured;
+                (long Asked, long Came) diagnosed = lsp.Diagnosed;
+                if (coloured.Asked >= inProject && diagnosed.Asked >= inProject)
                 {
-                    // Not yet able to say (a request cancelled as projects load), or gone: asked again, or the loop ends.
+                    IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had {open.Name} in {placed.Project} {Since(began, placed.At)}, its colours {Since(began, coloured.Came)} and its diagnostics {Since(began, diagnosed.Came)} after it was started");
+                    return;
                 }
             }
             await Task.Delay(TimeSpan.FromMilliseconds(100));
@@ -909,6 +914,8 @@ public sealed class CSharpService : IAsyncDisposable
     }
 
     private static string Since(long began) => $"{Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s";
+
+    private static string Since(long began, long at) => $"{Stopwatch.GetElapsedTime(began, at).TotalSeconds:0.00} s";
 
     /// <summary>A message the server logged, as the status bar says it: without its tags ("[project/open]"), the open
     /// folder's paths made relative, its spaces single, and without MSBuild's repeat of the file at its end.</summary>

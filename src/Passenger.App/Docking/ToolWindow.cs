@@ -100,8 +100,6 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
         internal set => Set(ref isShown, value);
     }
 
-    public static bool IsSide(ToolAnchor anchor) => anchor is not (ToolAnchor.BottomLeft or ToolAnchor.BottomRight);
-
     /// <summary>The name a menu gives a place: "Left Top", "Bottom Right".</summary>
     public static string Name(ToolAnchor anchor) => anchor switch
     {

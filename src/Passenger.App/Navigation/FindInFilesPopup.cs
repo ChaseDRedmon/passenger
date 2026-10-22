@@ -263,9 +263,6 @@ public sealed class FindInFilesPopup : UserControl
         set => scopeBox.SelectedItem = value;
     }
 
-    /// <summary>The names the Scope scope offers.</summary>
-    public IReadOnlyList<string> NamedScopes => [.. scopeBox.Items.OfType<string>()];
-
     /// <summary>The file mask while it is on, else null; set to null turns it off.</summary>
     public string? FileMask
     {
@@ -279,9 +276,6 @@ public sealed class FindInFilesPopup : UserControl
             maskOn.IsChecked = value is not null;
         }
     }
-
-    /// <summary>The mask's field: what it shows while the mask is off too.</summary>
-    public string MaskText => maskBox.Text ?? string.Empty;
 
     /// <summary>The matches' number as Rider says it: a thousand and more past the limit.</summary>
     private static string Count(int found) =>

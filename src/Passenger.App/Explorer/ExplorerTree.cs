@@ -527,9 +527,10 @@ public sealed class ExplorerTree
             .Where(f => !FileText.IsSaving(f.Name))
             .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)];
         IReadOnlyDictionary<string, string> parents = FileNesting.Parents([.. held.Select(f => f.Path)], nesting.Project, nesting.ByName);
+        ILookup<string, string> nestedUnder = NestedUnder(held.Select(f => f.Path), parents);
         foreach ((string name, string path) in held.Where(f => !parents.ContainsKey(f.Path)))
         {
-            List<string> nested = [.. held.Where(f => parents.TryGetValue(f.Path, out string? parent) && parent == path).Select(f => f.Path)];
+            List<string> nested = [.. nestedUnder[path]];
             nodes.Add(nested.Count == 0
                 ? new ExplorerNode(NodeKind.File, name, path, depth, false, null)
                 : new ExplorerNode(NodeKind.File, name, path, depth, false, node =>
@@ -561,6 +562,7 @@ public sealed class ExplorerTree
         IReadOnlyDictionary<string, string> parents = nesting is null
             ? new Dictionary<string, string>()
             : FileNesting.Parents([.. entries.OfType<FileInfo>().Select(e => e.FullName)], nesting.Project, nesting.ByName);
+        ILookup<string, string> nestedUnder = NestedUnder(entries.OfType<FileInfo>().Select(e => e.FullName), parents);
         List<ExplorerNode> nodes = [];
         foreach (FileSystemInfo entry in entries)
         {
@@ -573,7 +575,7 @@ public sealed class ExplorerTree
             }
             else if (!parents.ContainsKey(entry.FullName))
             {
-                List<string> nested = [.. entries.Where(e => parents.TryGetValue(e.FullName, out string? parent) && parent == entry.FullName).Select(e => e.FullName)];
+                List<string> nested = [.. nestedUnder[entry.FullName]];
                 nodes.Add(nested.Count == 0
                     ? new ExplorerNode(NodeKind.File, entry.Name, entry.FullName, depth, dimmed, null)
                     : new ExplorerNode(NodeKind.File, entry.Name, entry.FullName, depth, dimmed, node =>
@@ -585,6 +587,11 @@ public sealed class ExplorerTree
         }
         return nodes;
     }
+
+    /// <summary>The files nested under each of a folder's files, in the folder's order, grouped once for the folder:
+    /// looking through the whole folder for each file's own held the UI thread 0.7 s opening a folder of 6,000 files.</summary>
+    private static ILookup<string, string> NestedUnder(IEnumerable<string> files, IReadOnlyDictionary<string, string> parents) =>
+        files.Where(parents.ContainsKey).ToLookup(file => parents[file], PathNames.Comparer);
 
     /// <summary>A node's descendants as rows, in order, through every node already open.</summary>
     private static IEnumerable<ExplorerNode> Visible(ExplorerNode node)
@@ -701,7 +708,6 @@ public sealed class ExplorerNode : Observable
     public bool LeavesFilesBehind => Kind is NodeKind.Project or NodeKind.SolutionFolder or NodeKind.ProjectReference || IsSolutionItem;
 
     public bool HasChildren => load is not null;
-    public bool IsDirectory => Kind == NodeKind.Folder;
     public bool IsFile => Kind == NodeKind.File;
     public List<ExplorerNode>? Children => load is null ? null : children ??= load(this);
 

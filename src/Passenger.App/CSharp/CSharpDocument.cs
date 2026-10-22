@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
@@ -55,6 +56,11 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
     /// asked again as the server's projects load: the one chosen stays while the server still has it.</summary>
     public IReadOnlyList<ProjectContext> Contexts { get; private set; } = [];
 
+    /// <summary>When the server first said it has the file in a project of the folder's, not Miscellaneous Files: when
+    /// it was asked (what it answers asked after that is that project's), when it said so (Stopwatch timestamps) and
+    /// the project; null before. A start's timing reads it.</summary>
+    internal (long Asked, long At, string Project)? Placed { get; private set; }
+
     /// <summary>Asks the server which projects it has the file in, as background work a screenshot waits for.</summary>
     public void FindContexts()
     {
@@ -69,6 +75,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
     {
         try
         {
+            long asked = Stopwatch.GetTimestamp();
             ProjectContextList? found = await lsp.ProjectContextsAsync();
             if (Lsp != lsp || found is null)
             {
@@ -88,6 +95,10 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
             }
             document.ProjectContexts = [.. Contexts.Select(c => c.Label)];
             document.ProjectContext = (kept ?? found.Default)?.Label;
+            if (Placed is null && Contexts.Count > 0)
+            {
+                Placed = (asked, Stopwatch.GetTimestamp(), document.ProjectContext ?? Contexts[0].Label);
+            }
         }
         catch (LanguageServerFailed)
         {

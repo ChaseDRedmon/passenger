@@ -27,6 +27,9 @@ public sealed class FolderWatcher : IDisposable
 {
     private static readonly TimeSpan Gather = TimeSpan.FromMilliseconds(150);
 
+    /// <summary>How long after a save its file's events are taken for the save's own.</summary>
+    private static readonly TimeSpan OwnWriteHeard = TimeSpan.FromSeconds(5);
+
     private static readonly string[] ProjectExtensions = [".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".props", ".targets"];
 
     /// <summary>The file a restore writes in a project's obj (or, with UseArtifactsOutput, in artifacts/obj/Project).</summary>
@@ -79,12 +82,23 @@ public sealed class FolderWatcher : IDisposable
         }
     }
 
-    /// <summary>A file Passenger is saving: its events in the next moments are its content changing, not a new file.</summary>
+    /// <summary>A file Passenger is saving: its events in the next moments are its content changing, not a new file.
+    /// The saves heard of longer ago than that are let go here, so the watcher keeps only its last moments' saves.</summary>
     private void OnWriting(string path)
     {
+        string canonical = PathNames.Canonical(path);
         lock (gate)
         {
-            ownWrites[PathNames.Canonical(path)] = DateTime.UtcNow;
+            DateTime now = DateTime.UtcNow;
+            foreach ((string written, DateTime at) in ownWrites)
+            {
+                if (now - at >= OwnWriteHeard)
+                {
+                    // A dictionary's enumeration survives a removal (since .NET Core 3.0).
+                    ownWrites.Remove(written);
+                }
+            }
+            ownWrites[canonical] = now;
         }
     }
 
@@ -432,7 +446,7 @@ public sealed class FolderWatcher : IDisposable
                 string canonical = PathNames.Canonical(path);
                 paths.Add(canonical);
                 // A save moves its temporary file over the file: a change, not a file come or gone.
-                bool saved = ownWrites.TryGetValue(canonical, out DateTime at) && DateTime.UtcNow - at < TimeSpan.FromSeconds(5);
+                bool saved = ownWrites.TryGetValue(canonical, out DateTime at) && DateTime.UtcNow - at < OwnWriteHeard;
                 structure |= created && !saved;
                 projects |= ProjectExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)
                     || Path.GetFileName(path).Equals("launchSettings.json", StringComparison.OrdinalIgnoreCase);

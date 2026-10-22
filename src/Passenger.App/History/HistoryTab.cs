@@ -163,16 +163,6 @@ public sealed class HistoryTab : DockPanel
     /// <summary>Chooses the row of a change set, once the history has it.</summary>
     public void SelectSet(long set) => list.SelectedItem = rows.FirstOrDefault(r => r.Set == set);
 
-    /// <summary>Chooses one of a folder's files, as a click on it does.</summary>
-    public void SelectFile(HistoryDifference file)
-    {
-        if (fileList is not null)
-        {
-            fileList.SelectedItems?.Clear();
-            fileList.SelectedItem = files.FirstOrDefault(f => PathNames.Same(f.Path, file.Path));
-        }
-    }
-
     /// <summary>The tab closed: it stops following the history, and lets go of the file it borrowed.</summary>
     public void Close()
     {

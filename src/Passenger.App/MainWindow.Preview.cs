@@ -21,9 +21,6 @@ public partial class MainWindow
     private readonly Dictionary<OpenDocument, (XamlPreview Preview, XamlPreviewPane Pane, Debounce Typing, EventHandler<DocumentChangedEventArgs> Changed)> previews = [];
     private bool previewing;
 
-    /// <summary>Whether XAML files are shown with their previews.</summary>
-    public bool Previewing => previewing;
-
     /// <summary>The preview of a file while it is shown, for tests.</summary>
     public XamlPreview? PreviewOf(OpenDocument document) => previews.TryGetValue(document, out var shown) ? shown.Preview : null;
 

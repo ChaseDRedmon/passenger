@@ -40,8 +40,6 @@ public sealed record IncomingCall(HierarchyItem From, IReadOnlyList<LspRange> Fr
 /// <summary>A callee and where in the caller the calls to it are.</summary>
 public sealed record OutgoingCall(HierarchyItem To, IReadOnlyList<LspRange> FromRanges);
 
-public sealed record LspLocationLink(LspRange? OriginSelectionRange, string TargetUri, LspRange TargetRange, LspRange TargetSelectionRange);
-
 /// <summary>A document, and the project the server is to answer for it in (Visual Studio's <c>_vs_projectContext</c>, a
 /// target framework of a multi-targeted project) when not the one it would choose.</summary>
 public sealed record TextDocumentIdentifier(string Uri, [property: JsonPropertyName("_vs_projectContext")] ProjectContext? ProjectContext = null);
@@ -63,8 +61,6 @@ public sealed record DidSaveTextDocumentParams(TextDocumentIdentifier TextDocume
 public sealed record TextDocumentPositionParams(TextDocumentIdentifier TextDocument, LspPosition Position);
 
 public sealed record LspTextEdit(LspRange Range, string NewText);
-
-public sealed record MarkupContent(string Kind, string Value);
 
 public sealed record WorkspaceFolder(string Uri, string Name);
 
@@ -112,11 +108,10 @@ public sealed class CompletionList
     public CompletionItemDefaults? ItemDefaults { get; init; }
 }
 
+/// <summary>The commit characters alone: the one item default the client's capabilities say it reads.</summary>
 public sealed class CompletionItemDefaults
 {
-    public JsonElement? EditRange { get; init; }
     public List<string>? CommitCharacters { get; init; }
-    public JsonElement? Data { get; init; }
 }
 
 public sealed class CompletionItem
@@ -211,8 +206,6 @@ public sealed record FixAllCodeActionParams(string Title, JsonElement Data, stri
 public sealed record FormattingOptions(int TabSize, bool InsertSpaces);
 
 public sealed record DocumentFormattingParams(TextDocumentIdentifier TextDocument, FormattingOptions Options);
-
-public sealed record DocumentRangeFormattingParams(TextDocumentIdentifier TextDocument, LspRange Range, FormattingOptions Options);
 
 // Symbols
 
