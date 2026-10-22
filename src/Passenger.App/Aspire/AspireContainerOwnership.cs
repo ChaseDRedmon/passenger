@@ -170,7 +170,8 @@ internal sealed class AspireContainerOwnership
                     JsonElement inspected = await engine.JsonAsync([.. identity.Arguments, "container", "inspect", entry.Id]).ConfigureAwait(false);
                     if (inspected.ValueKind != JsonValueKind.Array || inspected.GetArrayLength() != 1
                         || ContainerEngine.Text(inspected[0], "Id") != entry.Id
-                        || ContainerEngine.Text(inspected[0], "Name") != "/" + entry.Name)
+                        // Docker's inspect names a container "/name", Podman's own "name".
+                        || ContainerEngine.Text(inspected[0], "Name")?.TrimStart('/') != entry.Name)
                     {
                         IdeErrors.Write($"Aspire containers: retained {entry.Id}; its inspected identity or name changed");
                         continue;
