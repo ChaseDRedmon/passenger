@@ -168,7 +168,10 @@ public sealed class ExplorerFilesTests : IDisposable
         window.KeyTextInput("eggs, ");
         Ui.Settle();
         Assert.True(window.EditorArea.Active!.IsModified);
-        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
+        // The Explorer's keys back by Cmd+1, not a click on its row, which so soon after the first is a double click opening it.
+        Ui.Run(window, AppActions.FocusExplorer);
+        Assert.True(window.ExplorerView.Rows().IsKeyboardFocusWithin && window.ExplorerView.SelectedNodes.Select(n => n.Name).SequenceEqual(["Notes.txt"]),
+            $"Focus Explorer left the keys with {window.FocusManager?.GetFocusedElement()?.GetType().Name}, [{string.Join(", ", window.ExplorerView.SelectedNodes.Select(n => n.Name))}] chosen");
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => !File.Exists(notes) && window.EditorArea.Documents.Count == 0, "Notes.txt deleted and its tab closed");
         string trashed = File.ReadAllText(Path.Combine(trash, "Notes.txt"));
