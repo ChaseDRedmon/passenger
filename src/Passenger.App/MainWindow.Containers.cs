@@ -211,7 +211,7 @@ public partial class MainWindow
             return;
         }
         await containersView!.ActAsync(AppActions.ContainerScale, "scale", service,
-            [.. project.Arguments, "up", "-d", "--no-recreate", "--scale", $"{service.Service}={count}", service.Service!]);
+            [.. project.Arguments, "up", "-d", "--no-recreate", "--scale", $"{service.Service}={count}", "--", service.Service!]);
     }
 
     /// <summary>Inspect: what the engine says of a container, image, volume or network, as JSON in a read-only tab.</summary>

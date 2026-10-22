@@ -24,6 +24,9 @@ public sealed class ContainerLogPane : DockPanel
     private ContainerRow? row;
     private string? streaming;
 
+    /// <summary>What the log shown was read from (<see cref="Signature"/>).</summary>
+    private string? streamed;
+
     public ContainerLogPane(Func<ContainerEngine> engine)
     {
         this.engine = engine;
@@ -72,11 +75,12 @@ public sealed class ContainerLogPane : DockPanel
     /// <summary>What streams now, as a command's words; null while nothing does.</summary>
     public string? Streaming => streaming;
 
-    /// <summary>Streams a row's log, or nothing; the same row again leaves its stream as it is.</summary>
+    /// <summary>Streams a row's log, or nothing; the same row again leaves its stream as it is, and a stopped container's
+    /// log as it was read (its scroll and Find kept) until one of its containers runs again or another comes.</summary>
     public void Show(ContainerRow? shown)
     {
         UiThread.Check();
-        if (shown?.Key == row?.Key && (shown is null || runner is { IsRunning: true }))
+        if (shown?.Key == row?.Key && (shown is null || runner is { IsRunning: true } || (Signature(shown) == streamed && !shown.Containers.Any(c => c.IsRunning))))
         {
             row = shown;
             return;
@@ -129,10 +133,14 @@ public sealed class ContainerLogPane : DockPanel
         }
     }
 
+    /// <summary>The containers a row's log was read from, and which of them ran.</summary>
+    private static string Signature(ContainerRow shown) => string.Join(',', shown.Containers.Select(c => $"{c.Id}:{c.IsRunning}"));
+
     private void Restart()
     {
         End();
         Console.Clear();
+        streamed = row is { } read ? Signature(read) : null;
         if (row is not { } shown || Words(shown) is not { } words)
         {
             return;
@@ -175,7 +183,8 @@ public sealed class ContainerLogPane : DockPanel
             {
                 return null;
             }
-            return [.. project.Arguments, "logs", "--no-color", .. options, .. chosen];
+            // The services' names are labels', never read as flags.
+            return [.. project.Arguments, "logs", "--no-color", .. options, "--", .. chosen];
         }
         return null;
     }

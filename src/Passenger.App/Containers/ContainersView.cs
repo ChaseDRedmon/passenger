@@ -507,7 +507,7 @@ public sealed class ContainersView : DockPanel
         {
             foreach (ContainerPort port in containers.SelectMany(c => c.Ports).Distinct().Take(3))
             {
-                if (port.Link is { } link && containers.Any(c => c.IsRunning))
+                if (port.LinkOn(State?.Endpoint) is { } link && containers.Any(c => c.IsRunning))
                 {
                     Button open = new() { Classes = { "link" }, Content = port.ToString(), VerticalAlignment = VerticalAlignment.Center, Name = "containerPort" };
                     ToolTip.SetTip(open, link.ToString());

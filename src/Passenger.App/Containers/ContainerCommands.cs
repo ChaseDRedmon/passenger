@@ -18,7 +18,8 @@ public static class ContainerCommands
         if (row.Project is { } project)
         {
             List<string> words = [.. project.Arguments];
-            string[] services = row.Service is { } service ? [service] : [];
+            // A service's name is a label's, never read as a flag (a "-v" would have rm remove its volumes).
+            string[] services = row.Service is { } service ? ["--", service] : [];
             return action switch
             {
                 "start" => ([.. words, "start", .. services], null),

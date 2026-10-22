@@ -4,11 +4,23 @@ using System.Text.Json;
 namespace Passenger.App.Containers;
 
 /// <summary>A port a container publishes: on the host's port, from the container's, by its protocol. A TCP one is a link
-/// to <c>http://localhost:port</c>.</summary>
+/// to its port on the engine's machine: this one's (<c>http://localhost:port</c>) for an engine on a socket here, the
+/// remote one's for an engine reached over TCP or SSH (<see cref="LinkOn"/>).</summary>
 public sealed record ContainerPort(string HostPort, string Inside, string Protocol)
 {
-    public Uri? Link => Protocol == "tcp" && int.TryParse(HostPort, NumberStyles.None, CultureInfo.InvariantCulture, out int port)
-        ? new Uri($"http://localhost:{port}/") : null;
+    /// <summary>The link on the machine of the engine at an endpoint (the context's <c>DOCKER_HOST</c>): a <c>tcp://</c>,
+    /// <c>ssh://</c> or <c>http(s)://</c> host is another machine, anything else (a socket, a pipe, none) this one.</summary>
+    public Uri? LinkOn(string? endpoint)
+    {
+        if (Protocol != "tcp" || !int.TryParse(HostPort, NumberStyles.None, CultureInfo.InvariantCulture, out int port))
+        {
+            return null;
+        }
+        string host = endpoint is not null && Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? engine) && engine.Scheme is "tcp" or "ssh" or "http" or "https"
+            && engine.HostNameType is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6 && engine.Host.Length > 0
+            ? engine.Host : "localhost";
+        return Uri.TryCreate($"http://{host}:{port}/", UriKind.Absolute, out Uri? link) ? link : null;
+    }
 
     public override string ToString() => $"{HostPort}→{Inside}{(Protocol == "tcp" ? string.Empty : $"/{Protocol}")}";
 

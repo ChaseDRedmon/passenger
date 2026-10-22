@@ -55,16 +55,27 @@ public sealed class ContainerPaths
     /// <summary>This map with another's pairs: a Compose application's images together.</summary>
     public ContainerPaths With(ContainerPaths other) => new([.. pairs, .. other.pairs]);
 
-    /// <summary>The workspace's file for a container's path, or null for a path no copy covers.</summary>
+    /// <summary>The workspace's file for a container's path, or null for a path no copy covers, and for one that would lead
+    /// out of the folder it maps to (a <c>..</c>, a <c>//</c>, a rooted rest): a container's words never name a file
+    /// elsewhere on this machine.</summary>
     public string? ToHost(string containerPath)
     {
         string path = containerPath.Replace('\\', '/');
         foreach ((string container, string host) in pairs)
         {
-            if (path.StartsWith(container, StringComparison.Ordinal))
+            if (!path.StartsWith(container, StringComparison.Ordinal))
             {
-                return Path.Combine(host, path[container.Length..].Replace('/', Path.DirectorySeparatorChar));
+                continue;
             }
+            string rest = path[container.Length..];
+            if (rest.StartsWith('/') || rest.Split('/').Contains("..") || rest.Contains('\0', StringComparison.Ordinal)
+                || (OperatingSystem.IsWindows() && rest.Contains(':', StringComparison.Ordinal)))
+            {
+                return null;
+            }
+            string folder = Path.GetFullPath(host);
+            string file = Path.GetFullPath(Path.Combine(folder, rest.Replace('/', Path.DirectorySeparatorChar)));
+            return Core.PathNames.Within(file, folder) ? Path.Combine(host, rest.Replace('/', Path.DirectorySeparatorChar)) : null;
         }
         return null;
     }

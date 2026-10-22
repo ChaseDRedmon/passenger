@@ -39,7 +39,7 @@ public sealed partial class PassengerTools
             options.Add("-f");
         }
         IReadOnlyList<string> words = row.Container is { } one ? ["logs", .. options, one.Id]
-            : [.. row.Project!.Arguments, "logs", "--no-color", .. options, .. row.Service is { } service ? [service] : Array.Empty<string>()];
+            : [.. row.Project!.Arguments, "logs", "--no-color", .. options, .. row.Service is { } service ? ["--", service] : Array.Empty<string>()];
         ContainerEngine engine = window.Engine;
         TimeSpan time = TimeSpan.FromSeconds(Math.Clamp(followSeconds, 0, 300)) + ContainerEngine.AskLimit;
         AgentCall.Say(followSeconds > 0 ? $"Following {row.Name}'s log for {followSeconds} s" : $"Reading {row.Name}'s log");

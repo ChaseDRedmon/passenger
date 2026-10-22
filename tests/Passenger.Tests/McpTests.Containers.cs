@@ -109,9 +109,13 @@ public sealed partial class McpTests
             Assert.Equal("NoCompose", listed.GetProperty("status").GetString());
             JsonElement project = Assert.Single(listed.GetProperty("projects").EnumerateArray());
             Assert.Equal(("shop", "running(1)"), (project.GetProperty("name").GetString(), project.GetProperty("status").GetString()));
-            Assert.Equal("shop-web-1", Assert.Single(listed.GetProperty("containers").EnumerateArray()).GetProperty("name").GetString());
+            Assert.Equal(["shop-web-1", "solo"], listed.GetProperty("containers").EnumerateArray().Select(c => c.GetProperty("name").GetString()));
             Assert.Contains("hello from the stand-in web", Text(Await(Task.Run(() => Call(client, "container_logs", new() { ["container"] = "shop-web-1" })), "the container's log")),
                 StringComparison.Ordinal);
+            // The start both containers' ids share names neither: an action is never taken on the one listed first.
+            CallToolResult either = Await(Task.Run(() => Result(client, "container_logs", new() { ["container"] = "5a5d0c0ffee" })), "the log of an id's start two share");
+            Assert.True(either.IsError == true && Text(either).Contains("begins the ids of 2 containers (shop-web-1, solo)", StringComparison.Ordinal),
+                $"An id's start two containers share answered: {Text(either)}");
             // A project's log is Compose's to read: the engine's refusal is the agent's answer, never a fault of Passenger's.
             CallToolResult merged = Await(Task.Run(() => Result(client, "container_logs", new() { ["container"] = "shop" })), "the project's log");
             Assert.True(merged.IsError == true && Text(merged).Contains("'compose' is not a docker command", StringComparison.Ordinal)

@@ -47,12 +47,18 @@ public sealed class ContainerRow(ContainerRowKind kind, int depth, string key, s
         : Project is { } project ? Service is { } service ? [.. project.Services.Where(s => s.Service == service).SelectMany(s => s.Containers)] : [.. project.Containers]
         : [];
 
-    /// <summary>The row an agent names: a container by its name or id (or the start of it), a Compose project by its name, or
-    /// one of its services as project/service; null when nothing has that name.</summary>
+    /// <summary>The row an agent names: a container by its name or id (or the start of one container's id alone), a Compose
+    /// project by its name, or one of its services as project/service; null when nothing has that name. The start of
+    /// several containers' ids names none of them, an <see cref="ArgumentException"/> listing them: an action names one.</summary>
     public static ContainerRow? Named(ContainerSnapshot snapshot, string name)
     {
-        if ((snapshot.AllContainers.FirstOrDefault(c => c.Name == name || c.Name == name.TrimStart('/'))
-            ?? snapshot.AllContainers.FirstOrDefault(c => name.Length >= 4 && c.Id.StartsWith(name, StringComparison.OrdinalIgnoreCase))) is { } container)
+        ContainerInfo[] begun = name.Length >= 4 ? [.. snapshot.AllContainers.Where(c => c.Id.StartsWith(name, StringComparison.OrdinalIgnoreCase))] : [];
+        ContainerInfo? named = snapshot.AllContainers.FirstOrDefault(c => c.Name == name || c.Name == name.TrimStart('/'));
+        if (named is null && begun.Length > 1)
+        {
+            throw new ArgumentException($"{name} begins the ids of {begun.Length} containers ({string.Join(", ", begun.Select(c => c.Name))}): name one by its name or more of its id");
+        }
+        if ((named ?? begun.FirstOrDefault()) is { } container)
         {
             return new ContainerRow(ContainerRowKind.Container, 1, $"container:{container.Name}", container.Name) { Container = container };
         }

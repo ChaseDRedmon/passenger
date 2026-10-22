@@ -710,10 +710,64 @@ public sealed class ContainersTests
         }
     }
 
+    [AvaloniaFact]
+    public void A_remote_engines_port_opens_on_its_own_machine()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        (string cli, _) = StandInEngine(TestFolders.Create("ctr-remote-"), up: true, host: "tcp://engine.example:2376");
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-remote-window-"));
+        Ui.Settle();
+        try
+        {
+            ContainersView view = Shown(window);
+            Button? link = null;
+            Ui.WaitFor(() => (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort")) is not null, "web's port link");
+            Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(at, MouseButton.Left);
+            window.MouseUp(at, MouseButton.Left);
+            Ui.Settle();
+            Assert.Contains(new Uri("http://engine.example:8080/"), window.Browsed);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_stopped_containers_log_stays_as_it_was_read_while_the_window_reads_the_engine_again()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string name = Docker.Container("stopped", "for i in 1 2 3 4 5; do echo \"stopped line $i\"; done");
+        Ui.WaitFor(() => Docker.State(name) == "exited", $"{name} to end");
+        MainWindow window = Open(TestFolders.Create("ctr-stopped-"));
+        try
+        {
+            ContainersView view = Shown(window);
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+            OutputView console = view.Log.Console;
+            Ui.WaitFor(() => Text(console).Contains("stopped line 5", StringComparison.Ordinal), "the stopped container's log");
+            int changes = 0;
+            console.Document.Changed += (_, _) => changes++;
+            Ui.Await(view.RefreshAsync().ContinueWith(_ => true, TaskScheduler.Default), "the window's next read of the engine");
+            Ui.Await(view.RefreshAsync().ContinueWith(_ => true, TaskScheduler.Default), "the window's read after that");
+            Ui.Settle();
+            Assert.Equal(0, changes);
+            Assert.Equal(5, Text(console).Split('\n').Count(l => l.StartsWith("stopped line", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A docker of the test's own whose engine is running or not as its <c>state</c> file says ("up" or "down"):
-    /// a Linux server with no Compose v2 and no buildx, holding one container of a Compose project "shop" (service web),
-    /// whose events go on while it is up. The CLI and the state file.</summary>
-    internal static (string Cli, string State) StandInEngine(string folder, bool up)
+    /// a Linux server at <paramref name="host"/> with no Compose v2 and no buildx, holding a container of a Compose project
+    /// "shop" (service web, port 8080) and a stopped one of its own whose id begins as web's, whose events go on while it is
+    /// up. The CLI and the state file.</summary>
+    internal static (string Cli, string State) StandInEngine(string folder, bool up, string host = "unix:///nowhere/docker.sock")
     {
         string state = Path.Combine(folder, "state");
         File.WriteAllText(state, up ? "up" : "down");
@@ -726,12 +780,13 @@ public sealed class ContainersTests
             "case \"$1\" in",
             "  version) if [ \"$running\" = up ]; then echo '{\"Client\":{\"Version\":\"29.0.0\",\"Context\":\"stand-in\"},\"Server\":{\"Version\":\"29.0.0\",\"Os\":\"linux\",\"Arch\":\"arm64\"}}'; exit 0; fi",
             $"    echo '{{\"Client\":{{\"Version\":\"29.0.0\",\"Context\":\"stand-in\"}},\"Server\":null}}'; {Down} ;;",
-            "  context) echo '[{\"Name\":\"stand-in\",\"Endpoints\":{\"docker\":{\"Host\":\"unix:///nowhere/docker.sock\"}}}]'; exit 0 ;;",
+            $"  context) echo '[{{\"Name\":\"stand-in\",\"Endpoints\":{{\"docker\":{{\"Host\":\"{host}\"}}}}}}]'; exit 0 ;;",
             "  compose|buildx) echo \"docker: '$1' is not a docker command.\" >&2; exit 1 ;;",
             "esac",
             $"[ \"$running\" = up ] || {{ {Down}; }}",
             "case \"$1\" in",
-            "  ps) echo '{\"ID\":\"5a5d0c0ffee1\",\"Names\":\"shop-web-1\",\"Image\":\"busybox:1.37\",\"State\":\"running\",\"Status\":\"Up 5 minutes\",\"Ports\":\"\",\"Labels\":\"com.docker.compose.project=shop,com.docker.compose.service=web\"}' ;;",
+            "  ps) echo '{\"ID\":\"5a5d0c0ffee1\",\"Names\":\"shop-web-1\",\"Image\":\"busybox:1.37\",\"State\":\"running\",\"Status\":\"Up 5 minutes\",\"Ports\":\"0.0.0.0:8080->80/tcp\",\"Labels\":\"com.docker.compose.project=shop,com.docker.compose.service=web\"}'",
+            "    echo '{\"ID\":\"5a5d0c0ffee2\",\"Names\":\"solo\",\"Image\":\"busybox:1.37\",\"State\":\"exited\",\"Status\":\"Exited (0) 2 minutes ago\",\"Ports\":\"\",\"Labels\":\"\"}' ;;",
             "  images|volume|network) ;;",
             "  logs) echo 'hello from the stand-in web' ;;",
             "  events) while [ \"$(cat \"$here/state\")\" = up ]; do sleep 0.2; done ;;",

@@ -486,9 +486,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   followers told `engine` `stopped` and `started`, on which the window reads it all again). `ContainerSnapshot` reads what the
   engine holds at once (Compose projects by `com.docker.compose.project`, stopped ones too, their statuses from `compose
   ls` where the CLI has Compose v2, else from their containers' states, then containers, images, volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
-  `container_action` share. `ContainersView` (`MainWindow.Containers.cs`) asks the engine only while shown, its lists
-  again as events say; a container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
-  consoles'), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
+  `container_action` share (a service's name, a label's, always after `--`, never read as a flag; an agent's start of an
+  id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
+  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, a port's link on the
+  engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
+  container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
+  consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
+  again), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
   streamed only while its tab shows) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
   -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
@@ -555,7 +559,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   services whose build changed (`Changed`, by the output's stamps), and
   `StopAsync` (`down`, or `rm --stop` of the .NET services when backing services are kept, which then go with the folder).
   `ContainerPaths` maps an image's paths (its Dockerfile's COPY of the context into WORKDIR, and `/_/`) to the workspace's
-  and back, for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
+  and back (a container's path never to a file outside the folder it maps to: a `..`, a `//` or a rooted rest gives
+  none), for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
   the debugger takes it at the protocol's edge (`AdapterPlace`, a service's `DotnetService.Paths` in images mode,
   `ContainerPaths.None` in fast mode). A run is started one of three ways (`ContainerStart`): Run; Debug, its services
   marked Debug (else every .NET service it starts, `ContainerPlan.Debugged`) held at their runtime's start
