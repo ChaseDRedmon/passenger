@@ -813,7 +813,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
         // Arguments given for one run replace the profile's, and its environment stays.
         Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
-        Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
+        Assert.Contains("Hi [one|two three]", Ended(window), StringComparison.Ordinal);
 
         // Run, Debug and Profile start it in a container (ContainerRunsTests, ContainerRunDebuggingTests, ContainerRunProfilingTests),
         // which this project, with a Docker profile and no Dockerfile, cannot make: Profile says so rather than profiling it here.
@@ -1236,8 +1236,15 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         {
             Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
         }
-        Ui.WaitFor(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("Process finished", StringComparison.Ordinal), "the run to end");
-        return window.BottomPanel.Run.Document.Snapshot.ToString();
+        return Ended(window);
+    }
+
+    /// <summary>The Run console once the run already started has ended; never a run of its own, since a short program can end
+    /// before a test looks, and a Run pressed then would run the configuration again without what the test gave it.</summary>
+    private static string Ended(MainWindow window)
+    {
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the run to end");
+        return Output(window);
     }
 
     private MainWindow Open()

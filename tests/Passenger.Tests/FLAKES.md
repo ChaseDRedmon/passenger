@@ -111,3 +111,10 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 - `TitleBarTests`' menu bar titles, the same run: "The bar shows 3 of the main menu's titles at 1200 wide". The test was
   first run only on macOS, where the bar holds no window buttons; at 1200 wide Windows fits three titles beside its own,
   the rest behind the button as designed. **The test**, now opened 1600 wide.
+- The Mac's full run at 509e5dfc, beside three agents' builds: `BuildRunTests`' launch profile run with arguments of its
+  own lacked them. The short program had ended before `RunToEnd` looked, which then pressed Run again, running the
+  profile's own arguments. **The test waited wrong**; it now waits for the run it started (`Ended`).
+- The same run: `ContainersTests`' attach with tools of another version, its second attach refused "Already under way:
+  Downloading Passenger's container tools for linux-arm64". The first attach's download said its stage from a worker,
+  posted to the window, and it landed after the attach had ended: `ActionWork.Said` put the ended work back under way, so
+  Attach to Process was refused for good. **A race in the IDE**: a stage said after its work ended now leaves it ended.
