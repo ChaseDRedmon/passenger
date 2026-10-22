@@ -260,6 +260,11 @@ public sealed class ContainerEngine
         return found;
     }
 
+    /// <summary>Whether a line is Podman's own compose saying its provider failed ("Error: executing …/docker-compose …:
+    /// exit status 1"), which it writes after the provider's own words, the ones that say why.</summary>
+    public static bool ProviderFailed(string line) =>
+        line.StartsWith("Error: executing ", StringComparison.Ordinal) && line.Contains(": exit status ", StringComparison.Ordinal);
+
     /// <summary>What a failed command said: its errors, else its output, else its exit code.</summary>
     public static string Said(ChildResult result) =>
         (result.Error.Trim() is { Length: > 0 } error ? error : result.Output.Trim() is { Length: > 0 } output ? output : $"exit code {result.ExitCode}")

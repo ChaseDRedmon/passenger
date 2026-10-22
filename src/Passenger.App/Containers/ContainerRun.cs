@@ -1149,7 +1149,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             // What the services said before they ended is why, which the down that follows would take with them.
             await StreamAsync([.. Plan.Compose, "logs", "--no-color", "--tail", "40"], cancel);
-            string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } lines
+            string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => !ContainerEngine.ProviderFailed(l)).ToArray()
+                is { Length: > 0 } lines
                 ? lines.LastOrDefault(l => l.Contains("rror", StringComparison.Ordinal)) ?? lines[^1] : $"exit code {up.ExitCode}";
             return $"{Plan.Name} did not come up: {last}";
         }

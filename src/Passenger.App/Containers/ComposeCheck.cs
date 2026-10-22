@@ -307,7 +307,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     /// <summary>What Compose said of the failure: its last line that is not one of its log's warnings.</summary>
     private static string Error(ChildResult result) =>
         result.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault(l => !l.StartsWith("time=", StringComparison.Ordinal)) ?? ContainerEngine.Said(result);
+            .LastOrDefault(l => !l.StartsWith("time=", StringComparison.Ordinal) && !ContainerEngine.ProviderFailed(l)) ?? ContainerEngine.Said(result);
 
     /// <summary>The file a message names (its schema's check, its parse), "-" for the text typed, and the message after it.</summary>
     private static (string? File, string Message) Named(string said)

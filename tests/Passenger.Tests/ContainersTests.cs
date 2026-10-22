@@ -320,7 +320,7 @@ public sealed class ContainersTests
         Assert.True(web.Container.IsRunning, $"web is {web.Container.State}");
         ContainerPort port = Assert.Single(web.Container.Ports);
         Assert.Equal("8080", port.Inside);
-        Assert.Equal(Docker.Image, Service(view, project, "worker").Container!.Image);
+        Assert.Equal(Docker.Image, Docker.Short(Service(view, project, "worker").Container!.Image));
         // The port is a link the browser opens, on web's row scrolled into view: an engine holding many projects lists it
         // below the rows the list makes.
         Button? link = null;
