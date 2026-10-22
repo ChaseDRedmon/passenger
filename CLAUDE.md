@@ -1961,9 +1961,11 @@ what it tests to a time, and those that work in its Sum project given `RestoredF
 `McpTests` starts `Passenger --mcp` and works a project through it, `McpDebuggingTests` debugs it there (with the tool
 list's size and a long call's progress), `McpWindowTests` and `McpAttachTests` attach to a window with
 `--mcp-attach` (its sockets in the folder named for the run's `PASSENGER_SETTINGS`) and change what the window shows,
-once it lets them in and the person answers its questions, and `McpProcessesTests`, `McpIdeTests`,
-`McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`, `McpSessionsTests` and the container classes take the
-rest by what the tools reach; each checks a tool's answer, leaving the window's own steps to the window's tests.
+once it lets them in and the person answers its questions (`McpWindowDebuggingTests` where an agent debugs there or
+what it tests is held to a time, as `McpAttachTimingTests` hold the joins and calls given up), and `McpProcessesTests`
+(`McpBuildNodesTests` for the MSBuild nodes a build leaves, which the machine's other builds would sway), `McpIdeTests`
+(`McpIdeProfilingTests` for Attach Profiler's samples), `McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`,
+`McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
 client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
 (headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through

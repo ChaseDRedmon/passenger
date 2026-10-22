@@ -14,7 +14,6 @@ namespace Passenger.Tests;
 
 /// <summary>Agents joining the window a person is using (<c>--mcp-attach</c>): what the window asks them before
 /// an agent's first change, what it shows of their work, and what each tool answers there.</summary>
-[Collection(Alone.Name)]
 public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
 {
     public McpWindowTests(RestoredFolders folders)
@@ -164,51 +163,6 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Gone(client);
-            window.Close();
-        }
-    }
-
-    /// <summary>An agent's diagnostics for a project file wait for that file's own checks alone: they waited for all of the
-    /// IDE's background work, so a build running meanwhile held the answer for the tool's 30 s.</summary>
-    [AvaloniaFact]
-    public void An_agents_diagnostics_for_a_project_file_come_from_its_own_checks_while_a_build_runs()
-    {
-        File.WriteAllText(Path.Combine(Folder, "Directory.Build.targets"), """
-            <Project>
-              <Target Name="Slow" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('slow')">
-                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; slow.pid; exec sleep 120" />
-                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path slow.pid -Value $PID; Start-Sleep -Seconds 120&quot;" />
-              </Target>
-            </Project>
-            """);
-        File.WriteAllText(Path.Combine(Folder, "slow"), string.Empty);
-        MainWindow window = AgentsWindow(Folder, languageServer: false);
-        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
-        int step = 0;
-        try
-        {
-            Assert.True(window.Perform(AppActions.Build));
-            step = Processes.WrittenId(Path.Combine(Folder, "slow.pid"), "the build's slow step to start");
-
-            // The person types an import that is not there into the project file, unsaved, as the build runs on.
-            window.OpenFile(Path.Combine(Folder, "Sum.csproj"));
-            window.EditorArea.CodeEditor.GoTo(new Passenger.Text.TextPosition(6, 0));
-            window.KeyTextInput("<Import Project=\"Missing.props\" />");
-            Stopwatch asked = Stopwatch.StartNew();
-            Task<JsonElement> diagnostics = Task.Run(() => Call(client, "diagnostics", new() { ["path"] = "Sum.csproj" }));
-            Ui.PumpUntil(() => diagnostics.IsCompleted, "the project file's diagnostics", AgentLimit);
-            asked.Stop();
-            JsonElement missing = Assert.Single(diagnostics.GetAwaiter().GetResult().EnumerateArray());
-            Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
-            Assert.True(window.IsBuilding, "The build ended before the agent's diagnostics were answered");
-            Assert.True(asked.Elapsed < TimeSpan.FromSeconds(20).Scaled(), $"The project file's diagnostics took {asked.Elapsed.TotalSeconds:F0} s while a build ran");
-        }
-        finally
-        {
-            window.Perform(AppActions.Stop);
-            Processes.Kill(step);
-            Ui.PumpUntil(() => !window.IsBuilding, "the build to stop", TimeSpan.FromMinutes(1));
             Gone(client);
             window.Close();
         }
@@ -392,65 +346,6 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
-    /// <summary>On the person's window an agent is asked once, the first time, before it runs a configuration, sets a
-    /// breakpoint (whose condition runs in their later sessions too), debugs, evaluates code in the paused program, sets a
-    /// value there or types into its input; saving and stopping are never asked about. The configuration uses the terminal
-    /// (DebuggerTests and TerminalTests run and debug one there through the window): run answers with what the program's tab
-    /// shows, debug_start stops at a breakpoint on Main's first line, debug_input types into its tab, and debug_output reads
-    /// the tab, the program's end in it.</summary>
-    [AvaloniaFact]
-    public void An_agent_is_asked_once_before_it_first_runs_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_a_program_in_the_terminal()
-    {
-        Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
-        MainWindow window = AgentsWindow(Folder, languageServer: false);
-        window.SetConfigurations([new global::Passenger.App.Run.RunConfiguration
-        {
-            Name = "In the terminal",
-            Project = Path.Combine(window.Folder!, "Sum.csproj"),
-            Console = global::Passenger.App.Run.ConsoleKind.Terminal,
-        }], "In the terminal");
-        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
-        try
-        {
-            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
-            JsonElement ran = Asked(window, client, "run", "run a configuration", new() { ["waitSeconds"] = 5 });
-            string output = ran.GetProperty("output").GetString()!;
-            Assert.True(ran.GetProperty("stillRunning").GetBoolean() && output.Contains("red at the third row's fifth column", StringComparison.Ordinal),
-                $"The run in the terminal was answered without the program waiting for its key in its tab: {ran}");
-            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
-            WaitFor(() => window.RunInTerminal is { IsRunning: false }, "the program in the terminal to end");
-
-            Asked(window, client, "breakpoint_set", "set a breakpoint", new() { ["path"] = "Program.cs", ["line"] = 1 });
-            Unasked(window, client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 24 });
-            JsonElement stop = Asked(window, client, "debug_start", "debug a configuration");
-            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.StartsWith("Program.cs:1:", StringComparison.Ordinal),
-                $"Debugged in the terminal, the program did not stop on Main's first line: {stop}");
-            Assert.Equal("42", Asked(window, client, "debug_evaluate", "evaluate an expression", new() { ["expression"] = "6 * 7" }).GetProperty("value").GetString());
-            Assert.Equal("0", Unasked(window, client, "debug_evaluate", new() { ["expression"] = "args.Length" }).GetProperty("value").GetString());
-            string set = Asked(window, client, "debug_set_value", "set a value", new() { ["expression"] = "line", ["value"] = "\"forty\"" }).GetProperty("value").GetString()!;
-            Assert.Contains("forty", set, StringComparison.Ordinal);
-            set = Unasked(window, client, "debug_set_value", new() { ["expression"] = "line", ["value"] = "\"again\"" }).GetProperty("value").GetString()!;
-            Assert.Contains("again", set, StringComparison.Ordinal);
-
-            // Let go, it asks for a key in its tab, which the agent types there, then a line.
-            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint's removal");
-            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 24 })), "the other breakpoint's removal");
-            Await(Task.Run(() => Call(client, "debug_continue", new() { ["waitSeconds"] = 1 })), "the program let go");
-            WaitFor(() => window.Debugger.Session?.Terminal?.Session.Screen.Lines.Any(l => l.Text() == "key?") == true, "the program to ask for a key in its tab");
-            Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "q", ["newline"] = false });
-            Unasked(window, client, "debug_input", new() { ["text"] = "hello" });
-            WaitFor(() => !window.Debugger.IsDebugging && window.Debugger.Session?.Terminal?.Ended.IsCompleted == true, "the program's end");
-            string shown = Await(Task.Run(() => Call(client, "debug_output")), "the program's output").GetString()!;
-            Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
-                && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"debug_output read, of the program's tab:\n{shown}");
-        }
-        finally
-        {
-            Gone(client);
-            window.Close();
-        }
-    }
-
     /// <summary>Each solution window of one Passenger listens for agents on a socket of its own, the second opened by File,
     /// Open in a window of its own as Settings says and letting agents in as the first does; an agent started in either's
     /// folder reaches that window, and a window closing takes its own socket alone.</summary>
@@ -532,6 +427,129 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
+    /// <summary>The folder of the window an agent started in a folder reaches with <c>--mcp-attach</c>.</summary>
+    private string? AttachedFolder(string workingDirectory) => Await(Task.Run(async () =>
+    {
+        await using McpClient client = await Start(["--mcp-attach"], workingDirectory);
+        return (await Call(client, "workspace")).GetProperty("folder").GetString();
+    }), $"an agent attaching from {workingDirectory}");
+}
+
+/// <summary>McpWindowTests' agents on the person's window where one debugs through the window (a program in the terminal,
+/// stopped, evaluated and typed into) or where what it tests is held to a time (a project file's diagnostics during a
+/// build, the window's keys while ten thousand usages land), so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class McpWindowDebuggingTests : McpRig, IClassFixture<RestoredFolders>
+{
+    public McpWindowDebuggingTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
+
+    /// <summary>An agent's diagnostics for a project file wait for that file's own checks alone: they waited for all of the
+    /// IDE's background work, so a build running meanwhile held the answer for the tool's 30 s.</summary>
+    [AvaloniaFact]
+    public void An_agents_diagnostics_for_a_project_file_come_from_its_own_checks_while_a_build_runs()
+    {
+        File.WriteAllText(Path.Combine(Folder, "Directory.Build.targets"), """
+            <Project>
+              <Target Name="Slow" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('slow')">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; slow.pid; exec sleep 120" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path slow.pid -Value $PID; Start-Sleep -Seconds 120&quot;" />
+              </Target>
+            </Project>
+            """);
+        File.WriteAllText(Path.Combine(Folder, "slow"), string.Empty);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        int step = 0;
+        try
+        {
+            Assert.True(window.Perform(AppActions.Build));
+            step = Processes.WrittenId(Path.Combine(Folder, "slow.pid"), "the build's slow step to start");
+
+            // The person types an import that is not there into the project file, unsaved, as the build runs on.
+            window.OpenFile(Path.Combine(Folder, "Sum.csproj"));
+            window.EditorArea.CodeEditor.GoTo(new Passenger.Text.TextPosition(6, 0));
+            window.KeyTextInput("<Import Project=\"Missing.props\" />");
+            Stopwatch asked = Stopwatch.StartNew();
+            Task<JsonElement> diagnostics = Task.Run(() => Call(client, "diagnostics", new() { ["path"] = "Sum.csproj" }));
+            Ui.PumpUntil(() => diagnostics.IsCompleted, "the project file's diagnostics", AgentLimit);
+            asked.Stop();
+            JsonElement missing = Assert.Single(diagnostics.GetAwaiter().GetResult().EnumerateArray());
+            Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
+            Assert.True(window.IsBuilding, "The build ended before the agent's diagnostics were answered");
+            Assert.True(asked.Elapsed < TimeSpan.FromSeconds(20).Scaled(), $"The project file's diagnostics took {asked.Elapsed.TotalSeconds:F0} s while a build ran");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Processes.Kill(step);
+            Ui.PumpUntil(() => !window.IsBuilding, "the build to stop", TimeSpan.FromMinutes(1));
+            Gone(client);
+            window.Close();
+        }
+    }
+
+    /// <summary>On the person's window an agent is asked once, the first time, before it runs a configuration, sets a
+    /// breakpoint (whose condition runs in their later sessions too), debugs, evaluates code in the paused program, sets a
+    /// value there or types into its input; saving and stopping are never asked about. The configuration uses the terminal
+    /// (DebuggerTests and TerminalTests run and debug one there through the window): run answers with what the program's tab
+    /// shows, debug_start stops at a breakpoint on Main's first line, debug_input types into its tab, and debug_output reads
+    /// the tab, the program's end in it.</summary>
+    [AvaloniaFact]
+    public void An_agent_is_asked_once_before_it_first_runs_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_a_program_in_the_terminal()
+    {
+        Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
+        window.SetConfigurations([new global::Passenger.App.Run.RunConfiguration
+        {
+            Name = "In the terminal",
+            Project = Path.Combine(window.Folder!, "Sum.csproj"),
+            Console = global::Passenger.App.Run.ConsoleKind.Terminal,
+        }], "In the terminal");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
+            JsonElement ran = Asked(window, client, "run", "run a configuration", new() { ["waitSeconds"] = 5 });
+            string output = ran.GetProperty("output").GetString()!;
+            Assert.True(ran.GetProperty("stillRunning").GetBoolean() && output.Contains("red at the third row's fifth column", StringComparison.Ordinal),
+                $"The run in the terminal was answered without the program waiting for its key in its tab: {ran}");
+            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
+            WaitFor(() => window.RunInTerminal is { IsRunning: false }, "the program in the terminal to end");
+
+            Asked(window, client, "breakpoint_set", "set a breakpoint", new() { ["path"] = "Program.cs", ["line"] = 1 });
+            Unasked(window, client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 24 });
+            JsonElement stop = Asked(window, client, "debug_start", "debug a configuration");
+            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.StartsWith("Program.cs:1:", StringComparison.Ordinal),
+                $"Debugged in the terminal, the program did not stop on Main's first line: {stop}");
+            Assert.Equal("42", Asked(window, client, "debug_evaluate", "evaluate an expression", new() { ["expression"] = "6 * 7" }).GetProperty("value").GetString());
+            Assert.Equal("0", Unasked(window, client, "debug_evaluate", new() { ["expression"] = "args.Length" }).GetProperty("value").GetString());
+            string set = Asked(window, client, "debug_set_value", "set a value", new() { ["expression"] = "line", ["value"] = "\"forty\"" }).GetProperty("value").GetString()!;
+            Assert.Contains("forty", set, StringComparison.Ordinal);
+            set = Unasked(window, client, "debug_set_value", new() { ["expression"] = "line", ["value"] = "\"again\"" }).GetProperty("value").GetString()!;
+            Assert.Contains("again", set, StringComparison.Ordinal);
+
+            // Let go, it asks for a key in its tab, which the agent types there, then a line.
+            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint's removal");
+            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 24 })), "the other breakpoint's removal");
+            Await(Task.Run(() => Call(client, "debug_continue", new() { ["waitSeconds"] = 1 })), "the program let go");
+            WaitFor(() => window.Debugger.Session?.Terminal?.Session.Screen.Lines.Any(l => l.Text() == "key?") == true, "the program to ask for a key in its tab");
+            Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "q", ["newline"] = false });
+            Unasked(window, client, "debug_input", new() { ["text"] = "hello" });
+            WaitFor(() => !window.Debugger.IsDebugging && window.Debugger.Session?.Terminal?.Ended.IsCompleted == true, "the program's end");
+            string shown = Await(Task.Run(() => Call(client, "debug_output")), "the program's output").GetString()!;
+            Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
+                && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"debug_output read, of the program's tab:\n{shown}");
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void The_window_takes_keys_while_an_attached_agent_finds_ten_thousand_usages_each_with_its_line()
     {
@@ -599,11 +617,4 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             window.Close();
         }
     }
-
-    /// <summary>The folder of the window an agent started in a folder reaches with <c>--mcp-attach</c>.</summary>
-    private string? AttachedFolder(string workingDirectory) => Await(Task.Run(async () =>
-    {
-        await using McpClient client = await Start(["--mcp-attach"], workingDirectory);
-        return (await Call(client, "workspace")).GetProperty("folder").GetString();
-    }), $"an agent attaching from {workingDirectory}");
 }
