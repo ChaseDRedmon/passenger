@@ -147,6 +147,12 @@ public sealed class TestRun : IDisposable
         // Nor the person's application data: a Testing Platform test app the IDE runs writes its first-run notice's
         // sentinel there (Microsoft/TestingPlatform) unless telemetry is opted out.
         Environment.SetEnvironmentVariable("TESTINGPLATFORM_TELEMETRY_OPTOUT", "1");
+        // Nor Aspire's: an aspire CLI or AppHost the run starts keeps its settings, logs and first-run sentinel in the run's
+        // own home (ASPIRE_HOME), sends no telemetry and looks for no newer version of itself or of Aspire.
+        Environment.SetEnvironmentVariable("ASPIRE_HOME", Path.Combine(Root, "aspire-home"));
+        Environment.SetEnvironmentVariable("ASPIRE_CLI_TELEMETRY_OPTOUT", "1");
+        Environment.SetEnvironmentVariable("features__updateNotificationsEnabled", "false");
+        Environment.SetEnvironmentVariable("ASPIRE_VERSION_CHECK_DISABLED", "true");
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
         // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Dap's AdapterEnvironment.EvaluationTimeoutVariable;
         // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it

@@ -1919,9 +1919,11 @@ dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' age
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
-run up, each leaving no container of the project. Aspire's tests (#338): `AspireTests` (Alone), `AspireExternalDataTests`
-and `McpAspireTests`' tests of a real AppHost run the `aspire` CLI, which keeps its state in the person's own ~/.aspire,
-so they skip, saying why (`AspireApp.CliSkipped`), until the tests give it a home of their own; `AspireApp` makes two of
+run up, each leaving no container of the project. Aspire's tests (#338): the run gives every `aspire` CLI and AppHost it
+starts a home of its own (`ASPIRE_HOME`), telemetry and version checks off (`TestRun`), but an AppHost and the CLI keep
+their record of running AppHosts in `$HOME/.aspire/cli/bch` whatever `ASPIRE_HOME` says (on Windows in the person's
+profile whatever the environment says), so `AspireTests` (Alone), `AspireExternalDataTests` and `McpAspireTests`' tests of
+a real AppHost skip, saying why (`AspireApp.CliSkipped`), until they run with a home of the run's own; `AspireApp` makes two of
 Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`: the test project's restore puts the
 AppHost's graph in the package cache), as do `AspireOrchestrationTests`, on a solution of the tests' own target;

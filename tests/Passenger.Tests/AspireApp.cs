@@ -16,9 +16,11 @@ public sealed class AspireApp : SharedProject
     public const string Name = "PassengerAspire";
     public const string CompanionName = "CompanionAspire";
     public const string RequestLog = "Passenger request {RequestValue}";
-    /// <summary>Why the tests that run the aspire CLI skip: it runs as the person's (their PATH's, keeping its state in their
-    /// own ~/.aspire, their AppHosts in its aspire ps), which no test may touch, until the tests give it a home of their own.</summary>
-    public const string CliSkipped = "Runs the person's own aspire CLI, whose state is their ~/.aspire: skipped until the tests give it a home of their own";
+    /// <summary>Why the tests that run a real AppHost or the aspire CLI skip. The run gives both a home of its own (ASPIRE_HOME,
+    /// TestRun), but an AppHost and the CLI keep their record of running AppHosts (aspire ps's) in $HOME/.aspire/cli/bch
+    /// whatever ASPIRE_HOME says, on Windows in the person's profile whatever the environment says, a script-installed
+    /// CLI its whole home beside itself, in ~/.aspire; and no CLI of the run's own is downloaded yet (#400).</summary>
+    public const string CliSkipped = "Runs a real AppHost or the aspire CLI, which keep their record of running AppHosts in the person's own ~/.aspire whatever ASPIRE_HOME says: skipped until they run with a home of the run's own";
 
     public AspireApp() : base("aspire-")
     {
