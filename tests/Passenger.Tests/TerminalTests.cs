@@ -869,14 +869,7 @@ public sealed class TerminalTests
     /// <summary>The terminal's Copy: Cmd+C on the Mac, Ctrl+Shift+C elsewhere.</summary>
     private static string CopyKey => OperatingSystem.IsMacOS() ? "meta C" : "control shift C";
 
-    private static void Copy(TopLevel window, string text)
-    {
-        Task copied = window.Clipboard!.SetTextAsync(text);
-        while (!copied.IsCompleted)
-        {
-            Ui.Settle();
-        }
-    }
+    private static void Copy(TopLevel window, string text) => Ui.Await(window.Clipboard!.SetTextAsync(text), "the clipboard to take the text");
 
     /// <summary>The number of the last of seq's lines in the terminal, its scrollback included; -1 before the first.</summary>
     private static long LastLine(TerminalSession session)

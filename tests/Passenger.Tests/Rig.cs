@@ -851,6 +851,13 @@ public static class Ui
         return task.GetAwaiter().GetResult();
     }
 
+    /// <inheritdoc cref="Await{T}(Task{T}, string, TimeSpan?)"/>
+    public static void Await(Task task, string what, TimeSpan? limit = null)
+    {
+        WaitFor(() => task.IsCompleted, what, limit);
+        task.GetAwaiter().GetResult();
+    }
+
     /// <summary>Waits for a launch the window started (Run, Debug, Profile, a test run) as <see cref="Await"/> does, and
     /// fails unless it started, with its refusal and the build's own errors (<see cref="BuildErrors"/>).</summary>
     public static void Launched(Passenger.App.MainWindow window, Task<string?> launch, string what, TimeSpan? limit = null)
@@ -970,15 +977,8 @@ public static class Ui
     }
 
     /// <summary>The clipboard's text, read as a paste would read it.</summary>
-    public static string? Clipboard(TopLevel window)
-    {
-        Task<string?> text = Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!);
-        while (!text.IsCompleted)
-        {
-            Settle();
-        }
-        return text.Result;
-    }
+    public static string? Clipboard(TopLevel window) =>
+        Await(Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!), "the clipboard's text");
 
     /// <summary>Files dragged from the system's file manager onto the middle of a control and dropped there, as the
     /// platform delivers such a drag (an enter, a move, the drop).</summary>
@@ -1749,4 +1749,54 @@ public static partial class NativeStacks
     // "    +   881 main  (in ReadsInputConsoleApp) + 184  [0x1024fa124]"
     [System.Text.RegularExpressions.GeneratedRegex(@"^[\s+!:|]*\d+\s+(.+?)\s+\(in ([^)]+)\)")]
     private static partial System.Text.RegularExpressions.Regex FrameLine();
+}
+
+/// <summary>A port of the system's choosing, kept from every other program until a program of the test's own is about to
+/// listen there: bound but not listening, so a connection to it is refused as to a port nothing holds. The program waits
+/// at a gate file before it binds, which <see cref="LetGo"/> opens just after freeing the port; <see cref="Hold"/> takes
+/// the port back for a next run once that program has ended.</summary>
+public sealed class HeldPort : IDisposable
+{
+    private System.Net.Sockets.Socket? held;
+
+    public HeldPort()
+    {
+        held = Bound(0);
+        Port = ((System.Net.IPEndPoint)held.LocalEndPoint!).Port;
+    }
+
+    public int Port { get; }
+
+    /// <summary>Frees the port and opens the gate the program that listens there waits at.</summary>
+    public void LetGo(string gate)
+    {
+        held?.Dispose();
+        held = null;
+        File.WriteAllText(gate, string.Empty);
+    }
+
+    /// <summary>Closes the gate and takes the port back, the program that listened there having ended.</summary>
+    public void Hold(string gate)
+    {
+        File.Delete(gate);
+        held ??= Bound(Port);
+    }
+
+    public void Dispose()
+    {
+        held?.Dispose();
+        held = null;
+    }
+
+    private static System.Net.Sockets.Socket Bound(int port)
+    {
+        System.Net.Sockets.Socket socket = new(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        if (port != 0 && !OperatingSystem.IsWindows())
+        {
+            // Taken back: a connection the last program there closed may linger on it (TIME_WAIT), which holds no one's port.
+            socket.SetSocketOption(System.Net.Sockets.SocketOptionLevel.Socket, System.Net.Sockets.SocketOptionName.ReuseAddress, true);
+        }
+        socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port));
+        return socket;
+    }
 }

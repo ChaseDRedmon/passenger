@@ -57,7 +57,7 @@ public sealed partial class McpTests
         finally
         {
             await Call(client, "stop");
-            Assert.True(await Waiting.UntilAsync(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2),
+            Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
             // The headless IDE's state is not the run's, whose end removes only its own images: these go here.
             foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))

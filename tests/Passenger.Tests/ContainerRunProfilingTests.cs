@@ -99,7 +99,7 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
             Assert.Equal(["api", "cache", "web"], ContainerRunsTests.States(project).Keys.Order(StringComparer.Ordinal));
             Assert.True(window.IsRunning, "The run's log is not followed in the Run window");
             int port = ContainerRunsTests.Published(project, "web");
-            Assert.True(Waiting.Until(() => ContainerRunsTests.Answer(port) == "web 1", TimeSpan.FromMinutes(1)), "web, let go by the profiler, did not answer");
+            Assert.True(Ui.Pumped(() => ContainerRunsTests.Answer(port) == "web 1", TimeSpan.FromMinutes(1)), "web, let go by the profiler, did not answer");
 
             // A memory snapshot is taken in web's container.
             Click(window.ProfilerView, "Get Memory Snapshot");
@@ -136,7 +136,7 @@ public sealed class ContainerRunProfilingTests(ContainerRunDebuggingTests.Tools 
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         Ui.WaitFor(() => !window.IsRunning && window.Profiling is null, "the run and its profile to end with Stop");

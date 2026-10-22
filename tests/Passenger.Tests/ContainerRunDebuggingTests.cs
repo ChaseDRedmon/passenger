@@ -85,7 +85,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         // A debugger that lost its container under it would be an IDE error, which fails the test.
@@ -123,7 +123,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             Resume(window, web);
             Assert.Equal("web 2", Ui.Await(answer, "web's answer after the edit", TimeSpan.FromMinutes(1)));
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.Debugger.IsDebugging && Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => !window.Debugger.IsDebugging && Docker.NoneLeft(project),
                 "Stop to end web's session and take it down", TimeSpan.FromMinutes(2));
             window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InRequest);
 
@@ -166,7 +166,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         Ui.WaitFor(() => window.Debugger.Running.Count == 0, "the Hot Reload sessions to end with Stop");
@@ -219,7 +219,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take the services down", TimeSpan.FromMinutes(2));
             window.Close();
         }

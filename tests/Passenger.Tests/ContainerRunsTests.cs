@@ -66,7 +66,7 @@ public sealed class ContainerRunsTests
             Assert.Equal(image, Docker.Run("inspect", "-f", "{{.Image}}", Container(project, "web")));
             // On the port it had, so a browser open there stays right.
             Assert.Equal(webPort, Published(project, "web"));
-            Assert.True(Waiting.Until(() => Answer(webPort) == "web 2", TimeSpan.FromMinutes(1)), $"web did not answer with its new build: {Answer(webPort)}");
+            Assert.True(Ui.Pumped(() => Answer(webPort) == "web 2", TimeSpan.FromMinutes(1)), $"web did not answer with its new build: {Answer(webPort)}");
             Assert.True(window.IsRunning, "The run's log stopped being followed through the restart");
 
             // api's change built, then web alone restarted from the Containers window: api still runs its old build, so Rerun
@@ -83,12 +83,12 @@ public sealed class ContainerRunsTests
                 "Rerun to restart what changed", TimeSpan.FromMinutes(3));
             Assert.True(window.Status!.Split(": restarted ")[^1].Split(" with ")[0].Split(", ").Contains("api"),
                 $"Rerun did not restart api, whose build changed before web's restart: {window.Status}");
-            Assert.True(Waiting.Until(() => Answer(apiPort) == "api 2", TimeSpan.FromMinutes(1)), $"api did not answer with its new build: {Answer(apiPort)}");
+            Assert.True(Ui.Pumped(() => Answer(apiPort) == "api 2", TimeSpan.FromMinutes(1)), $"api did not answer with its new build: {Answer(apiPort)}");
         }
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         Assert.Equal(string.Empty, Docker.Run("network", "ls", "-q", "--filter", $"label=com.docker.compose.project={project}"));
@@ -114,7 +114,7 @@ public sealed class ContainerRunsTests
             Launched(window, "the Compose application to come up beside the person's own container");
             Assert.Equal("running", Docker.State(own));
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label={ContainerLabels.Process}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project, ContainerLabels.Process),
                 "Stop to take the run's containers down", TimeSpan.FromMinutes(2));
             Assert.Equal("running", Docker.State(own));
             Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
@@ -157,7 +157,7 @@ public sealed class ContainerRunsTests
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take the container down", TimeSpan.FromMinutes(2));
             window.Close();
             Docker.Ask(["rmi", own]);
@@ -206,8 +206,7 @@ public sealed class ContainerRunsTests
                 window.Perform(AppActions.Stop);
                 if (project is not null)
                 {
-                    Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
-                        $"Stop to take {name}'s container down", TimeSpan.FromMinutes(2));
+                    Ui.WaitFor(() => Docker.NoneLeft(project), $"Stop to take {name}'s container down", TimeSpan.FromMinutes(2));
                 }
                 Ui.WaitFor(() => !window.IsRunning, $"{name}'s log to stop being followed");
             }
@@ -245,7 +244,7 @@ public sealed class ContainerRunsTests
             window.Perform(AppActions.Stop);
             if (project is not null)
             {
-                Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take the tool down", TimeSpan.FromMinutes(2));
+                Ui.WaitFor(() => Docker.NoneLeft(project), "Stop to take the tool down", TimeSpan.FromMinutes(2));
             }
             window.Close();
             if (image is not null)
@@ -388,7 +387,7 @@ public sealed class ContainerRunsTests
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take cache down", TimeSpan.FromMinutes(2));
             window.Close();
         }
@@ -416,13 +415,13 @@ public sealed class ContainerRunsTests
                 "Compose's watch to start in the Run window", TimeSpan.FromMinutes(1));
             Assert.True(Run(window).Contains("Watch enabled", StringComparison.Ordinal), $"Compose's watch did not start: {Run(window)}");
             File.WriteAllText(Path.Combine(folder, "site", "index.html"), "second\n");
-            Assert.True(Waiting.Until(() => Docker.Run("exec", site, "cat", "/www/index.html") == "second", TimeSpan.FromMinutes(1)),
+            Assert.True(Ui.Pumped(() => Docker.Said("exec", site, "cat", "/www/index.html") == "second", TimeSpan.FromMinutes(1)),
                 $"Compose's watch did not sync the change: {Run(window)}");
         }
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take the site down", TimeSpan.FromMinutes(2));
             window.Close();
         }
@@ -445,12 +444,12 @@ public sealed class ContainerRunsTests
         Launched(window, "web and its cache to come up");
         Assert.Equal(["cache", "web"], States(project).Keys.Order(StringComparer.Ordinal));
         window.Perform(AppActions.Stop);
-        Ui.WaitFor(() => !States(project).ContainsKey("web"), "Stop to take web down", TimeSpan.FromMinutes(2));
+        Ui.WaitFor(() => StatesNow(project) is { } states && !states.ContainsKey("web"), "Stop to take web down", TimeSpan.FromMinutes(2));
         Assert.Equal("running", States(project)["cache"]);
         Assert.Equal("Web and its cache stopped: its .NET services were taken down, cache kept running", window.Status);
         // Kept for the next run, never left behind: the folder's end takes it down.
         window.Close();
-        Assert.True(Waiting.Until(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2)),
+        Assert.True(Ui.Pumped(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2)),
             "The kept cache outlived its folder");
     }
 
@@ -510,7 +509,7 @@ public sealed class ContainerRunsTests
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take web down", TimeSpan.FromMinutes(2));
             window.Close();
         }
@@ -687,7 +686,7 @@ public sealed class ContainerRunsTests
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take web down", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => Docker.NoneLeft(project), "Stop to take web down", TimeSpan.FromMinutes(2));
             window.Close();
         }
 
@@ -716,7 +715,7 @@ public sealed class ContainerRunsTests
         static void Stopped(MainWindow window, string project)
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=web").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project, "com.docker.compose.service=web"),
                 "Stop to take web down", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
         }
@@ -768,7 +767,7 @@ public sealed class ContainerRunsTests
                     Assert.Contains("web runs as you", window.Status, StringComparison.Ordinal);
                 }
                 window.Perform(AppActions.Stop);
-                Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=web").Length == 0,
+                Ui.WaitFor(() => Docker.NoneLeft(project, "com.docker.compose.service=web"),
                     $"Stop to take {each.Name} down", TimeSpan.FromMinutes(2));
                 Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
             }
@@ -776,7 +775,7 @@ public sealed class ContainerRunsTests
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => Docker.NoneLeft(project), "Stop to take every container down", TimeSpan.FromMinutes(2));
             window.Close();
         }
     }
@@ -814,7 +813,7 @@ public sealed class ContainerRunsTests
             Assert.NotEqual(theirs, ours);
             Assert.Equal(ContainerLabels.ProcessValue, Docker.Run("inspect", "-f", $"{{{{index .Config.Labels \"{ContainerLabels.Process}\"}}}}", ours));
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take the run's cache down", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => Docker.NoneLeft(project), "Stop to take the run's cache down", TimeSpan.FromMinutes(2));
         }
         finally
         {
@@ -942,11 +941,21 @@ public sealed class ContainerRunsTests
         return window;
     }
 
-    /// <summary>Each service's container's state, by service.</summary>
+    /// <summary>Each service's container's state, by service, failing the test when docker cannot say.</summary>
     internal static Dictionary<string, string> States(string project) =>
-        Docker.Run("compose", "-p", project, "ps", "--all", "--format", "{{.Service}} {{.State}}")
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(l => l.Split(' ')).ToDictionary(p => p[0], p => p[1], StringComparer.Ordinal);
+        StatesOf(Docker.Run("compose", "-p", project, "ps", "--all", "--format", "{{.Service}} {{.State}}"));
+
+    /// <summary>Each service's container's state as a wait looks at them: null while docker cannot say.</summary>
+    internal static Dictionary<string, string>? StatesNow(string project) =>
+        Docker.Said("compose", "-p", project, "ps", "--all", "--format", "{{.Service}} {{.State}}") is { } said ? StatesOf(said) : null;
+
+    /// <summary>Compose's lines of services and states; a service with two containers for a moment (one made anew beside the
+    /// one it replaces) has both states, joined, which no single state equals.</summary>
+    private static Dictionary<string, string> StatesOf(string said) =>
+        said.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(l => l.Split(' ')).Where(p => p.Length == 2)
+            .GroupBy(p => p[0], StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => string.Join('+', g.Select(p => p[1])), StringComparer.Ordinal);
 
     internal static string Container(string project, string service) =>
         Docker.Run("ps", "-q", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label=com.docker.compose.service={service}");
@@ -964,7 +973,7 @@ public sealed class ContainerRunsTests
     private static string Page(int port)
     {
         string? answer = null;
-        Assert.True(Waiting.Until(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)), $"Nothing answered on port {port}");
+        Assert.True(Ui.Pumped(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)), $"Nothing answered on port {port}");
         return answer!;
     }
 
@@ -975,7 +984,7 @@ public sealed class ContainerRunsTests
         string said = Docker.Ask(["compose", "-p", project, "port", service, "8080"]).Split('\n')[0].Trim();
         string? answer = null;
         if (said.LastIndexOf(':') is int colon and > 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
-            && Waiting.Until(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)))
+            && Ui.Pumped(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)))
         {
             return answer!;
         }

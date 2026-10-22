@@ -277,19 +277,34 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Assert.Equal(written, File.ReadAllText(calc));
         Assert.Equal(program, editor.Document.Snapshot.ToString());
 
-        // Asked again once the server has read the file, it lands where the name is now.
-        DateTime until = DateTime.UtcNow.AddSeconds(60);
-        while (File.ReadAllText(calc) == written && DateTime.UtcNow < until)
+        // Asked again once the server holds the file as written and a write's moment has passed, it lands where the name is now.
+        string held = Passenger.Roslyn.Extension.TextHash.Of(written);
+        string served = Passenger.Core.PathNames.Canonical(calc);
+        Task<IReadOnlyList<Passenger.Roslyn.Extension.TextHeld>>? asking = null;
+        Ui.WaitFor(() =>
         {
-            System.Diagnostics.Stopwatch waiting = System.Diagnostics.Stopwatch.StartNew();
-            Ui.PumpUntil(() => waiting.Elapsed > TimeSpan.FromSeconds(1), "a second to pass");
-            editor.Selections = SelectionSet.Single(editor.Document.Snapshot.ToString().IndexOf("Calc.Twi", StringComparison.Ordinal) + "Calc.Twi".Length);
-            Ui.Run(window, AppActions.Rename);
-            Ui.Settle();
-            window.KeyTextInput("Double");
-            Ui.Press(window, "ENTER");
-            Ui.Settle();
+            if (asking is { IsCompletedSuccessfully: true } done && done.Result is [{ Hash: { } hash }] && hash == held)
+            {
+                return true;
+            }
+            if (asking is null || asking.IsCompleted)
+            {
+                asking = window.CSharpService!.Session!.HeldTextsAsync([served]);
+            }
+            return false;
+        }, "the language server to hold Calc.cs as it was written");
+        TimeSpan unsettled = File.GetLastWriteTimeUtc(calc) + Passenger.App.CSharp.WorkspaceEdits.Catching - DateTime.UtcNow;
+        if (unsettled > TimeSpan.Zero)
+        {
+            Ui.Hold(unsettled + TimeSpan.FromMilliseconds(100), "the moment after Calc.cs was written, in which a rename is refused whatever the server holds, to pass");
         }
+        editor.Selections = SelectionSet.Single(editor.Document.Snapshot.ToString().IndexOf("Calc.Twi", StringComparison.Ordinal) + "Calc.Twi".Length);
+        Ui.Run(window, AppActions.Rename);
+        Ui.Settle();
+        window.KeyTextInput("Double");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.True(File.ReadAllText(calc) != written, $"Asked again once the server held Calc.cs, the rename was not applied: {window.Status}");
         Assert.Equal(written.Replace("Twice", "Double", StringComparison.Ordinal), File.ReadAllText(calc));
         Assert.Contains("Calc.Double(2)", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
         window.Close();

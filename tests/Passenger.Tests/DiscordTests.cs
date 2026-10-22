@@ -418,11 +418,7 @@ public sealed class DiscordTests : IDisposable
         [.. Ui.IdeLog().Split('\n').Where(l => l.Contains("Discord: ", StringComparison.Ordinal) && l.Contains(discord.Base, StringComparison.Ordinal))];
 
     /// <summary>Lets the window run a while, its timers and Passenger's looks for Discord with it.</summary>
-    private static void Wait(TimeSpan time)
-    {
-        Stopwatch waiting = Stopwatch.StartNew();
-        Ui.PumpUntil(() => waiting.Elapsed > time, $"{time.TotalSeconds} s to pass");
-    }
+    private static void Wait(TimeSpan time) => Ui.Hold(time, "the window running a while, its timers and Passenger's looks for Discord with it");
 
     /// <summary>What edits an option, beside its label in the page shown.</summary>
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>

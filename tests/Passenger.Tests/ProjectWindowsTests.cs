@@ -427,7 +427,7 @@ public sealed class ProjectWindowsTests : IDisposable
             Ui.Press(second, "ESCAPE");
 
             // Written whole: both changes in settings.json.
-            Ui.WaitFor(() => File.Exists(file) && Read(file) is { } kept && (double?)kept["editorFontSize"] == 17 && (string?)kept["theme"] == "Light",
+            Ui.WaitFor(() => ReadNow(file) is { } kept && (double?)kept["editorFontSize"] == 17 && (string?)kept["theme"] == "Light",
                 "both changes in settings.json", TimeSpan.FromSeconds(10));
 
             // Another Passenger's change to the file is followed by every window here.
@@ -521,6 +521,20 @@ public sealed class ProjectWindowsTests : IDisposable
     private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
     private static JsonObject Read(string file) => (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
+
+    /// <summary>The file as a wait looks at it: null while it is not there, or not yet whole, or being replaced (Windows
+    /// refuses a reader as the store renames its temporary file over it).</summary>
+    private static JsonObject? ReadNow(string file)
+    {
+        try
+        {
+            return JsonNode.Parse(Ui.Shared(file)) as JsonObject;
+        }
+        catch (Exception unread) when (unread is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
     private static IDisposable TestsTheme() => new ThemeBack(Avalonia.Application.Current!.RequestedThemeVariant);
 

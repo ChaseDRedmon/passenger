@@ -169,7 +169,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         await Call(client, "type", new() { ["text"] = "<Import Project=\"Missing.props\" />" });
         Stopwatch asked = Stopwatch.StartNew();
         JsonElement missing = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = "Sum.csproj" })).EnumerateArray());
-        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(60), $"The project file's diagnostics took {asked.Elapsed}");
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(60).Scaled(), $"The project file's diagnostics took {asked.Elapsed}");
         Assert.Equal(("error", 7), (missing.GetProperty("severity").GetString(), missing.GetProperty("line").GetInt32()));
         Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
         // Its code help is MSBuild's, from the evaluation before the import that is not there broke it.
@@ -911,7 +911,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             JsonElement missing = Assert.Single(diagnostics.GetAwaiter().GetResult().EnumerateArray());
             Assert.Contains("Missing.props", missing.GetProperty("message").GetString(), StringComparison.Ordinal);
             Assert.True(window.IsBuilding, "The build ended before the agent's diagnostics were answered");
-            Assert.True(asked.Elapsed < TimeSpan.FromSeconds(20), $"The project file's diagnostics took {asked.Elapsed.TotalSeconds:F0} s while a build ran");
+            Assert.True(asked.Elapsed < TimeSpan.FromSeconds(20).Scaled(), $"The project file's diagnostics took {asked.Elapsed.TotalSeconds:F0} s while a build ran");
         }
         finally
         {
@@ -1658,7 +1658,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             long began = Stopwatch.GetTimestamp();
             await Call(client, "vcs_status");
             TimeSpan took = Stopwatch.GetElapsedTime(began);
-            Assert.True(took < TimeSpan.FromSeconds(10),
+            Assert.True(took < TimeSpan.FromSeconds(10).Scaled(),
                 $"Git's status took {took.TotalSeconds:0.0} s the second time: the git it ran waited for the login shell's environment again, the profile's job holding up its read");
         }
         finally

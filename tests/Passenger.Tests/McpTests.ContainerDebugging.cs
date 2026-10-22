@@ -32,7 +32,7 @@ public sealed partial class McpTests
             Assert.Equal("paused", stop.GetProperty("state").GetString());
             Assert.Contains("Program.cs:1:", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
             Assert.Equal("Stopped", Text(await Call(client, "stop")));
-            Assert.True(await Waiting.UntilAsync(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2),
+            Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
 
             // A program in a container Passenger did not start: listed by its container, attached to there.
@@ -102,7 +102,7 @@ public sealed partial class McpTests
         finally
         {
             await Call(client, "stop");
-            Assert.True(await Waiting.UntilAsync(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2), test),
+            Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2), test),
                 "stop left the configuration's containers behind");
             foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -122,7 +122,7 @@ public sealed partial class McpTests
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentgone");
         madeFolders.Add(shop);
-        bool Up() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length > 0;
+        bool Up() => Docker.Said("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}") is { Length: > 0 };
         McpClient client = await Start(["--mcp", shop]);
         try
         {

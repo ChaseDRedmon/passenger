@@ -1019,15 +1019,18 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     [AvaloniaFact]
     public void A_web_project_whose_profile_launches_the_browser_opens_its_launch_url_once_it_listens_and_not_before()
     {
-        int port = FreePort();
+        // Each profile's port held from now until its site is about to listen there.
+        using HeldPort browse = new();
+        using HeldPort quiet = new();
         Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
         Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        // A start slow enough to tell opening once it listens from opening once it started.
-        Write("src/Site/Program.cs", "Console.WriteLine(\"Warming up\");\nThread.Sleep(4000);\nWebApplication app = WebApplication.Create(args);\n"
-            + "app.MapGet(\"/orders\", () => \"Orders\");\napp.Run();\n");
+        // Started, it listens only once the test lets it, to tell opening once it listens from opening once it started.
+        string listen = Path.Combine(folder, "listen");
+        Write("src/Site/Program.cs", $"Console.WriteLine(\"Warming up\");\nwhile (!File.Exists(@\"{listen}\"))\n{{\n    Thread.Sleep(20);\n}}\n"
+            + "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/orders\", () => \"Orders\");\napp.Run();\n");
         Write("src/Site/Properties/launchSettings.json", "{\n  \"profiles\": {\n"
-            + $"    \"Browse\": {{ \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"orders\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }},\n"
-            + $"    \"Quiet\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }}\n  }}\n}}\n");
+            + $"    \"Browse\": {{ \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"orders\", \"applicationUrl\": \"http://127.0.0.1:{browse.Port}\" }},\n"
+            + $"    \"Quiet\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{quiet.Port}\" }}\n  }}\n}}\n");
         Restore.Run(Path.Combine(folder, "src", "Site"));
         MainWindow window = Open();
         try
@@ -1035,13 +1038,13 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.True(window.SelectConfiguration("Site: Browse"));
             Ui.Launched(window, window.RunAsync(), "the site to start", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => Output(window).Contains("Warming up", StringComparison.Ordinal), "the site to start", TimeSpan.FromMinutes(2));
-            DateTime warming = DateTime.UtcNow.AddSeconds(2.5);
-            Ui.WaitFor(() => window.Browsed.Count > 0 || DateTime.UtcNow > warming, "the site to warm up");
+            Ui.Hold(TimeSpan.FromSeconds(2), "the site warming up, its port refusing every connection: no browser is to open meanwhile");
             Assert.True(window.Browsed.Count == 0, $"The browser opened {window.Browsed.FirstOrDefault()} before the site listened");
 
+            browse.LetGo(listen);
             Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the site listens", TimeSpan.FromSeconds(60));
             Uri opened = Assert.Single(window.Browsed);
-            Assert.Equal($"http://127.0.0.1:{port}/orders", opened.AbsoluteUri);
+            Assert.Equal($"http://127.0.0.1:{browse.Port}/orders", opened.AbsoluteUri);
             using (System.Net.Http.HttpClient client = new())
             {
                 Assert.Equal("Orders", client.GetStringAsync(opened).GetAwaiter().GetResult());
@@ -1050,11 +1053,12 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
 
             // A profile that does not ask for the browser opens none.
+            File.Delete(listen);
             Assert.True(window.SelectConfiguration("Site: Quiet"));
             Ui.Launched(window, window.RunAsync(), "the quiet site to start", TimeSpan.FromMinutes(2));
+            quiet.LetGo(listen);
             Ui.WaitFor(() => Output(window).Contains("Now listening on:", StringComparison.Ordinal), "the quiet site to listen", TimeSpan.FromMinutes(2));
-            DateTime listening = DateTime.UtcNow.AddSeconds(1.5);
-            Ui.WaitFor(() => DateTime.UtcNow > listening, "the quiet site to run a while");
+            Ui.Hold(TimeSpan.FromSeconds(1.5), "the quiet site running a while, listening: no browser is to open meanwhile");
             Assert.Single(window.Browsed);
         }
         finally
@@ -1063,16 +1067,6 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
             window.Close();
         }
-    }
-
-    /// <summary>A port nothing listens on now, for a site of the test's own.</summary>
-    private static int FreePort()
-    {
-        System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 
     /// <summary>The pointer brought to rest on a character of a console.</summary>

@@ -356,14 +356,7 @@ public sealed class IndentationTests : IDisposable
         editor.Selections = SelectionSet.Single(at);
     }
 
-    private static void Copy(MainWindow window, string text)
-    {
-        Task copied = window.Clipboard!.SetTextAsync(text);
-        while (!copied.IsCompleted)
-        {
-            Ui.Settle();
-        }
-    }
+    private static void Copy(MainWindow window, string text) => Ui.Await(window.Clipboard!.SetTextAsync(text), "the clipboard to take the text");
 
     private static string Text(CodeEditor editor) => editor.Document.Snapshot.ToString();
 

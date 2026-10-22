@@ -1300,8 +1300,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
                     return worst;
                 }
             }
-            Stopwatch idle = Stopwatch.StartNew();
-            Ui.PumpUntil(() => idle.Elapsed > TimeSpan.FromSeconds(1), "a second of the window at rest");
+            Ui.Hold(TimeSpan.FromSeconds(1), "a second of the window at rest, against which the keys' waits while the program writes are held");
             double atRest = Worst();
 
             // When the console's text grew, from the debugger's start to the program's last line.

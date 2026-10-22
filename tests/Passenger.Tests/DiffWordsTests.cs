@@ -184,7 +184,7 @@ public sealed class DiffWordsTests : IDisposable
         Ui.Settle();
         Assert.True(view.Words.Right.Count == 1667, $"Once its work had landed the diff marked {view.Words.Right.Count} words of the 1,667 changed");
         opened.Stop();
-        Assert.True(opened.Elapsed < TimeSpan.FromSeconds(5), $"The diff of 1,667 changes took {opened.Elapsed.TotalMilliseconds:F0} ms to open with its words marked");
+        Assert.True(opened.Elapsed < TimeSpan.FromSeconds(5).Scaled(), $"The diff of 1,667 changes took {opened.Elapsed.TotalMilliseconds:F0} ms to open with its words marked");
         Assert.All(Marked(view.Right.Document.Snapshot.ToString(), view.Words.Right), w => Assert.Equal("Measure", w));
 
         // A rewrite too big to compare word by word is shown by its lines, at once.
@@ -197,7 +197,7 @@ public sealed class DiffWordsTests : IDisposable
         opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
         Ui.Landed(() => opening.IsCompleted, "the rewrite's diff open");
         opened.Stop();
-        Assert.True(opened.Elapsed < TimeSpan.FromSeconds(5), $"The diff of a 20,000-line rewrite took {opened.Elapsed.TotalMilliseconds:F0} ms to open");
+        Assert.True(opened.Elapsed < TimeSpan.FromSeconds(5).Scaled(), $"The diff of a 20,000-line rewrite took {opened.Elapsed.TotalMilliseconds:F0} ms to open");
         Assert.Empty(opening.Result!.View.Words.Right);
         opening.Result.Close();
         window.Close();

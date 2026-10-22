@@ -456,13 +456,16 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
     [AvaloniaFact]
     public void A_launch_profiles_browser_shows_under_open_browser_and_a_copy_with_it_turned_off_opens_none()
     {
-        System.Net.Sockets.TcpListener probe = new(System.Net.IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
+        // The port held until each run's program, waiting at a gate, is let listen there; it listens until let go.
+        using HeldPort held = new();
+        int port = held.Port;
+        string gates = TestFolders.Create("gates-");
+        string listen = Path.Combine(gates, "listen");
+        string done = Path.Combine(gates, "done");
         Write("Hello/Program.cs", "using System.Net;\nusing System.Net.Sockets;\n\n"
+            + $"while (!File.Exists(@\"{listen}\"))\n{{\n    Thread.Sleep(20);\n}}\n"
             + "TcpListener listener = new(IPAddress.Loopback, int.Parse(Environment.GetEnvironmentVariable(\"PORT\")!));\n"
-            + "listener.Start();\nConsole.WriteLine(\"Listening\");\nThread.Sleep(4000);\n");
+            + $"listener.Start();\nConsole.WriteLine(\"Listening\");\nwhile (!File.Exists(@\"{done}\"))\n{{\n    Thread.Sleep(20);\n}}\n");
         Write("Hello/Properties/launchSettings.json", "{ \"profiles\": { \"Serve\": { \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"status\", "
             + $"\"applicationUrl\": \"http://127.0.0.1:{port}\", \"environmentVariables\": {{ \"PORT\": \"{port}\" }} }} }} }}");
         MainWindow window = Keeping();
@@ -482,18 +485,27 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
             Assert.False(window.Configuration!.LaunchBrowser);
 
             Ui.Launched(window, window.RunAsync(), "the copy's run to start", TimeSpan.FromMinutes(2));
+            held.LetGo(listen);
+            Ui.WaitFor(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("Listening", StringComparison.Ordinal), "the copy's program to listen");
+            Ui.Hold(TimeSpan.FromSeconds(1.5), "the copy's program listening: no browser is to open meanwhile");
+            File.WriteAllText(done, string.Empty);
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the copy's run to end");
-            Assert.Contains("Listening", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
             Assert.Empty(window.Browsed);
 
+            File.Delete(done);
+            held.Hold(listen);
             Assert.True(window.SelectConfiguration("Hello: Serve"));
             Ui.Launched(window, window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2));
+            held.LetGo(listen);
             Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the program listens", TimeSpan.FromSeconds(60));
             Assert.Equal([$"http://127.0.0.1:{port}/status"], window.Browsed.Select(u => u.AbsoluteUri));
+            File.WriteAllText(done, string.Empty);
             Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the profile's run to end");
         }
         finally
         {
+            // A program a failure left listening ends; one still waiting to listen ends with the window.
+            File.WriteAllText(done, string.Empty);
             window.Close();
         }
     }

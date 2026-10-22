@@ -78,8 +78,7 @@ public sealed class XamlTimingTests : IClassFixture<XamlTimingTests.LongView>
                 return worst;
             }
         }
-        Stopwatch idle = Stopwatch.StartNew();
-        Ui.PumpUntil(() => idle.Elapsed > TimeSpan.FromSeconds(1), "a second of the window at rest");
+        Ui.Hold(TimeSpan.FromSeconds(1), "a second of the window at rest, against which the keys' waits while loading are held");
         double atRest = Worst();
 
         window.OpenFile(Path.Combine(XamlTests.Repository, "src", "Passenger.App", "Theme", "Shell.axaml"));

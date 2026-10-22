@@ -152,7 +152,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the sessions to end with Stop");
@@ -192,18 +192,18 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
                 "web and api to run under the debugger again");
 
             Act(window, view, project, "api", AppActions.ContainerStop);
-            Ui.WaitFor(() => !api.IsLive && ContainerRunsTests.States(project).GetValueOrDefault("api") == "exited", "api's session to end and its container to stop",
+            Ui.WaitFor(() => !api.IsLive && ContainerRunsTests.StatesNow(project)?.GetValueOrDefault("api") == "exited", "api's session to end and its container to stop",
                 TimeSpan.FromMinutes(2));
             Assert.True(web.IsLive, "Stop of api ended web's session");
 
             Act(window, view, project, "web", AppActions.ContainerRemove);
-            Ui.WaitFor(() => !web.IsLive && !ContainerRunsTests.States(project).ContainsKey("web"), "web's session to end and its container to go", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => !web.IsLive && ContainerRunsTests.StatesNow(project) is { } states && !states.ContainsKey("web"), "web's session to end and its container to go", TimeSpan.FromMinutes(2));
             Assert.Equal("running", ContainerRunsTests.States(project)["cache"]);
 
             // The project's Stop is the run's: nothing of it left, its log no longer followed.
             Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
             Assert.True(window.Perform(AppActions.ContainerStop), $"Stop could not run on {project}: {window.Status}");
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "the project's Stop to take the run down",
+            Ui.WaitFor(() => Docker.NoneLeft(project), "the project's Stop to take the run down",
                 TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => !window.IsRunning, "the run's log to stop being followed");
             Assert.Null(window.Builds.Containers);
@@ -211,7 +211,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         window.Close();
@@ -250,7 +250,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         finally
         {
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+            Ui.WaitFor(() => Docker.NoneLeft(project),
                 "Stop to take every container down", TimeSpan.FromMinutes(2));
         }
         window.Close();

@@ -56,11 +56,11 @@ public sealed partial class McpTests
         Assert.True(built.GetProperty("succeeded").GetBoolean(), $"The app did not build: {built}");
         // A build that succeeded is answered in a few words: MSBuild's lines are for one that did not.
         Assert.False(built.TryGetProperty("outputTail", out _), $"A build that succeeded was answered with MSBuild's output: {built}");
-        // An app never ends by itself: run waits for its UI rather than for the whole of waitSeconds, and says it is up.
+        // An app never ends by itself: run waits for its UI, not the whole of a waitSeconds no start takes, and says it is up.
         long began = Stopwatch.GetTimestamp();
-        JsonElement ran = await Call(client, "run");
+        JsonElement ran = await Call(client, "run", new() { ["waitSeconds"] = 300 });
         Assert.True(ran.GetProperty("stillRunning").GetBoolean(), $"The app ended as it started: {ran}");
-        Assert.True(ran.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && Stopwatch.GetElapsedTime(began) < TimeSpan.FromSeconds(25),
+        Assert.True(ran.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && Stopwatch.GetElapsedTime(began) < TimeSpan.FromSeconds(25).Scaled(),
             $"run waited {Stopwatch.GetElapsedTime(began).TotalSeconds:0} s for an app that never ends, and said: {ran}");
 
         // Its one window, as the app has it: its title, its size in units.
@@ -132,10 +132,10 @@ public sealed partial class McpTests
     public async Task An_agent_debugging_an_avalonia_app_that_clicks_into_a_breakpoint_is_told_at_once_where_it_stopped()
     {
         await using McpClient client = await Start(["--mcp", appFolder]);
-        // An app never stops by itself: debug_start comes back once its UI is up, not after the whole of waitSeconds.
+        // An app never stops by itself: debug_start comes back once its UI is up, not after the whole of a long waitSeconds.
         Stopwatch launching = Stopwatch.StartNew();
-        JsonElement started = await Call(client, "debug_start");
-        Assert.True(started.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && launching.Elapsed < TimeSpan.FromSeconds(50),
+        JsonElement started = await Call(client, "debug_start", new() { ["waitSeconds"] = 300 });
+        Assert.True(started.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && launching.Elapsed < TimeSpan.FromSeconds(50).Scaled(),
             $"debug_start waited {launching.Elapsed.TotalSeconds:0} s for an app that never stops, and said: {started}");
         Assert.Single((await Call(client, "app_windows")).GetProperty("windows").EnumerateArray());
 
@@ -144,7 +144,7 @@ public sealed partial class McpTests
         await Call(client, "breakpoint_set", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
         Stopwatch asked = Stopwatch.StartNew();
         string clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
-        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(8), $"The click that stopped at a breakpoint took {asked.Elapsed} to say so: {clicked}");
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(8).Scaled(), $"The click that stopped at a breakpoint took {asked.Elapsed} to say so: {clicked}");
         Assert.Contains("and that paused the program (breakpoint) at MainWindow.axaml.cs:23:", clicked, StringComparison.Ordinal);
         JsonElement stopped = await Call(client, "debug_state");
         Assert.Equal("paused", stopped.GetProperty("state").GetString());

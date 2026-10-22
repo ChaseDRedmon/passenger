@@ -129,7 +129,7 @@ public sealed partial class McpTests
         {
             Gone(client);
             window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take web down", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => Docker.NoneLeft(project), "Stop to take web down", TimeSpan.FromMinutes(2));
             window.Close();
         }
     }

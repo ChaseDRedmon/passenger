@@ -123,6 +123,26 @@ internal static class Docker
         return result.Output.Trim();
     }
 
+    /// <summary>What docker answers, trimmed, or null while it cannot say (it failed, or took a minute): for a wait's
+    /// condition, which looks again rather than failing the test.</summary>
+    public static string? Said(params string[] arguments)
+    {
+        try
+        {
+            ChildResult result = Ask(arguments, TimeSpan.FromMinutes(1).Scaled());
+            return result.Succeeded ? result.Output.Trim() : null;
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Whether a Compose project has no container left (of those carrying each label given too), as a wait looks:
+    /// false while docker cannot say.</summary>
+    public static bool NoneLeft(string project, params string[] labels) =>
+        Said(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", .. labels.SelectMany(l => (string[])["--filter", $"label={l}"])]) is "";
+
     /// <summary>A folder of the test's own holding a Compose file whose services and network carry the run's label, brought
     /// up and waited for until healthy; its project's name is the test run's and the folder's.</summary>
     public static (string Folder, string Project) ComposeUp(string name, string services)
@@ -304,7 +324,7 @@ public sealed class ContainersTests
         Ui.WaitFor(() => Docker.State(name) == "running" && Row(view, name)?.Container?.IsRunning == true, $"{name} started again");
         string started = Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name);
         Assert.True(window.Perform(AppActions.ContainerRestart), "Restart did not run");
-        Ui.WaitFor(() => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", name) != started, $"{name} restarted");
+        Ui.WaitFor(() => Docker.Said("inspect", "-f", "{{.State.StartedAt}}", name) is { } now && now != started, $"{name} restarted");
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
         Ui.WaitFor(() => Docker.State(name) is null && Row(view, name) is null, $"{name} removed, and gone from the window");
         Assert.Null(window.Asked);
