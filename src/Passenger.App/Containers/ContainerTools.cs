@@ -235,6 +235,11 @@ public static class ContainerTools
     /// <summary>The engine's own processor, docker's name for it (amd64, arm64).</summary>
     public static async Task<string> EngineArchitectureAsync(ContainerEngine engine, CancellationToken cancel)
     {
+        // Podman's own docker has no server apart, nor Arch: the state reads its system from what it has.
+        if ((await engine.StateAsync(cancel: cancel).ConfigureAwait(false)) is { PodmanCli: true, ServerArch: { } arch })
+        {
+            return arch;
+        }
         ChildResult result = await engine.RunAsync(["version", "--format", "{{.Server.Arch}}"], cancel: cancel).ConfigureAwait(false);
         return result.Succeeded ? result.Output.Trim() : throw new ContainerToolsException($"The container engine did not say its processor: {ContainerEngine.Said(result)}");
     }

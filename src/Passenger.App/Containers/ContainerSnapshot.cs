@@ -24,6 +24,26 @@ public sealed record ContainerPort(string HostPort, string Inside, string Protoc
 
     public override string ToString() => $"{HostPort}→{Inside}{(Protocol == "tcp" ? string.Empty : $"/{Protocol}")}";
 
+    /// <summary>The ports a row of <c>docker ps --format json</c> publishes: Docker's words, or Podman's own list of them
+    /// (<c>host_port</c>, <c>container_port</c>, <c>protocol</c>).</summary>
+    public static IReadOnlyList<ContainerPort> Read(JsonElement row)
+    {
+        if (!row.TryGetProperty("Ports", out JsonElement listed) || listed.ValueKind != JsonValueKind.Array)
+        {
+            return Read(ContainerEngine.Text(row, "Ports"));
+        }
+        List<ContainerPort> ports = [];
+        foreach (JsonElement published in listed.EnumerateArray())
+        {
+            if (ContainerEngine.Text(published, "host_port") is { } host and not "0" && ContainerEngine.Text(published, "container_port") is { } inside
+                && new ContainerPort(host, inside, ContainerEngine.Text(published, "protocol") ?? "tcp") is var port && !ports.Contains(port))
+            {
+                ports.Add(port);
+            }
+        }
+        return ports;
+    }
+
     /// <summary>The ports in <c>docker ps</c>'s words ("0.0.0.0:8080->80/tcp, [::]:8080->80/tcp, 443/tcp"): those published,
     /// each once whichever addresses it is on.</summary>
     public static IReadOnlyList<ContainerPort> Read(string? said)
@@ -72,10 +92,32 @@ public sealed record ContainerInfo(string Id, string Name, string Image, string 
         string? health = ContainerEngine.Text(row, "HealthStatus") is { } said && said != "none" ? said
             : status.Contains("(healthy)", StringComparison.Ordinal) ? "healthy"
             : status.Contains("(unhealthy)", StringComparison.Ordinal) ? "unhealthy"
-            : status.Contains("(health: starting)", StringComparison.Ordinal) ? "starting" : null;
-        return new ContainerInfo(ContainerEngine.Text(row, "ID") ?? string.Empty, (ContainerEngine.Text(row, "Names") ?? string.Empty).Split(',')[0],
+            : status.Contains("(health: starting)", StringComparison.Ordinal) || status.Contains("(starting)", StringComparison.Ordinal) ? "starting" : null;
+        return new ContainerInfo(IdOf(row) ?? string.Empty, First(row, "Names") ?? string.Empty,
             ContainerEngine.Text(row, "Image") ?? string.Empty, (ContainerEngine.Text(row, "State") ?? string.Empty).ToLowerInvariant(), status, health,
-            ContainerPort.Read(ContainerEngine.Text(row, "Ports")), ReadLabels(ContainerEngine.Text(row, "Labels")));
+            ContainerPort.Read(row), ReadLabels(row));
+    }
+
+    /// <summary>A row's id: Docker's CLI writes ID, Podman's own Id (an image's, a container's) or id (a network's).</summary>
+    internal static string? IdOf(JsonElement row) => ContainerEngine.Text(row, "ID") ?? ContainerEngine.Text(row, "Id") ?? ContainerEngine.Text(row, "id");
+
+    /// <summary>The first of a row's names: Docker's CLI joins them with commas, Podman's own lists them.</summary>
+    internal static string? First(JsonElement row, string name) =>
+        row.ValueKind == JsonValueKind.Object && row.TryGetProperty(name, out JsonElement names) && names.ValueKind == JsonValueKind.Array
+            ? names.EnumerateArray().Select(n => n.ValueKind == JsonValueKind.String ? n.GetString() : null).FirstOrDefault()
+            : ContainerEngine.Text(row, name)?.Split(',')[0];
+
+    /// <summary>A row's labels: Docker's CLI joins them ("a=1,b=2"), Podman's own gives an object (Labels, or a network's labels).</summary>
+    internal static IReadOnlyDictionary<string, string> ReadLabels(JsonElement row)
+    {
+        foreach (string name in (string[])["Labels", "labels"])
+        {
+            if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty(name, out JsonElement labels) && labels.ValueKind == JsonValueKind.Object)
+            {
+                return labels.EnumerateObject().ToDictionary(l => l.Name, l => l.Value.ToString(), StringComparer.Ordinal);
+            }
+        }
+        return ReadLabels(ContainerEngine.Text(row, "Labels"));
     }
 
     /// <summary>Labels as the CLI's table joins them, "a=1,b=2": a part with no '=' belongs to the value before it (Compose's
@@ -164,6 +206,10 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
         Task<IReadOnlyList<JsonElement>> networks = engine.JsonLinesAsync(["network", "ls", "--format", "json"], cancel);
         await Task.WhenAll(containers, projects, images, volumes, networks);
         List<ContainerInfo> all = [.. (await containers).Select(ContainerInfo.Read).OrderBy(c => c.Name, StringComparer.Ordinal)];
+        if (engine.Known is { IsPodman: true, PodmanCli: false })
+        {
+            all = await HealthAsync(engine, all, cancel);
+        }
         Dictionary<string, string> statuses = (await projects).Where(p => ContainerEngine.Text(p, "Name") is not null)
             .ToDictionary(p => ContainerEngine.Text(p, "Name")!, p => ContainerEngine.Text(p, "Status") ?? string.Empty, StringComparer.Ordinal);
         List<ComposeProject> composed = [];
@@ -177,13 +223,12 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
                 first.Labels.GetValueOrDefault(ComposeLabels.WorkingDir), services));
         }
         return new ContainerSnapshot(composed, [.. all.Where(c => c.Project is null)],
-            [.. (await images).Select(i => new EngineObject("image", ContainerEngine.Text(i, "ID") ?? string.Empty, ImageName(i),
-                $"{ContainerEngine.Text(i, "Size")}, {ContainerEngine.Text(i, "CreatedSince")}", new Dictionary<string, string>()))],
+            [.. (await images).Select(i => new EngineObject("image", ContainerInfo.IdOf(i) ?? string.Empty, ImageName(i), ImageDetail(i), new Dictionary<string, string>()))],
             [.. (await volumes).Select(v => new EngineObject("volume", ContainerEngine.Text(v, "Name") ?? string.Empty, ContainerEngine.Text(v, "Name") ?? string.Empty,
-                ContainerEngine.Text(v, "Driver") ?? string.Empty, ContainerInfo.ReadLabels(ContainerEngine.Text(v, "Labels"))))
+                ContainerEngine.Text(v, "Driver") ?? string.Empty, ContainerInfo.ReadLabels(v)))
                 .OrderBy(v => v.Labels.ContainsKey("com.docker.volume.anonymous")).ThenBy(v => v.Name, StringComparer.Ordinal)],
-            [.. (await networks).Select(n => new EngineObject("network", ContainerEngine.Text(n, "ID") ?? string.Empty, ContainerEngine.Text(n, "Name") ?? string.Empty,
-                ContainerEngine.Text(n, "Driver") ?? string.Empty, ContainerInfo.ReadLabels(ContainerEngine.Text(n, "Labels"))))
+            [.. (await networks).Select(n => new EngineObject("network", ContainerInfo.IdOf(n) ?? string.Empty, ContainerEngine.Text(n, "Name") ?? ContainerEngine.Text(n, "name") ?? string.Empty,
+                ContainerEngine.Text(n, "Driver") ?? ContainerEngine.Text(n, "driver") ?? string.Empty, ContainerInfo.ReadLabels(n)))
                 .OrderBy(n => n.Name, StringComparer.Ordinal)]);
 
         static string Status(IEnumerable<ContainerInfo> containers) =>
@@ -202,10 +247,50 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
         }
     }
 
+    /// <summary>The running containers' health, which Podman's Docker API leaves out of its list's status words: asked of
+    /// inspect, all at once (one removed meanwhile leaves the others answered).</summary>
+    private static async Task<List<ContainerInfo>> HealthAsync(ContainerEngine engine, List<ContainerInfo> all, CancellationToken cancel)
+    {
+        string[] running = [.. all.Where(c => c.IsRunning && c.Health is null).Select(c => c.Id)];
+        if (running.Length == 0)
+        {
+            return all;
+        }
+        Core.ChildResult said = await engine.RunAsync(["inspect", "--type", "container", "--format", "{{.Id}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", .. running],
+            cancel: cancel);
+        Dictionary<string, string> health = new(StringComparer.Ordinal);
+        foreach (string line in said.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (line.Split(' ', 2) is [{ } id, { Length: > 0 } status])
+            {
+                health[id] = status;
+            }
+        }
+        return [.. all.Select(c => health.FirstOrDefault(h => c.Id.Length > 0 && h.Key.StartsWith(c.Id, StringComparison.Ordinal)).Value is { } status ? c with { Health = status } : c)];
+    }
+
     private static string ImageName(JsonElement image)
     {
+        // Podman's own command names an image in full ("docker.io/library/busybox:1.37"), with no repository and tag apart.
+        if (ContainerEngine.Text(image, "Repository") is null && ContainerInfo.First(image, "Names") is { } named)
+        {
+            return named;
+        }
         string repository = ContainerEngine.Text(image, "Repository") ?? "<none>";
         string tag = ContainerEngine.Text(image, "Tag") ?? "<none>";
-        return repository == "<none>" ? ContainerEngine.Text(image, "ID") ?? repository : tag == "<none>" ? repository : $"{repository}:{tag}";
+        return repository == "<none>" ? ContainerInfo.IdOf(image) ?? repository : tag == "<none>" ? repository : $"{repository}:{tag}";
+    }
+
+    /// <summary>An image's size and age as Docker's CLI words them; Podman's own gives the size in bytes and no age.</summary>
+    private static string ImageDetail(JsonElement image)
+    {
+        string? size = ContainerEngine.Text(image, "Size");
+        if (image.TryGetProperty("Size", out JsonElement bytes) && bytes.ValueKind == JsonValueKind.Number && bytes.TryGetInt64(out long count))
+        {
+            size = count >= 1_000_000_000 ? string.Create(CultureInfo.InvariantCulture, $"{count / 1e9:0.##}GB")
+                : count >= 1_000_000 ? string.Create(CultureInfo.InvariantCulture, $"{count / 1e6:0.##}MB")
+                : string.Create(CultureInfo.InvariantCulture, $"{count / 1e3:0.##}kB");
+        }
+        return ContainerEngine.Text(image, "CreatedSince") is { } since ? $"{size}, {since}" : size ?? string.Empty;
     }
 }

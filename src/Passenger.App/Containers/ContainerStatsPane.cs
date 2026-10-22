@@ -13,9 +13,10 @@ namespace Passenger.App.Containers;
 /// in the engine's own words.</summary>
 public sealed record ContainerStatsSample(string Name, double Cpu, double MemoryPercent, string Memory, string Network, string Disk, string Processes)
 {
-    internal static ContainerStatsSample? Read(JsonElement row)
+    /// <param name="names">The containers' names by the ids they were asked by (Docker's Container is the id asked).</param>
+    internal static ContainerStatsSample? Read(JsonElement row, IReadOnlyDictionary<string, string>? names = null)
     {
-        string? name = ContainerEngine.Text(row, "Name");
+        string? name = ContainerEngine.Text(row, "Container") is { } asked && names?.GetValueOrDefault(asked) is { } known ? known : ContainerEngine.Text(row, "Name");
         if (name is null)
         {
             return null;
@@ -35,6 +36,10 @@ public sealed record ContainerStatsSample(string Name, double Cpu, double Memory
 /// CLI said on its standard error, which is read as it comes so a CLI that says much never stalls the numbers.</summary>
 public sealed class ContainerStatsPane : DockPanel
 {
+    /// <summary>A reading of Podman's own stats as one line of Docker's JSON.</summary>
+    private const string PodmanLine =
+        """{"Name":"{{.Name}}","CPUPerc":"{{.CPUPerc}}","MemPerc":"{{.MemPerc}}","MemUsage":"{{.MemUsage}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDS}}"}""";
+
     /// <summary>How many readings the lines keep: about two minutes of the engine's one a second or so.</summary>
     private const int Kept = 120;
 
@@ -86,10 +91,14 @@ public sealed class ContainerStatsPane : DockPanel
         {
             return;
         }
+        // Each reading named by the container it was asked of: Docker's CLI on Podman's socket cuts a name's first letter.
+        Dictionary<string, string> names = row!.Containers.Where(c => c.IsRunning).ToDictionary(c => c.Id, c => c.Name, StringComparer.Ordinal);
         Process process;
         try
         {
-            ProcessStartInfo start = engine().Command(["stats", "--format", "json", .. running]);
+            // Podman's own stats writes its JSON over several lines, under its own names: a line of Docker's names asked of it.
+            string format = engine().Known is { PodmanCli: true } ? PodmanLine : "json";
+            ProcessStartInfo start = engine().Command(["stats", "--format", format, .. running]);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
             process = ChildProcesses.Start(start);
@@ -108,7 +117,7 @@ public sealed class ContainerStatsPane : DockPanel
                 Task<string?> errors = LastSaidAsync(process.StandardError);
                 while (await process.StandardOutput.ReadLineAsync() is { } line)
                 {
-                    ContainerStatsSample[] read = [.. ContainerEngine.JsonLines(line).Select(ContainerStatsSample.Read).OfType<ContainerStatsSample>()];
+                    ContainerStatsSample[] read = [.. ContainerEngine.JsonLines(line).Select(r => ContainerStatsSample.Read(r, names)).OfType<ContainerStatsSample>()];
                     if (read.Length > 0)
                     {
                         UiThread.Post(() => Take(process, read));
