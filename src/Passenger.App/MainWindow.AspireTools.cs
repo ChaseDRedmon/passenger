@@ -124,7 +124,7 @@ public partial class MainWindow
         string? resourceName = null)
     {
         using CancellationTokenSource waiting = CancellationTokenSource.CreateLinkedTokenSource(cancel, current.Aspire.ClosingToken, app.Lifetime.Token);
-        waiting.CancelAfter(TimeSpan.FromSeconds(60));
+        waiting.CancelAfter(Waits.Of(TimeSpan.FromSeconds(60)));
         TaskCompletionSource<AspireResourceRun> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
         current.Aspire.Changed += CheckStarted;
         try

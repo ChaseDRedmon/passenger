@@ -79,7 +79,7 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException("The selected AppHost is running but does not expose that resource; workspace lists targets");
         }
-        DateTime until = DateTime.UtcNow.AddSeconds(60);
+        DateTime until = DateTime.UtcNow + Waits.Of(TimeSpan.FromSeconds(60));
         do
         {
             selected = await window.ResolveOwnedAspireResourceAsync(resource, chosen, cancel, allowMissing: true);
