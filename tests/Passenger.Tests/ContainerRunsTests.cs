@@ -416,26 +416,6 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         }
     }
 
-    /// <summary>The stand-in for dotnet dev-certs: it notes what it was asked, answers the check with the exit code the test
-    /// put in "check" (naming the certificate in "thumbprint" as found, when there is one; first taking two minutes while
-    /// "slow" is there), trusts nothing, and exports a file that is no certificate with the mode its umask gives (or fails,
-    /// as a locked keychain does, while "fail" is there), noting in "folder" the mode of the folder it exports into as it is
-    /// called. Its first word is the folder it keeps those in.</summary>
-    internal const string DevCerts = """
-        dir=$1; shift
-        echo "$*" >> "$dir/asked"
-        case " $* " in
-          *" --check "*) if [ -f "$dir/slow" ]; then sleep 120; fi
-                         if [ -f "$dir/thumbprint" ]; then echo "A valid certificate was found: $(cat "$dir/thumbprint") - CN=localhost"; fi
-                         exit "$(cat "$dir/check")" ;;
-          *" -ep "*) if [ -f "$dir/fail" ]; then echo "The keychain is locked" >&2; exit 3; fi
-                     while [ "$1" != "-ep" ]; do shift; done; ls -ld "$(dirname "$2")" | cut -c1-10 > "$dir/folder"
-                     printf 'stand-in' > "$2"; exit 0 ;;
-          *" --trust "*) exit 0 ;;
-        esac
-        exit 1
-        """;
-
     /// <summary>A run whose service serves HTTPS with no trusted development certificate asks first, in a window that lets no
     /// agent in too (--no-mcp): Run over HTTP serves it over HTTP on its port, with no certificate made or trusted; a
     /// certificate whose export fails is said in the status bar, a click away from what dev-certs said, the service over HTTP;
@@ -466,10 +446,10 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
             """);
         File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
-        MainWindow window = Open(folder, (words, at) => ChildProcesses.Command("/bin/sh", ["-c", DevCerts, "dev-certs", standIn, .. words], at), agentsAllowed: false);
+        MainWindow window = Open(folder, DevCerts.In(standIn), agentsAllowed: false);
         RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
         window.SetConfigurations([web], web.Name);
-        string Asked() => File.Exists(Path.Combine(standIn, "asked")) ? File.ReadAllText(Path.Combine(standIn, "asked")) : string.Empty;
+        string Asked() => DevCerts.Asked(standIn);
         bool Exported() => Asked().Split('\n').Any(l => l.StartsWith("dev-certs https -ep ", StringComparison.Ordinal));
         string Env() => Docker.Run("inspect", "-f", "{{json .Config.Env}}", Container(project, "web"));
         string Mounts() => Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));

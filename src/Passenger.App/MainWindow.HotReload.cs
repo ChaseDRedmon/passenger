@@ -227,7 +227,7 @@ public partial class MainWindow
         }
         if (containers.Length > 0)
         {
-            restarted &= await buildRun.RestartContainerServicesAsync(outcome, containers);
+            restarted &= await buildRun.RestartServicesForEditAsync(outcome, containers);
         }
         return restarted;
     }
@@ -248,7 +248,7 @@ public partial class MainWindow
         if (tab.RestartFor is null && tab.Group is not null && debugged.Attached)
         {
             bool restarted = (!ask || settings.RestartOnRudeEdit)
-                && await buildRun.RestartContainerServicesAsync(outcome, outcome.Restart.Count > 0 ? outcome.Restart : [tab.Name]);
+                && await buildRun.RestartServicesForEditAsync(outcome, outcome.Restart.Count > 0 ? outcome.Restart : [tab.Name]);
             return restarted && session == next && !next.IsEnded;
         }
         if (debugged.Attached)

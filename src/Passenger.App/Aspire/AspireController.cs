@@ -140,8 +140,31 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     public bool IsAspire(RunConfiguration configuration) => configuration.Aspire
         || workspace.Projects.Any(project => project.IsAspireHost && PathNames.Same(project.Path, configuration.Project));
 
+    /// <summary>The AppHost's own addresses, as its launch profile gives them, that its dashboard, telemetry and resource
+    /// service serve on, which over HTTP serve HTTP.</summary>
+    private static readonly string[] AppHostAddresses = ["ASPNETCORE_URLS", "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL", "ASPIRE_DASHBOARD_OTLP_HTTP_ENDPOINT_URL",
+        "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL", "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL", "DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL", "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL"];
+
+    /// <summary>The AppHosts of an Aspire configuration (it and those it links) that serve HTTPS on this machine, by name, as
+    /// their launch profiles say: what the development certificate is checked for before any of them starts. Throws a
+    /// <see cref="LaunchException"/> for a single-file AppHost's profile that does not read.</summary>
+    public IReadOnlyList<string> ServingHttps(RunConfiguration configuration) =>
+        [.. new[] { configuration }.Concat(configuration.LinkedAppHosts
+            .Select(path => workspace.Configurations.All.FirstOrDefault(candidate => candidate.Aspire && PathNames.Same(candidate.Project, path)))
+            .OfType<RunConfiguration>())
+            .Where(candidate => (Path.GetExtension(candidate.Project).Equals(".cs", StringComparison.OrdinalIgnoreCase)
+                ? ReadFileProfile(candidate, Path.GetDirectoryName(candidate.Project)!) : candidate).Environment
+                .Where(variable => AppHostAddresses.Contains(variable.Key))
+                .SelectMany(variable => variable.Value.Split(';'))
+                .Any(url => Uri.TryCreate(url.Trim(), UriKind.Absolute, out Uri? uri) && uri.Scheme == "https"
+                    && (uri.IsLoopback || uri.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))))
+            .Select(candidate => Path.GetFileNameWithoutExtension(candidate.Project))];
+
+    /// <summary>Starts an Aspire configuration's AppHosts, each built first as it says, and once each is connected to answers
+    /// null, else why not. <paramref name="https"/> is how its HTTPS is served, as the start worked out before: over HTTP, the
+    /// AppHosts' own addresses and the services they start serve HTTP for this run.</summary>
     public async Task<string?> StartAsync(RunConfiguration configuration, AspireRunMode mode,
-        Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation = default)
+        Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation = default, HttpsChoice? https = null)
     {
         UiThread.Check();
         ObjectDisposedException.ThrowIf(disposed, this);
@@ -181,9 +204,10 @@ public sealed partial class AspireController(ProjectSession workspace, string st
                     .Select(chosen => (chosen.Project, chosen.LaunchService)).ToArray();
             }
             (string AppHost, string Name)? profileTarget = candidates.Length > 0 ? candidates[0] : null;
+            https ??= HttpsChoice.None;
             foreach (RunConfiguration chosen in configurations)
             {
-                AspireAppRun app = await StartAppAsync(chosen, mode, group, build, starting.Token, profileTarget);
+                AspireAppRun app = await StartAppAsync(chosen, mode, group, build, starting.Token, profileTarget, https, said: started.Count == 0 ? https.Said : []);
                 started.Add(app);
             }
             if (mode == AspireRunMode.Profile)
@@ -223,7 +247,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     }
 
     private async Task<AspireAppRun> StartAppAsync(RunConfiguration configuration, AspireRunMode mode, string group,
-        Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation, (string AppHost, string Name)? profileTarget)
+        Func<BuildStep, Task<BuildOutcome>> build, CancellationToken cancellation, (string AppHost, string Name)? profileTarget, HttpsChoice https,
+        IReadOnlyList<string> said)
     {
         LaunchPlan plan = await ResolveAppHostAsync(configuration, cancellation);
         if (plan.Build is { } step && await build(step) is { Succeeded: false } failed)
@@ -239,7 +264,15 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         {
             throw new LaunchException(why);
         }
-        AspireAppRun app = new(configuration, mode, group) { ProfileTarget = profileTarget };
+        AspireAppRun app = new(configuration, mode, group) { ProfileTarget = profileTarget, OverHttp = https.OverHttp is not null };
+        if (https.OverHttp is { } note)
+        {
+            app.Notes.Add(note);
+        }
+        foreach (string line in said)
+        {
+            app.Console.Append($"{line}\n", error: true);
+        }
         LastAppConsole = app.Console;
         apps.Add(app);
         try
@@ -248,6 +281,22 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             app.Lifetime.Token.ThrowIfCancellationRequested();
             cancellation.ThrowIfCancellationRequested();
             Dictionary<string, string> environment = new(plan.Environment, StringComparer.Ordinal);
+            if (app.OverHttp)
+            {
+                // Its dashboard, telemetry and resource service serve HTTP for this run, which Aspire takes once told it may.
+                foreach (string address in AppHostAddresses)
+                {
+                    if (environment.GetValueOrDefault(address) is { } urls && urls.Contains("https:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        environment[address] = urls.Replace("https:", "http:", StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+                foreach ((string name, string value) in DevelopmentCertificate.OverHttp(environment))
+                {
+                    environment[name] = value;
+                }
+                environment["ASPIRE_ALLOW_UNSECURED_TRANSPORT"] = "true";
+            }
             foreach ((string name, string value) in execution.Environment)
             {
                 environment[name] = value;
@@ -593,6 +642,14 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         foreach (AspireEnvironmentVariable variable in request.Environment)
         {
             environment[variable.Name] = variable.Value;
+        }
+        if (app.OverHttp)
+        {
+            // No certificate for this run: a service told to serve HTTPS serves HTTP where it would have, as its AppHost does.
+            foreach ((string name, string value) in DevelopmentCertificate.OverHttp(environment))
+            {
+                environment[name] = value;
+            }
         }
         if (app.Mode == AspireRunMode.HotReload)
         {
@@ -1053,6 +1110,14 @@ public sealed class AspireAppRun
     public AspireRunMode Mode { get; }
     public string Group { get; }
     public bool IsTest { get; internal init; }
+
+    /// <summary>Whether it and the services it starts serve HTTP for this run where they would serve HTTPS, there being no
+    /// trusted development certificate to serve it with (<see cref="HttpsChoice"/>).</summary>
+    public bool OverHttp { get; internal init; }
+
+    /// <summary>What the run said of itself as it started (its HTTPS served over HTTP, and why), which an agent's answer
+    /// carries too, as a container run's notes are.</summary>
+    public List<string> Notes { get; } = [];
     public OutputView Console { get; } = new();
     public ProcessRunner Runner { get; }
     public int? ProcessId { get; internal set; }

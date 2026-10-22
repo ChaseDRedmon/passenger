@@ -39,8 +39,9 @@ public sealed record BuildRunParts(
     /// <summary>Where the window's container tools come from, which Debug of a container configuration puts in each service.</summary>
     public Func<Containers.ContainerToolsSource>? Tools { get; init; }
 
-    /// <summary>The dotnet <c>dev-certs</c> runs through for a container run's HTTPS services: the machine's, or a test's stand-in.</summary>
-    public Containers.DotnetWords? DevCertificates { get; init; }
+    /// <summary>The dotnet <c>dev-certs</c> runs through for a run that serves HTTPS (containers' or Aspire's): the machine's,
+    /// or a test's stand-in.</summary>
+    public DotnetWords? DevCertificates { get; init; }
 
     /// <summary>Asks the person whether to make and trust the development certificate (true) or run over HTTP (false), given
     /// the configuration, the services that serve HTTPS and whether there is none at all; the question closed unanswered
@@ -720,15 +721,23 @@ public sealed partial class BuildRunController
                 {
                     return Said(StoppedStarting(chosen.Name));
                 }
+                // Once, before any AppHost starts, as a container run's certificate is checked before its services come up.
+                HttpsChoice https = await CertificateAsync(chosen.Name, session.Aspire.ServingHttps(configuration), Path.GetDirectoryName(configuration.Project)!,
+                    ContainerPlans.StateOf(parts.StateFolder(), session.Folder ?? Path.GetDirectoryName(configuration.Project)!), export: false, work);
+                if (session.IsEnded || work.IsStopped)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
                 parts.Dock.Show(ToolWindowIds.Aspire);
-                string? problem = await session.Aspire.StartAsync(configuration, mode, BuildBeforeLaunchAsync, work.Stopping);
+                string? problem = await session.Aspire.StartAsync(configuration, mode, BuildBeforeLaunchAsync, work.Stopping, https);
                 if (problem is not null)
                 {
                     return Said(problem);
                 }
                 AspireAppRun[] running = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
                 aspireEnd = Ended(running);
-                parts.Say($"{mode switch { AspireRunMode.Debug => "Debugging", AspireRunMode.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}", StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
+                parts.Say($"{mode switch { AspireRunMode.Debug => "Debugging", AspireRunMode.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}"
+                    + (https.OverHttp is { } overHttp ? $" ({overHttp})" : string.Empty), StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
                 RunningChanged?.Invoke(this, EventArgs.Empty);
                 return null;
             }

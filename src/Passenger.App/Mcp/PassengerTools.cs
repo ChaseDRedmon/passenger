@@ -651,6 +651,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string status = code is int exit ? BuildRunController.RunEnded(name, exit)
             : app is { State: LiveTree.LiveAppState.Connected } ? $"Running {name}, its UI up: app_windows, app_screenshot and app_click look at it and use it"
             : $"Running {name}";
+        // What an Aspire run said of itself as it started (its HTTPS over HTTP), as a container run's notes are said.
+        if (Session.Configurations.Chosen is { } chosen && Session.Aspire.IsAspire(chosen) && Session.Aspire.FindApp(chosen.Project) is { } aspire)
+        {
+            status += string.Concat(aspire.Notes.Select(n => $"\nNote: {n}"));
+        }
         return new RunResult(code is null, code, status, output);
     });
 

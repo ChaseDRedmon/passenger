@@ -2,12 +2,12 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace Passenger.App.Containers;
+namespace Passenger.App.Run;
 
-/// <summary>The question a container run asks when services of it serve HTTPS and this machine's ASP.NET Core development
-/// certificate is missing or not trusted: Create and Trust (the default), which has <c>dotnet dev-certs https --trust</c>
-/// make and trust one (the system may ask too), or Run over HTTP, this run's services serving HTTP where they would have
-/// served HTTPS. Escape and closing answer Run over HTTP.</summary>
+/// <summary>The question a run asks when what it starts serves HTTPS (a container run's services, an Aspire AppHost) and
+/// this machine's ASP.NET Core development certificate is missing or not trusted: Create and Trust (the default), which has
+/// <c>dotnet dev-certs https --trust</c> make and trust one (the system may ask too), or Run over HTTP, this run serving
+/// HTTP where it would have served HTTPS. Escape and closing answer Run over HTTP.</summary>
 public sealed class CertificateQuestionDialog : Window
 {
     public const string CreateAndTrust = "Create and Trust";
@@ -42,7 +42,7 @@ public sealed class CertificateQuestionDialog : Window
                 new TextBlock
                 {
                     Text = "Create and Trust has dotnet dev-certs make the certificate and trust it, which the system may ask you to allow. "
-                        + "Run over HTTP serves these services over HTTP on the same ports for this run.",
+                        + "Run over HTTP serves HTTP on the same ports for this run, where HTTPS would have been served.",
                     TextWrapping = TextWrapping.Wrap,
                 },
             },

@@ -8,6 +8,7 @@ using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Aspire;
 using Passenger.App.Aspire.Protocol;
+using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Text;
 
@@ -55,6 +56,83 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
 
         static bool Found(MainWindow window, string file) => window.Configurations.Any(c => c.Aspire && PathNames.Same(c.Project, file));
+    }
+
+    /// <summary>An AppHost whose launch profile serves HTTPS, with no trusted development certificate, has the person asked
+    /// once before it starts, as a container run does (dev-certs is <see cref="DevCerts"/>' stand-in, which trusts nothing on
+    /// this machine): Stop closes the question and starts nothing; Run over HTTP has it serve HTTP where it would have served
+    /// HTTPS, unsecured transport allowed, the status bar saying why; and Create and Trust has dev-certs trust it, the AppHost
+    /// serving HTTPS as its profile says.</summary>
+    [AvaloniaFact]
+    public void An_AppHost_that_serves_HTTPS_with_no_trusted_certificate_asks_once_before_it_starts_to_run_over_HTTP_or_trust_it()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in dev-certs is a shell script");
+        project.Reset();
+        string standIn = TestFolders.Create("devcerts-");
+        File.WriteAllText(Path.Combine(standIn, "check"), "7");
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        const string Https = "https://localhost:7311";
+        project.Serve(backend, Https);
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false, DevCertificates = DevCerts.In(standIn) };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+
+            // Stopped as it asks: the question closes, and nothing has started.
+            Task<string?> running = window.RunAsync();
+            CertificateQuestionDialog asked = Question(window, running);
+            Assert.Equal("The HTTPS development certificate is not trusted", asked.Title);
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Assert.Equal($"{StandInAppHost.Configuration} was stopped as it started", Ui.Await(running, "the start to end once stopped"));
+            Ui.WaitFor(() => window.CertificateQuestion is null && !asked.IsVisible, "Stop to close the question");
+            Assert.Empty(window.AspireRuntime.Apps);
+            Assert.False(File.Exists(project.KeyFile), "The AppHost started though its start was stopped as it asked");
+
+            // Run over HTTP: its dashboard serves HTTP where it would have served HTTPS, allowed so, the status bar saying why.
+            File.Delete(Path.Combine(standIn, "asked"));
+            running = window.RunAsync();
+            asked = Question(window, running);
+            Ui.Click(asked.HttpButton);
+            Ui.Launched(window, running, "the AppHost to start over HTTP");
+            Assert.Equal(["http://localhost:7311", "true"], Told());
+            Assert.Contains("StandIn.AppHost over HTTP for this run: the development certificate is not trusted", window.Status, StringComparison.Ordinal);
+            Assert.Equal("dev-certs https --check --trust\n", DevCerts.Asked(standIn));
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Count == 0 && !window.IsRunning, "Stop to end the AppHost");
+            File.Delete(project.KeyFile);
+
+            // Missing: Create and Trust has dev-certs trust it, and it serves HTTPS as its profile says.
+            File.WriteAllText(Path.Combine(standIn, "check"), "6");
+            File.Delete(Path.Combine(standIn, "asked"));
+            running = window.RunAsync();
+            asked = Question(window, running);
+            Assert.Equal("No HTTPS development certificate", asked.Title);
+            Ui.Click(asked.CreateButton);
+            Ui.Launched(window, running, "the AppHost to start over HTTPS");
+            string[] told = Told();
+            Assert.True(told[0].StartsWith(Https + ";", StringComparison.Ordinal) && told[1].Length == 0, $"The AppHost was told {string.Join(" and ", told)}");
+            Assert.Equal("dev-certs https --check --trust\ndev-certs https --trust\n", DevCerts.Asked(standIn));
+            Assert.DoesNotContain("over HTTP", window.Status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        string[] Told() => File.ReadAllText(project.UrlsFile).Split('\n');
+    }
+
+    /// <summary>The question a start asked of its certificate, held to the dialogs' rules.</summary>
+    internal static CertificateQuestionDialog Question(MainWindow window, Task<string?> running)
+    {
+        Ui.PumpUntil(() => window.CertificateQuestion is not null || running.IsCompleted, "the start to ask about the certificate", TimeSpan.FromMinutes(2));
+        Assert.True(window.CertificateQuestion is not null, $"The start asked nothing of its certificate: {(running.IsCompleted ? running.Result : null)}");
+        return DialogButtonsTests.Check(window.CertificateQuestion!);
     }
 
     [AvaloniaFact]
@@ -582,6 +660,7 @@ public sealed class StandInAppHost : SharedProject
             using System.Threading;
 
             string keyFile = Environment.GetEnvironmentVariable("PASSENGER_STAND_IN_KEY")!;
+            File.WriteAllText(keyFile + ".urls", $"{Environment.GetEnvironmentVariable("ASPNETCORE_URLS")}\n{Environment.GetEnvironmentVariable("ASPIRE_ALLOW_UNSECURED_TRANSPORT")}");
             File.WriteAllText(keyFile + ".part", Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_RESOURCESERVICE_APIKEY"));
             File.Move(keyFile + ".part", keyFile, overwrite: true);
             Console.WriteLine("The stand-in AppHost is up");
@@ -599,16 +678,28 @@ public sealed class StandInAppHost : SharedProject
 
     public string KeyFile => PathOf("resource-service.key");
 
-    /// <summary>The AppHost's launch profile, naming the stand-in resource service's address, as an AppHost's names its own.</summary>
-    internal void Serve(AspireInteractionHost backend) => Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint));
+    /// <summary>Where the stand-in AppHost writes, as it starts, the addresses it was told to serve on (ASPNETCORE_URLS) and
+    /// whether it may serve them unsecured (ASPIRE_ALLOW_UNSECURED_TRANSPORT), a line each, before its key.</summary>
+    public string UrlsFile => KeyFile + ".urls";
 
-    private string Profile(Uri? resourceService)
+    /// <summary>The AppHost's launch profile, naming the stand-in resource service's address, as an AppHost's names its own;
+    /// with <paramref name="https"/>, its dashboard served there as an https profile serves it, with no unsecured transport.</summary>
+    internal void Serve(AspireInteractionHost backend, string? https = null) => Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, https));
+
+    private string Profile(Uri? resourceService, string? https = null)
     {
         Dictionary<string, string> environment = new()
         {
-            ["ASPIRE_ALLOW_UNSECURED_TRANSPORT"] = "true",
             ["PASSENGER_STAND_IN_KEY"] = KeyFile,
         };
+        if (https is null)
+        {
+            environment["ASPIRE_ALLOW_UNSECURED_TRANSPORT"] = "true";
+        }
+        else
+        {
+            environment["ASPNETCORE_URLS"] = https;
+        }
         if (resourceService is not null)
         {
             environment["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"] = resourceService.AbsoluteUri;
