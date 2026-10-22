@@ -267,7 +267,7 @@ public sealed class ProblemsTests : IDisposable
     }
 
     /// <summary>A click on a console line's link to a file, at its first character, as a person clicks it.</summary>
-    private static void ClickLink(MainWindow window, OutputView console, string line)
+    internal static void ClickLink(MainWindow window, OutputView console, string line)
     {
         Passenger.Editor.CodeEditor editor = console.Editor;
         Passenger.App.ToolWindows.FoundLink link = console.Links.In(line).Single(l => l.Target is FileLink);

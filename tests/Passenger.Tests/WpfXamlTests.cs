@@ -215,6 +215,8 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         // A button given two children: MarkupCompile's to find, not the live check's.
         PlaceAfter(editor, "<StackPanel Margin=\"12\">");
         window.KeyTextInput("\n<Button><TextBlock Text=\"a\" /><TextBlock Text=\"b\" /></Button>");
+        // MarkupCompile counts lines as an XML reader does, ending one at this lone '\r' the editor reads inside its line.
+        Replace(editor, "Title=\"Gallery\" Height", "Title=\"Gallery\"\r Height");
         Ui.Settle();
         Assert.Empty(document.Markers);
         Ui.Run(window, AppActions.Build);
@@ -223,6 +225,7 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Assert.Equal(PathNames.Canonical(app.PathOf("MainWindow.xaml")), built.Path);
         int line = editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("<Button><TextBlock", StringComparison.Ordinal));
         Assert.Equal(line, built.Position.Line);
+        Assert.Contains($"Line {line + 1} Position ", built.Message, StringComparison.Ordinal);
         Marker marked = Assert.Single(document.Markers);
         Assert.Equal(MarkerKind.Error, marked.Kind);
         Assert.Equal("MC3089: The object 'Button' already has a child and cannot add 'TextBlock'. 'Button' can accept only one child.", marked.Message);

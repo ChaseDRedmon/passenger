@@ -686,6 +686,43 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.Close();
     }
 
+    /// <summary>Avalonia's XAML compiler counts lines as an XML reader does, ending one at the lone '\r' in the window's tag,
+    /// which the editor reads inside its line, so below it the compiler's line runs one ahead of the editor's: its error is
+    /// listed, marked, said in its message and gone to from the Build window's link at the editor's line, and an agent is
+    /// told that line.</summary>
+    [AvaloniaFact]
+    public void Below_a_lone_carriage_return_the_xaml_compilers_error_is_listed_marked_and_gone_to_at_the_editors_line()
+    {
+        string xaml = app.Write("MainWindow.axaml", Gallery.Window
+            .Replace("d:DesignWidth=\"800\" d:DesignHeight", "d:DesignWidth=\"800\"\r d:DesignHeight", StringComparison.Ordinal)
+            .Replace("<TextBlock Name=\"Title\"", "<TextBlock Name=\"Title\" Width=\"wide\"", StringComparison.Ordinal));
+        MainWindow window = app.Open(xaml);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        string text = editor.Document.Snapshot.ToString();
+        TextPosition width = editor.Document.Snapshot.GetPosition(text.IndexOf("Width=\"wide\"", StringComparison.Ordinal));
+        Ui.Run(window, AppActions.Build);
+        Ui.Settle();
+        Problem built = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "AVLN1000");
+        Assert.True(built.Position == width, $"The XAML compiler's error is listed at {built.Where}, not MainWindow.axaml:{width.Line + 1}:{width.Column + 1}");
+        Assert.Contains($"Line {width.Line + 1}, position {width.Column + 1}", built.Message, StringComparison.Ordinal);
+        Assert.Equal(MarkerKind.Error, MarkerOn(editor, document, "Width").Kind);
+
+        // The compiler's message in the Build window names its own line, one on; its link goes to the editor's.
+        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Build;
+        console.Flush();
+        string message = console.Document.Snapshot.ToString().Split('\n').First(l => l.Contains("AVLN1000", StringComparison.Ordinal));
+        Assert.True(message.Contains($"MainWindow.axaml({width.Line + 2},{width.Column + 1}", StringComparison.Ordinal), $"The Build window does not name the compiler's line: {message}");
+        editor.GoTo(new TextPosition(0, 0));
+        ProblemsTests.ClickLink(window, console, message);
+        Assert.Equal(PathNames.Canonical(xaml), window.EditorArea.Active?.Path);
+        Assert.True(editor.CaretPosition == width, $"The Build window's link went to {editor.CaretPosition.Line + 1}:{editor.CaretPosition.Column + 1}, not {width.Line + 1}:{width.Column + 1}");
+
+        Passenger.App.Mcp.ProblemsInfo told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Problems(), "the problems an agent asks for");
+        Assert.Equal((width.Line + 1, width.Column + 1), told.Build.Where(f => f.Path == "MainWindow.axaml").Select(f => (f.Line, f.Column)).Single());
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Passengers_own_xaml_which_compiles_is_marked_with_no_problem()
     {

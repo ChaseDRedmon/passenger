@@ -83,9 +83,10 @@ public partial class MainWindow
         switch (target)
         {
             case FileLink file:
-                if (file.RoslynLines)
+                if (file.CompiledLines)
                 {
-                    NavigateTo(file.Path, new Lsp.LspPosition(file.Position.Line, file.Position.Column));
+                    NavigateTo(file.Path, CSharp.ServerPlaces.PositionOfCompiled(file.Path, CSharp.ServerPlaces.TextOf(Editors, file.Path),
+                        new Lsp.LspPosition(file.Position.Line, file.Position.Column)));
                 }
                 else
                 {

@@ -81,7 +81,7 @@ public sealed partial class BuildRunController
     private Problem? reading;
 
     /// <summary>The texts of the files the build's problems are in, each read once a build: a compiler's line in a file
-    /// Roslyn compiles is read there as the editor counts it (<see cref="ServerPlaces"/>).</summary>
+    /// Roslyn or a XAML compiler compiles is read there as the editor counts it (<see cref="ServerPlaces"/>).</summary>
     private Func<string, TextSnapshot?>? builtTexts;
 
     private BuildKind buildKind;
@@ -324,11 +324,27 @@ public sealed partial class BuildRunController
         reading = null;
     }
 
+    /// <summary>A problem's place as the editor counts its file's lines (<see cref="Placed(Problem, Func{string, TextSnapshot?})"/>),
+    /// its files' texts read once a build.</summary>
+    private Problem Placed(Problem problem) => Placed(problem, builtTexts ??= ServerPlaces.Texts(parts.Editors));
+
     /// <summary>A problem's place as the editor counts its file's lines: Roslyn's compilers end a line at a lone '\r',
-    /// U+0085, U+2028 and U+2029, as its language server does.</summary>
-    private Problem Placed(Problem problem) => problem.Path is { } path && ServerPlaces.CountedByRoslyn(path)
-        ? problem with { Position = ServerPlaces.PositionOf((builtTexts ??= ServerPlaces.Texts(parts.Editors))(path), new Lsp.LspPosition(problem.Position.Line, problem.Position.Column)) }
-        : problem;
+    /// U+0085, U+2028 and U+2029, as its language server does, and the XAML compilers (Avalonia's AVLN, WPF's MC) at a lone
+    /// '\r', as an XML reader does (<see cref="ServerPlaces.Compiled"/>); the place a XAML compiler's message repeats at its
+    /// end is said at the editor's line too.</summary>
+    private static Problem Placed(Problem problem, Func<string, TextSnapshot?> texts)
+    {
+        if (problem.Path is not { } path || !ServerPlaces.CountedApart(path))
+        {
+            return problem;
+        }
+        TextPosition at = ServerPlaces.PositionOfCompiled(path, texts(path), new Lsp.LspPosition(problem.Position.Line, problem.Position.Column));
+        return at == problem.Position ? problem : problem with
+        {
+            Position = at,
+            Message = ServerPlaces.CountedAsXml(path) ? BuildOutput.Moved(problem.Message, problem.Position, at) : problem.Message,
+        };
+    }
 
     private void OnBuilt(int code)
     {

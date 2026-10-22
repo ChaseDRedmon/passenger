@@ -180,6 +180,19 @@ public static partial class BuildOutput
     [GeneratedRegex(@"^#\d+\s+\d+(?:\.\d+)?\s+")]
     private static partial Regex BuildKitStep();
 
+    /// <summary>A XAML compiler's message with the place it repeats at its end (Avalonia's "Line 8, position 6.", WPF's
+    /// MarkupCompile's "Line 8 Position 6.") said at another, as the editor counts the file's lines; as it was when it
+    /// repeats no such place, or another than <paramref name="was"/> (both from zero).</summary>
+    public static string Moved(string message, TextPosition was, TextPosition now) =>
+        RepeatedPlace().Replace(message, place =>
+            int.TryParse(place.Groups["line"].ValueSpan, out int line) && line == was.Line + 1
+                && int.TryParse(place.Groups["column"].ValueSpan, out int column) && column == was.Column + 1
+                ? $"{place.Groups["word"].Value} {now.Line + 1}{place.Groups["between"].Value}{now.Column + 1}"
+                : place.Value);
+
+    [GeneratedRegex(@"\b(?<word>Line) (?<line>\d{1,9})(?<between>,? [Pp]osition )(?<column>\d{1,9})\b")]
+    private static partial Regex RepeatedPlace();
+
     /// <summary>The problem before with this line's text added, when the line goes on with its message: MSBuild's console
     /// logger writes each further line of a message (Avalonia's XAML compiler's stack trace, NuGet's dependency chains) as
     /// a line of its own with the same place, code and project and the text indented past the one space after the code,

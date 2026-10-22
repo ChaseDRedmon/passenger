@@ -269,8 +269,9 @@ public sealed partial class BuildRunController
         parts.Say($"Bringing {chosen.Name} up…");
         ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Profiler = profile, LabelledFor = session.Folder, Certificate = certificate };
         run.Brought(holding);
-        run.ProblemFound += (_, problem) =>
+        run.ProblemFound += (_, found) =>
         {
+            Problem problem = Placed(found, CSharp.ServerPlaces.Texts(parts.Editors));
             if (!session.IsEnded && !session.Problems.Contains(problem))
             {
                 session.Problems.Add(problem);

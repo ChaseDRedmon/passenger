@@ -11,9 +11,11 @@ public abstract record LinkTarget;
 
 public sealed record FileLink(string Path, TextPosition Position) : LinkTarget
 {
-    /// <summary>Whether the line is a compiler's or a stack frame's in a file Roslyn compiles, which count its lines as the
-    /// language server does: read in the file's text as it is opened (<see cref="CSharp.ServerPlaces"/>).</summary>
-    public bool RoslynLines { get; init; }
+    /// <summary>Whether the line is its compiler's count, not the editor's: a compiler's message or a stack frame (its PDB's)
+    /// in a file Roslyn compiles, which counts its lines as the language server does, or a XAML compiler's message or frame
+    /// in a XAML file, counted as an XML reader counts them; read in the file's text as it is opened
+    /// (<see cref="CSharp.ServerPlaces.PositionOfCompiled"/>).</summary>
+    public bool CompiledLines { get; init; }
 }
 
 public sealed record WebLink(Uri Address) : LinkTarget;
@@ -126,7 +128,7 @@ public sealed partial class ConsoleLinks : IHighlighter
         {
             Group path = frame.Groups["path"];
             Claim(found, new FoundLink(path.Index, frame.Index + frame.Length - path.Index,
-                new FileLink(framed, Position(frame.Groups["line"], null)) { RoslynLines = CSharp.ServerPlaces.CountedByRoslyn(framed) }));
+                new FileLink(framed, Position(frame.Groups["line"], null)) { CompiledLines = CSharp.ServerPlaces.CountedApart(framed) }));
         }
         if (FilePaths)
         {
@@ -152,8 +154,11 @@ public sealed partial class ConsoleLinks : IHighlighter
         else if (Compiler().Match(line, skip, line.Length - skip) is { Success: true } message && Resolve(message.Groups["path"].Value, project: ProjectOf(line)) is { } source)
         {
             Group path = message.Groups["path"];
+            // A XAML file's place is its compiler's only in a compiler's message: a failed binding's line names the editor's.
+            bool compiled = CSharp.ServerPlaces.CountedByRoslyn(source)
+                || (CSharp.ServerPlaces.CountedAsXml(source) && Diagnostic().IsMatch(line, message.Index + message.Length));
             Claim(found, new FoundLink(path.Index, message.Groups["close"].Index + 1 - path.Index,
-                new FileLink(source, Position(message.Groups["line"], message.Groups["column"])) { RoslynLines = CSharp.ServerPlaces.CountedByRoslyn(source) }));
+                new FileLink(source, Position(message.Groups["line"], message.Groups["column"])) { CompiledLines = compiled }));
         }
         found.Sort((a, b) => a.Start.CompareTo(b.Start));
         FoundLink[] links = [.. found];
@@ -297,6 +302,11 @@ public sealed partial class ConsoleLinks : IHighlighter
     /// before it when Visual Studio numbered the projects. The path may hold parentheses of its own ("Shop (copy)").</summary>
     [GeneratedRegex(@"^\s*(?:\d+>)?(?<path>[^\s>][^\r\n]*?)\((?<line>\d{1,9})(?:,(?<column>\d{1,9}))?(?:[-,]\d{1,9})*(?<close>\))\s*:")]
     private static partial Regex Compiler();
+
+    /// <summary>What follows a compiler's message's place: its severity and code, MSBuild's subcategory perhaps before them
+    /// ("Avalonia error AVLN2000:", "error MC3000:").</summary>
+    [GeneratedRegex(@"\G\s*(?:[A-Za-z][\w.]*\s+)?(?:error|warning)\s+[A-Za-z]+\d+\s*:")]
+    private static partial Regex Diagnostic();
 
     /// <summary>The project MSBuild names at the end of a message.</summary>
     [GeneratedRegex(@"\[(?<project>[^\[\]]+\.\w*proj)\]\s*$")]
