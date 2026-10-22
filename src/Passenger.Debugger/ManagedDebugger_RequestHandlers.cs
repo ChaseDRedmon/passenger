@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Passenger.Dap;
 using Passenger.Debugger.ExpressionEvaluator;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.ExpressionEvaluator.Compiler;
@@ -322,7 +323,7 @@ public partial class ManagedDebugger
         // ICorDebug's Stop is synchronous and raises no callback of its own, so the stop is reported here.
         if (PausedThread() is { } thread)
         {
-            ReportStop(thread, "pause");
+            ReportStop(thread, StopReasons.Pause);
             return;
         }
         // No thread runs managed code yet (the runtime is still starting): the pause is taken at its next event.
@@ -341,7 +342,7 @@ public partial class ManagedDebugger
         }
         _pauseRequested = false;
         EndStepForStop();
-        ReportStop(thread, "pause");
+        ReportStop(thread, StopReasons.Pause);
         return true;
     }
 

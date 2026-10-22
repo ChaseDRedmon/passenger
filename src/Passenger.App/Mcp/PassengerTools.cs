@@ -1111,7 +1111,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException(problem);
         }
-        await Until(() => paused.StopReason == "goto", TimeSpan.FromSeconds(10), cancel);
+        await Until(() => paused.StopReason == StopReasons.Goto, TimeSpan.FromSeconds(10), cancel);
         return await DebugSnapshotAsync(paused);
     });
 
@@ -1359,7 +1359,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
         }
         string? exception = null;
-        if (session.StopReason == "exception")
+        if (session.StopReason == StopReasons.Exception)
         {
             try
             {

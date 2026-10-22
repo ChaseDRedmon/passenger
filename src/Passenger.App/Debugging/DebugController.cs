@@ -1335,7 +1335,7 @@ public sealed class DebugController : IDisposable
         {
             Load = async reference => stop == shown && session.State == DebugState.Paused
                 ? await session.VariablesAsync(reference)
-                : throw new DapException("variables", "The program has gone on from the stop this value was read at"),
+                : throw new DapException(DapCommands.Variables, "The program has gone on from the stop this value was read at"),
         };
         tree.Show([Hovered(value)]);
         VariablesList list = new(tree) { DataWatch = DataWatchAsync };
@@ -1607,7 +1607,7 @@ public sealed class DebugController : IDisposable
                 view.Console.Append(BindingErrors.StopLine(failed.Problem, Folder), error: true);
             }
         }
-        if (session.StopReason == "exception")
+        if (session.StopReason == StopReasons.Exception)
         {
             try
             {
@@ -1722,7 +1722,7 @@ public sealed class DebugController : IDisposable
         // there, but under Just My Code the user's frame it came through is the one shown, as Rider and Visual Studio show it.
         DapStackFrame? user = stack.FirstOrDefault(f => f.Source?.Path is not null && f.PresentationHint != "subtle");
         bool inspected = thread == session.StoppedThread && (session.PropertyStop is not null || session.BindingErrorStop);
-        bool thrown = thread == session.StoppedThread && session.StopReason == "exception";
+        bool thrown = thread == session.StoppedThread && session.StopReason == StopReasons.Exception;
         DapStackFrame? top = inspected ? user ?? stack.FirstOrDefault()
             : (thrown ? user : null) ?? stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
         bool shows = !inspected || top == user;

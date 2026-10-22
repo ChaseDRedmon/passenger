@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Passenger.Dap;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
@@ -510,7 +511,7 @@ public partial class ManagedDebugger
         SourceInfo? source = top is ICorDebugILFrame ? GetSourceInfoAtFrame(top, _justMyCode is false) : null;
         string change = $"Previous Value: {before ?? "?"}, New Value: {target.Shown ?? "?"}";
         _logger?.Invoke($"Data {target.Id}: {target.Description} is changed ({change})");
-        ReportStop(thread.Id, "data breakpoint", source?.FilePath, source?.StartLine ?? 0, source?.StartColumn ?? 0, [watch.Id], change);
+        ReportStop(thread.Id, StopReasons.DataBreakpoint, source?.FilePath, source?.StartLine ?? 0, source?.StartColumn ?? 0, [watch.Id], change);
     }
 
     /// <summary>The statement a frame's last instruction ran in: the write a data breakpoint caught, which the thread has
@@ -567,7 +568,7 @@ public partial class ManagedDebugger
         {
             return false;
         }
-        ReportStop(thread.Id, "step", at.FilePath, at.StartLine, at.StartColumn, null);
+        ReportStop(thread.Id, StopReasons.Step, at.FilePath, at.StartLine, at.StartColumn, null);
         return true;
     }
 

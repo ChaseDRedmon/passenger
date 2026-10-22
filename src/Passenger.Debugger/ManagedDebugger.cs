@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Passenger.Dap;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.Interop;
 using Passenger.Debugger.Models;
@@ -568,13 +569,13 @@ public partial class ManagedDebugger
         // A step's calls' values are shown at its own stop; one that stops anywhere else stops showing them.
         EndReturnWatch();
         EndSmartStep();
-        if (reason != "step")
+        if (reason != StopReasons.Step)
         {
             ForgetReturnedValues();
         }
         _stopShown = true;
         // A pause holds threads where they stand, and an exception inside its managed dispatch, neither at a patch.
-        _stoppedInDispatch = reason is "pause" or "exception" ? null : threadId;
+        _stoppedInDispatch = reason is StopReasons.Pause or StopReasons.Exception ? null : threadId;
         OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds, text));
     }
 
