@@ -106,6 +106,38 @@ public sealed record EvaluatedProject
 
     /// <summary>The folders its items' wildcards walked, as they were: one whose files came or went changed.</summary>
     public IReadOnlyList<Stamp> Folders { get; init; } = [];
+
+    /// <summary>The properties of <see cref="CarriedProperties.Names"/> that have a value, as evaluated: what finds and makes
+    /// its container run configurations, wherever a build would take them from (a Directory.Build.props, an import, a
+    /// condition that holds), never a comment.</summary>
+    public IReadOnlyDictionary<string, EvaluatedProperty> Properties { get; init; } = new Dictionary<string, EvaluatedProperty>();
+}
+
+/// <summary>A property's evaluated value, and whether the project's own files set it (the project, a Directory.Build.props,
+/// an import outside the SDK and the package folders) rather than the SDK's or a package's defaults.</summary>
+public sealed record EvaluatedProperty(string Value, bool Own);
+
+/// <summary>The properties an evaluation carries beyond what the Solution view shows (<see cref="EvaluatedProject.Properties"/>):
+/// Docker's and the .NET SDK container's, by which a project's container run configurations are found and made, and the
+/// user secrets a container of it is given.</summary>
+public static class CarriedProperties
+{
+    public const string EnableSdkContainerSupport = "EnableSdkContainerSupport";
+    public const string ContainerRepository = "ContainerRepository";
+    public const string ContainerImageName = "ContainerImageName";
+    public const string ContainerBaseImage = "ContainerBaseImage";
+    public const string DockerfileFile = "DockerfileFile";
+    public const string DockerfileContext = "DockerfileContext";
+    public const string DockerfileFastModeStage = "DockerfileFastModeStage";
+    public const string ContainerDevelopmentMode = "ContainerDevelopmentMode";
+    public const string DockerDefaultTargetOS = "DockerDefaultTargetOS";
+    public const string UserSecretsId = "UserSecretsId";
+
+    public static readonly IReadOnlyList<string> Names =
+    [
+        EnableSdkContainerSupport, ContainerRepository, ContainerImageName, ContainerBaseImage, DockerfileFile, DockerfileContext,
+        DockerfileFastModeStage, ContainerDevelopmentMode, DockerDefaultTargetOS, UserSecretsId,
+    ];
 }
 
 public sealed record FrameworkDependencies(string? Framework, IReadOnlyList<PackageDependency> Packages, IReadOnlyList<string> Projects)

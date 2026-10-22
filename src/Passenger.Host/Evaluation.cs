@@ -137,6 +137,7 @@ internal static class Evaluation
             IsTestProject = each.Any(p => p.GetPropertyValue("IsTestProject").Equals("true", StringComparison.OrdinalIgnoreCase)),
             Dependencies = [.. each.Select((p, i) => Dependencies(p, named[i]))],
             Items = items,
+            Properties = Carried(first, excluded),
             Inputs = [file, .. each
                 .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
                 .Distinct(PathComparer)
@@ -172,6 +173,24 @@ internal static class Evaluation
     }
 
     private static string? NonEmpty(string value) => value.Length > 0 ? value : null;
+
+    /// <summary>The carried properties (<see cref="CarriedProperties.Names"/>) that have a value, each with whether the
+    /// element that last set it lies in the project's own files, outside the SDK and the package folders: the SDK now turns
+    /// EnableSdkContainerSupport on for every executable, which asks for nothing.</summary>
+    private static Dictionary<string, EvaluatedProperty> Carried(Project project, HashSet<string> excluded)
+    {
+        Dictionary<string, EvaluatedProperty> carried = new(StringComparer.Ordinal);
+        foreach (string name in CarriedProperties.Names)
+        {
+            if (project.GetProperty(name) is { EvaluatedValue.Length: > 0 } property)
+            {
+                string? file = property.Xml?.ContainingProject?.FullPath;
+                bool own = file is { Length: > 0 } && !excluded.Any(root => file.StartsWith(root, PathComparison));
+                carried[name] = new EvaluatedProperty(property.EvaluatedValue, own);
+            }
+        }
+        return carried;
+    }
 
     /// <summary>A framework's packages, each with the version restore takes (its own, its VersionOverride, else under
     /// central package management its PackageVersion's), and the projects it references.</summary>

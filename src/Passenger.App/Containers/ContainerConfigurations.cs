@@ -1,19 +1,19 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Host;
 
 namespace Passenger.App.Containers;
 
 /// <summary>The container run configurations a workspace makes as it opens: one for each compose file (its overrides with
 /// it) beside the solution, the folder or a project; one for each Docker Compose project (.dcproj), from its own properties
 /// and each of its launch profiles; one for each runnable project with a Dockerfile; and one for each project the .NET SDK
-/// makes a container of (<c>EnableSdkContainerSupport</c>, <c>ContainerRepository</c>); a project whose launch profile is
-/// a Docker or SdkContainer one has that profile's instead. Read from the files' text alone, on the window's thread: the
-/// few files it reads are kept by their time.</summary>
-public static partial class ContainerConfigurations
+/// makes a container of (<see cref="AsksForSdkContainer"/>); a project whose launch profile is a Docker or SdkContainer one
+/// has that profile's instead. A project's properties are MSBuild's evaluation of it (<see cref="ProjectModel.Property"/>),
+/// the rest the files' text, on the window's thread: the few files it reads are kept by their time.</summary>
+public static class ContainerConfigurations
 {
     /// <summary>The names a compose file has, as <c>docker compose</c> looks for them in a folder, in its order.</summary>
     public static readonly IReadOnlyList<string> ComposeNames = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
@@ -66,8 +66,10 @@ public static partial class ContainerConfigurations
         foreach (ProjectModel project in projects.Where(p => p.Exists && p.IsRunnable))
         {
             IReadOnlyList<LaunchProfile> profiles = LaunchProfile.Read(project);
-            string text = Text(project.Path) ?? string.Empty;
-            if (!profiles.Any(p => p.Is(LaunchProfile.DockerCommand)) && Dockerfile(project, text) is { } dockerfile)
+            string? dockerfile = profiles.Any(p => p.Is(LaunchProfile.DockerCommand)) ? null : Dockerfile(project);
+            bool sdk = !profiles.Any(p => p.Is(LaunchProfile.SdkContainerCommand)) && AsksForSdkContainer(project);
+            bool web = (dockerfile is not null || sdk) && IsWeb(project, projects);
+            if (dockerfile is not null)
             {
                 made.Add(new RunConfiguration
                 {
@@ -77,12 +79,13 @@ public static partial class ContainerConfigurations
                     Dockerfile = dockerfile,
                     // Every port its image exposes, each on a port the engine chooses, as Visual Studio's publishAllPorts.
                     RunArguments = "-P",
-                    LaunchBrowser = IsWeb(project),
-                    BrowserUrl = IsWeb(project) ? ServiceUrl : string.Empty,
+                    LaunchBrowser = web,
+                    BrowserUrl = web ? ServiceUrl : string.Empty,
                     Origin = $"Generated for {project.Name}'s {Path.GetFileName(dockerfile)}",
+                    Unsupported = WindowsContainer(project),
                 });
             }
-            if (!profiles.Any(p => p.Is(LaunchProfile.SdkContainerCommand)) && SdkContainer().IsMatch(text))
+            if (sdk)
             {
                 made.Add(new RunConfiguration
                 {
@@ -90,9 +93,9 @@ public static partial class ContainerConfigurations
                     Kind = RunKind.SdkContainer,
                     Project = project.Path,
                     RunArguments = "-P",
-                    LaunchBrowser = IsWeb(project),
-                    BrowserUrl = IsWeb(project) ? ServiceUrl : string.Empty,
-                    Origin = $"Generated for {project.Name}, whose project file has the .NET SDK make its container",
+                    LaunchBrowser = web,
+                    BrowserUrl = web ? ServiceUrl : string.Empty,
+                    Origin = $"Generated for {project.Name}, whose project has the .NET SDK make its container",
                 });
             }
         }
@@ -271,13 +274,13 @@ public static partial class ContainerConfigurations
         }
     }
 
-    /// <summary>A project's Dockerfile: the one its project file names (DockerfileFile), else Dockerfile or Containerfile
-    /// beside it; null for none.</summary>
-    public static string? Dockerfile(ProjectModel project, string projectText)
+    /// <summary>A project's Dockerfile: the one its evaluated DockerfileFile names (from the project's folder), else
+    /// Dockerfile or Containerfile beside it; null for none.</summary>
+    public static string? Dockerfile(ProjectModel project)
     {
-        if (DockerfileFile().Match(projectText) is { Success: true } named)
+        if (project.Property(CarriedProperties.DockerfileFile) is { } named)
         {
-            string file = Path.GetFullPath(Path.Combine(project.Folder, named.Groups[1].Value.Trim().Replace('\\', '/')));
+            string file = Path.GetFullPath(Path.Combine(project.Folder, named.Trim().Replace('\\', '/')));
             if (File.Exists(file))
             {
                 return PathNames.Canonical(file);
@@ -286,10 +289,26 @@ public static partial class ContainerConfigurations
         return new[] { "Dockerfile", "Containerfile" }.Select(n => Path.Combine(project.Folder, n)).FirstOrDefault(File.Exists);
     }
 
-    /// <summary>Whether a project is an ASP.NET Core app (it references its shared framework), whose container serves a page.</summary>
-    public static bool IsWeb(ProjectModel project) =>
-        project.Evaluated?.Dependencies.Any(d => d.FrameworkReferences.Contains("Microsoft.AspNetCore.App", StringComparer.OrdinalIgnoreCase)) == true
-        || (Text(project.Path) ?? string.Empty).Contains("Microsoft.NET.Sdk.Web", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Whether the .NET SDK makes the project's container and the project asks it to: EnableSdkContainerSupport
+    /// evaluates true (the SDK turns it on for every executable, which alone asks for nothing) and the project's own files
+    /// set it, or name the image (ContainerRepository, the older ContainerImageName) or its base (ContainerBaseImage).</summary>
+    public static bool AsksForSdkContainer(ProjectModel project) =>
+        string.Equals(project.Property(CarriedProperties.EnableSdkContainerSupport), "true", StringComparison.OrdinalIgnoreCase)
+        && (string.Equals(project.OwnProperty(CarriedProperties.EnableSdkContainerSupport), "true", StringComparison.OrdinalIgnoreCase)
+            || project.OwnProperty(CarriedProperties.ContainerRepository) is not null
+            || project.OwnProperty(CarriedProperties.ContainerImageName) is not null
+            || project.OwnProperty(CarriedProperties.ContainerBaseImage) is not null);
+
+    /// <summary>Why a project's Dockerfile cannot run here: its DockerDefaultTargetOS says it builds a Windows container,
+    /// where Passenger runs Linux ones; null otherwise.</summary>
+    private static string? WindowsContainer(ProjectModel project) =>
+        string.Equals(project.Property(CarriedProperties.DockerDefaultTargetOS), "Windows", StringComparison.OrdinalIgnoreCase)
+            ? $"{project.Name}'s Dockerfile builds a Windows container (its DockerDefaultTargetOS), and Passenger runs Linux containers"
+            : null;
+
+    /// <summary>Whether a project is an ASP.NET Core app, whose container serves a page: as Add Docker Support decides its
+    /// image (<see cref="DockerFiles.Describe"/>), through the projects it references and the packages its restore took.</summary>
+    public static bool IsWeb(ProjectModel project, IReadOnlyList<ProjectModel> all) => DockerFiles.Describe(project, all).Web;
 
     /// <summary>A file's text, read again only once it was written since; null for one that is not there.</summary>
     public static string? Text(string path)
@@ -320,10 +339,4 @@ public static partial class ContainerConfigurations
             return null;
         }
     }
-
-    [GeneratedRegex(@"<\s*(?:EnableSdkContainerSupport\s*>\s*true|ContainerRepository\s*>|ContainerBaseImage\s*>)", RegexOptions.IgnoreCase)]
-    private static partial Regex SdkContainer();
-
-    [GeneratedRegex(@"<\s*DockerfileFile\s*>([^<]+)<", RegexOptions.IgnoreCase)]
-    private static partial Regex DockerfileFile();
 }

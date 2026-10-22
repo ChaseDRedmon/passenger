@@ -87,7 +87,7 @@ public partial class MainWindow
     /// <summary>The Dockerfile a Dockerfile configuration builds: its own, else its project's beside it.</summary>
     private string? DockerfileOf(RunConfiguration configuration) => configuration.Dockerfile.Length > 0 ? configuration.Dockerfile
         : Projects.FirstOrDefault(p => Core.PathNames.Same(p.Path, configuration.Project)) is { } project
-            ? Containers.ContainerConfigurations.Dockerfile(project, Containers.ContainerConfigurations.Text(project.Path) ?? string.Empty)
+            ? Containers.ContainerConfigurations.Dockerfile(project)
             : null;
 
     /// <summary>Each service's line of a compose file: the keys one level under the top-level <c>services:</c>.</summary>

@@ -329,7 +329,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
   `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one
   the folder's global.json picks) through MSBuildLocator. It answers JSON lines: `evaluate` (the Solution view's
-  projects as a build sees them, `Workspace/ProjectModels`, cached in the folder's `projectModels.json`), `build`
+  projects as a build sees them, with the properties their container run configurations are found by, `CarriedProperties`,
+  each with whether the project's own files set it rather than the SDK or a package, `Workspace/ProjectModels`, cached in
+  the folder's `projectModels.json`, whose `Upgrades` forget what a build that carried less kept), `build`
   (Roslyn's design-time builds, written as its build host writes ProjectFileInfo, `Workspace/ProjectBuilds`, cached
   Brotli-compressed in `projectBuilds.json`) and `cancel` (a request given up: no more projects started, the build's
   submissions cancelled, so a left folder never holds the host), `hold` (a build of the IDE's own: no design-time build
@@ -541,7 +543,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
   run).
-  Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`) skip saying why unless `docker info`'s
+  Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`; not `ContainerConfigurationsTests`, which
+  need no engine) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop: an engine that stops and starts
   again, or has no Compose v2, is `ContainersTests.StandInEngine`'s, a shell script (so skipped on Windows) whose `state`
@@ -551,8 +554,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   (no test pulls the SDK's 800 MB; it skips saying which to pull), its image labelled with the run's label and removed.
   Container run configurations (#343): a `RunConfiguration`'s `Kind` (Project, Compose, Dockerfile, SdkContainer), made as
   the folder opens by `ContainerConfigurations` (compose files beside the folder, the solution or a project, overrides with
-  them; a .dcproj's properties and DockerCompose profiles, read as XML; a runnable project's Dockerfile; a project file
-  that has the SDK make its container; a Docker or SdkContainer launch profile is its project's). `ContainerPlans.ResolveAsync`
+  them; a .dcproj's properties and DockerCompose profiles, read as XML; a runnable project's Dockerfile, its evaluated
+  DockerfileFile else beside it; a project that asks the SDK for its container, `AsksForSdkContainer`: EnableSdkContainerSupport
+  evaluates true, which the SDK makes it for every executable, and its own files set it or ContainerRepository,
+  ContainerImageName or ContainerBaseImage; a Docker or SdkContainer launch profile is its project's), a project's
+  properties always its evaluation's (`ProjectModel.Property`, `OwnProperty`), never its text's. `ContainerPlans.ResolveAsync`
   reads Compose's own model (`ComposeModel`, `config --format json`; a Dockerfile or SDK container configuration is a
   compose file of one service Passenger writes) and the project each service runs (its Dockerfile's ENTRYPOINT assembly
   or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command

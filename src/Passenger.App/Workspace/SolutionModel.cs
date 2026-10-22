@@ -238,6 +238,13 @@ public sealed record ProjectModel(
 
     public string Folder => System.IO.Path.GetDirectoryName(Path)!;
 
+    /// <summary>A property its evaluation carries (<see cref="CarriedProperties"/>) as MSBuild evaluated it, wherever it was
+    /// set; null when it has no value, or before the project is evaluated.</summary>
+    public string? Property(string name) => Evaluated?.Properties?.GetValueOrDefault(name)?.Value;
+
+    /// <summary>A carried property as evaluated when the project's own files set it, not the SDK's or a package's default.</summary>
+    public string? OwnProperty(string name) => Evaluated?.Properties?.GetValueOrDefault(name) is { Own: true } set ? set.Value : null;
+
     /// <summary>Whether it holds tests VSTest or Microsoft.Testing.Platform runs: it says so (IsTestProject, MSTest.Sdk), or
     /// references a test SDK, an adapter or a Testing Platform test framework.</summary>
     public bool IsTestProject => DeclaredTest || Packages.Any(p => TestPackages.Contains(p.Name));

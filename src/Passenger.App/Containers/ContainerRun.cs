@@ -286,7 +286,7 @@ public static class ContainerPlans
         {
             string dockerfile = configuration.Dockerfile.Length > 0 ? configuration.Dockerfile
                 : properties.GetValueOrDefault("DockerfileFile") is { Length: > 0 } file ? Path.GetFullPath(Path.Combine(project.Folder, file))
-                : ContainerConfigurations.Dockerfile(project, ContainerConfigurations.Text(project.Path) ?? string.Empty)
+                : ContainerConfigurations.Dockerfile(project)
                     ?? throw new LaunchException($"{configuration.Name} cannot run: {project.Name} has no Dockerfile");
             string context = configuration.Context.Length > 0 ? configuration.Context
                 : properties.GetValueOrDefault("DockerfileContext") is { Length: > 0 } given ? Path.GetFullPath(Path.Combine(project.Folder, given))
@@ -318,11 +318,11 @@ public static class ContainerPlans
         {
             string image = properties.GetValueOrDefault("PassengerImage") is { Length: > 0 } published ? published
                 : properties.GetValueOrDefault("ContainerBaseImage") is { Length: > 0 } basis ? basis
-                : $"mcr.microsoft.com/dotnet/{(ContainerConfigurations.IsWeb(project) ? "aspnet" : "runtime")}:{FrameworkTag(project)}";
+                : $"mcr.microsoft.com/dotnet/{(ContainerConfigurations.IsWeb(project, workspace.Projects) ? "aspnet" : "runtime")}:{FrameworkTag(project)}";
             service["image"] = image;
             exposed.AddRange((properties.GetValueOrDefault("ContainerPort") ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries)
                 .Select(p => int.TryParse(p.Split(':')[0], NumberStyles.None, CultureInfo.InvariantCulture, out int n) ? n : 0).Where(n => n > 0));
-            if (exposed.Count == 0 && ContainerConfigurations.IsWeb(project))
+            if (exposed.Count == 0 && ContainerConfigurations.IsWeb(project, workspace.Projects))
             {
                 exposed.Add(8080);
             }
@@ -560,8 +560,7 @@ public static class ContainerPlans
     /// <summary>The folder of a project's user secrets on this machine, when it has an id and that folder is there.</summary>
     private static string? UserSecrets(ProjectModel? project)
     {
-        if (project is null || ContainerConfigurations.Text(project.Path) is not { } text
-            || System.Text.RegularExpressions.Regex.Match(text, @"<\s*UserSecretsId\s*>\s*([^<\s]+)\s*<") is not { Success: true })
+        if (project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is null)
         {
             return null;
         }
