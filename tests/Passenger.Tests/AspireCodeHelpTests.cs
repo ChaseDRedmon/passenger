@@ -28,7 +28,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         PlaceAfter(window, "AddProject<Projects.Ap");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.WaitFor(() => window.EditorArea.Active?.Name == "Api.csproj", "AddProject to open Api.csproj, not generated metadata");
-        Assert.True(PathNames.Same(project.PathOf("Api/Api.csproj"), window.EditorArea.Active!.Path));
+        Assert.True(PathNames.Same(PathNames.Canonical(project.PathOf("Api/Api.csproj")), window.EditorArea.Active!.Path));
 
         window.OpenFile(project.PathOf("Host/Program.cs"));
         Ui.Settle();
@@ -131,9 +131,9 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
         try
         {
-            Ui.WaitFor(() => window.Configurations.Any(configuration => PathNames.Same(configuration.Project, project.PathOf("Host/Host.csproj"))),
+            Ui.WaitFor(() => window.Configurations.Any(configuration => PathNames.Same(configuration.Project, PathNames.Canonical(project.PathOf("Host/Host.csproj")))),
                 "the semantic AppHost configuration");
-            RunConfiguration host = window.Configurations.First(configuration => PathNames.Same(configuration.Project, project.PathOf("Host/Host.csproj")));
+            RunConfiguration host = window.Configurations.First(configuration => PathNames.Same(configuration.Project, PathNames.Canonical(project.PathOf("Host/Host.csproj"))));
             Assert.True(window.SelectConfiguration(host.Name));
             Ui.Run(window, AppActions.FindAction);
             window.KeyTextInput("Edit Configurations");
@@ -241,6 +241,8 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             }
             Put("Host/Program.cs", Host);
             Put("OtherHost/Program.cs", "System.Console.WriteLine(\"No graph\");\n");
+            // The AppHosts' graph is the starter's, in the package cache the test project's restore filled: never nuget.org.
+            AspireApp.UseFeed(Folder);
             Prepare();
         }
 

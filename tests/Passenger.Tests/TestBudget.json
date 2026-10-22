@@ -11,6 +11,7 @@
     "RunConfigurationsTests": 90,
     "PublishTests": 240,
     "UnitTestsTests": 240,
+    "McpAspireTests": 60,
     "McpAttachTests": 90,
     "McpAvaloniaAppTests": 90,
     "McpContainerDebuggingTests": 90,

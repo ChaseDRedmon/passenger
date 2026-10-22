@@ -16,7 +16,9 @@ public sealed class AspireApp : SharedProject
     public const string Name = "PassengerAspire";
     public const string CompanionName = "CompanionAspire";
     public const string RequestLog = "Passenger request {RequestValue}";
-    public const string MissingCliReason = "Aspire CLI was not found on PATH. Install Aspire 13.6.2.";
+    /// <summary>Why the tests that run the aspire CLI skip: it runs as the person's (their PATH's, keeping its state in their
+    /// own ~/.aspire, their AppHosts in its aspire ps), which no test may touch, until the tests give it a home of their own.</summary>
+    public const string CliSkipped = "Runs the person's own aspire CLI, whose state is their ~/.aspire: skipped until the tests give it a home of their own";
 
     public AspireApp() : base("aspire-")
     {
@@ -42,8 +44,22 @@ public sealed class AspireApp : SharedProject
 
     public static bool IsUnavailable => Unavailable is not null;
 
-    public static string? Unavailable => Programs.OnPath(OperatingSystem.IsWindows() ? "aspire.exe" : "aspire") is null
-        ? MissingCliReason : null;
+    public static string? Unavailable => CliSkipped;
+
+    /// <summary>A folder's restores from the run's local feed alone (<see cref="AvaloniaApp.UseFeed"/>), with Aspire's AppHost
+    /// SDK in it: the rest of an AppHost's graph is in the package cache the test project's restore filled, never fetched.</summary>
+    public static void UseFeed(string folder)
+    {
+        string version = TemplatesVersion.ToLowerInvariant();
+        string sdk = Path.Combine(AvaloniaApp.Metadata("NuGetPackageRoot"), "aspire.apphost.sdk", version, $"aspire.apphost.sdk.{version}.nupkg");
+        Assert.True(File.Exists(sdk), $"Aspire.AppHost.Sdk {TemplatesVersion} is missing at {sdk}; restore the test project first");
+        string fed = Path.Combine(AvaloniaApp.Feed, Path.GetFileName(sdk));
+        if (!File.Exists(fed))
+        {
+            File.Copy(sdk, fed, overwrite: true);
+        }
+        AvaloniaApp.UseFeed(folder);
+    }
 
     public string Host => PathOf($"First/{Name}.AppHost/{Name}.AppHost.csproj");
     public string CompanionHost => PathOf($"Second/{CompanionName}.AppHost/{CompanionName}.AppHost.csproj");

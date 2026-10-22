@@ -41,7 +41,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Run_with_Hot_Reload_applies_to_both_quiet_sessions_and_a_rude_edit_restarts_only_its_service()
     {
         PrepareEditableServices();
@@ -126,7 +126,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Rerun_keeps_unchanged_processes_and_restarts_only_the_edited_project()
     {
         PrepareEditableServices();
@@ -159,7 +159,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void The_initial_AppHost_configuration_lists_unassigned_resources_and_copied_service_choices_survive_reopening()
     {
         string settings = TestFolders.Create("aspire-service-choices-");
@@ -278,7 +278,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             "the native API and frontend resource stream", TimeSpan.FromMinutes(3));
     }
 
-    [AvaloniaTheory(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaTheory(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     [InlineData(false)]
     [InlineData(true)]
     public void The_AppHost_gutter_runs_or_debugs_only_the_requested_project(bool debugging)
@@ -306,7 +306,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_gutter_start_rejects_the_captured_declaration_after_its_source_changes()
     {
         MainWindow window = project.OpenHost();
@@ -329,7 +329,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Gutter_startup_profile_uses_its_AppHost_not_the_toolbar_and_records_the_first_hot_turn()
     {
         string source = File.ReadAllText(project.ApiProgram);
@@ -408,7 +408,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Click(Assert.IsAssignableFrom<TopLevel>(TopLevel.GetTopLevel(item)), item);
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Native_logs_find_merged_service_output_and_hiding_the_pane_cancels_display_without_a_CLI_refresh()
     {
         MainWindow window = OpenRunning();
@@ -473,7 +473,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_selected_child_span_survives_the_next_live_trace_batch()
     {
         MainWindow window = OpenRunning();
@@ -576,7 +576,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_real_AppHost_command_observes_confirmation_cancel_and_server_validated_input_from_the_window()
     {
         string host = Path.Combine(Path.GetDirectoryName(project.Host)!, "AppHost.cs");
@@ -648,7 +648,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
 
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void The_official_starter_runs_through_the_window_with_native_telemetry_and_resource_restart()
     {
         MainWindow window = OpenRunning();
@@ -710,7 +710,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.Close();
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_discovered_single_file_AppHost_runs_through_the_native_window_and_stops_its_listener()
     {
         string file = project.Write("apphost.cs", $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\n#:property AspireUseCliBundle=false\nusing Aspire.Hosting;\nusing Microsoft.Extensions.Hosting;\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n");
@@ -782,7 +782,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.Close();
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_single_file_AppHost_beside_a_project_is_refused_before_starting_a_process()
     {
         Directory.CreateDirectory(project.PathOf("Loose"));
@@ -799,7 +799,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.Close();
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Two_service_breakpoints_keep_both_sessions_alive_and_later_breakpoints_reach_the_background_session()
     {
         MainWindow window = project.OpenHost();
@@ -856,7 +856,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Ui.WaitFor(() => owned.All(pid => !Processes.IsRunning(pid)), "closing the window to stop both service debuggers and the AppHost");
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_saved_linked_configuration_survives_single_file_discovery_and_stops_both_real_apps()
     {
         string settings = TestFolders.Create("aspire-state-");
@@ -891,7 +891,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         TestFolders.Delete(settings);
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Attach_run_without_debugger_and_profile_target_only_the_selected_real_service()
     {
         MainWindow window = OpenRunning();
@@ -931,7 +931,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.Close();
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Choosing_a_native_debug_tab_clears_the_previously_selected_Aspire_service()
     {
         MainWindow window = OpenRunning();
@@ -971,7 +971,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_Dcp_service_that_cannot_start_releases_its_resource_and_does_not_hold_app_shutdown()
     {
         string settingsFile = Path.Combine(Path.GetDirectoryName(project.ApiProject)!, "Properties", "launchSettings.json");
@@ -1015,7 +1015,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void The_running_windows_Dcp_endpoint_rejects_bad_auth_and_payloads_and_isolates_foreign_instances()
     {
         MainWindow window = OpenRunning();
@@ -1079,7 +1079,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Ui.WaitFor(() => owned.All(id => !Processes.IsRunning(id)), "window shutdown after malformed and foreign DCP requests");
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_slow_Dcp_notification_consumer_cannot_end_a_service_that_fills_its_console_queue()
     {
         MainWindow window = OpenRunning();
@@ -1116,7 +1116,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.Close();
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Canceling_a_window_start_ends_the_pending_AppHost_and_its_owned_endpoint()
     {
         MainWindow window = project.OpenHost();
@@ -1141,7 +1141,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.Close();
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void The_native_console_deduplicates_overlapping_batches_and_cancels_the_previous_generation()
     {
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the console protocol backend");
@@ -1189,7 +1189,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         static ConsoleLogLine Line(int number) => new() { Text = $"line {number}", LineNumber = number };
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_background_resource_update_preserves_the_selected_parent_and_its_expanded_native_hierarchy()
     {
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the resource hierarchy backend");
@@ -1234,7 +1234,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void Disconnecting_a_Dcp_create_while_the_window_is_stalled_cannot_start_a_late_service_after_close()
     {
         string marker = project.PathOf("canceled-dcp-request.pid");
@@ -1302,7 +1302,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Assert.Throws<HttpRequestException>(() => closed.GetAwaiter().GetResult());
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_native_confirmation_cancel_and_server_updated_form_send_the_current_dialog_response()
     {
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the test interaction backend");
@@ -1374,7 +1374,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaTheory(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaTheory(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     [InlineData("close")]
     [InlineData("escape")]
     [InlineData("dismiss")]
@@ -1446,7 +1446,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         }
     }
 
-    [AvaloniaFact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public void A_server_form_update_rejects_an_in_flight_file_upload_and_a_new_upload_submits_the_current_file()
     {
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(), "the upload interaction backend");
@@ -1573,7 +1573,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             $"the AppHost's {title} interaction");
         AspireInteractionDialog dialog = Assert.Single(window.OwnedWindows.OfType<AspireInteractionDialog>(), dialog => dialog.Title?.EndsWith(" · " + title, StringComparison.Ordinal) == true);
         Assert.Same(window, dialog.Owner);
-        return dialog;
+        return DialogButtonsTests.Check(dialog);
     }
 
     private static void CompleteInteraction(AspireInteractionHost backend, MainWindow window, int id)

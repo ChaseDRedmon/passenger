@@ -59,7 +59,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         Assert.Empty(workspace.GetProperty("aspireApps").EnumerateArray());
     }
 
-    [Fact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [Fact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public async Task An_agent_must_qualify_duplicate_official_starter_resource_names_with_the_owned_AppHost()
     {
         using AspireApp project = new();
@@ -126,7 +126,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         window.SetConfigurations([new RunConfiguration
         {
             Name = "Pending Aspire",
-            Project = Path.Combine(Folder, "Sum.csproj"),
+            Project = PathNames.Canonical(Path.Combine(Folder, "Sum.csproj")),
             Aspire = true,
         }], "Pending Aspire");
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the Aspire agent attaching");
@@ -181,7 +181,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
-    [Fact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [Fact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public async Task Ending_a_windowless_Passengers_input_stops_the_official_starter_tree_and_Dcp_listener()
     {
         string starter = TestFolders.Create("mcp-aspire-shutdown-");
