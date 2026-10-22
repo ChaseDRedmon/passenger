@@ -1377,7 +1377,9 @@ A test waits for what it checks, however slow the machine (#237). `Ui.Settle`, a
 (each language server request unanswered, all but Roslyn's `workspace/diagnostic` pull, which it holds open until the
 next change), every dispatcher timer come due fired and the last layout drawn (`Ui.Draw`; hit tests read the last frame
 drawn, so a test reads bounds or clicks right after a wait). A program `ProcessRunner` ran that has ended holds
-`BackgroundWork` until its console has its last output and exit code; the folder watcher's gathering and delivery,
+`BackgroundWork` until its console has its last output and exit code, or, while a job it left holds its output, for
+`ChildProcesses.OutputGrace` before that job is ended with its group (`OutputEndsAsync`, as `RunAsync` does), and a
+landing the dispatcher drops lets its hold go (`UiThread.Post(work, dropped)`); the folder watcher's gathering and delivery,
 Local History's queue and a console's batches were background work already. Left out by design: a program still
 running and its output, the state store's half-second write delay (a test that reads a state file flushes it), the
 templates' read ahead, and the system's own delay before the watcher hears a change (a test that needs it heard waits
