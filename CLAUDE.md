@@ -606,7 +606,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   does. A Release build (the tools' `optimized`), a runtime with DOTNET_EnableDiagnostics=0 (not held, and not attached: it
   runs on) and an image of another processor than the engine's are said in the status bar after the run comes up. Stop ends
   the run's sessions (`ContainerRun.Debugged`) before the containers go, since a container taken from under its adapter
-  would end it as a failure. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
+  would end it as a failure. A start stopped (Stop, the window's Kill, an agent giving up on `run` or `debug_start`,
+  `PassengerTools.Started`) ends Compose's `up` and waits for its CLI to go before the take-down looks, which waits for it
+  (`ContainerRun.upEnded`) and looks again 2 s later, since the engine can finish a container it was making as `up` ended;
+  an attach whose container was reached after the Stop starts no session. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
@@ -1568,7 +1571,11 @@ request's handler), run it with Hot Reload, and in images mode build its apps he
 aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is asked again while nothing listens yet,
 since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
 solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
-method leads web's own (a web app's idle threads wait in the runtime's code). `WpfPreviewTests` (Windows only)
+method leads web's own (a web app's idle threads wait in the runtime's code). `ContainerServicesTests` (Alone) act on one
+service of that solution's run from the Containers window's rows and the gutter, the others never restarted;
+`ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, and
+`McpTests.ContainerDebugging.cs`' agent gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
+run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.

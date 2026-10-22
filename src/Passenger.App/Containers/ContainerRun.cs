@@ -718,6 +718,19 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     private Process? watching;
     private Task? stopping;
 
+    /// <summary>Whether <c>up</c> was ended before it had made all it would: the engine may finish a container it was making.</summary>
+    private bool cut;
+
+    /// <summary>Done once <c>up</c> has ended, having made all it would make or been ended; never begun, done already.</summary>
+    private TaskCompletionSource upEnded = Done();
+
+    private static TaskCompletionSource Done()
+    {
+        TaskCompletionSource done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        done.SetResult();
+        return done;
+    }
+
     public ContainerPlan Plan { get; private set; } = plan;
 
     /// <summary>The address the browser was opened at, which a restart on an engine that chose another port changes.</summary>
@@ -811,25 +824,42 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         }
         words.AddRange(Plan.Start.Count > 0 ? ["--", .. Plan.Start] : []);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        upEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<ChildResult> coming = StreamAsync(words, ending.Token);
-        if (alongside is not null)
+        ChildResult up;
+        try
         {
-            string? unattached = await alongside(coming, ending.Token);
-            if (unattached is not null)
+            if (alongside is not null && await alongside(coming, ending.Token) is { } unattached)
             {
-                await ending.CancelAsync();
-                try
-                {
-                    await coming;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Ended for the attach that failed, which says why.
-                }
+                await EndedAsync();
                 return unattached;
             }
+            up = await coming;
         }
-        ChildResult up = await coming;
+        catch (OperationCanceledException)
+        {
+            // Stopped as it came up: Compose ends first, or it would go on making containers after Stop took the others.
+            await EndedAsync();
+            throw;
+        }
+        finally
+        {
+            upEnded.TrySetResult();
+        }
+
+        async Task EndedAsync()
+        {
+            cut = true;
+            await ending.CancelAsync();
+            try
+            {
+                await coming;
+            }
+            catch (OperationCanceledException)
+            {
+                // Ended for the attach that failed, or the Stop, which say why.
+            }
+        }
         if (!up.Succeeded)
         {
             // What the services said before they ended is why, which the down that follows would take with them.
@@ -914,13 +944,19 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             watching = null;
         }
         IReadOnlyList<string>? only = Plan.KeepBacking && Plan.Backing.Count > 0 ? [.. Plan.Dotnet.Select(d => d.Service)] : null;
+        Task up = upEnded.Task;
+        bool coming = !up.IsCompleted || cut;
         stopping = BackgroundWork.Run(async () =>
         {
-            if (first is not null)
-            {
-                await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(10)));
-            }
+            // Compose still bringing it up (Stop's own start's end ends it) makes no container after the take-down's look.
+            await Task.WhenAny(Task.WhenAll(first ?? Task.CompletedTask, up), Task.Delay(TimeSpan.FromSeconds(10)));
             await FolderContainers.TakeDownAsync(engine, Plan.Compose, LabelledFor, $"as {Plan.Name} stopped", only);
+            if (coming)
+            {
+                // Stopped as it came up: a container the engine was still making as Compose ended is taken too.
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                await FolderContainers.TakeDownAsync(engine, Plan.Compose, LabelledFor, $"as {Plan.Name} stopped", only);
+            }
         });
         return stopping;
     }
@@ -1115,6 +1151,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         catch (OperationCanceledException)
         {
             ChildProcesses.Kill(process);
+            // Gone before its caller goes on: Compose killed makes nothing more after a take-down has looked.
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { }, TaskScheduler.Default);
             throw;
         }
         await Task.WhenAll(output, errors).WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);

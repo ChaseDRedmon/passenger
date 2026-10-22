@@ -200,6 +200,7 @@ public sealed partial class BuildRunController
         if (failed is not null)
         {
             // Whatever came up goes: a run that did not start leaves nothing running.
+            IdeLog.Write(IdeLog.Ide, $"Containers: {chosen.Name} did not start ({failed}): what came up is taken down");
             await session.StopContainersAsync();
             parts.Views.Run.SetRunning(false);
             RunningChanged?.Invoke(this, EventArgs.Empty);
@@ -218,7 +219,7 @@ public sealed partial class BuildRunController
             ContainerStart.Profile => $"Profiling {Named(debugged)} of {chosen.Name}: Get Snapshot when it has done what is to be measured",
             _ => $"Running {chosen.Name}",
         };
-        parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Count(plan.Dotnet.Count(d => d.Starts), ".NET service")} from Passenger's build"
+        parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Count(plan.Dotnet.Count(d => plan.Starts(d.Service)), ".NET service")} from Passenger's build"
             + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Count(plan.Backing.Count, "other service")}; Stop takes them down"
             + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty));
         parts.Reveal?.Invoke(plan.ProjectName);
@@ -270,6 +271,12 @@ public sealed partial class BuildRunController
         {
             // Compose ended without starting it: what it said is in the Run window, and the run's failure says why.
             return null;
+        }
+        // Stopped while its container was reached: a session begun now would outlive the Stop that ended the others.
+        stop.ThrowIfCancellationRequested();
+        if (run.IsStopped)
+        {
+            throw new OperationCanceledException(stop);
         }
         if (there.Program.WhyNot is { } why)
         {

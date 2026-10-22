@@ -329,7 +329,8 @@ public sealed class ProfilerCommands
         {
             failed = await builds.ProfileContainersAsync(chosen, work, async (service, program, place, cancel) =>
             {
-                name = $"{service.Service} of {chosen.Name}";
+                // A gutter icon's one-service configuration is named for its service already.
+                name = chosen.Services is [{ } only] && only == service.Service ? chosen.Name : $"{service.Service} of {chosen.Name}";
                 work.Say($"Recording {service.Service} in its container…");
                 try
                 {

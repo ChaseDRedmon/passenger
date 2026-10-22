@@ -574,7 +574,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;
         BuildRunController builds = Builds;
         AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
-        if (await builds.RunAsync(arguments, hotReload).WaitAsync(cancel) is { } refused)
+        if (await Started(builds.RunAsync(arguments, hotReload), AppActions.RunProgram, cancel) is { } refused)
         {
             throw new InvalidOperationException(WithBuildErrors(refused));
         }
@@ -915,12 +915,20 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         Choose(configuration);
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
-        if (await Builds.DebugAsync(arguments).WaitAsync(cancel) is { } problem)
+        if (await Started(Builds.DebugAsync(arguments), AppActions.Debug, cancel) is { } problem)
         {
             throw new InvalidOperationException(WithBuildErrors(problem));
         }
         return await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
+
+    /// <summary>A start an agent waits on (Run's, Debug's), ended as Stop ends one when the agent gives up on the call before
+    /// it has started: a container run comes down rather than coming up for no one. One started is the person's to end.</summary>
+    private async Task<string?> Started(Task<string?> start, string action, CancellationToken cancel)
+    {
+        using CancellationTokenRegistration givenUp = cancel.Register(() => UiThread.Post(() => window.Actions.Work.Of(action)?.Cancel()));
+        return await start.WaitAsync(cancel);
+    }
 
     /// <summary>A run, debug, test or profile refused for a failed build, with the build's errors after it (path:line:column,
     /// code and message, at most ten), so an agent fixes them without asking problems first.</summary>
