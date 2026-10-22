@@ -83,8 +83,8 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
     /// whose containers it would make again over any of the project's it finds.</summary>
     public IReadOnlyList<string> Touched { get; init; } = [];
 
-    /// <summary>What the run says of itself as it comes up (a service marked Don't start that another depends on), after its
-    /// status.</summary>
+    /// <summary>What the run says of itself as it comes up (a service marked Don't start that another depends on, one run as
+    /// the person on this Linux engine), after its status.</summary>
     public IReadOnlyList<string> Notes { get; init; } = [];
 }
 
@@ -214,13 +214,28 @@ public static class ContainerPlans
         List<string> watched = [.. model.Services.Where(s => s.Watches && !dotnetNames.Contains(s.Name) && (start.Count == 0 || start.Contains(s.Name))).Select(s => s.Name)];
         List<string> notes = [.. dotnet.Where(d => !d.Starts && touched.Contains(d.Service))
             .Select(d => $"{d.Service} is marked Don't start, but a service it starts depends on it: Compose starts it from its own image, as its files build it")];
+        // As deployed, the image's own user could not read what is kept for the person alone (OverrideAsync's owner).
+        if (mode == ContainerMode.Images && OperatingSystem.IsLinux() && DotnetProcesses.UserAndGroup is { } owner)
+        {
+            foreach (DotnetService runs in dotnet.Where(d => d.Starts && touched.Contains(d.Service)))
+            {
+                string[] kept = [.. Serves(model[runs.Service]!) ? ["development certificate"] : Array.Empty<string>(),
+                    .. !Development(model[runs.Service]!) || UserSecrets(projects.FirstOrDefault(p => PathNames.Same(p.Path, runs.Project))) is null ? Array.Empty<string>() : ["user secrets"]];
+                if (kept.Length > 0)
+                {
+                    notes.Add($"{runs.Service} runs as you ({owner}) on this Linux engine, as fast mode does, so it can read the {string.Join(" and ", kept)} kept for you alone");
+                }
+            }
+        }
 
         string overrideFile = Path.Combine(state, $"{file}.override.yaml");
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
         // Written once the host's build is done: what fast mode mounts (its static web assets' folders) is that build's.
         bool pin = Overrides((await engine.StateAsync(cancel: cancel)).ComposeVersion);
+        // Each port Passenger pins is chosen once for the plan: every override it writes after (a hold, a restart) keeps it.
+        Dictionary<(string Service, int Port), int> pinned = [];
         async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken stop) =>
-            WriteJson(overrideFile, await OverrideAsync(model, dotnet, mode, labels, projects, state, pin, held, modifiable, certificate, stop), overriding: true);
+            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
             await WriteOverride([], [], null, cancel);
@@ -457,29 +472,37 @@ public static class ContainerPlans
             .Select(f => Version.Parse(f[3..])).OrderByDescending(v => v).Select(v => $"{v.Major}.{Math.Max(0, v.Minor)}").FirstOrDefault() ?? "10.0";
 
     /// <summary>The override Passenger lays over the files: Passenger's labels on every service, image and network it makes
-    /// (so Stop, the folder's end and the IDE's end take them down), and for each .NET service, in fast mode, its image's
-    /// runtime stage, <c>dotnet /passenger/app/X.dll</c> as PID 1 with Passenger's build mounted there read-only, and in
-    /// images mode a Debug build where its Dockerfile takes BUILD_CONFIGURATION; HTTPS's development certificate and the
-    /// project's user secrets where they serve; a service held for the debugger started held by its runtime until the debugger
-    /// lets it go, its code open to Hot Reload. JSON, which Compose reads as YAML.</summary>
-    private static async Task<JsonObject> OverrideAsync(ComposeModel model, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
-        IReadOnlyList<ProjectModel> projects, string state, bool pinPorts, IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable,
-        DevelopmentCertificate.Exported? certificate, CancellationToken cancel)
+    /// (so Stop, the folder's end and the IDE's end take them down; an image built as deployed tagged apart from the one its
+    /// files name), and for each .NET service it starts, in fast mode, its image's runtime stage, <c>dotnet
+    /// /passenger/app/X.dll</c> as PID 1 with Passenger's build mounted there read-only, and in images mode a Debug build
+    /// where its Dockerfile takes BUILD_CONFIGURATION; HTTPS's development certificate and the project's user secrets where
+    /// they serve; a service held for the debugger started held by its runtime until the debugger lets it go, its code open
+    /// to Hot Reload. JSON, which Compose reads as YAML.</summary>
+    private static async Task<JsonObject> OverrideAsync(ComposeModel model, string project, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
+        IReadOnlyList<ProjectModel> projects, string state, Dictionary<(string Service, int Port), int>? pinned, IReadOnlyCollection<string> held,
+        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken cancel)
     {
         JsonObject services = [];
+        string? owner = OperatingSystem.IsLinux() ? DotnetProcesses.UserAndGroup : null;
         foreach (ComposeService service in model.Services)
         {
             JsonObject entry = new() { ["labels"] = Labels(labels) };
             if (service.Context is not null)
             {
                 entry["build"] = new JsonObject { ["labels"] = Labels(labels) };
+                // Built again with Passenger's labels (a .NET service's as Debug): never under the image name its files give,
+                // which stays the person's own.
+                if (mode == ContainerMode.Images)
+                {
+                    entry["image"] = $"{project}-{service.Name}:passenger";
+                    entry["pull_policy"] = "build";
+                }
             }
             // A .NET service marked Don't start that another depends on runs as its files say: Passenger built nothing for it.
             if (dotnet.FirstOrDefault(d => d.Service == service.Name) is { Starts: true } built)
             {
                 JsonObject environment = [];
-                bool development = !service.Environment.ContainsKey("ASPNETCORE_ENVIRONMENT") && !service.Environment.ContainsKey("DOTNET_ENVIRONMENT")
-                    || service.Environment.GetValueOrDefault("ASPNETCORE_ENVIRONMENT") == "Development" || service.Environment.GetValueOrDefault("DOTNET_ENVIRONMENT") == "Development";
+                bool development = Development(service);
                 JsonArray volumes = [];
                 if (mode == ContainerMode.Fast)
                 {
@@ -491,7 +514,7 @@ public static class ContainerPlans
                         {
                             build["target"] = stage;
                         }
-                        entry["image"] = $"{model.Name}-{service.Name}:passenger-fast";
+                        entry["image"] = $"{project}-{service.Name}:passenger-fast";
                         entry["pull_policy"] = "build";
                     }
                     entry["entrypoint"] = new JsonArray("dotnet", $"{AppFolder}/{built.Assembly}.dll");
@@ -499,15 +522,10 @@ public static class ContainerPlans
                     entry["init"] = true;
                     // Rerun restarts the container, and the engine gives a port of its own choosing a new one at each start:
                     // chosen here once, so a browser open on it stays right.
-                    if (pinPorts && service.Ports.Any(p => ComposeModel.HostPort(p.Published) is null))
+                    if (pinned is not null && service.Ports.Any(p => ComposeModel.HostPort(p.Published) is null))
                     {
-                        entry["ports"] = new JsonArray([.. service.Ports.Select(p =>
-                            (JsonNode)$"{ComposeModel.HostPort(p.Published) ?? FreePort()}:{p.Target}{(p.Protocol == "tcp" ? string.Empty : $"/{p.Protocol}")}")]);
-                    }
-                    // Linux's engine keeps the host's permissions on a mount: the app runs as the person, who can read the build.
-                    if (OperatingSystem.IsLinux() && DotnetProcesses.UserAndGroup is { } owner)
-                    {
-                        entry["user"] = owner;
+                        entry["ports"] = new JsonArray([.. service.Ports.Select((p, i) =>
+                            (JsonNode)Port(p, ComposeModel.HostPort(p.Published) is null ? Pinned(pinned, service.Name, i, p.HostIp) : null))]);
                     }
                     volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = built.Output, ["target"] = AppFolder, ["read_only"] = true });
                     if (!service.Environment.ContainsKey("ASPNETCORE_ENVIRONMENT") && !service.Environment.ContainsKey("DOTNET_ENVIRONMENT"))
@@ -529,6 +547,13 @@ public static class ContainerPlans
                     JsonObject build = (JsonObject)(entry["build"] ??= new JsonObject());
                     build["args"] = new JsonObject { ["BUILD_CONFIGURATION"] = "Debug" };
                 }
+                (string Folder, string Id)? secrets = development ? UserSecrets(projects.FirstOrDefault(p => PathNames.Same(p.Path, built.Project))) : null;
+                // Linux's engine keeps the host's owners and permissions on a mount: the app runs as the person, who can read the
+                // build, the certificate and the user secrets, kept for them alone (the image's own user, as deployed, could not).
+                if (owner is not null && (mode == ContainerMode.Fast || Serves(service) || secrets is not null))
+                {
+                    entry["user"] = owner;
+                }
                 if (held.Contains(service.Name))
                 {
                     environment[HeldVariable] = "1";
@@ -547,12 +572,12 @@ public static class ContainerPlans
                 {
                     OverHttp(service, environment);
                 }
-                if (development && UserSecrets(projects.FirstOrDefault(p => PathNames.Same(p.Path, built.Project))) is { } secrets)
+                // .NET reads APPDATA before HOME for user secrets on every system, so whichever user the app runs as finds this
+                // project's own folder there, mounted alone.
+                if (secrets is { } own)
                 {
-                    foreach (string home in (string[])["/root", "/home/app"])
-                    {
-                        volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = secrets, ["target"] = $"{home}/.microsoft/usersecrets", ["read_only"] = true });
-                    }
+                    volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = own.Folder, ["target"] = $"{AppData}/Microsoft/UserSecrets/{own.Id}", ["read_only"] = true });
+                    environment["APPDATA"] = AppData;
                 }
                 if (volumes.Count > 0)
                 {
@@ -636,22 +661,38 @@ public static class ContainerPlans
         }
     }
 
+    /// <summary>Whether a service runs in Development (as its files say, or with nothing said, as Passenger runs it), where it
+    /// reads its user secrets and static web assets.</summary>
+    private static bool Development(ComposeService service) =>
+        !service.Environment.ContainsKey("ASPNETCORE_ENVIRONMENT") && !service.Environment.ContainsKey("DOTNET_ENVIRONMENT")
+        || service.Environment.GetValueOrDefault("ASPNETCORE_ENVIRONMENT") == "Development" || service.Environment.GetValueOrDefault("DOTNET_ENVIRONMENT") == "Development";
+
     /// <summary>Whether a service serves HTTPS: Kestrel told an https address or an HTTPS port, or a port of HTTPS's.</summary>
     private static bool Serves(ComposeService service) =>
         service.Environment.GetValueOrDefault("ASPNETCORE_URLS")?.Contains("https:", StringComparison.OrdinalIgnoreCase) == true
         || service.Environment.ContainsKey("ASPNETCORE_HTTPS_PORTS") || service.Ports.Any(p => p.Target is 443 or 8081);
 
-    /// <summary>The folder of a project's user secrets on this machine, when it has an id and that folder is there.</summary>
-    private static string? UserSecrets(ProjectModel? project)
+    /// <summary>Where a .NET service in its container finds its user secrets: APPDATA, which Passenger sets there.</summary>
+    public const string AppData = "/passenger/appdata";
+
+    /// <summary>The folder user secrets are kept in on this machine in place of .NET's own (APPDATA's Microsoft/UserSecrets
+    /// on Windows, ~/.microsoft/usersecrets elsewhere): read for that alone, so a test's run never mounts the person's own.</summary>
+    public const string UserSecretsVariable = "PASSENGER_USER_SECRETS";
+
+    /// <summary>The folder of a project's own user secrets on this machine and its id, when it has an id that names one
+    /// folder (no separator, never a dot or two alone) and that folder is there.</summary>
+    private static (string Folder, string Id)? UserSecrets(ProjectModel? project)
     {
-        if (project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is null)
+        if (project?.Property(Passenger.Host.CarriedProperties.UserSecretsId) is not { Length: > 0 } id || id is "." or ".."
+            || id.IndexOfAny([.. Path.GetInvalidFileNameChars(), '/', '\\']) >= 0)
         {
             return null;
         }
-        string root = OperatingSystem.IsWindows()
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
+        string root = Environment.GetEnvironmentVariable(UserSecretsVariable) is { Length: > 0 } given ? given
+            : OperatingSystem.IsWindows() ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".microsoft", "usersecrets");
-        return Directory.Exists(root) ? root : null;
+        string folder = Path.Combine(root, id);
+        return Directory.Exists(folder) ? (folder, id) : null;
     }
 
     private static JsonObject Labels(IReadOnlyList<string> words)
@@ -667,12 +708,37 @@ public static class ContainerPlans
         return labels;
     }
 
-    /// <summary>A port nothing on this machine listens on now, for a service's published port Passenger chooses.</summary>
-    private static int FreePort()
+    /// <summary>A port nothing on this machine listens on now (at the host's address it is published on), for a service's
+    /// published port Passenger chooses: chosen once for the plan, the same one after.</summary>
+    private static int Pinned(Dictionary<(string Service, int Port), int> pinned, string service, int index, string? hostIp)
     {
-        using System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        if (!pinned.TryGetValue((service, index), out int port))
+        {
+            System.Net.IPAddress at = hostIp is { Length: > 0 } given && System.Net.IPAddress.TryParse(given, out System.Net.IPAddress? parsed) ? parsed : System.Net.IPAddress.Loopback;
+            using System.Net.Sockets.TcpListener listener = new(at, 0);
+            listener.Start();
+            pinned[(service, index)] = port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        return port;
+    }
+
+    /// <summary>A port in Compose's long syntax as its model had it (the host's address, mode, name and application protocol
+    /// kept), published on <paramref name="chosen"/> where Passenger chose its port.</summary>
+    private static JsonObject Port(ComposePort port, int? chosen)
+    {
+        JsonObject written = new() { ["target"] = port.Target, ["protocol"] = port.Protocol };
+        if ((chosen?.ToString(CultureInfo.InvariantCulture) ?? port.Published) is { Length: > 0 } published)
+        {
+            written["published"] = published;
+        }
+        foreach ((string key, string? value) in (ReadOnlySpan<(string, string?)>)[("host_ip", port.HostIp), ("mode", port.Mode), ("name", port.Name), ("app_protocol", port.AppProtocol)])
+        {
+            if (value is { Length: > 0 })
+            {
+                written[key] = value;
+            }
+        }
+        return written;
     }
 
     /// <summary>Whether Compose takes YAML's <c>!override</c> tag (2.24 and later), which puts a list in place of the file's
@@ -688,6 +754,11 @@ public static class ContainerPlans
         text = overriding ? text.Replace("\"ports\": [", "\"ports\": !override [", StringComparison.Ordinal) : text;
         string temporary = path + ".tmp";
         File.WriteAllText(temporary, text);
+        // It may hold the certificate's password and the configuration's environment: the person's alone to read.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         File.Move(temporary, path, overwrite: true);
     }
 
@@ -725,7 +796,7 @@ public delegate ProcessStartInfo DotnetWords(IReadOnlyList<string> words, string
 /// (<c>dotnet dev-certs https --check --trust</c>), made and trusted when the person asks (<c>--trust</c>, which the system
 /// may ask about too), and exported once into the state (<c>-ep … -p …</c>), with a password of its own kept beside it and
 /// never written to a console; each through ChildProcesses, bounded, saying why when it does not come.</summary>
-public static class DevelopmentCertificate
+public static partial class DevelopmentCertificate
 {
     public sealed record Exported(string Folder, string File, string Password);
 
@@ -750,24 +821,30 @@ public static class DevelopmentCertificate
     /// <summary>How long the check may take, which asks nothing of the person.</summary>
     public static readonly TimeSpan CheckLimit = TimeSpan.FromSeconds(30);
 
-    /// <summary>Whether a certificate is there and trusted, as dev-certs answers (6: none valid, 7: not trusted), and what it said.</summary>
-    public static async Task<(Standing Standing, string Said)> CheckAsync(DotnetWords dotnet, string folder, CancellationToken cancel)
+    /// <summary>Whether a certificate is there and trusted, as dev-certs answers (6: none valid, 7: not trusted), what it said,
+    /// and the thumbprint of the certificate it found, when it named one. Stopped, it throws <see cref="OperationCanceledException"/>.</summary>
+    public static async Task<(Standing Standing, string Said, string? Thumbprint)> CheckAsync(DotnetWords dotnet, string folder, CancellationToken cancel)
     {
         try
         {
             ChildResult answered = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--check", "--trust"], folder), limit: CheckLimit, cancel: cancel,
                 answers: [6, 7]);
-            return (answered.ExitCode switch { 0 => Standing.Trusted, 6 => Standing.Missing, 7 => Standing.NotTrusted, _ => Standing.Unknown }, Said(answered));
+            string? thumbprint = answered.ExitCode is 0 or 7 && Thumbprint().Match(answered.Output) is { Success: true } found ? found.Value.ToUpperInvariant() : null;
+            return (answered.ExitCode switch { 0 => Standing.Trusted, 6 => Standing.Missing, 7 => Standing.NotTrusted, _ => Standing.Unknown }, Said(answered), thumbprint);
         }
         catch (TimeoutException)
         {
-            return (Standing.Unknown, $"dotnet dev-certs https --check did not answer within {CheckLimit.TotalSeconds:0} s");
+            return (Standing.Unknown, $"dotnet dev-certs https --check did not answer within {CheckLimit.TotalSeconds:0} s", null);
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            return (Standing.Unknown, failed.Message);
+            return (Standing.Unknown, failed.Message, null);
         }
     }
+
+    /// <summary>A certificate's SHA-1 thumbprint, as dev-certs names the one it found ("A valid certificate was found: …").</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b[0-9A-Fa-f]{40}\b")]
+    private static partial System.Text.RegularExpressions.Regex Thumbprint();
 
     /// <summary>Makes the certificate if there is none and trusts it, as <c>dotnet dev-certs https --trust</c> does (the
     /// system may ask the person too), the copy exported before let go: null once trusted, else why not.</summary>
@@ -789,20 +866,27 @@ public static class DevelopmentCertificate
         }
     }
 
-    /// <summary>The certificate exported into the state (once; again after <see cref="TrustAsync"/>), or why it is not.</summary>
-    public static async Task<(Exported? Certificate, string? Problem)> ExportAsync(DotnetWords dotnet, string state, CancellationToken cancel)
+    /// <summary>The certificate exported into the state (once for the certificate dev-certs has, <paramref name="thumbprint"/>
+    /// as its check named it: again once that is another, or after <see cref="TrustAsync"/>), or why it is not. Stopped, it
+    /// throws <see cref="OperationCanceledException"/>.</summary>
+    public static async Task<(Exported? Certificate, string? Problem)> ExportAsync(DotnetWords dotnet, string state, string? thumbprint, CancellationToken cancel)
     {
         string folder = Path.Combine(state, "https");
         string file = Path.Combine(folder, "aspnetapp.pfx");
         string kept = Path.Combine(folder, "password");
+        // The thumbprint of the certificate exported, as the check named it then: a copy of another the check no longer finds
+        // (made again since, or expired and replaced) would be refused by every browser that trusts the new one.
+        string exportedOf = Path.Combine(folder, "thumbprint");
         await Gate.WaitAsync(cancel);
         try
         {
             Directory.CreateDirectory(folder);
-            if (File.Exists(file) && File.Exists(kept))
+            if (File.Exists(file) && File.Exists(kept)
+                && (thumbprint is null || File.Exists(exportedOf) && string.Equals((await File.ReadAllTextAsync(exportedOf, cancel)).Trim(), thumbprint, StringComparison.OrdinalIgnoreCase)))
             {
                 return (new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim()), null);
             }
+            Forget(state);
             string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
             ChildResult exported = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
             if (!exported.Succeeded || !File.Exists(file))
@@ -813,6 +897,10 @@ public static class DevelopmentCertificate
             if (!OperatingSystem.IsWindows())
             {
                 File.SetUnixFileMode(kept, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+            if (thumbprint is not null)
+            {
+                await File.WriteAllTextAsync(exportedOf, thumbprint, cancel);
             }
             return (new Exported(folder, file, password), null);
         }
@@ -836,10 +924,12 @@ public static class DevelopmentCertificate
     {
         try
         {
-            string file = Path.Combine(state, "https", "aspnetapp.pfx");
-            if (File.Exists(file))
+            foreach (string kept in (string[])["aspnetapp.pfx", "thumbprint"])
             {
-                File.Delete(file);
+                if (Path.Combine(state, "https", kept) is var file && File.Exists(file))
+                {
+                    File.Delete(file);
+                }
             }
         }
         catch (Exception kept) when (kept is IOException or UnauthorizedAccessException)
@@ -1144,7 +1234,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         return upEnded.Task;
     }
 
-    /// <summary>What the run said of itself as it came up (its notes: a service over HTTP, one that runs without the debugger).</summary>
+    /// <summary>What the run said of itself as it came up (its notes: a service over HTTP, one run as the person, one that runs
+    /// without the debugger), which an agent's answer carries too.</summary>
     public List<string> Notes { get; } = [];
 
     /// <summary>The .NET services whose build changed since they started (or were last restarted), Rerun's to restart.</summary>

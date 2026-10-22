@@ -621,7 +621,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             IReadOnlyList<(string Service, string State, string? Health, string Ports)> states = await run.StatesAsync(cancel);
             return $"Running {run.Plan.Name} (Compose project {run.Plan.ProjectName}):\n" + string.Join('\n', states.Select(s =>
                 $"  {s.Service}: {s.State}{(s.Health is { } health ? $" ({health})" : string.Empty)}{(s.Ports.Length > 0 ? $", ports {s.Ports}" : string.Empty)}"
-                + (run.Plan.Dotnet.Any(d => d.Service == s.Service) ? ", from Passenger's build" : string.Empty)));
+                + (run.Plan.Dotnet.Any(d => d.Service == s.Service) ? ", from Passenger's build" : string.Empty)))
+                + string.Concat(run.Notes.Select(n => $"\nNote: {n}"));
         }
         catch (Exception failed) when (failed is global::Passenger.App.Containers.ContainerCommandException or TimeoutException or System.Text.Json.JsonException)
         {

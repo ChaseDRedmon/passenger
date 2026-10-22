@@ -588,22 +588,37 @@ window or takes the focus; it shows everything but the system's own window chrom
   compose file of one service Passenger writes) and the project each service runs (its Dockerfile's ENTRYPOINT assembly
   or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command
   takes Passenger's override from the folder's state (`workspaces/…/containers/<config>.override.yaml`, JSON, written
-  after the host's build): labels on every service, image build and network; in fast mode each .NET service's runtime
+  after the host's build, the person's alone to read on macOS and Linux, as a single service's compose file is, since it
+  names the certificate's password and the configuration's environment): labels on every service, image build and network;
+  in fast mode each .NET service it starts its runtime
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
   read-only, its static web assets' folders mounted and its manifest rewritten (`ASPNETCORE_STATICWEBASSETS`); in images
-  mode BUILD_CONFIGURATION=Debug where the Dockerfile declares it; the dev certificate (`DevelopmentCertificate`) for a
+  mode BUILD_CONFIGURATION=Debug where the Dockerfile declares it, every image it builds tagged `<project>-<service>:passenger`
+  (fast mode's `:passenger-fast`), never the name its files give, which stays the person's; on Linux a .NET service runs as
+  the person (`user: uid:gid`), in fast mode always and as deployed where it takes the certificate or user secrets (said
+  after the status), since the engine keeps the host's owners and modes and those are the person's alone; the dev certificate (`DevelopmentCertificate`) for a
   service that serves HTTPS (`ContainerPlan.Https`; `BuildRunController.CertificateAsync` before the override: `dotnet
   dev-certs https --check --trust`, and missing or not trusted the person asked once, `CertificateQuestionDialog`, Create
-  and Trust running `--trust` or Run over HTTP; an agent's own IDE asks no one and runs over HTTP; then exported once,
-  the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
+  and Trust running `--trust` or Run over HTTP; a run an agent's call started (`Mcp.AgentCall.Current`) or an agent's own
+  IDE (`MainWindow.AgentsOwn`, `--mcp`'s, not `--no-mcp`'s) asks no one and runs over HTTP, saying so in the status bar and
+  the call's answer (`ContainerRun.Notes`); a start stopped closes the question; then exported, again once the check names
+  another certificate than the one exported (its thumbprint kept beside it), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
   failure is said in the status bar, a click from the Run window's line of what dev-certs said; the wait for the answer
   holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
-  and user secrets in Development; a fast .NET service's ports the file leaves to the engine
-  chosen free once (`FreePort`) and put in the file's place (`!override` on JSON's flow list, Compose 2.24 on), since a
+  and in Development the project's own user secrets (its UserSecretsId's folder alone, mounted at
+  `/passenger/appdata/Microsoft/UserSecrets/<id>` with APPDATA set to `/passenger/appdata`, which .NET reads before HOME on
+  every system, so any user the app runs as finds them; the folder is `PASSENGER_USER_SECRETS`'s in place of the person's
+  when set, read for that alone, as the tests' run sets it); a fast .NET service's ports the file leaves to the engine
+  chosen free once for the plan (`Pinned`, the same at every override written after: a hold, a restart) and put in the
+  file's place in Compose's long syntax, its host address, mode, name and application protocol kept (`!override` on
+  JSON's flow list, Compose 2.24 on), since a
   restart otherwise publishes another. A configuration whose every service is marked Don't start runs nothing, saying so
   (`up` given none would start them all); a .NET service marked Don't start that a started one depends on is left out of
-  the override's .NET part, Compose starting it from its own image, which the run says (`ContainerPlan.Notes`;
-  `ContainerPlan.Touched` is what `up` makes: the services it starts and what they depend on). An SDK container as deployed is the SDK's own image (`dotnet publish
+  the override's .NET part, Compose starting it from its own image, which the run says (`ContainerPlan.Notes`). Before `up`,
+  containers of its project of the services it makes (`ContainerPlan.Touched`: those it starts and what they depend on)
+  that lack this process's labels are the person's own, which `up` would make again and Stop then remove: the person is
+  asked (`ReplaceContainersDialog`: Replace Them, after which they are the run's, or Cancel), and a run an agent's call
+  started, or an agent's own IDE, refuses saying why. An SDK container as deployed is the SDK's own image (`dotnet publish
   -t:PublishContainer` into the engine, `ContainerRun.PublishAsync`, named `passenger-<config>-<folder>:passenger`, which
   carries no label of Passenger's). `ContainerRun` (`ProjectSession.ContainerRun`) is `up
   --detach --wait` streamed into the Run console, then `logs --follow` through the session's `Runner` (so Run's Stop,
@@ -1500,7 +1515,8 @@ log, history or Git signing and hooks. Nor does a test start the person's Passen
 ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test
 reaches a registry through a Dockerfile it opens: the run sets `PASSENGER_BUILDKIT_CHECKS=off`, the default of Check
 Dockerfiles with BuildKit (`Containers.BuildKitChecks`), which `EngineChecksTests`' one test of it turns on in its window's
-Settings. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
+Settings. Nor does a container run mount the person's user secrets: the run points `PASSENGER_USER_SECRETS` at its own
+folder (`TestRun.UserSecrets`), where a test writes a project's. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
 an update gives its window the updater of a copy installed in a test folder, and no other window has one; each
 version's disk image is made once a class (`UpdatesTests.DiskImages`), since hdiutil takes seconds over each. After every window test, pass or fail, the windows it left open are closed,
@@ -1630,12 +1646,13 @@ aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is
 since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
 solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
 method leads web's own (a web app's idle threads wait in the runtime's code). `ContainerServicesTests` (Alone) act on one
-service of that solution's run from the Containers window's rows and the gutter, the others never restarted, Stop and
-Remove a debugged one there and Restart and Stop the run's project, and Debug one whose tools cannot be found
-(`ContainerToolsFrom` an empty folder and the dead release feed), which then runs on unheld (`McpTests.ContainerDebugging.cs`'
-agent restarts and stops one with `container_action`); `ContainerRunStopsTests` (Alone) press Stop during its first build and
-during `up` as held services attach, press Debug as Run brings it up and open another folder as Debug does (its cache
-answering its health check only after 25 s, so `up` waits), and `McpTests.ContainerDebugging.cs`' agent stops a run as it
+service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
+the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
+Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
+dead release feed), which then runs on unheld (`McpTests.ContainerDebugging.cs`' agent restarts and stops one with `container_action`);
+`ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
+Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
+and `McpTests.ContainerDebugging.cs`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
 run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.

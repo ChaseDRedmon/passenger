@@ -2,6 +2,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Containers;
 using Passenger.App.Run;
@@ -135,7 +136,11 @@ public sealed class ContainerRunsTests
         Write(folder, "src/Shop/Program.cs", "Console.WriteLine(\"shop\");\n");
         // An image built from the context into /src: what it prints names its own paths, as a stack trace from a build in an image does.
         Write(folder, "Dockerfile", $"FROM {Docker.Image}\nWORKDIR /src\nCOPY . .\nCMD [\"sh\", \"-c\", \"echo '   at Shop.Program.Main() in /src/src/Shop/Program.cs:line 1'; sleep 600\"]\n");
-        Write(folder, "compose.yaml", $"name: {project}\nservices:\n  shop:\n    build: .\n    init: true\n");
+        // The image its files name is the person's own, which Passenger's build (its labels on it) never takes the name of.
+        string own = $"{project}own:mine";
+        Docker.Run("tag", Docker.Image, own);
+        string ownImage = Docker.Run("image", "inspect", "-f", "{{.Id}}", own);
+        Write(folder, "compose.yaml", $"name: {project}\nservices:\n  shop:\n    build: .\n    image: {own}\n    init: true\n");
         MainWindow window = Open(folder);
         window.SetConfigurations([window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Images", Mode = ContainerMode.Images, Generated = false }], "Images");
         try
@@ -146,6 +151,8 @@ public sealed class ContainerRunsTests
             FileLink link = Assert.IsType<FileLink>(Assert.Single(window.BottomPanel.Run.Links.In(line)).Target);
             Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Shop", "Program.cs")), link.Path);
             Assert.Equal(0, link.Position.Line);
+            Assert.Equal($"{project}-shop:passenger", Docker.Run("inspect", "-f", "{{.Config.Image}}", Container(project, "shop")));
+            Assert.Equal(ownImage, Docker.Run("image", "inspect", "-f", "{{.Id}}", own));
         }
         finally
         {
@@ -153,6 +160,7 @@ public sealed class ContainerRunsTests
             Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
                 "Stop to take the container down", TimeSpan.FromMinutes(2));
             window.Close();
+            Docker.Ask(["rmi", own]);
         }
     }
 
@@ -469,6 +477,7 @@ public sealed class ContainerRunsTests
         (string folder, string project) = Shop("https");
         Write(folder, "Web/Web.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
             + "    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>passenger-test-https</UserSecretsId>\n  </PropertyGroup>\n</Project>\n");
+        Write(TestRun.UserSecrets, "passenger-test-https/secrets.json", "{ \"Greeting\": \"https\" }\n");
         File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
         // The certificate exported is the machine's own, its trust asked of no one: the check answers trusted (dotnet --version).
@@ -496,14 +505,8 @@ public sealed class ContainerRunsTests
             Assert.Equal("CN=localhost", subject);
             string mounts = Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));
             Assert.Contains("/https", mounts, StringComparison.Ordinal);
-            string secrets = OperatingSystem.IsWindows()
-                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "UserSecrets")
-                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".microsoft", "usersecrets");
-            if (Directory.Exists(secrets))
-            {
-                Assert.Contains("/home/app/.microsoft/usersecrets", mounts, StringComparison.Ordinal);
-                Assert.Contains("/root/.microsoft/usersecrets", mounts, StringComparison.Ordinal);
-            }
+            // The project's own secrets, from the run's folder of them, never the person's.
+            Assert.Contains($"{ContainerPlans.AppData}/Microsoft/UserSecrets/passenger-test-https", mounts, StringComparison.Ordinal);
         }
         finally
         {
@@ -527,13 +530,15 @@ public sealed class ContainerRunsTests
     }
 
     /// <summary>The stand-in for dotnet dev-certs: it notes what it was asked, answers the check with the exit code the test
-    /// put in "check" (first taking two minutes while "slow" is there), trusts nothing, and exports a file that is no
-    /// certificate (or fails, as a locked keychain does, while "fail" is there). Its first word is the folder it keeps those in.</summary>
-    private const string DevCerts = """
+    /// put in "check" (naming the certificate in "thumbprint" as found, when there is one; first taking two minutes while
+    /// "slow" is there), trusts nothing, and exports a file that is no certificate (or fails, as a locked keychain does, while
+    /// "fail" is there). Its first word is the folder it keeps those in.</summary>
+    internal const string DevCerts = """
         dir=$1; shift
         echo "$*" >> "$dir/asked"
         case " $* " in
           *" --check "*) if [ -f "$dir/slow" ]; then sleep 120; fi
+                         if [ -f "$dir/thumbprint" ]; then echo "A valid certificate was found: $(cat "$dir/thumbprint") - CN=localhost"; fi
                          exit "$(cat "$dir/check")" ;;
           *" -ep "*) if [ -f "$dir/fail" ]; then echo "The keychain is locked" >&2; exit 3; fi
                      while [ "$1" != "-ep" ]; do shift; done; printf 'stand-in' > "$2"; exit 0 ;;
@@ -542,10 +547,12 @@ public sealed class ContainerRunsTests
         exit 1
         """;
 
-    /// <summary>A run whose service serves HTTPS with no trusted development certificate asks first: Run over HTTP serves it
-    /// over HTTP on its port, with no certificate made or trusted; a certificate whose export fails is said in the status bar,
-    /// a click away from what dev-certs said, the service over HTTP; and Create and Trust has dev-certs trust it, exports it
-    /// and gives it to the service. Run and Profile stopped as dev-certs checks it say so and leave nothing. dev-certs is a
+    /// <summary>A run whose service serves HTTPS with no trusted development certificate asks first, in a window that lets no
+    /// agent in too (--no-mcp): Run over HTTP serves it over HTTP on its port, with no certificate made or trusted; a
+    /// certificate whose export fails is said in the status bar, a click away from what dev-certs said, the service over HTTP;
+    /// and Create and Trust has dev-certs trust it, exports it and gives it to the service, the override that holds its
+    /// password the person's alone to read. The copy is exported again once dev-certs names another certificate, and kept
+    /// while it names the same. Run and Profile stopped as dev-certs checks it say so and leave nothing. dev-certs is a
     /// stand-in throughout, which trusts nothing on this machine.</summary>
     [AvaloniaFact]
     public void A_run_that_serves_HTTPS_with_no_trusted_certificate_asks_to_create_and_trust_it_or_run_over_HTTP_and_says_an_export_that_fails()
@@ -569,10 +576,11 @@ public sealed class ContainerRunsTests
             """);
         File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
-        MainWindow window = Open(folder, (words, at) => ChildProcesses.Command("/bin/sh", ["-c", DevCerts, "dev-certs", standIn, .. words], at));
+        MainWindow window = Open(folder, (words, at) => ChildProcesses.Command("/bin/sh", ["-c", DevCerts, "dev-certs", standIn, .. words], at), agentsAllowed: false);
         RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
         window.SetConfigurations([web], web.Name);
         string Asked() => File.Exists(Path.Combine(standIn, "asked")) ? File.ReadAllText(Path.Combine(standIn, "asked")) : string.Empty;
+        bool Exported() => Asked().Split('\n').Any(l => l.StartsWith("dev-certs https -ep ", StringComparison.Ordinal));
         string Env() => Docker.Run("inspect", "-f", "{{json .Config.Env}}", Container(project, "web"));
         string Mounts() => Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));
         try
@@ -636,6 +644,27 @@ public sealed class ContainerRunsTests
             Assert.Contains("/https", Mounts(), StringComparison.Ordinal);
             Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx", Env(), StringComparison.Ordinal);
             Assert.DoesNotContain("over HTTP for this run", window.Status, StringComparison.Ordinal);
+            // The override names the certificate's password: no one but its owner reads it.
+            string written = window.Builds.Containers!.Plan.Compose.Single(w => w.EndsWith(".override.yaml", StringComparison.Ordinal));
+            Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Password", File.ReadAllText(written), StringComparison.Ordinal);
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(written));
+            }
+            Stopped(window, project);
+
+            // dev-certs names a certificate now, which the copy kept is not known to be: exported again, then kept while it
+            // names the same, and exported again once it names another.
+            File.WriteAllText(Path.Combine(standIn, "check"), "0");
+            foreach ((string thumbprint, bool again) in (ReadOnlySpan<(string, bool)>)[(new string('A', 40), true), (new string('A', 40), false), (new string('B', 40), true)])
+            {
+                File.WriteAllText(Path.Combine(standIn, "thumbprint"), thumbprint);
+                File.Delete(Path.Combine(standIn, "asked"));
+                Launched(window, window.RunAsync(), "web to come up with the certificate dev-certs names");
+                Assert.True(Exported() == again, $"With dev-certs naming {thumbprint[..4]}…, the certificate was {(again ? "not exported again" : "exported again")}: {Asked()}");
+                Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx", Env(), StringComparison.Ordinal);
+                Stopped(window, project);
+            }
         }
         finally
         {
@@ -663,6 +692,118 @@ public sealed class ContainerRunsTests
             Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=web").Length == 0,
                 "Stop to take web down", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
+        }
+    }
+
+    /// <summary>A service's user secrets reach it in its container, from Passenger's build and as deployed by an image whose
+    /// user is its own (on Linux, run as the person, who alone may read them): its project's folder of them alone is
+    /// mounted, where .NET finds it whoever the app runs as, and never another project's.</summary>
+    [AvaloniaFact]
+    public void A_services_user_secrets_reach_it_in_its_container_from_Passengers_build_and_as_deployed_and_only_its_own_are_mounted()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Shop("secrets");
+        string id = $"passenger-test-{project}";
+        Write(folder, "Web/Web.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            + $"    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>{id}</UserSecretsId>\n  </PropertyGroup>\n</Project>\n");
+        Write(folder, "Web/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.MapGet(\"/\", () => app.Configuration[\"Greeting\"] ?? \"no secret\");\napp.Run();\n");
+        // Kept as dotnet user-secrets keeps them: readable by their owner alone.
+        string secrets = Path.Combine(TestRun.UserSecrets, id, "secrets.json");
+        Write(TestRun.UserSecrets, $"{id}/secrets.json", "{ \"Greeting\": \"from secrets\" }\n");
+        Write(TestRun.UserSecrets, "another-project/secrets.json", "{ \"Greeting\": \"another's\" }\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(secrets, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.SetUnixFileMode(Path.GetDirectoryName(secrets)!, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        // As deployed: web published (no static web assets of this machine's to look for) into the runtime's image, run as its own user.
+        ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["publish", Path.Combine(folder, "Web", "Web.csproj"), "-c", "Debug",
+            "-o", Path.Combine(folder, "deployed"), "-nologo", "-v:q"], folder), null, TimeSpan.FromMinutes(5).Scaled(), CancellationToken.None)).GetAwaiter().GetResult();
+        Assert.True(built.Succeeded, $"web did not build: {built.Output}{built.Error}");
+        // Its files readable by any user whatever the mode the run made them with: in the image they are root's.
+        Write(folder, "Web/Deployed.Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nUSER $APP_UID\nWORKDIR /app\nCOPY --chmod=755 deployed .\nEXPOSE 8080\nENTRYPOINT [\"dotnet\", \"Web.dll\"]\n");
+        Write(folder, "deployed.yaml", "services:\n  web:\n    build: { context: ., dockerfile: Web/Deployed.Dockerfile }\n    environment: { ASPNETCORE_ENVIRONMENT: Development }\n");
+        MainWindow window = Open(folder);
+        RunConfiguration fast = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web from Passenger's build", Services = ["web"], Generated = false };
+        RunConfiguration deployed = fast with { Name = "Web as deployed", Mode = ContainerMode.Images, ComposeFiles = [.. fast.ComposeFiles, Path.Combine(folder, "deployed.yaml")] };
+        window.SetConfigurations([fast, deployed], fast.Name);
+        try
+        {
+            foreach (RunConfiguration each in (RunConfiguration[])[fast, deployed])
+            {
+                Assert.True(window.SelectConfiguration(each.Name));
+                Launched(window, $"{each.Name} to come up");
+                Assert.Equal("from secrets", Served(window, project, "web"));
+                string[] mounts = Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}}\n{{end}}", Container(project, "web")).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                Assert.Equal([$"{ContainerPlans.AppData}/Microsoft/UserSecrets/{id}"], mounts.Where(m => m.Contains("secrets", StringComparison.OrdinalIgnoreCase)));
+                if (OperatingSystem.IsLinux() && each.Mode == ContainerMode.Images)
+                {
+                    Assert.Contains("web runs as you", window.Status, StringComparison.Ordinal);
+                }
+                window.Perform(AppActions.Stop);
+                Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=web").Length == 0,
+                    $"Stop to take {each.Name} down", TimeSpan.FromMinutes(2));
+                Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
+            }
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take every container down", TimeSpan.FromMinutes(2));
+            window.Close();
+        }
+    }
+
+    /// <summary>Containers of the run's Compose project that Passenger did not make (the person's own docker compose up's), of
+    /// a service the run would start, are replaced only once the person says so: Cancel runs nothing and leaves them as they
+    /// are; Replace Them runs it in their place, and Stop then takes the run's down.</summary>
+    [AvaloniaFact]
+    public void Containers_of_the_project_Passenger_did_not_make_are_replaced_only_once_the_person_says_so()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Shop("theirs");
+        // The person's own cache, from their own compose up (with the run's label, so the run's end removes it should this test not).
+        Write(folder, "theirs.yaml", $"services:\n  cache:\n    labels: [\"{Docker.RunLabel}\"]\n");
+        Docker.Run("compose", "-f", Path.Combine(folder, "compose.yaml"), "-f", Path.Combine(folder, "theirs.yaml"), "up", "-d", "cache");
+        string theirs = Container(project, "cache");
+        MainWindow window = Open(folder);
+        RunConfiguration cache = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Cache", Services = ["cache"], Generated = false };
+        window.SetConfigurations([cache], cache.Name);
+        try
+        {
+            Task<string?> running = window.RunAsync();
+            ReplaceContainersDialog asked = Question(window, running);
+            Assert.Contains($"{project}-cache-1", string.Join('\n', asked.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text)), StringComparison.Ordinal);
+            Press(asked.CancelButton);
+            Assert.Equal($"Cache was not run: {project}-cache-1 of {project}, which Passenger did not make, were left as they are", Ui.Await(running, "Run to end once Cancel was answered", TimeSpan.FromMinutes(1)));
+            Assert.Equal(theirs, Container(project, "cache"));
+            Assert.Equal("running", Docker.State(theirs));
+
+            running = window.RunAsync();
+            Press(Question(window, running).ReplaceButton);
+            string? refused = Ui.Await(running, "cache to come up in place of the person's", TimeSpan.FromMinutes(5));
+            Assert.True(refused is null, $"{refused}{Ui.BuildErrors(window)}\n{Run(window)}");
+            string ours = Container(project, "cache");
+            Assert.NotEqual(theirs, ours);
+            Assert.Equal(ContainerLabels.ProcessValue, Docker.Run("inspect", "-f", $"{{{{index .Config.Labels \"{ContainerLabels.Process}\"}}}}", ours));
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take the run's cache down", TimeSpan.FromMinutes(2));
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            foreach (string left in Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Docker.Run("rm", "-f", left);
+            }
+            window.Close();
+        }
+
+        static ReplaceContainersDialog Question(MainWindow window, Task<string?> running)
+        {
+            Ui.PumpUntil(() => window.ReplaceQuestion is not null || running.IsCompleted, "the run to ask about the containers it would replace", TimeSpan.FromMinutes(2));
+            Assert.True(window.ReplaceQuestion is not null, $"The run asked nothing of the person's own container: {(running.IsCompleted ? running.Result : null)}");
+            return DialogButtonsTests.Check(window.ReplaceQuestion!);
         }
     }
 
@@ -765,9 +906,9 @@ public sealed class ContainerRunsTests
         File.WriteAllText(path, text);
     }
 
-    internal static MainWindow Open(string folder, DotnetWords? devCertificates = null)
+    internal static MainWindow Open(string folder, DotnetWords? devCertificates = null, bool agentsAllowed = true)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, DevCertificates = devCertificates };
+        MainWindow window = new() { Width = 1200, Height = 800, DevCertificates = devCertificates, AgentsAllowed = agentsAllowed };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -798,6 +939,23 @@ public sealed class ContainerRunsTests
         string? answer = null;
         Assert.True(Waiting.Until(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)), $"Nothing answered on port {port}");
         return answer!;
+    }
+
+    /// <summary>The page a service serves on the port its 8080 is published on, or the test failed with what its container
+    /// and the Run window say of why it serves none.</summary>
+    private static string Served(MainWindow window, string project, string service)
+    {
+        string said = Docker.Ask(["compose", "-p", project, "port", service, "8080"]).Split('\n')[0].Trim();
+        string? answer = null;
+        if (said.LastIndexOf(':') is int colon and > 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+            && Waiting.Until(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)))
+        {
+            return answer!;
+        }
+        string container = Docker.Ask(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label=com.docker.compose.service={service}"]).Trim();
+        Assert.Fail($"{service} gave no answer ({said}); its container: {Docker.Ask(["inspect", "-f", "{{.State.Status}} {{.State.ExitCode}} {{.Config.User}}", container])}"
+            + $"\nits log's end:\n{Docker.Ask(["logs", "--tail", "40", container])}\nthe Run window:\n{Run(window)}");
+        return said;
     }
 
     internal static string? Answer(int port)

@@ -151,6 +151,17 @@ public sealed partial class BuildRunController
         {
             return Said(refused is LaunchException ? refused.Message : $"{chosen.Name} cannot run: {refused.Message}");
         }
+        try
+        {
+            if (await ReplacesOthersAsync(chosen, plan, engine, work) is { } kept)
+            {
+                return session.IsEnded ? Left : Said(kept);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
+        }
         List<(DotnetService Service, ContainerStart How)> holding = how switch
         {
             ContainerStart.Run => [],
@@ -343,12 +354,69 @@ public sealed partial class BuildRunController
         static string Named(IReadOnlyList<DotnetService> services) => string.Join(" and ", services.Select(s => s.Service));
     }
 
+    /// <summary>Why nobody may be asked about this start, or null when the person at the window may be: an agent's call
+    /// started it (its answer would wait on them for good), or the IDE is an agent's own (<c>--mcp</c>).</summary>
+    private string? NoOneToAsk() => Mcp.AgentCall.Current is not null ? "an agent's call started this run, and asks no one"
+        : parts.AsksNoOne ? "nobody is at this IDE to ask (an agent's own)" : null;
+
+    /// <summary>Containers of the run's Compose project, of the services its <c>up</c> makes, that this Passenger did not make
+    /// (the person's own, from their own <c>docker compose up</c>): Compose would make them again with Passenger's labels and
+    /// settings, and Stop would then remove them. The person is asked first (Replace Them, after which they are this run's,
+    /// or Cancel); an agent's run, and an IDE with nobody to ask, replaces none and refuses, saying why. Null when it may go
+    /// on, else what it says.</summary>
+    private async Task<string?> ReplacesOthersAsync(RunConfiguration chosen, ContainerPlan plan, ContainerEngine engine, Working work)
+    {
+        ChildResult listed;
+        try
+        {
+            listed = await BackgroundWork.Run(() => engine.RunAsync(["ps", "-a", "--filter", $"label={ComposeLabels.Project}={plan.ProjectName}", "--format",
+                $"{{{{.Names}}}}\t{{{{.Label \"{ComposeLabels.Service}\"}}}}\t{{{{.Label \"{ContainerLabels.Machine}\"}}}}\t{{{{.Label \"{ContainerLabels.Process}\"}}}}"],
+                ContainerEngine.AskLimit, work.Stopping));
+        }
+        catch (Exception unasked) when (unasked is TimeoutException or FileNotFoundException or System.ComponentModel.Win32Exception)
+        {
+            // An engine that does not list them now refuses up's own commands next, which says why.
+            return null;
+        }
+        // Not trimmed: a container without Passenger's labels ends its line in empty columns.
+        string[] others = [.. listed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r').Split('\t'))
+            .Where(row => row.Length == 4 && plan.Touched.Contains(row[1]) && (row[2] != ContainerLabels.MachineValue || row[3] != ContainerLabels.ProcessValue))
+            .Select(row => row[0])];
+        if (!listed.Succeeded || others.Length == 0)
+        {
+            return null;
+        }
+        string named = string.Join(", ", others);
+        if (NoOneToAsk() is { } why)
+        {
+            return $"{chosen.Name} was not run: it would replace {named} of {plan.ProjectName}, which Passenger did not make, and {why}; "
+                + "remove them first, or run it from the window";
+        }
+        bool replace = false;
+        if (parts.AskReplace is { } ask)
+        {
+            // The person's answer takes as long as it takes: the run's hold on what is drawn is let go meanwhile.
+            BackgroundWork.End();
+            try
+            {
+                replace = await ask(chosen.Name, plan.ProjectName, others, work.Stopping);
+            }
+            finally
+            {
+                BackgroundWork.Begin();
+            }
+        }
+        work.Stopping.ThrowIfCancellationRequested();
+        return replace ? null : $"{chosen.Name} was not run: {named} of {plan.ProjectName}, which Passenger did not make, were left as they are";
+    }
+
     /// <summary>The development certificate a run's HTTPS services take: how it stands checked first (<c>dotnet dev-certs
     /// https --check --trust</c>), and, missing or not trusted, the person asked once whether to make and trust it or run
-    /// over HTTP; then exported into the state. With none (the person's choice, nobody to ask, or a step that failed),
-    /// those services serve HTTP for this run, which <paramref name="work"/>'s run says, a failure with what dev-certs said
-    /// in the Run window. None asked of a run whose services serve no HTTPS. Stopped, it throws
-    /// <see cref="OperationCanceledException"/>.</summary>
+    /// over HTTP; then exported into the state, again once dev-certs has another. With none (the person's choice, nobody to
+    /// ask, or a step that failed), those services serve HTTP for this run, which <paramref name="work"/>'s run says, a
+    /// failure with what dev-certs said in the Run window. None asked of a run whose services serve no HTTPS. Stopped, it
+    /// throws <see cref="OperationCanceledException"/>.</summary>
     private async Task<(DevelopmentCertificate.Exported? Certificate, string? Note, bool Failed)> CertificateAsync(ContainerPlan plan, Working work)
     {
         string[] serving = [.. plan.Https.Where(plan.Starts)];
@@ -359,12 +427,18 @@ public sealed partial class BuildRunController
         string named = string.Join(", ", serving);
         DotnetWords dotnet = parts.DevCertificates ?? DevelopmentCertificate.Machine;
         work.Say("Checking the HTTPS development certificate…");
-        (DevelopmentCertificate.Standing standing, string said) = await BackgroundWork.Run(() => DevelopmentCertificate.CheckAsync(dotnet, plan.Folder, work.Stopping));
+        (DevelopmentCertificate.Standing standing, string said, string? thumbprint) =
+            await BackgroundWork.Run(() => DevelopmentCertificate.CheckAsync(dotnet, plan.Folder, work.Stopping));
         work.Stopping.ThrowIfCancellationRequested();
         if (standing is DevelopmentCertificate.Standing.Missing or DevelopmentCertificate.Standing.NotTrusted)
         {
             bool missing = standing == DevelopmentCertificate.Standing.Missing;
             string standsSo = $"the development certificate {(missing ? "is not there" : "is not trusted")}";
+            // Asking would hold an agent's call on a person who may never answer: it runs over HTTP and says so.
+            if (NoOneToAsk() is { } why)
+            {
+                return (null, $"{named} over HTTP for this run: {standsSo}, and {why}", false);
+            }
             bool trust = false;
             if (parts.AskCertificate is { } ask)
             {
@@ -395,7 +469,7 @@ public sealed partial class BuildRunController
             parts.Views.Run.Append($"dotnet dev-certs https --check: {said}\n", error: true);
         }
         work.Say("Exporting the HTTPS development certificate…");
-        (DevelopmentCertificate.Exported? exported, string? problem) = await BackgroundWork.Run(() => DevelopmentCertificate.ExportAsync(dotnet, plan.State, work.Stopping));
+        (DevelopmentCertificate.Exported? exported, string? problem) = await BackgroundWork.Run(() => DevelopmentCertificate.ExportAsync(dotnet, plan.State, thumbprint, work.Stopping));
         work.Stopping.ThrowIfCancellationRequested();
         return exported is not null ? (exported, null, false) : Unmade($"the development certificate could not be exported: {problem}");
 

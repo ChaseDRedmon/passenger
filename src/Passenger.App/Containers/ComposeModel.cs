@@ -3,9 +3,10 @@ using System.Text.Json;
 
 namespace Passenger.App.Containers;
 
-/// <summary>A service's port as Compose's model has it: the container's port, the host's when published by number, and
-/// its protocol.</summary>
-public sealed record ComposePort(int Target, string? Published, string Protocol);
+/// <summary>A service's port as Compose's model has it: the container's port, the host's when published by number, its
+/// protocol, and the rest of Compose's long syntax as written (the host's address it is published on, its mode, name and
+/// application protocol), which a port Passenger pins keeps.</summary>
+public sealed record ComposePort(int Target, string? Published, string Protocol, string? HostIp = null, string? Mode = null, string? Name = null, string? AppProtocol = null);
 
 /// <summary>A service of a Compose application as <c>docker compose config --format json</c> says it: its build (context,
 /// Dockerfile, target, args) or image, ports, environment's names, whether it has a <c>develop.watch</c>, and its
@@ -60,7 +61,8 @@ public sealed record ComposeModel(string Name, IReadOnlyList<ComposeService> Ser
                     {
                         if (port.TryGetProperty("target", out JsonElement inside) && inside.TryGetInt32(out int number))
                         {
-                            ports.Add(new ComposePort(number, ContainerEngine.Text(port, "published"), ContainerEngine.Text(port, "protocol") ?? "tcp"));
+                            ports.Add(new ComposePort(number, ContainerEngine.Text(port, "published"), ContainerEngine.Text(port, "protocol") ?? "tcp",
+                                ContainerEngine.Text(port, "host_ip"), ContainerEngine.Text(port, "mode"), ContainerEngine.Text(port, "name"), ContainerEngine.Text(port, "app_protocol")));
                         }
                     }
                 }

@@ -16,15 +16,17 @@ public partial class MainWindow
     /// <summary>The question a container run asked last of its HTTPS development certificate, for the tests.</summary>
     public CertificateQuestionDialog? CertificateQuestion { get; private set; }
 
+    /// <summary>The question a container run asked last of containers it would replace, for the tests.</summary>
+    public ReplaceContainersDialog? ReplaceQuestion { get; private set; }
+
+    /// <summary>Whether this is an agent's own IDE (<c>--mcp</c>): nobody is at it, so what would ask the person (a container
+    /// run's certificate, containers it would replace) takes the way that asks nothing and says so.</summary>
+    public bool AgentsOwn { get; init; }
+
     /// <summary>Asks whether to make and trust the development certificate for a run's HTTPS services, or run them over HTTP;
-    /// an agent's own IDE (--mcp) has nobody to ask, and runs them over HTTP; a start stopped meanwhile closes the question,
-    /// answered Run over HTTP.</summary>
+    /// a start stopped meanwhile closes the question, answered Run over HTTP.</summary>
     private async Task<bool> AskCertificateAsync(string configuration, string services, bool missing, CancellationToken stop)
     {
-        if (!AgentsAllowed)
-        {
-            return false;
-        }
         CertificateQuestionDialog question = new(configuration, services, missing);
         CertificateQuestion = question;
         try
@@ -36,6 +38,25 @@ public partial class MainWindow
             if (CertificateQuestion == question)
             {
                 CertificateQuestion = null;
+            }
+        }
+    }
+
+    /// <summary>Asks whether a container run may replace containers of its Compose project Passenger did not make; a start
+    /// stopped meanwhile closes the question, answered Cancel.</summary>
+    private async Task<bool> AskReplaceAsync(string configuration, string project, IReadOnlyList<string> containers, CancellationToken stop)
+    {
+        ReplaceContainersDialog question = new(configuration, project, containers);
+        ReplaceQuestion = question;
+        try
+        {
+            return await AskAsync(question, stop);
+        }
+        finally
+        {
+            if (ReplaceQuestion == question)
+            {
+                ReplaceQuestion = null;
             }
         }
     }

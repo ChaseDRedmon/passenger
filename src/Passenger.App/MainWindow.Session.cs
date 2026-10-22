@@ -59,6 +59,8 @@ public partial class MainWindow
         Tools = () => ToolsSource,
         DevCertificates = DevCertificates,
         AskCertificate = AskCertificateAsync,
+        AskReplace = AskReplaceAsync,
+        AsksNoOne = AgentsOwn,
     };
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what

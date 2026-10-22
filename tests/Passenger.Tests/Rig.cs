@@ -44,6 +44,10 @@ public sealed class TestRun : IDisposable
     /// <summary>The IDE's state folder for the whole run.</summary>
     public static string Settings => Path.Combine(Root, "settings");
 
+    /// <summary>Where the run's IDE finds user secrets in place of the person's own: a project's folder there, by its id, is
+    /// what a container run mounts.</summary>
+    public static string UserSecrets => Path.Combine(Root, "usersecrets");
+
     /// <summary>What every wall-clock limit of a test is multiplied by (<see cref="Limits.Scaled"/>): <c>PASSENGER_TEST_TIME_SCALE</c>,
     /// read once, 1 when unset, as on a developer's machine, for whose times each limit is written; CI sets it for each
     /// system from how much slower its runners are. A value that is no number above 0 fails every test of the run, saying
@@ -121,6 +125,8 @@ public sealed class TestRun : IDisposable
         // Nor a registry for a Dockerfile's base images: BuildKit's checks, which read their metadata there, are off in every
         // window's settings but in the one test that turns them on.
         Environment.SetEnvironmentVariable(Passenger.App.Containers.BuildKitChecks.Variable, "off");
+        // Nor the person's user secrets: a container run mounts a project's from the run's own folder, which a test writes.
+        Environment.SetEnvironmentVariable(Passenger.App.Containers.ContainerPlans.UserSecretsVariable, UserSecrets);
         // Nor the person's Passenger: an agent's call with no window to join starts this build headless, in the run's state.
         Environment.SetEnvironmentVariable(Passenger.App.Mcp.McpProxy.StartVariable, "headless");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.

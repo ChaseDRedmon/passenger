@@ -43,6 +43,15 @@ public sealed record BuildRunParts(
     /// the configuration, the services that serve HTTPS and whether there is none at all; the question closed unanswered
     /// (false) once the start is stopped.</summary>
     public Func<string, string, bool, CancellationToken, Task<bool>>? AskCertificate { get; init; }
+
+    /// <summary>Asks the person whether a container run may replace containers of its Compose project Passenger did not make
+    /// (true), given the configuration, the project and those containers' names; closed unanswered (false) once the start is
+    /// stopped.</summary>
+    public Func<string, string, IReadOnlyList<string>, CancellationToken, Task<bool>>? AskReplace { get; init; }
+
+    /// <summary>Whether nobody is at the window to ask (an agent's own IDE, <c>--mcp</c>): what would ask the person takes the
+    /// way that asks nothing, saying so.</summary>
+    public bool AsksNoOne { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of

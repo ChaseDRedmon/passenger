@@ -111,9 +111,9 @@ public sealed partial class McpTests
         }
     }
 
-    /// <summary>A compose configuration's debug_start an agent gives up on as its held services come up, and a run it stops as
-    /// it comes up, take the run down rather than leaving it up for no one; and a run up as a --mcp IDE's input ends goes
-    /// with the IDE.</summary>
+    /// <summary>An agent's run never replaces the person's own containers of the project, refusing with why; a compose
+    /// configuration's debug_start an agent gives up on as its held services come up, and a run it stops as it comes up,
+    /// take the run down rather than leaving it up for no one; and a run up as a --mcp IDE's input ends goes with the IDE.</summary>
     [Fact]
     public async Task A_compose_start_an_agent_gives_up_on_or_stops_comes_down_and_a_run_up_goes_with_the_ides_end()
     {
@@ -126,6 +126,16 @@ public sealed partial class McpTests
         McpClient client = await Start(["--mcp", shop]);
         try
         {
+            // The person's own cache, from their own compose up: an agent's run refuses rather than replace it, asking no one.
+            File.WriteAllText(Path.Combine(shop, "theirs.yaml"), $"services:\n  cache:\n    labels: [\"{Docker.RunLabel}\"]\n");
+            Docker.Run("compose", "-f", Path.Combine(shop, "compose.yaml"), "-f", Path.Combine(shop, "theirs.yaml"), "up", "-d", "cache");
+            string theirs = ContainerRunsTests.Container(project, "cache");
+            ModelContextProtocol.Protocol.CallToolResult refused = await Result(client, "run", new() { ["configuration"] = "Compose: compose.yaml" });
+            Assert.True(refused.IsError == true && Text(refused).Contains($"would replace {project}-cache-1 of {project}, which Passenger did not make", StringComparison.Ordinal),
+                $"run answered: {Text(refused)}");
+            Assert.Equal(theirs, ContainerRunsTests.Container(project, "cache"));
+            Docker.Run("rm", "-f", theirs);
+
             // Stopped as its services come up: up ends and nothing of it is left.
             Task<ModelContextProtocol.Protocol.CallToolResult> running = Result(client, "run", new() { ["configuration"] = "Compose: compose.yaml" });
             Assert.True(await Waiting.UntilAsync(() => Up() || running.IsCompleted, TimeSpan.FromMinutes(5), test), "run never brought a container up");

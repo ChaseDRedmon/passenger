@@ -301,7 +301,7 @@ public static partial class McpHost
             .SetupWithoutStarting();
 
         // The agent's own IDE, which no other agent joins.
-        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false };
+        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false, AgentsOwn = true };
         window.SetRenderScaling(2);
         window.Show();
         window.Start(launch);

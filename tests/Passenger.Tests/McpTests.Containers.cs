@@ -91,6 +91,49 @@ public sealed partial class McpTests
         }
     }
 
+    /// <summary>An agent's run of a configuration whose service serves HTTPS, the development certificate not trusted, asks the
+    /// person nothing (their answer could keep the call waiting for good): it runs the service over HTTP, its answer and the
+    /// status bar saying so. dev-certs is ContainerRunsTests' stand-in, which trusts nothing on this machine.</summary>
+    [AvaloniaFact]
+    public void An_agents_run_of_a_service_that_serves_HTTPS_with_no_trusted_certificate_runs_it_over_HTTP_asking_no_one()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in dev-certs is a shell script");
+        string standIn = TestFolders.Create("devcerts-");
+        File.WriteAllText(Path.Combine(standIn, "check"), "7");
+        (string shop, string project) = ContainerRunsTests.Shop("agentcerts");
+        File.WriteAllText(Path.Combine(shop, "compose.yaml"), File.ReadAllText(Path.Combine(shop, "compose.yaml"))
+            .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
+        MainWindow window = ContainerRunsTests.Open(shop, (words, at) => global::Passenger.Core.ChildProcesses.Command("/bin/sh", ["-c", ContainerRunsTests.DevCerts, "dev-certs", standIn, .. words], at));
+        global::Passenger.App.Run.RunConfiguration web = window.Configurations.First(c => c.Kind == global::Passenger.App.Run.RunKind.Compose).Copied() with
+        {
+            Name = "Web over HTTPS",
+            Services = ["web"],
+            Generated = false,
+        };
+        window.SetConfigurations([web], web.Name);
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Task<JsonElement> running = Task.Run(() => Call(client, "run", new() { ["configuration"] = web.Name }));
+            Press(Admission(window, "the window to ask whether the agent may work there"), AgentAdmissionDialog.Allow);
+            Press(Question(window, "the question for the agent's run"), "Allow");
+            WaitFor(() => running.IsCompleted || window.CertificateQuestion is not null, "the agent's run", TimeSpan.FromMinutes(5));
+            Assert.Null(window.CertificateQuestion);
+            const string Said = "web over HTTP for this run: the development certificate is not trusted, and an agent's call started this run, and asks no one";
+            Assert.Contains(Said, running.GetAwaiter().GetResult().GetProperty("status").GetString(), StringComparison.Ordinal);
+            Assert.Contains(Said, window.Status, StringComparison.Ordinal);
+            Assert.Equal("dev-certs https --check --trust\n", File.ReadAllText(Path.Combine(standIn, "asked")));
+        }
+        finally
+        {
+            Gone(client);
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take web down", TimeSpan.FromMinutes(2));
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void An_agent_lists_an_engine_without_compose_by_its_containers_labels_and_reads_a_log()
     {

@@ -71,14 +71,22 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         {
             ContainerRunsTests.Write(folder, $"{app}/Program.cs", Program);
         }
+        // web is published on the loopback address alone, on a port the engine chooses (which Passenger pins for the run).
+        string compose = Path.Combine(folder, "compose.yaml");
+        string text = File.ReadAllText(compose);
+        int ports = text.IndexOf("ports: [\"8080\"]", StringComparison.Ordinal);
+        File.WriteAllText(compose, $"{text[..ports]}ports: [\"127.0.0.1::8080\"]{text[(ports + "ports: [\"8080\"]".Length)..]}");
         MainWindow window = ContainerRunsTests.Open(folder);
         window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InMain);
         window.Debugger.Breakpoints.Toggle(Source(folder, "Api"), InRequest);
         Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        string WebPublished() => Docker.Run("compose", "-p", project, "port", "web", "8080").Split('\n')[0].Trim();
         try
         {
             Ui.Launched(window, window.RunAsync(), "the services to come up", TimeSpan.FromMinutes(5));
             Assert.False(window.Debugger.IsDebugging, "Run debugged a service");
+            string webAt = WebPublished();
+            Assert.StartsWith("127.0.0.1:", webAt, StringComparison.Ordinal);
             string apiStarted = Started(project, "api");
             ContainersView view = Shown(window);
 
@@ -88,6 +96,8 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             ContainerRunDebuggingTests.StoppedAt(window, web, Source(folder, "Web"), InMain, "web, made again held, to stop in Main");
             Assert.Equal(apiStarted, Started(project, "api"));
             Assert.True(window.IsRunning, "Debug of one service took the run down");
+            // Made anew, still on the loopback address and the port the browser was opened at.
+            Assert.Equal(webAt, WebPublished());
             ContainerRunDebuggingTests.Resume(window, web);
 
             // The Containers window's Restart goes through the run: its session ended, held again, stopping in Main again.
@@ -96,6 +106,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Ui.WaitFor(() => Started(project, "web") is { Length: > 0 } now && now != webDebugged, "web to restart", TimeSpan.FromMinutes(2));
             web = ContainerRunDebuggingTests.Tab(window, "web");
             ContainerRunDebuggingTests.StoppedAt(window, web, Source(folder, "Web"), InMain, "web, restarted from the Containers window, to stop in Main again");
+            Assert.Equal(webAt, WebPublished());
             ContainerRunDebuggingTests.Resume(window, web);
 
             // Run without Debugger lets its session go, no restart, web answering on.
