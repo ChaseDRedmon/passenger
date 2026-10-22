@@ -38,13 +38,50 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
     private const string Untidy = "<StackPanel   Margin=\"12\">\n<!-- the\n     greeting -->\n      <TextBlock Text='Fish &amp; chips' />\n"
         + "<Button Grid.Row=\"1\" Content=\"Go\"\n  x:Name=\"Pay\"\n     HorizontalAlignment=\"Center\"/>\n\n\n\n  <Border></Border>\n</StackPanel >";
 
+    /// <summary>Every tool in one window on the dialect's app, which its language server loads once, the main file put back
+    /// as written before each: Surround With, Extract Resource and Extract Style, the fixes that create what a binding
+    /// lacks, in Avalonia's XAML a partial property and the places below line breaks only Roslyn counts, and Reformat Code
+    /// last, since its settings' change would lay out what the others write.</summary>
     [AvaloniaTheory]
     [InlineData("Avalonia")]
     [InlineData("WPF")]
-    public void Reformat_code_lays_xaml_out_by_riders_code_style_and_the_editorconfig_changing_nothing_but_whitespace(string dialect)
+    public void Each_xaml_editing_tool_makes_its_edit_in_one_window_on_the_apps_files(string dialect)
     {
         SharedProject app = App(dialect);
         MainWindow window = app.Open(app.PathOf(MainFile(dialect)));
+        string written = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+        SurroundWith(window, dialect);
+        PutBack(window, app, dialect, written);
+        ExtractResourceAndStyle(window, app, dialect);
+        PutBack(window, app, dialect, written);
+        CreateWhatABindingLacks(window, app, dialect);
+        if (dialect == "Avalonia")
+        {
+            CreatePropertyAfterPartialProperties(window);
+            PutBack(window, app, dialect, written);
+            PlacesBelowLineBreaksOnlyRoslynCounts(window);
+        }
+        PutBack(window, app, dialect, written);
+        Reformat(window, app, dialect);
+        window.Close();
+    }
+
+    /// <summary>The main file shown again with its text as written, in one edit, and the keys in it.</summary>
+    private static void PutBack(MainWindow window, SharedProject app, string dialect, string written)
+    {
+        window.OpenFile(app.PathOf(MainFile(dialect)));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, written)]);
+        editor.Selections = SelectionSet.Single(0);
+        editor.Focus();
+        Ui.Settle();
+        Assert.Equal(written, editor.Document.Snapshot.ToString());
+    }
+
+    /// <summary>Reformat Code lays XAML out by Rider's code style and the file's .editorconfig, changing nothing but whitespace.</summary>
+    private static void Reformat(MainWindow window, SharedProject app, string dialect)
+    {
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.Run(window, AppActions.Reformat);
         Ui.Settle();
@@ -111,19 +148,15 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Ui.Settle();
         Assert.Contains("\n        <Button Grid.Row=\"1\"\n                Content=\"Go\"\n                x:Name=\"Pay\"\n                HorizontalAlignment=\"Center\" />\n",
             editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData("Avalonia")]
-    [InlineData("WPF")]
-    public void Extract_resource_moves_a_value_into_this_files_or_the_applications_resources_and_extract_style_its_properties_into_a_style(string dialect)
+    /// <summary>Extract Resource moves a value into this file's or the application's resources, and Extract Style a
+    /// button's properties into a style.</summary>
+    private static void ExtractResourceAndStyle(MainWindow window, SharedProject app, string dialect)
     {
-        SharedProject app = App(dialect);
         bool avaloniaXaml = dialect == "Avalonia";
         string main = MainFile(dialect);
         string appFile = avaloniaXaml ? "App.axaml" : "App.xaml";
-        MainWindow window = app.Open(app.PathOf(main));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         List<string> asked = Answer(window);
@@ -209,17 +242,13 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
             Assert.Contains("<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\" Style=\"{StaticResource ButtonStyle}\" />", text, StringComparison.Ordinal);
         }
         Ui.WaitFor(() => document.Markers.Count == 0, "the style and the button that takes it marked with nothing");
-        window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData("Avalonia")]
-    [InlineData("WPF")]
-    public void A_binding_path_and_a_converter_nothing_has_offer_to_create_them_in_the_view_model_and_a_converter_class(string dialect)
+    /// <summary>A binding path and a converter nothing has offer to create them: a property or command in the view model,
+    /// the MVVM Toolkit's way where the project has it, and a converter's class and resource.</summary>
+    private static void CreateWhatABindingLacks(MainWindow window, SharedProject app, string dialect)
     {
-        SharedProject app = App(dialect);
         bool avaloniaXaml = dialect == "Avalonia";
-        MainWindow window = app.Open(app.PathOf(MainFile(dialect)));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         List<string> asked = Answer(window);
@@ -304,16 +333,15 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
             + "    [ObservableProperty]\n    private string? _name;\n\n    [ObservableProperty]\n    private string? _title;\n\n    [RelayCommand]\n    private void Buy()\n    {\n    }\n}\n",
             File.ReadAllText(app.PathOf("ViewModels/ShopViewModel.cs")).ReplaceLineEndings("\n"));
         Ui.WaitFor(() => shopView.Markers.Count == 0, "the generated property and command resolved");
-        window.Close();
     }
 
     /// <summary>In a view model written as Avalonia's MVVM template writes it, in toolkit 8.4's partial properties (which
     /// flags a field marked [ObservableProperty], MVVMTK0042), the property a binding lacks is made another partial property
     /// after the view model's own.</summary>
-    [AvaloniaFact]
-    public void Create_property_in_a_view_model_of_the_toolkits_partial_properties_makes_another_after_them()
+    private void CreatePropertyAfterPartialProperties(MainWindow window)
     {
-        MainWindow window = avalonia.Open(avalonia.PathOf("TillView.axaml"));
+        window.OpenFile(avalonia.PathOf("TillView.axaml"));
+        Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         Insert(editor, "<TextBlock Text=\"{Binding Name}\" />", "\n        <TextBlock Text=\"{Binding Price}\" />");
@@ -328,17 +356,12 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Assert.True(made.Contains("    [ObservableProperty]\n    public partial string Name { get; set; } = \"Tea\";\n\n    [ObservableProperty]\n    public partial string? Price { get; set; }\n\n    public void Clear()", StringComparison.Ordinal),
             $"Create property did not make a partial property after the view model's own, as its others are written:\n{made}");
         Ui.WaitFor(() => document.Markers.Count == 0, "the binding resolved once the property is there");
-        window.Close();
     }
 
-    [AvaloniaTheory]
-    [InlineData("Avalonia")]
-    [InlineData("WPF")]
-    public void Surround_with_wraps_the_element_at_the_caret_or_the_elements_chosen_in_a_layout_element(string dialect)
+    /// <summary>Surround With wraps the element at the caret, or the elements chosen, in a layout element.</summary>
+    private static void SurroundWith(MainWindow window, string dialect)
     {
-        SharedProject app = App(dialect);
         bool avaloniaXaml = dialect == "Avalonia";
-        MainWindow window = app.Open(app.PathOf(MainFile(dialect)));
         CodeEditor editor = window.EditorArea.CodeEditor;
         string button = avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\" Background=\"{StaticResource Accent}\" />"
             : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\" Background=\"{StaticResource Accent}\" />";
@@ -370,17 +393,14 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         window.KeyTextInput("DockPanel");
         Ui.Settle();
         Assert.Contains($"        <DockPanel>\n            {title}\n            {button}\n        </DockPanel>\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
     /// <summary>A lone '\r', U+0085, U+2028 and U+2029 end a line for Roslyn and the language servers, not for the editor:
     /// XAML's usages, a binding's declaration in its view model and Extract Resource's edits are read and made in each
     /// file's own lines, never a line away for each such break above them.</summary>
-    [AvaloniaFact]
-    public void Usages_declarations_and_extract_resource_land_where_asked_below_line_breaks_only_roslyn_counts()
+    private void PlacesBelowLineBreaksOnlyRoslynCounts(MainWindow window)
     {
         string pasted = $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd -->";
-        MainWindow window = avalonia.Open(avalonia.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         Insert(editor, "Title=\"Gallery\">", $"\n    {pasted}");
         Ui.PlaceAfter(editor, "<Button Name=\"G");
@@ -415,7 +435,6 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Next(resource);
         Assert.Contains($"Title=\"Gallery\">\n    <Window.Resources>\n        <Thickness x:Key=\"PanelMargin\">12</Thickness>\n    </Window.Resources>\n    {pasted}\n"
             + "    <StackPanel Margin=\"{StaticResource PanelMargin}\" Spacing=\"8\">\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
     private SharedProject App(string dialect) => dialect == "Avalonia" ? avalonia : wpf;
