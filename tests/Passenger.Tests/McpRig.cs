@@ -195,10 +195,11 @@ public abstract class McpRig : IDisposable
         }
     }
 
-    /// <summary>A window over a folder whose person has let agents in.</summary>
-    protected static MainWindow AgentsWindow(string at)
+    /// <summary>A window over a folder whose person has let agents in; with no C# language server for a test whose agent
+    /// asks nothing of C# code.</summary>
+    protected static MainWindow AgentsWindow(string at, bool languageServer = true)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(at);
         Ui.Settle();

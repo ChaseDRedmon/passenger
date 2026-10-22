@@ -47,7 +47,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
               </Target>
             </Project>
             """);
-        MainWindow window = AgentsWindow(library);
+        MainWindow window = AgentsWindow(library, languageServer: false);
         global::Passenger.App.ToolWindows.NuGetView nuget = window.NuGet;
         window.Perform(AppActions.ShowNuGet);
         Ui.Settle();
@@ -108,7 +108,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         string root = TestFolders.Create("mcp-push-");
         try
         {
-            MainWindow window = AgentsWindow(Repository(root, refusing: false));
+            MainWindow window = AgentsWindow(Repository(root, refusing: false), languageServer: false);
             string? pressed = null;
             window.Vcs.Message += (_, message) =>
             {
@@ -143,7 +143,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
     [AvaloniaFact]
     public void An_agents_action_no_action_has_or_one_that_cannot_run_here_is_an_error_saying_why()
     {
-        MainWindow window = AgentsWindow(Folder);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
         {
@@ -183,7 +183,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             </Project>
             """);
         File.WriteAllText(Path.Combine(Folder, "slow"), string.Empty);
-        MainWindow window = AgentsWindow(Folder);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         int step = 0;
         try
@@ -218,7 +218,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
     [AvaloniaFact]
     public void An_agents_call_that_meets_a_fault_of_the_IDEs_is_answered_with_it_and_logged()
     {
-        MainWindow window = AgentsWindow(Folder);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
         window.Actions.Add(new IdeAction("tests.fault", "Fault", "Tests", _ => throw new NullReferenceException("The fault's own words")));
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
@@ -245,7 +245,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
     [AvaloniaFact]
     public void An_agent_attached_to_the_window_sets_a_breakpoint_the_person_sees()
     {
-        MainWindow window = AgentsWindow(Folder);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
         string program = Path.Combine(window.Folder!, "Program.cs");
         window.OpenFile(program);
         Ui.Settle();
@@ -282,7 +282,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
     [AvaloniaFact]
     public void With_the_MCP_server_off_the_window_asks_to_let_an_agent_in_on_it_lets_agents_in_unasked_and_off_again_shuts_them_out()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         window.Show();
         window.KeepSettings();
         window.OpenFolder(Folder);
@@ -342,7 +342,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
     public void An_agent_asks_before_its_first_run_and_the_window_stops_waiting_when_it_gives_up_or_goes()
     {
         Write("Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
-        MainWindow window = AgentsWindow(Folder);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         Dictionary<string, object?> run = new() { ["waitSeconds"] = 600 };
         try
@@ -402,7 +402,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
     public void An_agent_is_asked_once_before_it_first_runs_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_a_program_in_the_terminal()
     {
         Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
-        MainWindow window = AgentsWindow(Folder);
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
         window.SetConfigurations([new global::Passenger.App.Run.RunConfiguration
         {
             Name = "In the terminal",
@@ -460,7 +460,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         string own = Plain("mcp-first-");
         Directory.CreateDirectory(Path.Combine(own, "Inner"));
         string other = Plain("mcp-second-");
-        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         first.Show();
         first.KeepLayout();
         first.KeepSettings();
@@ -504,7 +504,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         File.WriteAllText(Path.Combine(repository, "Notes.txt"), "notes\n");
         TestGit.Run(repository, "add", "-A");
         TestGit.Run(repository, "commit", "-q", "-m", "Notes");
-        MainWindow window = AgentsWindow(repository);
+        MainWindow window = AgentsWindow(repository, languageServer: false);
         string store = Path.Combine(window.Folder!, "src", "Store.cs");
         Passenger.App.ToolWindows.GitLogView history = Await(window.ShowHistoryAsync(store), "the file's history")!;
         Ui.Landed(() => history.Rows.Count == 3, "the file's three commits");

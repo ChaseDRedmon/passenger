@@ -15,7 +15,6 @@ namespace Passenger.Tests;
 /// other, every caller following; what the agent reads back and what is on disk after, the project still building after
 /// the member moves and the server's refactorings, and the
 /// person's Undo taking each change back whole.</summary>
-[Collection(Alone.Name)]
 public sealed class McpRefactorTests : McpRig, IClassFixture<RestoredFolders>
 {
     public McpRefactorTests(RestoredFolders folders)

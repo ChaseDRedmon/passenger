@@ -33,7 +33,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     public void Cancelling_an_attach_during_initialization_closes_its_stream_and_a_queued_call_does_not_lose_the_join()
     {
         string notes = Plain("mcp-initialize-");
-        MainWindow window = AgentsWindow(notes);
+        MainWindow window = AgentsWindow(notes, languageServer: false);
         McpClient? client = null;
         using CancellationTokenSource firstCancel = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
         using CancellationTokenSource queuedCancel = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
@@ -99,7 +99,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     {
         Assert.SkipUnless(OperatingSystem.IsLinux(), "This test fills a Linux Unix-domain socket backlog");
         string notes = Plain("mcp-backlog-");
-        MainWindow window = AgentsWindow(notes);
+        MainWindow window = AgentsWindow(notes, languageServer: false);
         McpClient? client = null;
         List<Socket> fillers = [];
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
@@ -348,7 +348,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     {
         string wanted = Plain("mcp-wanted-");
         string unrelated = Plain("mcp-unrelated-");
-        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         first.Show();
         first.KeepLayout();
         first.KeepSettings();
@@ -436,7 +436,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     public void An_agent_on_an_older_protocol_is_answered_in_its_own_version_through_attach()
     {
         string older = Plain("mcp-older-");
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(older);
         Ui.Settle();
@@ -465,7 +465,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     public void An_agent_giving_up_on_its_call_takes_the_windows_question_away()
     {
         string unattended = Plain("mcp-given-up-");
-        MainWindow window = new() { Width = 1200, Height = 800, AgentAnswerLimit = TimeSpan.FromMinutes(10) };
+        MainWindow window = new() { Width = 1200, Height = 800, AgentAnswerLimit = TimeSpan.FromMinutes(10), StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(unattended);
         Ui.Settle();
@@ -500,7 +500,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     {
         TimeSpan limit = TimeSpan.FromSeconds(5).Scaled();
         string unattended = Plain("mcp-unanswered-");
-        MainWindow window = new() { Width = 1200, Height = 800, AgentAnswerLimit = limit };
+        MainWindow window = new() { Width = 1200, Height = 800, AgentAnswerLimit = limit, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(unattended);
         Ui.Settle();
@@ -587,7 +587,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     public void Settings_gives_each_agent_its_setup_for_this_copy_and_copies_it_whole()
     {
         string project = Plain("mcp-setup-");
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project);
         Ui.Settle();
@@ -650,7 +650,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     {
         string theirs = Plain("mcp-theirs-");
         string elsewhere = Plain("mcp-elsewhere-");
-        MainWindow window = AgentsWindow(theirs);
+        MainWindow window = AgentsWindow(theirs, languageServer: false);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", theirs])), "the agent attaching");
         try
         {
@@ -695,7 +695,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
         string first = Plain("mcp-first-");
         string second = Plain("mcp-second-");
         string third = Plain("mcp-third-");
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(first);
         Ui.Settle();
@@ -756,7 +756,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     {
         string own = Plain("mcp-own-");
         string other = Plain("mcp-other-");
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
@@ -791,14 +791,14 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
     {
         string taken = Plain("mcp-taken-");
         string kept = Plain("mcp-kept-");
-        MainWindow settingsWindow = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow settingsWindow = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         settingsWindow.Show();
         settingsWindow.KeepLayout();
         settingsWindow.KeepSettings();
         settingsWindow.OpenFolder(taken);
         Ui.Settle();
         settingsWindow.ApplySettings(settingsWindow.Settings with { AgentFolders = [PathNames.Canonical(taken)] });
-        MainWindow asking = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow asking = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         asking.Show();
         asking.KeepLayout();
         asking.KeepSettings();

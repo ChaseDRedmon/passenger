@@ -11,7 +11,6 @@ namespace Passenger.Tests;
 /// <summary>An agent's container tools on a real engine: the engine's containers listed, a log read, a container stopped
 /// and started as the window's buttons do it, a command run in one only once the person allows it, and what a crashed
 /// Passenger left removed as the next one starts. Each skips, saying why, where no Linux engine runs.</summary>
-[Collection(Alone.Name)]
 public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
 {
     public McpContainersTests(RestoredFolders folders)

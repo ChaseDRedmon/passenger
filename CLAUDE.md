@@ -1246,7 +1246,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
   angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
-  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpTests until
+  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpDebuggingTests until
   Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call), so it says each thing once: the
   element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
   own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
@@ -1806,7 +1806,7 @@ window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protoc
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike (an adapter in a container keeps it there, `DebugSession.ContainerEngineLog`). `Debugging/Helpers/StartHold` holds a launched program's runtime at its start by
 pointing `DOTNET_DiagnosticPorts=…,connect,suspend` at a port of the test's own, which comes before the runtime starts
-its debugger (LaunchTests, DebuggerTests, and McpTests through a launch profile); a window test with a held start waits
+its debugger (LaunchTests, DebuggerTests, and McpDebuggingTests through a launch profile); a window test with a held start waits
 with `Ui.PumpUntil`, since the start holds BackgroundWork. Attach to Process's search matches text, so tests choose a
 program's row by its id (`ChooseById`). LoopingConsoleApp's `waiting` and `waiting first` modes give an async method a builder whose
 `ObjectIdForDebugger` waits on the paused passing thread, `elsewhere` awaits something that goes on on a thread of
@@ -1934,9 +1934,10 @@ Microsoft.WindowsDesktop.App.Ref is a `PackageDownload` at Directory.Packages.pr
 the tests check against the version the SDK's KnownFrameworkReference gives the target, failing with the version to
 pin when an SDK changes it; off Windows the app sets EnableWindowsTargeting and MarkupCompile builds it there too.
 
-The MCP server's tests are agents using the SDK's own client, in classes over `McpRig` (each `Alone`, and those that
-work in its Sum project given `RestoredFolders`, taken as a test first names it): `McpTests` starts `Passenger --mcp`
-and works and debugs a project through it, `McpWindowTests` and `McpAttachTests` attach to a window with
+The MCP server's tests are agents using the SDK's own client, in classes over `McpRig` (`Alone` where one debugs or holds
+what it tests to a time, and those that work in its Sum project given `RestoredFolders`, taken as a test first names it):
+`McpTests` starts `Passenger --mcp` and works a project through it, `McpDebuggingTests` debugs it there (with the tool
+list's size and a long call's progress), `McpWindowTests` and `McpAttachTests` attach to a window with
 `--mcp-attach` (its sockets in the folder named for the run's `PASSENGER_SETTINGS`) and change what the window shows,
 once it lets them in and the person answers its questions, and `McpProcessesTests`, `McpIdeTests`,
 `McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`, `McpSessionsTests` and the container classes take the

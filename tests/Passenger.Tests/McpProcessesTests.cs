@@ -34,7 +34,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         DateTimeOffset Now() => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero);
         void Later(TimeSpan by) => Interlocked.Add(ref clock[0], by.Ticks);
         global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = Now };
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(Folder);
         window.OpenFile(Path.Combine(Folder, "Helper.cs"));
@@ -75,7 +75,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         Ui.Settle();
         window.Close();
 
-        MainWindow again = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day };
+        MainWindow again = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day, StartsLanguageServer = false };
         again.Show();
         again.OpenFolder(Folder);
         Ui.Settle();
@@ -111,7 +111,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         McpClient client = Await(Task.Run(() => Start(["--mcp", Folder])), "the agent's Passenger starting");
         long[] clock = [new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero).UtcTicks];
         global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = () => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero) };
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(Folder);
         window.OpenFile(Path.Combine(Folder, "Helper.cs"));
