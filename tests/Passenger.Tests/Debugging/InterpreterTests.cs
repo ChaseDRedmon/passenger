@@ -9,11 +9,27 @@ namespace Passenger.Tests.Debugging;
 [Collection(Alone.Name)]
 public class InterpreterTests(ITestOutputHelper testOutputHelper)
 {
+    /// <summary>In one program, at Bumper.Work and then at Interpreter.Run's end: a constrained call on a struct argument,
+    /// integers, enums, conversions and unboxing, Set Value, a multi-dimensional array's elements, and checked conversions.
+    /// Each part names itself in its failure, and leaves the locals the next reads as they were.</summary>
     [Fact]
-    public async Task Integers_enums_conversions_and_unboxing_evaluate_as_the_language_says()
+    public async Task Integers_enums_conversions_unboxing_arrays_and_set_value_evaluate_as_the_language_says()
     {
-        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"interpreter\");");
-        using DebugSession _ = host;
+        string bumper = "Console.WriteLine(\"bumper\");";
+        string interpreter = "Console.WriteLine(\"interpreter\");";
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest([Line(bumper), Line(interpreter)], Debuggees.Source("PassengerCases", "Program.cs")).WithConfigurationDoneRequest();
+
+        // A constrained call on a struct argument changes the argument.
+        int frame = await StoppedAt(host, bumper);
+        Evaluate(host, frame, "item.Bump()");
+        Assert.Equal("1", Evaluate(host, frame, "((Bumped)(object)item).N").Value);
+        host.WithContinueRequest();
+        frame = await StoppedAt(host, interpreter);
 
         Assert.Equal(("-6", "int"), Evaluate(host, frame, "~myInt"));
         Assert.Equal(("7", "int"), Evaluate(host, frame, "checked((int)myUInt)"));
@@ -28,59 +44,30 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         // An assignment is its new value, even of a struct a constructor made in the program (which neuters the frame).
         Assert.Equal("10", Evaluate(host, frame, "price = 10m").Value);
         Assert.Equal("10", Evaluate(host, frame, "price").Value);
-    }
 
-    [Fact]
-    public async Task Set_value_assigns_what_an_expression_names_and_answers_with_it()
-    {
-        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"interpreter\");");
-        using DebugSession _ = host;
-
+        // Set Value assigns what an expression names and answers with it; one of the wrong type is refused.
         SetExpressionResponse set = host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("pairOfInt.Value", "40 + 2", frame));
         Assert.Equal("42", set.Value);
         Assert.Equal("42", Evaluate(host, frame, "pairOfInt.Value").Value);
         DapException refused = Assert.Throws<DapException>(() => host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("myInt", "\"text\"", frame)));
         Assert.NotEmpty(refused.Reason);
         Assert.Equal("5", Evaluate(host, frame, "myInt").Value);
-    }
 
-    /// <summary>A multi-dimensional array's element read, set, and its member set where it lies, as a watch and Set Value
-    /// reach them; the runtime makes such an array's Get, Set and Address, which no metadata defines, and each had failed
-    /// with a TypeLoadException.</summary>
-    [Fact]
-    public async Task A_multi_dimensional_arrays_elements_evaluate_and_take_a_value_set()
-    {
-        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"interpreter\");");
-        using DebugSession _ = host;
-
+        // A multi-dimensional array's element read, set, and its member set where it lies, as a watch and Set Value reach
+        // them; the runtime makes such an array's Get, Set and Address, which no metadata defines, and each had failed with
+        // a TypeLoadException.
         Assert.Equal(("4", "int"), Evaluate(host, frame, "grid[1, 1]"));
         Assert.Equal("11", Evaluate(host, frame, "grid[2, 0] + grid[2, 1]").Value);
-        SetExpressionResponse set = host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("grid[0, 1]", "40 + 2", frame));
-        Assert.Equal("42", set.Value);
+        SetExpressionResponse element = host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("grid[0, 1]", "40 + 2", frame));
+        Assert.Equal("42", element.Value);
         Assert.Equal("42", Evaluate(host, frame, "grid[0, 1]").Value);
         // A struct's member set in place, not on a copy of the element.
         Assert.Equal("7", Evaluate(host, frame, "pairGrid[1, 0].Value = 7").Value);
         Assert.Equal("7", Evaluate(host, frame, "pairGrid[1, 0].Value").Value);
         Assert.Contains("IndexOutOfRange", Evaluate(host, frame, "grid[3, 0]").Value, StringComparison.Ordinal);
-    }
 
-    [Fact]
-    public async Task A_constrained_call_on_a_struct_argument_changes_the_argument()
-    {
-        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"bumper\");");
-        using DebugSession _ = host;
-
-        Evaluate(host, frame, "item.Bump()");
-        Assert.Equal("1", Evaluate(host, frame, "((Bumped)(object)item).N").Value);
-    }
-
-    [Fact]
-    public async Task A_checked_conversion_out_of_range_throws_the_overflow_the_program_would_and_a_store_keeps_the_bits_that_fit()
-    {
-        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"interpreter\");");
-        using DebugSession _ = host;
-
-        // myInt is 5 and myUInt 7: each is out of its target's range, by its sign or by its size.
+        // A checked conversion out of range throws the overflow the program would, and a store keeps the bits that fit:
+        // myInt is 5 and myUInt 7, each out of its target's range by its sign or by its size.
         foreach (string expression in (string[])["checked((ulong)(myInt - 6))", "checked((nuint)(myInt - 6))", "checked((byte)(myInt + 251))",
             "checked((sbyte)(myUInt + 121))", "checked((nint)(myInt * 1e30))", "checked((ulong)(myInt - 6.5))"])
         {
@@ -93,11 +80,20 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("4294967295", Evaluate(host, frame, "myUInt").Value);
     }
 
+    /// <summary>A lambda watch evaluates as quickly with a large lambda as with a small one, and an expression that loops
+    /// without end is stopped saying it took too long, the program as it was and evaluating on.</summary>
     [Fact]
-    public async Task A_lambda_watch_evaluates_as_quickly_with_a_large_lambda_as_with_a_small_one()
+    public async Task A_large_lambda_evaluates_as_quickly_as_a_small_one_and_an_expression_that_loops_without_end_is_stopped()
     {
-        (DebugSession host, int frame) = await StopInMyMethod();
-        using DebugSession _ = host;
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("DebuggableConsoleApp"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        // Stopped in MyMethod, where System.Linq is loaded and _intList is 1, 4, 8, 25.
+        host.WithBreakpointsRequest(22, Debuggees.Source("DebuggableConsoleApp", "MyClass.cs")).WithConfigurationDoneRequest();
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int frame = host.GetTopStackFrame(stop.ThreadId!.Value).Id;
 
         // The first lambda also loads the debugger's own code into the program.
         Assert.Equal("3", Evaluate(host, frame, "_intList.Where(x => x > 2).Count()").Value);
@@ -112,13 +108,6 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         testOutputHelper.WriteLine($"Small lambda {small.TotalMilliseconds:0} ms, large lambda {large.TotalMilliseconds:0} ms");
         Assert.True(large < small + TimeSpan.FromSeconds(1),
             $"A lambda 64 KB larger took {large.TotalMilliseconds:0} ms to evaluate, where a small one took {small.TotalMilliseconds:0} ms: its code went into the program a byte at a time");
-    }
-
-    [Fact]
-    public async Task An_expression_that_loops_without_end_is_stopped_saying_it_took_too_long()
-    {
-        (DebugSession host, int frame) = await StopInMyMethod();
-        using DebugSession _ = host;
 
         CancellationToken cancelled = TestContext.Current.CancellationToken;
         Task<EvaluateResponse> evaluating = host.Connection.RequestAsync<EvaluateResponse>("evaluate",
@@ -130,26 +119,14 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("5", Evaluate(host, frame, "myInt + 1").Value);
     }
 
-    /// <summary>Stopped in DebuggableConsoleApp's MyMethod, where System.Linq is loaded and _intList is 1, 4, 8, 25.</summary>
-    private async Task<(DebugSession Host, int Frame)> StopInMyMethod()
-    {
-        DebugSession host = DebugSession.ForLaunch(testOutputHelper);
-        await host
-            .WithInitializeRequest()
-            .WithLaunchRequest(Debuggees.Program("DebuggableConsoleApp"), stopAtEntry: false, justMyCode: true)
-            .WaitForInitializedEvent();
-        host.WithBreakpointsRequest(22, Debuggees.Source("DebuggableConsoleApp", "MyClass.cs")).WithConfigurationDoneRequest();
-        StoppedEvent stop = await host.WaitForStoppedEvent();
-        return (host, host.GetTopStackFrame(stop.ThreadId!.Value).Id);
-    }
+    private static int Line(string code) => Debuggees.Line("PassengerCases", code);
 
-    private async Task<(DebugSession Host, int Frame)> StopAt(string code)
+    /// <summary>The next stop, at the line of this code; its top frame.</summary>
+    private static async Task<int> StoppedAt(DebugSession host, string code)
     {
-        int line = Debuggees.Line("PassengerCases", code);
-        DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases", line, []);
         StoppedEvent stop = await host.WaitForStoppedEvent();
-        Assert.Equal(line, stop.ReadStopInfo().line);
-        return (host, host.GetTopStackFrame(stop.ThreadId!.Value).Id);
+        Assert.True(stop.ReadStopInfo().line == Line(code), $"The program was to stop at {code}, but stopped at the {stop.Reason} at line {stop.Line}");
+        return host.GetTopStackFrame(stop.ThreadId!.Value).Id;
     }
 
     private static (string Value, string? Type) Evaluate(DebugSession host, int frame, string expression)

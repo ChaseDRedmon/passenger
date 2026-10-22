@@ -40,7 +40,6 @@
     "EditingSessionTests": 120,
     "CodeEditsTests": 120,
     "SolutionFoldersTests": 120,
-    "Debugging.ExceptionTests": 120,
     "RefactoringDialogsTests": 120,
     "DataBreakpointTests": 120,
     "TypeRenameTests": 90,
