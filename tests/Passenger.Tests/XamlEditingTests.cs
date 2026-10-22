@@ -307,6 +307,30 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         window.Close();
     }
 
+    /// <summary>In a view model written as Avalonia's MVVM template writes it, in toolkit 8.4's partial properties (which
+    /// flags a field marked [ObservableProperty], MVVMTK0042), the property a binding lacks is made another partial property
+    /// after the view model's own.</summary>
+    [AvaloniaFact]
+    public void Create_property_in_a_view_model_of_the_toolkits_partial_properties_makes_another_after_them()
+    {
+        MainWindow window = avalonia.Open(avalonia.PathOf("TillView.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Insert(editor, "<TextBlock Text=\"{Binding Name}\" />", "\n        <TextBlock Text=\"{Binding Price}\" />");
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Price'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
+        PlaceAfter(editor, "{Binding Pri");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
+        Assert.Equal("Create property 'Price'", window.Assist.Offered[0]);
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        string made = File.ReadAllText(avalonia.PathOf("ViewModels/TillViewModel.cs")).ReplaceLineEndings("\n");
+        Assert.True(made.Contains("    [ObservableProperty]\n    public partial string Name { get; set; } = \"Tea\";\n\n    [ObservableProperty]\n    public partial string? Price { get; set; }\n\n    public void Clear()", StringComparison.Ordinal),
+            $"Create property did not make a partial property after the view model's own, as its others are written:\n{made}");
+        Ui.WaitFor(() => document.Markers.Count == 0, "the binding resolved once the property is there");
+        window.Close();
+    }
+
     [AvaloniaTheory]
     [InlineData("Avalonia")]
     [InlineData("WPF")]
@@ -452,7 +476,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         namespace CommunityToolkit.Mvvm.ComponentModel
         {
-            [System.AttributeUsage(System.AttributeTargets.Field)]
+            [System.AttributeUsage(System.AttributeTargets.Field | System.AttributeTargets.Property)]
             public sealed class ObservablePropertyAttribute : System.Attribute
             {
             }
@@ -493,7 +517,27 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         """;
 
-    /// <summary>The Avalonia app of <see cref="XamlTests"/>, with a shop view whose view model uses the MVVM Toolkit.</summary>
+    /// <summary>A view model written as Avalonia's MVVM template writes it, in toolkit 8.4's partial properties.</summary>
+    private const string TillViewModel = """
+        using CommunityToolkit.Mvvm.ComponentModel;
+
+        namespace Gallery.ViewModels;
+
+        public partial class TillViewModel : ObservableObject
+        {
+            [ObservableProperty]
+            public partial string Name { get; set; } = "Tea";
+
+            public void Clear()
+            {
+            }
+        }
+
+        """;
+
+    /// <summary><see cref="XamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit's fields and a
+    /// till view whose view model uses its partial properties: never built, since without the toolkit's generators
+    /// Avalonia's compiler finds none of the properties they make, so XamlTests' own gallery, which it builds, has neither.</summary>
     public sealed class AvaloniaGallery : SharedProject
     {
         public AvaloniaGallery()
@@ -501,17 +545,23 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         {
             TestFolders.Prepare(() =>
             {
-                AvaloniaApp.Create(Folder, "Gallery");
-                Directory.CreateDirectory(PathOf("ViewModels"));
-                Directory.CreateDirectory(PathOf("Styles"));
-                Directory.CreateDirectory(PathOf("Assets"));
-                File.WriteAllText(PathOf("ViewModels/MainViewModel.cs"), XamlTests.Gallery.MainViewModel);
+                XamlTests.Gallery.Make(Folder);
                 File.WriteAllText(PathOf("ViewModels/ShopViewModel.cs"), ShopViewModel);
+                File.WriteAllText(PathOf("ViewModels/TillViewModel.cs"), TillViewModel);
                 File.WriteAllText(PathOf("Mvvm.cs"), Mvvm);
-                File.WriteAllText(PathOf("Styles/Palette.axaml"), XamlTests.Gallery.Palette);
-                File.WriteAllText(PathOf("App.axaml"), XamlTests.Gallery.AppXaml);
-                File.WriteAllText(PathOf("MainWindow.axaml"), XamlTests.Gallery.Window);
-                File.WriteAllText(PathOf("MainWindow.axaml.cs"), XamlTests.Gallery.CodeBehind);
+                File.WriteAllText(PathOf("TillView.axaml"), """
+                    <UserControl xmlns="https://github.com/avaloniaui"
+                                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                                 xmlns:vm="using:Gallery.ViewModels"
+                                 x:Class="Gallery.TillView"
+                                 x:DataType="vm:TillViewModel">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Name}" />
+                        </StackPanel>
+                    </UserControl>
+
+                    """);
+                File.WriteAllText(PathOf("TillView.axaml.cs"), "using Avalonia.Controls;\n\nnamespace Gallery;\n\npublic partial class TillView : UserControl\n{\n}\n");
                 File.WriteAllText(PathOf("ShopView.axaml"), """
                     <UserControl xmlns="https://github.com/avaloniaui"
                                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -530,7 +580,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         }
     }
 
-    /// <summary>The WPF app of <see cref="WpfXamlTests"/>, with a shop view whose view model uses the MVVM Toolkit.</summary>
+    /// <summary><see cref="WpfXamlTests.Gallery"/>'s app, with a shop view whose view model uses the MVVM Toolkit.</summary>
     public sealed class WpfGallery : SharedProject
     {
         public WpfGallery()
@@ -538,16 +588,9 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         {
             TestFolders.Prepare(() =>
             {
-                WpfApp.Create(Folder, "Gallery");
-                Directory.CreateDirectory(PathOf("ViewModels"));
-                Directory.CreateDirectory(PathOf("Themes"));
-                File.WriteAllText(PathOf("ViewModels/MainViewModel.cs"), WpfXamlTests.Gallery.MainViewModel);
+                WpfXamlTests.Gallery.Make(Folder);
                 File.WriteAllText(PathOf("ViewModels/ShopViewModel.cs"), ShopViewModel);
                 File.WriteAllText(PathOf("Mvvm.cs"), Mvvm);
-                File.WriteAllText(PathOf("Themes/Brushes.xaml"), WpfXamlTests.Gallery.Brushes);
-                File.WriteAllText(PathOf("App.xaml"), WpfXamlTests.Gallery.AppXaml);
-                File.WriteAllText(PathOf("MainWindow.xaml"), WpfXamlTests.Gallery.Window);
-                File.WriteAllText(PathOf("MainWindow.xaml.cs"), WpfXamlTests.Gallery.CodeBehind);
                 File.WriteAllText(PathOf("ShopView.xaml"), """
                     <UserControl x:Class="Gallery.ShopView"
                                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"

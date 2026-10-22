@@ -538,88 +538,6 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         }
     }
 
-    [AvaloniaFact]
-    public void Create_property_in_a_view_model_of_the_toolkits_partial_properties_makes_another_after_them()
-    {
-        // The MVVM Toolkit stood in by its names, its view model written as Avalonia's MVVM template writes it (toolkit 8.4's
-        // partial properties), which flags a field marked [ObservableProperty] (MVVMTK0042).
-        string folder = PathNames.Canonical(TestFolders.Create("xaml-toolkit-"));
-        try
-        {
-            TestFolders.Prepare(() =>
-            {
-                AvaloniaApp.Create(folder, "Shop");
-                File.WriteAllText(Path.Combine(folder, "Mvvm.cs"), """
-                    namespace CommunityToolkit.Mvvm.ComponentModel
-                    {
-                        [System.AttributeUsage(System.AttributeTargets.Field | System.AttributeTargets.Property)]
-                        public sealed class ObservablePropertyAttribute : System.Attribute
-                        {
-                        }
-
-                        public class ObservableObject : System.ComponentModel.INotifyPropertyChanged
-                        {
-                            public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
-                        }
-                    }
-
-                    """);
-                File.WriteAllText(Path.Combine(folder, "ShopViewModel.cs"), """
-                    using CommunityToolkit.Mvvm.ComponentModel;
-
-                    namespace Shop;
-
-                    public partial class ShopViewModel : ObservableObject
-                    {
-                        [ObservableProperty]
-                        public partial string Name { get; set; } = "Tea";
-
-                        public void Clear()
-                        {
-                        }
-                    }
-
-                    """);
-                File.WriteAllText(Path.Combine(folder, "MainWindow.axaml"), """
-                    <Window xmlns="https://github.com/avaloniaui"
-                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                            xmlns:local="using:Shop"
-                            x:Class="Shop.MainWindow"
-                            x:DataType="local:ShopViewModel">
-                        <StackPanel>
-                            <TextBlock Text="{Binding Name}" />
-                            <TextBlock Text="{Binding Price}" />
-                        </StackPanel>
-                    </Window>
-
-                    """);
-                Restore.Run(folder);
-            }, folder);
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
-            window.Show();
-            window.OpenFolder(folder);
-            window.OpenFile(Path.Combine(folder, "MainWindow.axaml"));
-            OpenDocument document = window.EditorArea.Active!;
-            CodeEditor editor = window.EditorArea.CodeEditor;
-            Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Price'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
-            PlaceAfter(editor, "{Binding Pri");
-            Ui.Run(window, AppActions.QuickFix);
-            Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
-            Assert.Equal("Create property 'Price'", window.Assist.Offered[0]);
-            Ui.Press(window, "ENTER");
-            Ui.Settle();
-            string made = File.ReadAllText(Path.Combine(folder, "ShopViewModel.cs")).ReplaceLineEndings("\n");
-            Assert.True(made.Contains("    [ObservableProperty]\n    public partial string Name { get; set; } = \"Tea\";\n\n    [ObservableProperty]\n    public partial string? Price { get; set; }\n\n    public void Clear()", StringComparison.Ordinal),
-                $"Create property did not make a partial property after the view model's own, as its others are written:\n{made}");
-            Ui.WaitFor(() => document.Markers.Count == 0, "the binding resolved once the property is there");
-            window.Close();
-        }
-        finally
-        {
-            TestFolders.Delete(folder);
-        }
-    }
-
     /// <summary>The same where the solution keeps its build output in artifacts/ (UseArtifactsOutput), its project in a folder
     /// below: the restore writes artifacts/obj/Fresh/project.assets.json, under no project's folder, on either way of
     /// watching (each folder on its own, as on Linux, or the whole tree).</summary>
@@ -1210,22 +1128,25 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         public Gallery()
             : base("xaml-")
         {
-            TestFolders.Prepare(() =>
-            {
-                AvaloniaApp.Create(Folder, "Gallery");
-                Directory.CreateDirectory(PathOf("ViewModels"));
-                Directory.CreateDirectory(PathOf("Styles"));
-                Directory.CreateDirectory(PathOf("Assets"));
-                File.WriteAllText(PathOf("ViewModels/MainViewModel.cs"), MainViewModel);
-                File.WriteAllText(PathOf("Styles/Palette.axaml"), Palette);
-                File.WriteAllBytes(PathOf("Assets/logo.png"), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-                File.WriteAllText(PathOf("App.axaml"), AppXaml);
-                File.WriteAllText(PathOf("MainWindow.axaml"), Window);
-                File.WriteAllText(PathOf("MainWindow.axaml.cs"), CodeBehind);
-                // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
-                Directory.CreateDirectory(PathOf("bin"));
-            }, Folder);
+            TestFolders.Prepare(() => Make(Folder), Folder);
             Prepare();
+        }
+
+        /// <summary>Makes the app in a folder, not yet restored.</summary>
+        internal static void Make(string folder)
+        {
+            AvaloniaApp.Create(folder, "Gallery");
+            Directory.CreateDirectory(Path.Combine(folder, "ViewModels"));
+            Directory.CreateDirectory(Path.Combine(folder, "Styles"));
+            Directory.CreateDirectory(Path.Combine(folder, "Assets"));
+            File.WriteAllText(Path.Combine(folder, "ViewModels/MainViewModel.cs"), MainViewModel);
+            File.WriteAllText(Path.Combine(folder, "Styles/Palette.axaml"), Palette);
+            File.WriteAllBytes(Path.Combine(folder, "Assets/logo.png"), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+            File.WriteAllText(Path.Combine(folder, "App.axaml"), AppXaml);
+            File.WriteAllText(Path.Combine(folder, "MainWindow.axaml"), Window);
+            File.WriteAllText(Path.Combine(folder, "MainWindow.axaml.cs"), CodeBehind);
+            // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
+            Directory.CreateDirectory(Path.Combine(folder, "bin"));
         }
 
         public const string MainViewModel = """
