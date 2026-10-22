@@ -332,6 +332,61 @@ public sealed class LocalHistoryTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A language server's edit that makes a file over one there (a create with overwrite, then its text), as a
+    /// refactoring's answer is applied: the file is written as a save writes it, so the history keeps what it held, which
+    /// it never saw open, and Undo puts that back.</summary>
+    [AvaloniaFact]
+    public void A_file_a_servers_edit_makes_over_one_there_keeps_what_it_held_in_the_history_and_undo_puts_it_back()
+    {
+        Write("Other.cs", "class Other\n{\n}\n");
+        string notes = Write("Notes.cs", Original);
+        MainWindow window = Open("Other.cs");
+        const string Made = "class Notes\n{\n}\n";
+        string uri = Passenger.Lsp.DocumentUris.FromPath(notes);
+        System.Text.Json.JsonElement edit = System.Text.Json.JsonSerializer.SerializeToElement(new
+        {
+            documentChanges = new object[]
+            {
+                new { kind = "create", uri, options = new { overwrite = true } },
+                new { textDocument = new { uri, version = (int?)null }, edits = new[] { new { range = new { start = new { line = 0, character = 0 }, end = new { line = 0, character = 0 } }, newText = Made } } },
+            },
+        });
+        Passenger.App.CSharp.WorkspaceEdits.ApplyAsCommand(window.EditorArea, edit, "Move to File");
+        Assert.Equal(Made, File.ReadAllText(notes));
+
+        // Undo from the Solution view, where the edit is the last change: the file holds what it held.
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        Point at = Centre(window, Show(window, notes));
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.True(File.ReadAllText(notes) == Original, $"Undo left the file made anew as '{File.ReadAllText(notes)}', not as it was: {window.Status}");
+
+        // Its first version is what it held before the edit made it anew.
+        RightClick(window, Show(window, notes));
+        ChooseFromMenu(window, null, "Show Local History");
+        HistoryTab history = window.LocalHistoryWindow.Shown!;
+        Ui.Landed(() => history.Rows.Count > 1, "the file's versions");
+        history.Select(history.Rows[^1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Original, "the file as it was before the edit made it anew");
+
+        // Over a read-only file the edit is refused before anything is written, as a save is.
+        new FileInfo(notes).IsReadOnly = true;
+        try
+        {
+            Passenger.App.CSharp.WorkspaceEditFailed refused = Assert.Throws<Passenger.App.CSharp.WorkspaceEditFailed>(
+                () => Passenger.App.CSharp.WorkspaceEdits.ApplyAsCommand(window.EditorArea, edit, "Move to File"));
+            Assert.Equal("Notes.cs is read-only", refused.Message);
+            Assert.Equal(Original, File.ReadAllText(notes));
+        }
+        finally
+        {
+            new FileInfo(notes).IsReadOnly = false;
+        }
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void The_store_keeps_days_of_activity_as_Riders_does_and_no_more_content_than_its_limit()
     {
@@ -487,14 +542,20 @@ public sealed class LocalHistoryTests : IDisposable
 
     private static void RightClick(MainWindow window, ExplorerNode row)
     {
+        Point at = Centre(window, row);
+        window.MouseDown(at, MouseButton.Right);
+        window.MouseUp(at, MouseButton.Right);
+        Ui.Settle();
+    }
+
+    /// <summary>Where a row of the Explorer is in the window, scrolled into view.</summary>
+    private static Point Centre(MainWindow window, ExplorerNode row)
+    {
         ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
         rows.ScrollIntoView(row);
         Ui.Settle();
         Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
+        return item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
     }
 
     private static string Text(MainWindow window) => window.EditorArea.Active!.Text.Snapshot.ToString();

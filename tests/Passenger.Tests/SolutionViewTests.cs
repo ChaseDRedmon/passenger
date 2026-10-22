@@ -410,6 +410,73 @@ public sealed class SolutionViewTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_file_folder_or_class_its_folder_refuses_is_refused_in_the_popup_saying_why_with_no_ide_error()
+    {
+        string models = Path.Combine(folder, "Shop.App", "Models");
+        MainWindow window = Open();
+        ExplorerNode row = Show(window, models);
+        using (Unwritable(models))
+        {
+            foreach ((string item, string name, string made) in new[] { ("New File...", "Notes.txt", "Notes.txt"), ("New Folder...", "Drafts", "Drafts"), ("Class/Interface...", "Invoice", "Invoice.cs") })
+            {
+                RightClick(window, row);
+                ChooseFromMenu(window, "Add", item);
+                NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+                window.KeyTextInput(name);
+                Ui.Press(window, "ENTER");
+                Assert.True(window.IsPopupOpen && popup.Problem == $"{made} could not be made: access denied",
+                    $"{item} in a folder that refuses it {(window.IsPopupOpen ? $"said '{popup.Problem}'" : "closed its popup")}, not why {made} was not made");
+                Assert.False(Path.Exists(Path.Combine(models, made)), $"{made} was made in a folder that refuses it");
+                Ui.Press(window, "ESCAPE");
+            }
+        }
+        Assert.Empty(IdeErrors.Errors);
+        window.Close();
+    }
+
+    /// <summary>A folder nothing can be made in while this is held: read-only for its owner on macOS and Linux, and on
+    /// Windows, whose read-only attribute a folder ignores, denied to this user for making files and folders.</summary>
+    private static IDisposable Unwritable(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return Denied(path);
+        }
+        UnixFileMode mode = File.GetUnixFileMode(path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        return new Restored(() =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(path, mode);
+            }
+        });
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static IDisposable Denied(string path)
+    {
+        DirectoryInfo info = new(path);
+        System.Security.AccessControl.FileSystemAccessRule deny = new(System.Security.Principal.WindowsIdentity.GetCurrent().User!,
+            System.Security.AccessControl.FileSystemRights.CreateFiles | System.Security.AccessControl.FileSystemRights.CreateDirectories,
+            System.Security.AccessControl.AccessControlType.Deny);
+        System.Security.AccessControl.DirectorySecurity security = info.GetAccessControl();
+        security.AddAccessRule(deny);
+        info.SetAccessControl(security);
+        return new Restored(() =>
+        {
+            System.Security.AccessControl.DirectorySecurity back = info.GetAccessControl();
+            back.RemoveAccessRule(deny);
+            info.SetAccessControl(back);
+        });
+    }
+
+    private sealed class Restored(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
+    [AvaloniaFact]
     public void Open_in_terminal_starts_a_shell_in_the_folder_in_a_tab_of_its_own()
     {
         if (OperatingSystem.IsWindows())

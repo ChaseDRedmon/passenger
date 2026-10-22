@@ -677,7 +677,7 @@ public sealed partial class CodeAssist
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
         List<CompletionRow> rows = open.Items
-            .Select(item => (item, score: FuzzyMatch.ScoreLabel(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
+            .Select(item => (item, score: FuzzyMatch.Label(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
             .Where(x => x.score is not null)
             .OrderByDescending(x => x.score / alike)
             .ThenByDescending(x => x.item.Preselect == true)

@@ -77,23 +77,14 @@ public static class FileSearch
         return (IReadOnlyList<SearchMatch>)found;
     }, cancellation);
 
-    /// <summary>A file's text, or null for one that is binary, too large or unreadable.</summary>
+    /// <summary>A file's text as the editor reads it (its BOM's encoding, a UTF-16 file's included), read once; null for
+    /// one that is binary (<see cref="FileText.LooksBinary"/>), too large or unreadable.</summary>
     public static string? Read(string path)
     {
         try
         {
             FileInfo file = new(path);
-            if (!file.Exists || file.Length > LargestFile)
-            {
-                return null;
-            }
-            byte[] start = new byte[Math.Min(8000, (int)file.Length)];
-            using (FileStream stream = file.OpenRead())
-            {
-                stream.ReadExactly(start);
-            }
-            // A NUL in the first few kilobytes is a binary file, as Git decides.
-            return Array.IndexOf(start, (byte)0) >= 0 ? null : FileText.Load(path)?.Text;
+            return file.Exists && file.Length <= LargestFile ? FileText.Load(path)?.Text : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

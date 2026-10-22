@@ -1,7 +1,9 @@
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
+using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Host;
 
 namespace Passenger.Tests;
 
@@ -84,6 +86,30 @@ public sealed class ProjectEvaluationTests : IDisposable
         Ui.WaitFor(() => !window.ExplorerView.Tree.Rows.Any(r => r.Name == "Serilog"), "the Dependencies to drop the package the project's condition now leaves out");
         Assert.Equal(["Dependencies", "Legacy", "Shared"], Children(window, "App"));
         Assert.Equal(["Old.cs"], Children(window, "Legacy"));
+        window.Close();
+    }
+
+    /// <summary>A host whose answer does not read, as one of another build's could write, is ended and the evaluation asked
+    /// of it fails, where its reader stopped and that evaluation, and every one after it, waited for good; the next change
+    /// is evaluated by a host started anew.</summary>
+    [AvaloniaFact]
+    public void A_project_host_whose_answer_does_not_read_is_ended_and_the_next_change_is_evaluated_by_a_new_one()
+    {
+        MainWindow window = Open();
+        Assert.Contains("Serilog", Children(window, "Dependencies"));
+        ProjectHost spoiled = Task.Run(() => ProjectHosts.ForAsync(folder)).GetAwaiter().GetResult();
+        spoiled.SpoilNext(HostMethods.Evaluate);
+        Write("App/App.csproj", Project.Replace("""<Compile Remove="Legacy/**" />""", """<Compile Remove="Legacy/Old.cs" />"""));
+        Ui.WaitFor(() => spoiled.HasExited, "the host whose answer did not read to be ended");
+        Ui.Settle();
+        Ui.WaitFor(() => Ui.IdeLog().Contains("could not evaluate the projects", StringComparison.Ordinal)
+            && Ui.IdeLog().Contains("the project host's answer could not be read", StringComparison.Ordinal), "the evaluation asked of it to fail, saying why");
+
+        Write("App/App.csproj", Project.Replace("""'$(ShopLogs)' == 'true'""", """'$(ShopLogs)' == 'false'"""));
+        Ui.WaitFor(() => !window.ExplorerView.Tree.Rows.Any(r => r.Name == "Serilog"), "the next change's evaluation to drop the package its condition now leaves out");
+        Assert.Null(window.Session.Models.Problem);
+        int now = Task.Run(() => ProjectHosts.ForAsync(folder)).GetAwaiter().GetResult().ProcessId;
+        Assert.True(now != spoiled.ProcessId, "The next evaluation was asked of the host whose answer did not read");
         window.Close();
     }
 

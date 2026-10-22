@@ -152,27 +152,85 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
-    public void Camel_humps_keep_completion_open_and_enter_inserts_the_matching_name()
+    public void CamelHumps_typed_offer_the_names_they_start_after_the_prefix_matches_and_enter_writes_the_one_chosen()
     {
-        foreach ((string qualifier, string typed, string expected) in new[]
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "static void Main()\n    {");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("var built = new System.Text.");
+        Ui.Settle();
+        Type("SB");
+        Assert.True(window.Assist.CompletionLabels.FirstOrDefault() == "StringBuilder",
+            $"Typing SB offered [{string.Join(", ", window.Assist.CompletionLabels.Take(5))}], not StringBuilder first");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Contains("new System.Text.StringBuilder", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // A lower-case hump then capitals, as gTOD names GetTypeOrDefault.
+        window.KeyTextInput("();");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("int at = \"text\".");
+        Ui.Settle();
+        Type("lIO");
+        Assert.True(window.Assist.CompletionLabels.Take(2).SequenceEqual(["LastIndexOf", "LastIndexOfAny"]),
+            $"Typing lIO offered [{string.Join(", ", window.Assist.CompletionLabels.Take(5))}], not LastIndexOf then LastIndexOfAny");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Contains("int at = \"text\".LastIndexOf", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // A name the humps start comes after every name the letters begin.
+        window.KeyTextInput("('x');");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("bool plain = \"text\".");
+        Ui.Settle();
+        Type("IN");
+        IReadOnlyList<string> labels = window.Assist.CompletionLabels;
+        int humps = labels.ToList().IndexOf("IsNormalized");
+        Assert.True(humps > 0 && labels.Take(humps).All(l => l.StartsWith("IN", StringComparison.OrdinalIgnoreCase))
+            && !labels.Skip(humps).Any(l => l.StartsWith("IN", StringComparison.OrdinalIgnoreCase)),
+            $"Typing IN offered [{string.Join(", ", labels.Take(8))}], not IsNormalized after every name beginning with In");
+        Ui.Press(window, "ESCAPE");
+        window.Close();
+
+        void Type(string letters)
         {
-            ("System.Text.", "SB", "StringBuilder"),
-            ("CompletionNames.", "gTOD", "GetTypeOrDefault"),
-        })
-        {
-            MainWindow window = project.Open("Program.cs");
-            CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "static void Main()\n    {\n");
-            window.KeyTextInput("        " + qualifier);
-            Ui.Settle();
-            window.KeyTextInput(typed);
-            Ui.Settle();
-            Assert.Equal(expected, window.Assist.CompletionLabels.FirstOrDefault());
-            Ui.Press(window, "Enter");
-            Assert.Contains(qualifier + expected, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-            Assert.DoesNotContain(expected + typed, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-            window.Close();
+            foreach (char letter in letters)
+            {
+                window.KeyTextInput(letter.ToString());
+                Ui.Settle();
+            }
         }
+    }
+
+    [AvaloniaTheory]
+    [InlineData("System.Text.", "SB", "StringBuilder")]
+    [InlineData("CompletionNames.", "gTOD", "GetTypeOrDefault")]
+    [InlineData("System.Net.", "IA", "IPAddress")]
+    [InlineData("CompletionNames.", "UE", "UIElement")]
+    public void Camel_humps_keep_completion_open_and_enter_inserts_the_matching_name(string qualifier, string typed, string expected)
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "static void Main()\n    {\n");
+        window.KeyTextInput("        " + qualifier);
+        Ui.Settle();
+        foreach (char letter in typed)
+        {
+            window.KeyTextInput(letter.ToString());
+            Ui.Settle();
+        }
+        int match = window.Assist.CompletionLabels.ToList().IndexOf(expected);
+        Assert.True(match >= 0, $"Typing {typed} did not offer {expected}");
+        for (int i = 0; i < match; i++)
+        {
+            Ui.Press(window, "Down");
+        }
+        Ui.Press(window, "Enter");
+        Assert.Contains(qualifier + expected, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(expected + typed, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -412,6 +470,22 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         // The rows under a group of what usages do, to the next group.
         static IEnumerable<FindRow> Visible(FindView find, string group) =>
             find.Rows.SkipWhile(r => r.Depth != 0 || r.Label != group).Skip(1).TakeWhile(r => r.Depth != 0);
+    }
+
+    [AvaloniaFact]
+    public void Find_usages_lists_a_usage_in_a_closed_UTF_16_file_at_its_line_with_its_code()
+    {
+        string wide = project.Write("Wide.cs", string.Empty);
+        File.WriteAllText(wide, "static class Wide\n{\n    public static int Four()\n    {\n        return Helper.Twice(2);\n    }\n}\n", Encoding.Unicode);
+        MainWindow window = project.Open("Helper.cs");
+        PlaceAfter(window.EditorArea.CodeEditor, "Twi");
+        Ui.Run(window, AppActions.FindUsages);
+        FindView find = window.Find;
+        Ui.WaitFor(() => find.Shown == "Usages of Twice" && find.Rows.Any(r => r.Usage?.Path == PathNames.Canonical(wide)), "the usage in the UTF-16 file");
+        Usage usage = find.Rows.Select(r => r.Usage).OfType<Usage>().Single(u => u.Path == PathNames.Canonical(wide));
+        Assert.True((usage.Line, usage.Column, usage.LineText) == (4, 22, "        return Helper.Twice(2);"),
+            $"Find Usages listed the UTF-16 file's usage at {usage.Line + 1}:{usage.Column + 1} as '{usage.LineText}', not where it is with its line of code");
+        window.Close();
     }
 
     /// <summary>The window takes keys while Find Usages lists ten thousand usages: each usage's place was grouped under its
@@ -2232,9 +2306,9 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         {
             File.WriteAllText(PathOf("Sample.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(PathOf("CompletionNames.cs"), "static class CompletionNames\n{\n    public static int UIElement() => 0;\n    public static int GetTypeOrDefault() => 0;\n    public static int SBPrefix() => 0;\n    public static int SbLower() => 0;\n    public static int StringBuilder() => 0;\n    public static int HasbInside() => 0;\n}\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
-            File.WriteAllText(PathOf("CompletionNames.cs"), "static class CompletionNames\n{\n    public static int GetTypeOrDefault() => 0;\n    public static int SBPrefix() => 0;\n    public static int SbLower() => 0;\n    public static int StringBuilder() => 0;\n    public static int HasbInside() => 0;\n}\n");
             File.WriteAllText(PathOf("Shapes.cs"), "interface IShape\n{\n    int Sides { get; }\n}\n\nclass Square : IShape\n{\n    public int Sides => 4;\n}\n");
             File.WriteAllText(PathOf("Area.cs"), "static class Area\n{\n    public static int Of(int width, int height) => width * height;\n    public static int Room() => Of(3, 4);\n}\n");
             File.WriteAllText(PathOf("Point.cs"), "class Point\n{\n    public int X { get; }\n    public int Y { get; }\n}\n");

@@ -461,6 +461,41 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A large checkout overflows the system's buffer of changes: those it lost are never heard of, so the window
+    /// reads again what it shows. Its watchers stop while the files change, so the changes are lost as an overflow loses them.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Changes_the_watcher_lost_are_read_again_into_the_open_files_the_explorer_and_go_to_file(bool eachFolder)
+    {
+        Write("One.cs", "class One { }\n");
+        Write("Old/Old.cs", "class Old { }\n");
+        MainWindow window = Open(eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree);
+        window.OpenFile("One.cs");
+        window.OpenFile("Old/Old.cs");
+        Ui.Settle();
+        List<FileSystemWatcher> watchers = [.. window.FolderWatcher!.Watches.Values];
+        watchers.ForEach(w => w.EnableRaisingEvents = false);
+
+        Write("One.cs", "class One { int changed; }\n");
+        Write("Old/Old.cs", "class Old { int changed; }\n");
+        Write("Fresh/Fresh.cs", "class Fresh { }\n");
+        RaiseError(window.FolderWatcher.Watches[folder], new InternalBufferOverflowException("Too many changes at once; directory listing is required."));
+        Ui.WaitFor(() => window.EditorArea.Documents.All(d => d.Text.Snapshot.ToString().Contains("int changed;", StringComparison.Ordinal)),
+            $"every open file to take the text on disk, where they hold [{string.Join(" | ", window.EditorArea.Documents.Select(d => d.Text.Snapshot.ToString().Trim()))}]");
+        Assert.All(window.EditorArea.Documents, d => Assert.False(d.IsModified));
+        Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Any(r => r.Name == "Fresh"),
+            $"the folder made meanwhile in the Explorer (it shows {string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))})");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("Fresh", "Fresh.cs")), "the file made meanwhile in Go to File");
+
+        // What changes from then on is heard again, in the folder made meanwhile too. Started only now, since a watcher
+        // started at once can still be told of the changes just made.
+        watchers.ForEach(w => w.EnableRaisingEvents = true);
+        Write("Fresh/Later.cs", "class Later { }\n");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("Fresh", "Later.cs")), "a file made after in Go to File");
+        window.Close();
+    }
+
     private static IOException OutOfWatches() =>
         new("The configured user limit (8192) on the number of inotify watches has been reached, or the operating system failed to allocate a required resource.", 28);
 

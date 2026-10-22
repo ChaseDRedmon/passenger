@@ -37,7 +37,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         {
             return Decode(bytes, bom);
         }
-        if (bytes.AsSpan(0, Math.Min(bytes.Length, BinaryProbe)).Contains((byte)0))
+        if (LooksBinary(bytes))
         {
             return null;
         }
@@ -80,6 +80,12 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         });
         return new FileText(text, Encoding.Latin1, false, IsBinary: true);
     }
+
+    /// <summary>Whether a file's bytes are binary, the one rule every reader of the folder's files keeps (the editor, Find
+    /// in Files, Find Usages, Local History): no BOM, and a NUL byte in the first few kilobytes, as Git decides. A UTF-16
+    /// file's BOM makes it text, NULs and all.</summary>
+    public static bool LooksBinary(ReadOnlySpan<byte> bytes) =>
+        Bom(bytes) is null && bytes[..Math.Min(bytes.Length, BinaryProbe)].Contains((byte)0);
 
     /// <summary>The encoding a byte-order mark at the start of the bytes is, or null without one.</summary>
     public static Encoding? Bom(ReadOnlySpan<byte> bytes) =>

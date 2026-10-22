@@ -1,38 +1,12 @@
 namespace Passenger.Text;
 
-/// <summary>Ranks file paths and completion labels, including CamelHumps initials like "CE" for CodeEditor.
-/// Score ranks a file's name (exact, prefix, CamelHumps, substring, then letters close together and in order),
-/// or its path when the query has a slash. Names are read in place because Go to File scores every file on every key.
-/// ScoreLabel ranks completion labels whole. Higher is better; null is no match.</summary>
+/// <summary>How well a typed query names a file, the way Rider's Go to File ranks: the file's own
+/// name (exact, then prefix, then CamelHumps initials like "CE" for CodeEditor, then anywhere in it,
+/// then its letters close together and in order), or its path when the query has a slash. Higher is
+/// better; null is no match. A name is read where it is in its path, nothing copied, since Go to File
+/// asks this of every file in the folder for every key.</summary>
 public static class FuzzyMatch
 {
-    /// <summary>Ranks a completion label whole: case-sensitive prefix, other prefix, CamelHumps, then substring.
-    /// A shorter label wins within each band; null means no match.</summary>
-    public static int? ScoreLabel(string query, string label)
-    {
-        if (query.Length == 0)
-        {
-            return 0;
-        }
-        if (label.StartsWith(query, StringComparison.Ordinal))
-        {
-            return 4000 - label.Length;
-        }
-        if (label.StartsWith(query, StringComparison.OrdinalIgnoreCase))
-        {
-            return 3000 - label.Length;
-        }
-        if (Humps(query, label))
-        {
-            return 2000 - label.Length;
-        }
-        if (query.Length >= 2 && label.Contains(query, StringComparison.OrdinalIgnoreCase))
-        {
-            return 1000 - label.Length;
-        }
-        return null;
-    }
-
     public static int? Score(string query, string relativePath)
     {
         if (query.Length == 0)
@@ -78,6 +52,41 @@ public static class FuzzyMatch
         if (query.Length >= 3 && InOrder(query, name) is { } nameSpread && nameSpread <= name.Length / 2)
         {
             return 500 - nameSpread - name.Length;
+        }
+        return null;
+    }
+
+    /// <summary>How well a typed word names a completion item's label, which is no path ('/', '\' and '.' are its own
+    /// characters): a prefix in its own case, then in any case, then CamelHumps from its first word ("SB" for
+    /// StringBuilder, "gTOD" for GetTypeOrDefault), then from a later one, then two letters or more anywhere in it;
+    /// within each band the shorter label first. Higher is better; null is no match. Nothing is copied, as completion
+    /// asks this of every item on every key.</summary>
+    public static int? Label(string query, string label)
+    {
+        if (query.Length == 0)
+        {
+            return 0;
+        }
+        if (label.StartsWith(query, StringComparison.Ordinal))
+        {
+            return 4000 - label.Length;
+        }
+        if (label.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 3000 - label.Length;
+        }
+        if (!Within(query, label))
+        {
+            return null;
+        }
+        if (Humps(query, label))
+        {
+            // The humps take the label's first word whenever its first letter is the query's.
+            return (char.ToLowerInvariant(label[0]) == char.ToLowerInvariant(query[0]) ? 2000 : 1500) - label.Length;
+        }
+        if (query.Length >= 2 && label.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1000 - label.Length;
         }
         return null;
     }
@@ -136,10 +145,11 @@ public static class FuzzyMatch
         return q == query.Length && query.Length > 1;
     }
 
-    /// <summary>Whether a word of the name starts at a character: the first, a capital after a letter that is not one, or
-    /// one after a separator, a letter or digit in any case.</summary>
+    /// <summary>Whether a letter or digit starts a word: the first character, one after a separator,
+    /// or a capital after a non-capital or before lowercase (the A in IPAddress).</summary>
     private static bool Starts(ReadOnlySpan<char> name, int i) =>
-        (i == 0 || char.IsUpper(name[i]) && !char.IsUpper(name[i - 1]) || name[i - 1] is '_' or '-' or '.' or ' ') && char.IsLetterOrDigit(name[i]);
+        (i == 0 || char.IsUpper(name[i]) && (!char.IsUpper(name[i - 1]) || i + 1 < name.Length && char.IsLower(name[i + 1]))
+            || name[i - 1] is '_' or '-' or '.' or ' ') && char.IsLetterOrDigit(name[i]);
 
     /// <summary>How spread out the query's letters are when found in order, or null if they are not.</summary>
     private static int? InOrder(string query, ReadOnlySpan<char> text)

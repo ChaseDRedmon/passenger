@@ -1,3 +1,4 @@
+using Passenger.App.CSharp;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -48,7 +49,13 @@ public partial class MainWindow
             List<Usage> found = [];
             foreach ((string path, TextSnapshot? open, ParsedText? syntax, string project, List<LspLocation> here) in files)
             {
-                TextSnapshot snapshot = syntax?.Text ?? open ?? (FileSearch.Read(path) is { } text ? TextSnapshot.From(text) : TextSnapshot.Empty);
+                if ((syntax?.Text ?? open ?? ServerPlaces.Read(path)) is not { } snapshot)
+                {
+                    // A file that cannot be read keeps the server's places, the best there is to say of them.
+                    found.AddRange(here.Select(l => new Usage(path, l.Range.Start.Line, l.Range.Start.Character,
+                        l.Range.End.Line == l.Range.Start.Line ? Math.Max(0, l.Range.End.Character - l.Range.Start.Character) : 0, string.Empty, UsageKind.Other, project)));
+                    continue;
+                }
                 ServerLines lines = ServerLines.Of(snapshot);
                 List<int> offsets = [.. here.Select(l => lines.OffsetOf(l.Range.Start))];
                 IReadOnlyList<UsageKind> kinds = path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)

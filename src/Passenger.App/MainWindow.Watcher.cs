@@ -39,8 +39,9 @@ public partial class MainWindow
             return;
         }
         session.LocalHistory?.Noticed(changes.Paths);
-        if (changes.Projects)
+        if (changes.Projects || changes.Lost)
         {
+            // Lost changes may have been a project's or the solution's: read again, which shows the whole Explorer anew.
             ReloadSolution();
         }
         else if (changes.Structure)
@@ -72,7 +73,7 @@ public partial class MainWindow
         session.MSBuild.FilesChanged(changes.Paths, changes.Structure);
         session.Web?.FilesChanged(changes.Paths);
         EndpointFilesChanged(changes);
-        FollowOpenFiles(changes.Paths);
+        FollowOpenFiles(changes.Paths, every: changes.Lost);
         if (changes.Paths.Count > 0 || changes.Git)
         {
             _ = session.Vcs.RefreshAsync();
@@ -81,14 +82,15 @@ public partial class MainWindow
 
     /// <summary>The open files a change names, or names a folder over (a folder moved, renamed or trashed is seen as that
     /// folder alone): each still there takes the disk's text; one gone follows its folder where a folder just come holds
-    /// it as it was (a move, whose halves may be seen apart), else is awaited as a file deleted.</summary>
-    private void FollowOpenFiles(IReadOnlySet<string> paths)
+    /// it as it was (a move, whose halves may be seen apart), else is awaited as a file deleted. With <paramref name="every"/>
+    /// (changes lost) every open file is looked at so.</summary>
+    private void FollowOpenFiles(IReadOnlySet<string> paths, bool every)
     {
         List<string>? come = null;
         foreach (OpenDocument document in Editors.Documents.ToList())
         {
             // A folder still there is named too as a file in it changes (Windows'), which leaves its other files as they are.
-            bool named = paths.Contains(document.Path) || paths.Any(p => PathNames.IsUnder(document.Path, p) && !Directory.Exists(p));
+            bool named = every || paths.Contains(document.Path) || paths.Any(p => PathNames.IsUnder(document.Path, p) && !Directory.Exists(p));
             if (File.Exists(document.Path))
             {
                 if (named)
