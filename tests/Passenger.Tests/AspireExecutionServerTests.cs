@@ -11,7 +11,8 @@ namespace Passenger.Tests;
 
 /// <summary>Passenger's execution server for Aspire's DCP over raw HTTP and WebSockets on loopback; with no window, beside the
 /// window tests (<see cref="Beside"/>): its trickled bodies wait real seconds, which a busy machine only lengthens past the
-/// server's deadline.</summary>
+/// server's deadline. A stand-in on its own, since only the orchestrator speaks to it, and nothing a person does sends it
+/// malformed, ambiguous or abandoned requests, which it must refuse unharmed.</summary>
 [Collection(Beside.Name)]
 public sealed class AspireExecutionServerTests
 {
