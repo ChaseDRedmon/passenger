@@ -1,3 +1,5 @@
+using Passenger.Core;
+
 namespace Passenger.Host;
 
 /// <summary>What says an evaluation still stands, one definition for both ends (the app compiles this file too): a file's
@@ -6,11 +8,12 @@ namespace Passenger.Host;
 /// names are hashed instead, those left out the same as the folders a wildcard never enters.</summary>
 public static class Stamps
 {
-    /// <summary>Names in a folder that say nothing of what a project holds: build output, dependencies, the system's own.</summary>
-    private static readonly HashSet<string> Passed = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", ".DS_Store", "Thumbs.db" };
+    /// <summary>Names in a folder that say nothing of what a project holds: build output and dependencies.</summary>
+    private static readonly HashSet<string> Passed = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules" };
 
-    /// <summary>Whether a folder's entry is one a wildcard may take in or enter: not build output, not a hidden folder.</summary>
-    public static bool Counts(string name, bool folder) => !Passed.Contains(name) && !(folder && name.StartsWith('.'));
+    /// <summary>Whether a folder's entry is one a wildcard may take in or enter: not build output, not a hidden folder, not
+    /// the system's own file (<see cref="PathNames.IsSystemFile"/>).</summary>
+    public static bool Counts(string name, bool folder) => !Passed.Contains(name) && !(folder && name.StartsWith('.')) && !PathNames.IsSystemFile(name);
 
     public static Stamp File(string path)
     {

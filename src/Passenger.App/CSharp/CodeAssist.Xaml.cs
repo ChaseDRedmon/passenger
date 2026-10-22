@@ -587,7 +587,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A C# definition that lands in the field Avalonia's generator or WPF's MarkupCompile made for a named element
     /// goes to the element's name in its XAML instead, as Rider's does; null for any other.</summary>
-    private XamlTarget? NamedElementOf(IReadOnlyList<LspLocation> definitions, int offset)
+    private async Task<XamlTarget?> NamedElementOfAsync(IReadOnlyList<LspLocation> definitions, int offset)
     {
         foreach (LspLocation place in definitions)
         {
@@ -603,7 +603,7 @@ public sealed partial class CodeAssist
             else
             {
                 Match generated = GeneratedFile().Match(Uri.UnescapeDataString(place.Uri));
-                xaml = generated.Success ? Xaml?.Invoke()?.ClassFile(generated.Groups["class"].Value, active.Path) : null;
+                xaml = generated.Success && Xaml?.Invoke() is { } service ? await service.ClassFileAsync(generated.Groups["class"].Value, active.Path) : null;
             }
             string name = NameAt(offset);
             if (xaml is not null && Regex.Match(ReadOpenOrDisk(xaml), $@"\b(?:x:)?Name\s*=\s*""(?<name>{Regex.Escape(name)})""") is { Success: true } found)

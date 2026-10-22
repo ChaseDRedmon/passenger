@@ -354,19 +354,46 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         }
     }
 
+    /// <summary>A project whose folders link back up its own tree gets its XAML help, and Go to Declaration from a named
+    /// element's field in the code-behind finds the XAML that declares its class, deep among those links: the class's XAML
+    /// was looked for on the window's thread through every link, round the loops for good.</summary>
     [AvaloniaFact]
     public void A_project_holding_folder_links_back_up_its_own_tree_gets_its_xaml_help()
     {
         string folder = PathNames.Canonical(TestFolders.Create("xaml-links-"));
         string shop = Path.Combine(folder, "Shop");
         string views = Path.Combine(shop, "Views");
+        string deep = Path.Combine(views, "Parts", "Deep");
         try
         {
             TestFolders.Prepare(() =>
             {
                 AvaloniaApp.Create(shop, "Shop");
-                Directory.CreateDirectory(Path.Combine(views, "Parts"));
+                Directory.CreateDirectory(deep);
                 File.WriteAllText(Path.Combine(views, "Parts", "Palette.axaml"), Gallery.Palette);
+                File.WriteAllText(Path.Combine(deep, "Card.axaml"), """
+                    <UserControl xmlns="https://github.com/avaloniaui"
+                                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                                 x:Class="Shop.Views.Card">
+                        <Button Name="Pay" Content="Pay" />
+                    </UserControl>
+
+                    """);
+                File.WriteAllText(Path.Combine(deep, "Card.axaml.cs"), """
+                    using Avalonia.Controls;
+
+                    namespace Shop.Views;
+
+                    public partial class Card : UserControl
+                    {
+                        public Card()
+                        {
+                            InitializeComponent();
+                            Pay.Content = "Pay now";
+                        }
+                    }
+
+                    """);
                 File.WriteAllText(Path.Combine(shop, "MainWindow.axaml"), """
                     <Window xmlns="https://github.com/avaloniaui"
                             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -396,6 +423,16 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             Ui.Press(window, "ENTER");
             window.KeyTextInput("<");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<', once the project's XAML files are read");
+            Ui.Press(window, "ESCAPE");
+
+            window.OpenFile(Path.Combine(deep, "Card.axaml.cs"));
+            Ui.WaitFor(() => window.CSharpService?.IsReady == true, "the language server to load Shop");
+            CodeEditor code = window.EditorArea.CodeEditor;
+            PlaceAfter(code, "        Pa");
+            Ui.Run(window, AppActions.GoToDeclaration);
+            Ui.WaitFor(() => window.EditorArea.Active?.Name == "Card.axaml", "Go to Declaration of Pay to land in the XAML declaring Card, found among the links");
+            Assert.Contains("<Button Name=\"|Pay\"", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+            Assert.Equal(PathNames.Canonical(Path.Combine(deep, "Card.axaml")), window.EditorArea.Active?.Path);
             window.Close();
         }
         finally

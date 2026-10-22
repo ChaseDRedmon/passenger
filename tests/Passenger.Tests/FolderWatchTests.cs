@@ -565,6 +565,52 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Every look at the open folder's files walks it one way: Go to File lists each file once by its own name though
+    /// links lead to it again, back up the tree or out of the folder, never build output or the system's own files; a folder
+    /// with no solution takes its projects from those files but a hidden folder's (a tool's copy); and a folder another
+    /// program makes, a link back up in it, is kept by Local History file for file as Go to File lists it.</summary>
+    [AvaloniaFact]
+    public void Go_to_file_local_history_and_the_folders_projects_see_its_files_alike_through_links_and_hidden_folders()
+    {
+        Write("App/App.csproj", Project);
+        Write("App/Program.cs", "System.Console.WriteLine(\"app\");\n");
+        Write("App/Thumbs.db", "the system's own\n");
+        Write(".github/ci.yml", "on: push\n");
+        Write(".copy/Copy.csproj", Project);
+        Write("bin/out.txt", "built\n");
+        Write(".DS_Store", "the system's own\n");
+        string outside = TestFolders.Create("watch-outside-");
+        try
+        {
+            File.WriteAllText(Path.Combine(outside, "Far.cs"), "class Far { }\n");
+            // Alias comes before App by name, so the walk reaches App's files through it first.
+            TestFolders.LinkFolder(Path.Combine(folder, "Alias"), Path.Combine(folder, "App"));
+            TestFolders.LinkFolder(Path.Combine(folder, "App", "loop"), Path.Combine(folder, "App"));
+            TestFolders.LinkFolder(Path.Combine(folder, "App", "up"), folder);
+            TestFolders.LinkFolder(Path.Combine(folder, "far"), outside);
+            MainWindow window = Open();
+            List<string> listed = [Path.Combine(".copy", "Copy.csproj"), Path.Combine(".github", "ci.yml"), Path.Combine("App", "App.csproj"), Path.Combine("App", "Program.cs")];
+            Assert.Equal(listed, window.FileIndex.Files.Order(StringComparer.Ordinal));
+            Assert.Equal([PathNames.Canonical(Path.Combine(folder, "App", "App.csproj"))], window.Projects.Select(p => p.Path));
+
+            string made = Path.Combine(folder, "Made");
+            string note = PathNames.Canonical(Path.Combine(made, "note.txt"));
+            Write("Made/note.txt", "made elsewhere\n");
+            Write("Made/.DS_Store", "the system's own\n");
+            TestFolders.LinkFolder(Path.Combine(made, "again"), folder);
+            Ui.WaitFor(() => window.FileIndex.Files.Contains(Path.Combine("Made", "note.txt")), "the file of the folder made elsewhere in Go to File");
+            Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == note), "Local History to keep the file of the folder made elsewhere");
+            Ui.Settle();
+            Assert.Equal([.. listed, Path.Combine("Made", "note.txt")], window.FileIndex.Files.Order(StringComparer.Ordinal));
+            Assert.Equal([note], window.LocalHistory!.Snapshot().Events.Select(e => e.Path).OfType<string>().Where(p => PathNames.IsUnder(p, made)).Distinct());
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(outside);
+        }
+    }
+
     private static IEnumerable<string?> Codes(MainWindow window) =>
         window.CSharpService?.For(window.EditorArea.Active!)?.Diagnostics.Select(d => d.Code?.ToString()) ?? [];
 

@@ -27,8 +27,9 @@ public enum NodeKind
 /// children are made the first time it opens.</summary>
 public sealed class ExplorerTree
 {
-    /// <summary>Never listed: version control's own store, which nobody edits by hand.</summary>
-    private static readonly HashSet<string> Hidden = [".git", ".DS_Store"];
+    /// <summary>Never listed: version control's own store, which nobody edits by hand (and the system's own files,
+    /// <see cref="PathNames.IsSystemFile"/>).</summary>
+    private const string GitStore = ".git";
 
     /// <summary>Listed but dimmed, as Rider marks excluded folders: build output and dependencies.</summary>
     private static readonly HashSet<string> Excluded = ["bin", "obj", "artifacts", "node_modules", ".vs", ".idea"];
@@ -548,7 +549,7 @@ public sealed class ExplorerTree
         try
         {
             entries = [.. new DirectoryInfo(folder).EnumerateFileSystemInfos()
-                .Where(e => !Hidden.Contains(e.Name) && !(e is FileInfo && FileText.IsSaving(e.Name)))
+                .Where(e => e.Name != GitStore && !(e is FileInfo && (FileText.IsSaving(e.Name) || PathNames.IsSystemFile(e.Name))))
                 .Where(e => skip is null || (e.FullName != skip && !(e is DirectoryInfo && e.Name is "bin" or "obj")))
                 .OrderBy(e => e is FileInfo)
                 .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)];

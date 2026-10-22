@@ -301,9 +301,9 @@ public sealed class LocalHistory
     public static string Hash(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes)[..16]);
 
     /// <summary>Whether the history keeps a path: a file under the folder, outside the folders every walk passes over and
-    /// outside the state store, and not a save's temporary file.</summary>
+    /// outside the state store, and neither a save's temporary file nor the system's own.</summary>
     public bool Keeps(string path) =>
-        PathNames.IsUnder(path, Folder) && !PathNames.Within(path, stateFolder) && !FileText.IsSaving(path)
+        PathNames.IsUnder(path, Folder) && !PathNames.Within(path, stateFolder) && !FileText.IsSaving(path) && !PathNames.IsSystemFile(Path.GetFileName(path))
         && !Path.GetRelativePath(Folder, path).Split(Path.DirectorySeparatorChar).Any(IgnoredFolders.Contains);
 
     /// <summary>The set and name a save is kept under: the activity under way, else a set of its own.</summary>
@@ -563,13 +563,14 @@ public sealed class LocalHistory
             }
             if (Directory.Exists(path))
             {
-                // A folder new to the history (made, or moved in) is read for its files; one it knows has their own changes.
+                // A folder new to the history (made, or moved in) is read for its files; one it knows has their own changes,
+                // and a link to one holds nothing new: what it leads to is kept by its own names.
                 bool knownUnder;
                 lock (gate)
                 {
                     knownUnder = known.Keys.Any(k => PathNames.IsUnder(k, path));
                 }
-                foreach (string file in knownUnder ? [] : Walk(path))
+                foreach (string file in knownUnder || new DirectoryInfo(path).LinkTarget is not null ? [] : Walk(path))
                 {
                     Look(file);
                 }
@@ -889,43 +890,9 @@ public sealed class LocalHistory
     /// <summary>Text as the editor takes it (<see cref="FileText.LooksBinary"/>), and not too large to keep.</summary>
     private static bool IsText(byte[] bytes) => bytes.Length <= FileText.KeptLimit && !FileText.LooksBinary(bytes);
 
-    /// <summary>The files under a folder the history keeps, as many as it reads at once, linked folders not followed.</summary>
-    private IEnumerable<string> Walk(string top)
-    {
-        Stack<DirectoryInfo> folders = new([new DirectoryInfo(top)]);
-        int count = 0;
-        while (folders.Count > 0)
-        {
-            DirectoryInfo at = folders.Pop();
-            List<FileSystemInfo> entries;
-            try
-            {
-                entries = [.. at.EnumerateFileSystemInfos()];
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-            foreach (FileSystemInfo entry in entries)
-            {
-                if (entry is DirectoryInfo folder)
-                {
-                    if (folder.LinkTarget is null && !IgnoredFolders.Contains(folder.Name))
-                    {
-                        folders.Push(folder);
-                    }
-                }
-                else if (Keeps(entry.FullName))
-                {
-                    if (++count > WalkLimit)
-                    {
-                        yield break;
-                    }
-                    yield return entry.FullName;
-                }
-            }
-        }
-    }
+    /// <summary>The files under a folder the history keeps, as many as it reads at once, found as every walk of the open
+    /// folder finds them (<see cref="FolderWalk"/>).</summary>
+    private IEnumerable<string> Walk(string top) => FolderWalk.Files(top).Where(Keeps).Take(WalkLimit);
 
     private string Line(HistoryEvent kept)
     {

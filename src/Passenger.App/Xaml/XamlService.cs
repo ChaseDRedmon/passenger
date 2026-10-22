@@ -339,48 +339,35 @@ public sealed class XamlService : IDisposable
     }
 
     /// <summary>The XAML file whose <c>x:Class</c> is a class, in the project of a C# file of it: an open one's text first,
-    /// else the files on disk; null for none.</summary>
-    public string? ClassFile(string className, string near)
+    /// else the project's files on disk, read off the UI thread by the walk a project's files take (<see cref="FolderWalk"/>);
+    /// null for none.</summary>
+    public async Task<string?> ClassFileAsync(string className, string near)
     {
         UiThread.Check();
+        string declared = $"Class=\"{className}\"";
         foreach (XamlDocument document in documents.Values)
         {
-            if (document.Document.Text.Snapshot.ToString().Contains($"Class=\"{className}\"", StringComparison.Ordinal))
+            if (document.Document.Text.Snapshot.ToString().Contains(declared, StringComparison.Ordinal))
             {
                 return document.Document.Path;
             }
         }
-        if (ProjectFile(near) is not { } project)
+        return await BackgroundWork.Run(() => ProjectFile(near) is { } project
+            ? FolderWalk.Files(Path.GetDirectoryName(project)!, built: true).Where(IsXaml).FirstOrDefault(file => Declares(file, declared))
+            : null);
+    }
+
+    private static bool Declares(string file, string declared)
+    {
+        try
         {
-            return null;
+            return File.ReadAllText(file).Contains(declared, StringComparison.Ordinal);
         }
-        Stack<string> waiting = new([Path.GetDirectoryName(project)!]);
-        while (waiting.Count > 0)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            string folder = waiting.Pop();
-            try
-            {
-                foreach (string file in Directory.EnumerateFiles(folder).Where(IsXaml))
-                {
-                    if (File.ReadAllText(file).Contains($"Class=\"{className}\"", StringComparison.Ordinal))
-                    {
-                        return PathNames.Canonical(file);
-                    }
-                }
-                foreach (string sub in Directory.EnumerateDirectories(folder))
-                {
-                    if (Path.GetFileName(sub) is not ("bin" or "obj") && !Path.GetFileName(sub).StartsWith('.'))
-                    {
-                        waiting.Push(sub);
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // A folder that cannot be read holds no XAML to go to.
-            }
+            // Gone, or not readable: no XAML to go to.
+            return false;
         }
-        return null;
     }
 
     /// <summary>A file's project: the nearest folder at or above it with a C# project file.</summary>

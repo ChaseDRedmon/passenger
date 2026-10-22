@@ -11,9 +11,6 @@ namespace Passenger.App.Explorer;
 /// since MSBuild has nothing to say of it and one just made would otherwise vanish.</summary>
 internal sealed class ProjectFiles
 {
-    /// <summary>Never shown: the system's folder metadata, which no project means to hold.</summary>
-    private static readonly HashSet<string> Hidden = new(StringComparer.OrdinalIgnoreCase) { ".DS_Store", "Thumbs.db" };
-
     private readonly string root;
     private readonly Dictionary<string, List<(string Name, string Path)>> files = new(PathNames.Comparer);
     private readonly Dictionary<string, HashSet<string>> folders = new(PathNames.Comparer);
@@ -33,7 +30,7 @@ internal sealed class ProjectFiles
             int slash = logical.LastIndexOf('/');
             string folder = slash < 0 ? string.Empty : logical[..slash];
             string name = logical[(slash + 1)..];
-            if (name.Length == 0 || Hidden.Contains(name) || !seen.Add(item.Path))
+            if (name.Length == 0 || PathNames.IsSystemFile(name) || !seen.Add(item.Path))
             {
                 continue;
             }

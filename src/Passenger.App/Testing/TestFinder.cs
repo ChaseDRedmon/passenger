@@ -165,25 +165,8 @@ public sealed class TestFinder
         List<string> all = [];
         foreach (ProjectModel project in projects)
         {
-            List<string> files = [];
-            Stack<DirectoryInfo> folders = new([new DirectoryInfo(project.Folder)]);
-            while (folders.TryPop(out DirectoryInfo? at))
-            {
-                try
-                {
-                    files.AddRange(at.EnumerateFiles("*.cs").Select(f => f.FullName));
-                    foreach (DirectoryInfo child in at.EnumerateDirectories())
-                    {
-                        if (!child.Name.StartsWith('.') && !IgnoredFolders.Contains(child.Name) && child.LinkTarget is null && !projectFolders.Contains(child.FullName))
-                        {
-                            folders.Push(child);
-                        }
-                    }
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                {
-                }
-            }
+            List<string> files = [.. FolderWalk.Files(project.Folder, built: true, enters: folder => !projectFolders.Contains(folder))
+                .Where(file => file.EndsWith(".cs", PathNames.Comparison))];
             found[project.Path] = files;
             all.AddRange(files);
         }

@@ -1673,7 +1673,7 @@ public sealed partial class CodeAssist
                 Browse?.Invoke(this, page);
                 return;
             }
-            if (NamedElementOf(found, offset) is { } element)
+            if (await NamedElementOfAsync(found, offset) is { } element)
             {
                 await Arrive(element);
                 return;
