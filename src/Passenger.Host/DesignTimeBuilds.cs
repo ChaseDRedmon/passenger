@@ -7,6 +7,7 @@ using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
+using Passenger.Core;
 
 namespace Passenger.Host;
 
@@ -62,10 +63,6 @@ internal static class DesignTimeBuilds
     private static int holds;
     private static TaskCompletionSource unheld = Completed();
     private static TaskCompletionSource idle = Completed();
-
-    private static StringComparer PathComparer => OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
-
-    private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     /// <summary>Builds the projects asked, handing each over as it is built. Cancelled, it starts no other project and
     /// cancels the builds running, so the session ends at once for the next request's.</summary>
@@ -220,7 +217,7 @@ internal static class DesignTimeBuilds
             FileGlobs[] globs = [.. outer.GetAllGlobs().Select(g => new FileGlobs([.. g.IncludeGlobs.Select(Full)], [.. g.Excludes.Select(Full)], [.. g.Removes.Select(Full)]))];
             List<RoslynProjectFileInfo> infos = [];
             List<BuildDiagnostic> said = [];
-            HashSet<string> assets = new(PathComparer);
+            HashSet<string> assets = new(PathNames.Comparer);
             foreach (Project project in each)
             {
                 (ProjectInstance instance, IReadOnlyList<BuildDiagnostic> logged) = await BuildAsync(project, diagnostics, cancel).ConfigureAwait(false);
@@ -239,19 +236,19 @@ internal static class DesignTimeBuilds
             HashSet<string> outside = Evaluation.OutsideRoots(outer);
             List<Stamp> inputs = [file, .. loaded
                 .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
-                .Distinct(PathComparer)
-                .Where(i => !outside.Any(root => i.StartsWith(root, PathComparison)))
+                .Distinct(PathNames.Comparer)
+                .Where(i => !outside.Any(root => i.StartsWith(root, PathNames.Comparison)))
                 .Select(Stamps.File)
                 .Concat(assets.Select(Stamps.File))
                 .Concat(looked)
-                .DistinctBy(s => s.Path, PathComparer)];
+                .DistinctBy(s => s.Path, PathNames.Comparer)];
             string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
             List<Stamp> walked = [.. folders, .. infos
                 .SelectMany(i => i.Documents.Concat(i.AdditionalDocuments))
                 .Select(d => Path.GetDirectoryName(d.FilePath)!)
-                .Where(d => !d.StartsWith(own, PathComparison))
-                .Distinct(PathComparer)
-                .Where(d => !folders.Any(f => PathComparer.Equals(f.Path, d)) && Directory.Exists(d))
+                .Where(d => !d.StartsWith(own, PathNames.Comparison))
+                .Distinct(PathNames.Comparer)
+                .Where(d => !folders.Any(f => PathNames.Same(f.Path, d)) && Directory.Exists(d))
                 .Select(Stamps.Folder)];
             return new BuiltProject(path, JsonSerializer.Serialize(infos, Written), [.. inputs, .. walked], null, said);
         }

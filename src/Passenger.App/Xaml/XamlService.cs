@@ -71,7 +71,7 @@ public sealed class XamlService : IDisposable
         {
             return;
         }
-        if (IsXaml(document.Path) && !Paths.IsUnder(document.Path, LibrarySources.Folder))
+        if (IsXaml(document.Path) && !PathNames.Within(document.Path, LibrarySources.Folder))
         {
             if (ProjectOf(document.Path) is { } loading)
             {
@@ -243,7 +243,7 @@ public sealed class XamlService : IDisposable
 
     /// <summary>The project already loading or loaded that a file belongs to.</summary>
     private XamlLoading? Loaded(string path) =>
-        projects.Values.Where(l => Paths.IsUnder(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
+        projects.Values.Where(l => PathNames.Within(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
 
     /// <summary>The projects loaded or loading that a file changed on disk may change: for C#, each that may read it; for
     /// anything else, the project it is in, or whose restore it is.</summary>
@@ -260,8 +260,8 @@ public sealed class XamlService : IDisposable
     /// XAML binding to App.Core's view models), and each still loading, whose references are not known yet. Each builder
     /// says off the UI thread whether it compiles the file.</summary>
     private IEnumerable<XamlLoading> Reading(string path) =>
-        projects.Values.Where(l => Paths.IsUnder(path, l.Folder) || !l.Loaded.IsCompleted
-            || (l.Loaded.IsCompletedSuccessfully && l.Loaded.Result is { } project && project.Referenced.Any(r => Paths.IsUnder(path, r.Folder))));
+        projects.Values.Where(l => PathNames.Within(path, l.Folder) || !l.Loaded.IsCompleted
+            || (l.Loaded.IsCompletedSuccessfully && l.Loaded.Result is { } project && project.Referenced.Any(r => PathNames.Within(path, r.Folder))));
 
     /// <summary>The project a restore's assets under an artifacts folder are of (UseArtifactsOutput's
     /// artifacts/obj/Project/project.assets.json, which ProjectInputs reads), under no project's folder: the project of that
@@ -275,7 +275,7 @@ public sealed class XamlService : IDisposable
             return null;
         }
         string name = Path.GetFileName(named);
-        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && Paths.IsUnder(l.ProjectPath, root))
+        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && PathNames.Within(l.ProjectPath, root))
             .OrderByDescending(l => l.Folder.Length).FirstOrDefault();
     }
 

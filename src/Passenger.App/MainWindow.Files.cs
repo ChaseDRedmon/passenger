@@ -355,7 +355,7 @@ public partial class MainWindow
             return "The new file name cannot be used as a valid type name";
         }
         string target = Path.Combine(Path.GetDirectoryName(path)!, name);
-        if ((File.Exists(target) || Directory.Exists(target)) && !string.Equals(target, path, StringComparison.OrdinalIgnoreCase))
+        if ((File.Exists(target) || Directory.Exists(target)) && !PathNames.Same(target, path))
         {
             return $"{name} is already there";
         }
@@ -440,7 +440,7 @@ public partial class MainWindow
             return null;
         }
         List<(string From, string To)> moves = [(path, target), .. WithDependents(path, name)];
-        if (moves.FirstOrDefault(m => (File.Exists(m.To) || Directory.Exists(m.To)) && !string.Equals(m.To, m.From, StringComparison.OrdinalIgnoreCase)) is { To: not null } taken)
+        if (moves.FirstOrDefault(m => (File.Exists(m.To) || Directory.Exists(m.To)) && !PathNames.Same(m.To, m.From)) is { To: not null } taken)
         {
             return $"{Path.GetFileName(taken.To)} is already there";
         }

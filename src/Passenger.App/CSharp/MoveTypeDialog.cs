@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Microsoft.CodeAnalysis.CSharp;
+using Passenger.Core;
 using Passenger.Roslyn.Extension;
 
 namespace Passenger.App.CSharp;
@@ -42,7 +43,7 @@ public sealed class MoveTypeDialog : RefactoringDialog
         {
             return target.Length == 0 ? "file name is empty"
                 : !target.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? "The new file name extension is not valid for source code files"
-                : string.Equals(target, type.FileName, StringComparison.OrdinalIgnoreCase) ? $"'{type.Name}' is in {type.FileName} already"
+                : string.Equals(target, type.FileName, PathNames.Comparison) ? $"'{type.Name}' is in {type.FileName} already"
                 : null;
         }
         if (target.Length == 0)

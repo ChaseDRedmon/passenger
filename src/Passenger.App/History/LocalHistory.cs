@@ -66,10 +66,10 @@ public sealed class LocalHistory
 
     private readonly object gate = new();
     private readonly List<HistoryEvent> events = [];
-    private readonly Dictionary<string, string?> known = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, string?> known = new(PathNames.Comparer);
 
     /// <summary>The saves of each path queued and not yet recorded, whose new content the disk may already hold.</summary>
-    private readonly Dictionary<string, int> writing = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, int> writing = new(PathNames.Comparer);
     private readonly Queue<Action> jobs = new();
     private readonly string log;
     private readonly string blobs;
@@ -549,7 +549,7 @@ public sealed class LocalHistory
         List<(string Path, string Hash, byte[] Bytes, bool Made)> found = [];
         List<(string Path, string Hash)> gone = [];
         List<string> later = [];
-        HashSet<string> looked = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> looked = new(PathNames.Comparer);
         foreach (string path in paths)
         {
             lock (gate)
@@ -587,7 +587,7 @@ public sealed class LocalHistory
             }
         }
         List<HistoryEvent> made = [];
-        HashSet<string> paired = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> paired = new(PathNames.Comparer);
         foreach ((string path, string hash, byte[] bytes, bool isNew) in found)
         {
             string? was;
@@ -652,7 +652,7 @@ public sealed class LocalHistory
     private void RecordDeletion(HistoryDeletion deletion, long set, string? name, DateTimeOffset time)
     {
         List<HistoryEvent> made = [];
-        HashSet<string> taken = new(StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> taken = new(PathNames.Comparer);
         foreach ((string path, byte[] bytes) in deletion.Files)
         {
             if (!IsText(bytes))
@@ -730,7 +730,7 @@ public sealed class LocalHistory
         sincePrune = 0;
         List<(string Line, HistoryEvent? Event)> logged = Logged();
         List<HistoryEvent> all = [.. logged.Select(l => l.Event).OfType<HistoryEvent>()];
-        HashSet<string> onDisk = new(all.Select(Key), StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> onDisk = new(all.Select(Key), PathNames.Comparer);
         List<HistoryEvent> unlogged;
         lock (gate)
         {

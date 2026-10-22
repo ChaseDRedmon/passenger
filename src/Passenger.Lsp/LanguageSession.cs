@@ -10,7 +10,7 @@ namespace Passenger.Lsp;
 public sealed class LanguageSession : IAsyncDisposable, IDocumentHost
 {
     /// <summary>The open documents by their canonical path, as a server may spell a URI its own way.</summary>
-    private readonly Dictionary<string, LspDocument> documents = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, LspDocument> documents = new(PathNames.Comparer);
 
     private LanguageSession(LanguageServer server, PushPace pushes)
     {

@@ -140,7 +140,7 @@ public partial class MainWindow
     /// afterwards which of the two to keep, losing the other. Null once saved, else why not, and nothing is to be written.</summary>
     private string? SaveBeforeWriting(IEnumerable<string> paths)
     {
-        HashSet<string> writing = new(paths.Select(PathNames.Canonical), StringComparer.FromComparison(PathNames.Comparison));
+        HashSet<string> writing = new(paths.Select(PathNames.Canonical), PathNames.Comparer);
         foreach (OpenDocument document in Editors.Documents.Where(d => d.IsModified && writing.Contains(d.Path)).ToList())
         {
             if (!Editors.Save(document))

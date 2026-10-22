@@ -40,7 +40,7 @@ public sealed partial class ConsoleLinks : IHighlighter
     private const int Kept = 2048;
 
     private readonly Dictionary<string, FoundLink[]> lines = [];
-    private readonly Dictionary<string, string?> files = new(PathNames.Comparison == StringComparison.Ordinal ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string?> files = new(PathNames.Comparer);
 
     public event EventHandler? Changed;
 

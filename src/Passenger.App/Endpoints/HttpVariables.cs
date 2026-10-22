@@ -46,7 +46,7 @@ public static partial class HttpVariables
             {
                 return found;
             }
-            if (root is null || string.Equals(Path.TrimEndingDirectorySeparator(folder), Path.TrimEndingDirectorySeparator(root), Core.PathNames.Comparison))
+            if (root is null || Core.PathNames.Same(Path.TrimEndingDirectorySeparator(folder), Path.TrimEndingDirectorySeparator(root)))
             {
                 break;
             }

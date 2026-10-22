@@ -319,7 +319,7 @@ public sealed record ProjectModel(
     /// <summary>The file a file of the project depends on, as its evaluated DependentUpon says (relative to the file's own
     /// folder, as MSBuild has it); null when none does, or before the project is evaluated.</summary>
     public string? DependentUponOf(string file) =>
-        Evaluated?.Items.FirstOrDefault(i => i.DependentUpon is not null && string.Equals(i.Path, file, PathNames.Comparison)) is { DependentUpon: { } parent }
+        Evaluated?.Items.FirstOrDefault(i => i.DependentUpon is not null && PathNames.Same(i.Path, file)) is { DependentUpon: { } parent }
             ? System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(file)!, parent.Replace('\\', '/')))
             : null;
 

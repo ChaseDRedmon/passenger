@@ -16,6 +16,10 @@ public static partial class PathNames
     public static StringComparison Comparison { get; } =
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
+    /// <summary><see cref="Comparison"/> as a set's or a dictionary's: every collection keyed by paths (or by names in one
+    /// folder) takes this one.</summary>
+    public static StringComparer Comparer { get; } = StringComparer.FromComparison(Comparison);
+
     /// <summary>The path as the file system names it. Of a path that is not there (yet, or any more), the part that is
     /// there is resolved and the names below it are kept as given.</summary>
     public static string Canonical(string path)
@@ -60,7 +64,7 @@ public static partial class PathNames
     public static IEnumerable<string> FoldersUnder(string start, Func<string, bool> enters)
     {
         string root = Canonical(start);
-        HashSet<string> walked = new(StringComparer.FromComparison(Comparison)) { root };
+        HashSet<string> walked = new(Comparer) { root };
         Queue<(string At, string Canonical)> waiting = new([(start, root)]);
         while (waiting.TryDequeue(out (string At, string Canonical) folder))
         {

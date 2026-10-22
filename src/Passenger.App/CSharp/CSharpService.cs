@@ -90,7 +90,7 @@ public sealed class CSharpService : IAsyncDisposable
 
     /// <summary>What each project's last load reported, by its project file; a project that loads again without any
     /// problem leaves.</summary>
-    private readonly Dictionary<string, List<ProjectLoadProblem>> loadProblems = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly Dictionary<string, List<ProjectLoadProblem>> loadProblems = new(PathNames.Comparer);
 
     /// <summary>The problems of the loads under way, in the order they came: one toast says the batch had problems, the
     /// first project's, so the status bar says the rest when the batch ends.</summary>

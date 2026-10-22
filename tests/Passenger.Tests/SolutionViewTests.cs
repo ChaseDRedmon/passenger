@@ -564,6 +564,38 @@ public sealed class SolutionViewTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Where the file system tells letter case apart (Linux), Models and models are two folders of a project, each
+    /// showing its own files, and a rename of a file to the name of another in other letter case is refused before anything
+    /// changes, the type it is named after too: the Solution view merged the two folders into one, and the rename went on
+    /// over the other file, a type rename's edits made before the move failed.</summary>
+    [AvaloniaFact]
+    public void Where_letter_case_tells_names_apart_Models_and_models_stay_two_folders_and_a_rename_onto_another_case_is_refused()
+    {
+        Assert.SkipWhen(PathNames.Comparison != StringComparison.Ordinal, "Where the file system ignores letter case, Models and models are one folder and order.cs is Order.cs");
+        string app = Path.Combine(folder, "Shop.App", "Shop.App.csproj");
+        string upper = Path.Combine(folder, "Shop.App", "Models");
+        string lower = Path.Combine(folder, "Shop.App", "models");
+        string order = Path.Combine(upper, "Order.cs");
+        string sibling = Path.Combine(upper, "order.cs");
+        Write("Shop.App/models/Invoice.cs", "namespace Shop.App.models;\n\npublic class Invoice\n{\n}\n");
+        Write("Shop.App/Models/order.cs", "// Another file than Order.cs here.\n");
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Projects.First(p => p.Path == PathNames.Canonical(app)).IsEvaluated, "MSBuild to evaluate Shop.App");
+        Show(window, order);
+        Show(window, Path.Combine(lower, "Invoice.cs"));
+        IReadOnlyList<string> Held(string path) =>
+            [.. (Row(window, NodeKind.Folder, Path.GetFileName(path), path).Children ?? []).Select(c => c.Name).Order(StringComparer.Ordinal)];
+        Assert.Equal(["Lines", "Order.cs", "order.cs"], Held(upper));
+        Assert.Equal(["Invoice.cs"], Held(lower));
+
+        Assert.Equal("order.cs is already there", window.Rename(order, "order.cs"));
+        int type = File.ReadAllText(order).IndexOf("Order", StringComparison.Ordinal);
+        Assert.Equal("order.cs is already there", Ui.Await(window.RenameWithTypeAsync(order, "order.cs", ("Order", type), renameType: true), "the rename with its type"));
+        Assert.Equal(Order, File.ReadAllText(order));
+        Assert.Equal("// Another file than Order.cs here.\n", File.ReadAllText(sibling));
+        window.Close();
+    }
+
     /// <summary>An item of the Explorer's open menu, by its title.</summary>
     private static MenuItem MenuItemOf(MainWindow window, string header)
     {

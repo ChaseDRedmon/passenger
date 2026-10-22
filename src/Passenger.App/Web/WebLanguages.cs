@@ -50,7 +50,7 @@ public sealed class WebLanguages : IAsyncDisposable
     private readonly Dictionary<OpenDocument, WebDocument> documents = [];
 
     /// <summary>The folders npm install runs in now, whose files' banners say so.</summary>
-    private readonly HashSet<string> installing = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly HashSet<string> installing = new(PathNames.Comparer);
     private readonly CancellationTokenSource ending = new();
     private string? configured;
     private Task<NodeRuntime>? finding;

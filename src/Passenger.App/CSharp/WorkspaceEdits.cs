@@ -250,8 +250,8 @@ public static class WorkspaceEdits
         {
             bool overwrite = resource.Option("overwrite");
             bool ignored = !overwrite && resource.Option("ignoreIfExists");
-            // A new name differing only in case is the same file on macOS and Windows, not one already there.
-            bool taken = resource.To is { } to && Exists(to) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase);
+            // A new name differing only in case is the same file on macOS and Windows, not one already there; on Linux it is another.
+            bool taken = resource.To is { } to && Exists(to) && !PathNames.Same(to, resource.Path);
             switch (resource.Kind)
             {
                 case "create" when overwrite && FileText.IsReadOnly(resource.Path):
@@ -299,7 +299,7 @@ public static class WorkspaceEdits
                 break;
             }
             case "rename" when resource.To is { } to:
-                if ((File.Exists(to) || Directory.Exists(to)) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase))
+                if ((File.Exists(to) || Directory.Exists(to)) && !PathNames.Same(to, resource.Path))
                 {
                     // Ignored, as its options ask: the refusal stopped every other rename onto something there.
                     if (!resource.Option("overwrite") || Directory.Exists(to))

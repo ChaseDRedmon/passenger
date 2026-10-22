@@ -6,6 +6,7 @@ using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Framework;
+using Passenger.Core;
 
 namespace Passenger.Host;
 
@@ -25,8 +26,6 @@ internal static class Inspection
     private const int Kept = 16;
 
     private static readonly List<(string Key, ProjectInsight Insight)> Cache = [];
-
-    private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     public static ProjectInsight Run(InspectParams asked, CancellationToken cancel)
     {
@@ -138,7 +137,7 @@ internal static class Inspection
         Project = asked.Project,
         Diagnostics = diagnostics,
         // The files the failure names among them, so a fix to one is evaluated.
-        Inputs = [file, .. asked.Texts.Keys.Concat(diagnostics.Select(d => d.File)).Where(p => p.Length > 0 && !p.Equals(asked.Project, PathComparison)).Select(Stamps.File)
+        Inputs = [file, .. asked.Texts.Keys.Concat(diagnostics.Select(d => d.File)).Where(p => p.Length > 0 && !PathNames.Same(p, asked.Project)).Select(Stamps.File)
             .Concat(Evaluation.LookedFor(asked.Project, null)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
         Seconds = Stopwatch.GetElapsedTime(began).TotalSeconds,
     };
@@ -172,7 +171,7 @@ internal static class Inspection
     private static ProjectInsight Read(Project project, string? framework, Stamp file, IReadOnlyList<Stamp> walked, List<InsightDiagnostic> diagnostics, double seconds)
     {
         List<string> roots = [.. Evaluation.OutsideRoots(project)];
-        bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathComparison));
+        bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathNames.Comparison));
         FileTable files = new();
         List<InsightProperty> properties = [];
         foreach (ProjectProperty property in project.Properties)
