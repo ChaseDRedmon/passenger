@@ -94,6 +94,9 @@ internal sealed class ServerDiagnostics(OpenDocument document, bool holdsChecks)
     /// <summary>The diagnostics last reported, moved with the text since, so their lines are the text's as it is now.</summary>
     public IReadOnlyList<Diagnostic> Placed => placed ??= DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
 
+    /// <summary>The diagnostics placed so, each with its range in the text as it stands.</summary>
+    public IEnumerable<(Diagnostic Diagnostic, TextRange Range)> PlacedRanges => Placed.Zip(ranges);
+
     /// <summary>Carries the diagnostics' ranges through an edit.</summary>
     public void Move(DocumentChangedEventArgs e)
     {

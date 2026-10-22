@@ -51,52 +51,29 @@ public sealed partial class CodeAssist
         return true;
     }
 
-    private async Task<bool> ShowAspireFixes(OpenDocument document, LspDocument lsp, int offset, string title)
+    /// <summary>The WithReference fixes of a service's Aspire warnings on an offset's line, one of Passenger's own fixes
+    /// (<see cref="EditorFixes"/>), listed before the server's: each adds the reference in the AppHost, worked out again by
+    /// the extension as it is chosen, at the warning's place as it then stands, as one command of global undo.</summary>
+    public IReadOnlyList<EditorFix> AspireFixes(OpenDocument file, int offset)
     {
-        if (document.Syntax is null)
+        if (service()?.For(file) is not { Lsp: { } lsp } features)
         {
-            return false;
+            return [];
         }
-        int version = document.Text.Version;
-        AspireHelp help;
-        try
+        return [.. features.AspireMissingOn(lsp.PositionOf(offset).Line).DistinctBy(m => (m.Service, m.Resource))
+            .Select(m => Fix(m.Range, m.Service, m.Resource))];
+
+        EditorFix Fix(TextRange range, string named, string resource) =>
+            new($"Add WithReference({resource}) to {named}", "Aspire AppHost reference", range, string.Empty)
         {
-            help = await lsp.ExtensionAsync<AspireHelp>(Handlers.AspireCodeHelp, new AspireHelpRequest(null));
-        }
-        catch (LanguageServerFailed)
-        {
-            return false;
-        }
-        if (editors.Active != document || document.Text.Version != version)
-        {
-            return true;
-        }
-        int line = lsp.PositionOf(offset).Line;
-        AspireMissingReference[] missing = [.. help.Missing.Where(m => m.Start.Line <= line && line <= m.End.Line)];
-        if (missing.Length == 0)
-        {
-            return false;
-        }
-        ShowModal(new ChoicePopup(title, [.. missing.Select(m => new Choice(
-            $"Add WithReference({m.Resource}) to {m.Service}", "Aspire AppHost reference", m))]), offset, title, async choice =>
-        {
-            if (choice?.Value is not AspireMissingReference selected)
-            {
-                return;
-            }
-            // The server works the edge out again as it is chosen, so a diagnostics refresh meanwhile voids no offer.
-            if (document.Text.Version != version)
-            {
-                Message?.Invoke(this, "The Aspire reference was not added: source changed; request the fix again");
-                return;
-            }
-            RefactorOutcome outcome = await MakeAsync("Add Aspire reference", document,
+            // Where its warning stands as it is chosen, while it does; the extension says when the reference is no longer missing.
+            Again = _ => service()?.For(file)?.AspireMissingOn(null).FirstOrDefault(m => m.Service == named && m.Resource == resource) is { } now
+                ? Fix(now.Range, named, resource) : Fix(range, named, resource),
+            Elsewhere = (at, patience) => MakeAsync("Add Aspire reference", file,
                 current => current.ExtensionAsync<Refactored>(Handlers.AspireReferenceFix,
-                    new AspireFixRequest(selected.Start, selected.Service, selected.Resource)),
-                _ => $"Added WithReference({selected.Resource}) to {selected.Service}", null);
-            Message?.Invoke(this, outcome.Problem ?? outcome.Said);
-        });
-        return true;
+                    new AspireFixRequest(current.PlaceOf(at.Start), named, resource)),
+                _ => $"Added WithReference({resource}) to {named}", patience),
+        };
     }
 
     private async Task<bool> AspireGoToProject(LspDocument document, int offset)

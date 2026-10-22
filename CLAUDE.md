@@ -799,10 +799,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   references them, prepared under the state's `aspire-staging/` before any file is written, as one command of global
   undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
   reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
-  it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix worked out again
-  as it is applied (`AspireReferenceFix`), resource names complete, `AddProject` goes to its project
-  (`AspireProjectDeclaration`), and Edit Configurations and the gutter's `AddProject` icons read the same resources
-  (`AspireRunResources`). An agent's `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a
+  it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
+  own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete,
+  `AddProject` goes to its project (`AspireProjectDeclaration`), and Edit Configurations and the gutter's `AddProject`
+  icons read the same resources (`AspireRunResources`). An agent's `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a
   resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each
   resource's target, and `aspire_telemetry` reads their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client

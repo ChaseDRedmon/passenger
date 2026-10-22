@@ -61,6 +61,9 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"d");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Contains("Add WithReference(db) to api"), "the native reference fix to be offered");
+        // First, as Passenger's own fixes are, and beside the server's actions there, not in their place.
+        Assert.Equal("Add WithReference(db) to api", window.Assist.Offered[0]);
+        Assert.True(window.Assist.Offered.Count > 1, $"Only the Aspire fix was offered, without the language server's actions: {string.Join("; ", window.Assist.Offered)}");
         // Another file of the solution changed while the fix is offered, which the server says by asking for diagnostics again.
         TaskCompletionSource refreshed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         EventHandler heard = (_, _) => refreshed.TrySetResult();
