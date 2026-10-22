@@ -17,13 +17,44 @@ internal static class ContainerPrograms
     /// rewrite them under it, and the IDE would then look for them elsewhere (a download from the run's dead address).</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<ChildResult>> Published = new(StringComparer.Ordinal);
 
-    /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does, once a run.</summary>
+    /// <summary>Publishes the tools for a system into artifacts/container-tools, as tools/container-tools.sh does, once a run,
+    /// and one run of the checkout at a time (<see cref="Publishing"/>): another's, beside it, finds them up to date and
+    /// writes nothing under a container that is reading them.</summary>
     public static void Publish(string rid)
     {
-        string output = Path.Combine(Debugging.Helpers.Debuggees.Root, "artifacts", "container-tools", rid);
-        ChildResult published = Published.GetOrAdd(rid, _ => new Lazy<ChildResult>(() => Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"),
-            "-c", "Release", "-r", rid, "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
+        string tools = Path.Combine(Debugging.Helpers.Debuggees.Root, "artifacts", "container-tools");
+        string output = Path.Combine(tools, rid);
+        ChildResult published = Published.GetOrAdd(rid, _ => new Lazy<ChildResult>(() =>
+        {
+            using FileStream held = Publishing(tools);
+            return Dotnet(["publish", Path.Combine(Debugging.Helpers.Debuggees.Root, "src", "Passenger.ContainerTools"),
+                "-c", "Release", "-r", rid, "--self-contained", "-o", output, "-nologo", "-v:q"], Debugging.Helpers.Debuggees.Root);
+        }, LazyThreadSafetyMode.ExecutionAndPublication)).Value;
         Assert.True(published.Succeeded, $"Passenger's container tools for {rid} did not publish: {published.Output}{published.Error}");
+    }
+
+    /// <summary>The checkout's lock on publishing the tools, held open by one process at a time (the system lets it go with
+    /// a process that ends without letting go), waited for while another test run of the checkout publishes.</summary>
+    private static FileStream Publishing(string tools)
+    {
+        Directory.CreateDirectory(tools);
+        string path = Path.Combine(tools, ".publishing");
+        FileStream? held = null;
+        Assert.True(Waiting.Until(() => (held = Open()) is not null, TimeSpan.FromMinutes(10), every: TimeSpan.FromMilliseconds(250)),
+            $"Another test run of this checkout held {path} for 10 minutes, publishing Passenger's container tools");
+        return held!;
+
+        FileStream? Open()
+        {
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+        }
     }
 
     /// <summary>A program's project in <paramref name="folder"/>, built in Debug into <paramref name="output"/>, its paths

@@ -32,6 +32,8 @@ public sealed class KeymapChoiceTests : IDisposable
 
     public void Dispose()
     {
+        // The keymap in force is the process's: whatever a test here left chosen, failing or not, the next starts on the platform's.
+        AppActions.Choose(KeymapPreset.VisualStudio, new Dictionary<string, string[]>());
         TestFolders.Delete(folder);
         TestFolders.Delete(settings);
     }

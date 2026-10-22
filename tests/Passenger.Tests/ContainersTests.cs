@@ -27,12 +27,26 @@ internal static class Docker
 
     public const string Image = "busybox:1.37";
 
+    /// <summary>Set to <c>never</c> where the images the tests run on are pulled before the run (CI's test.yml): no test
+    /// pulls one there, and a missing one skips every container test, saying which. Unset, a test pulls what it needs.</summary>
+    public const string PullVariable = "PASSENGER_TEST_PULL";
+
+    /// <summary>Every image the container tests run on, Image's and .NET's, as ContainerImages.txt lists them for CI to pull.</summary>
+    public static IReadOnlyList<string> Images { get; } =
+        [.. File.ReadAllLines(Path.Combine(Debugging.Helpers.Debuggees.Root, "tests", "Passenger.Tests", "ContainerImages.txt")).Select(l => l.Trim()).Where(l => l.Length > 0)];
+
     private static readonly Lazy<string?> Unusable = new(() =>
     {
         if (ContainerEngine.Shared.Cli is null)
         {
             return "No docker command is installed here, so no container can run";
         }
+        bool mayPull = Environment.GetEnvironmentVariable(PullVariable) switch
+        {
+            null or "" => true,
+            "never" => false,
+            string other => throw new InvalidOperationException($"{PullVariable} is \"{other}\": unset, or never where the run's images were pulled before it"),
+        };
         TimeSpan limit = TimeSpan.FromSeconds(30).Scaled();
         try
         {
@@ -40,6 +54,10 @@ internal static class Docker
             string os = info.Output.Trim();
             string? why = !info.Succeeded ? $"The container engine is not running here: {ContainerEngine.Said(info)}"
                 : os != "linux" ? $"The container engine here runs {os} containers, and these tests run Linux ones" : null;
+            if (why is null && !mayPull && Images.Where(i => !Ask(["image", "inspect", i], limit).Succeeded).ToArray() is { Length: > 0 } missing)
+            {
+                why = $"The engine lacks {string.Join(" and ", missing)}, which no test pulls here ({PullVariable}=never): pull them before the run";
+            }
             if (why is null)
             {
                 RemoveDeadRuns();

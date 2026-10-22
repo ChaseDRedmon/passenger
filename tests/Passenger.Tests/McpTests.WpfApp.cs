@@ -28,20 +28,9 @@ public sealed partial class McpTests
             }
             Restore.Run(WpfApp.Project(wpf, "WpfTreeApp"));
         }, wpf);
-        // What the inspector in the app does is traced to a file a failure quotes; the Passenger started inherits the variable.
+        // The inspector traces to a file a failure quotes: the variable is the started Passenger's, never this process's.
         string trace = Path.Combine(wpf, "inspector.log");
-        string? traceBefore = Environment.GetEnvironmentVariable("PASSENGER_INSPECTOR_TRACE");
-        Environment.SetEnvironmentVariable("PASSENGER_INSPECTOR_TRACE", trace);
-        McpClient started;
-        try
-        {
-            started = await Start(["--mcp", wpf]);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PASSENGER_INSPECTOR_TRACE", traceBefore);
-        }
-        await using McpClient client = started;
+        await using McpClient client = await Start(["--mcp", wpf], environment: new() { ["PASSENGER_INSPECTOR_TRACE"] = trace });
         JsonElement built = await Call(client, "build");
         Assert.True(built.GetProperty("succeeded").GetBoolean(), $"The app did not build: {built}");
         JsonElement ran = await Call(client, "run", new() { ["waitSeconds"] = 0 });

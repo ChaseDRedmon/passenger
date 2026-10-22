@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -170,11 +172,11 @@ public sealed class ContainerRunsTests
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         (string folder, _) = Shop("single");
         File.Delete(Path.Combine(folder, "compose.yaml"));
-        int port = FreePort();
-        Write(folder, "Api/Properties/launchSettings.json", $$"""
+        // No httpPort: a port found free here is bound only after the build, so the engine chooses (ContainerConfigurationsTests read one).
+        Write(folder, "Api/Properties/launchSettings.json", """
             {
               "profiles": {
-                "Container": { "commandName": "Docker", "launchBrowser": true, "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}/", "httpPort": {{port}} }
+                "Container": { "commandName": "Docker", "launchBrowser": true, "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}/" }
               }
             }
             """);
@@ -188,7 +190,7 @@ public sealed class ContainerRunsTests
         Assert.Equal(RunKind.Dockerfile, window.Configurations.Single(c => c.Name == "Api: Container").Kind);
         // A project with a Docker profile has that profile's configuration, not a second of its Dockerfile.
         Assert.DoesNotContain("Api: Dockerfile", window.Configurations.Select(c => c.Name));
-        foreach ((string name, string answer, int? fixedPort) in (ReadOnlySpan<(string, string, int?)>)[("Web: Dockerfile", "web 1", null), ("Api: Container", "api 1", port), ("Tool: SDK container", "tool 1", null)])
+        foreach ((string name, string answer) in (ReadOnlySpan<(string, string)>)[("Web: Dockerfile", "web 1"), ("Api: Container", "api 1"), ("Tool: SDK container", "tool 1")])
         {
             Assert.True(window.SelectConfiguration(name));
             string? project = null;
@@ -197,7 +199,7 @@ public sealed class ContainerRunsTests
                 Launched(window, $"{name} to come up");
                 project = window.Builds.Containers!.Plan.ProjectName;
                 string service = window.Builds.Containers.Plan.Dotnet.Single().Service;
-                int published = fixedPort ?? Published(project, service);
+                int published = Published(project, service);
                 Assert.Equal(answer, Page(published));
                 Ui.WaitFor(() => window.Browsed.Any(u => u.Port == published), $"{name}'s browser at port {published}", TimeSpan.FromMinutes(1));
             }
@@ -457,29 +459,29 @@ public sealed class ContainerRunsTests
     public void A_service_that_serves_HTTPS_has_the_development_certificate_and_the_projects_user_secrets_mounted()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string certificates = TestFolders.Create("devcerts-");
-        ChildResult check = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "--check"], certificates))).GetAwaiter().GetResult();
-        Assert.SkipWhen(!check.Succeeded, "No ASP.NET Core development certificate here to export, and making one would change this machine's certificate store");
-        // An export the store holds up (a locked keychain asking for its password) is this machine's, not the IDE's, to answer.
-        bool exported;
-        try
-        {
-            exported = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "-ep", Path.Combine(certificates, "check.pfx"), "-p", "check"], certificates),
-                limit: TimeSpan.FromSeconds(30))).GetAwaiter().GetResult().Succeeded;
-        }
-        catch (TimeoutException)
-        {
-            exported = false;
-        }
-        Assert.SkipWhen(!exported, "The development certificate could not be exported here within 30 s (its store asks something of the person)");
+        // A throwaway certificate for localhost stands in for the machine's, whose store is never read and so asks no one anything.
+        using RSA key = RSA.Create(2048);
+        CertificateRequest request = new("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], critical: false));
+        SubjectAlternativeNameBuilder names = new();
+        names.AddDnsName("localhost");
+        request.CertificateExtensions.Add(names.Build());
+        using X509Certificate2 throwaway = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
         (string folder, string project) = Shop("https");
         Write(folder, "Web/Web.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
             + "    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>passenger-test-https</UserSecretsId>\n  </PropertyGroup>\n</Project>\n");
         Write(TestRun.UserSecrets, "passenger-test-https/secrets.json", "{ \"Greeting\": \"https\" }\n");
         File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
-        // The certificate exported is the machine's own, its trust asked of no one: the check answers trusted (dotnet --version).
-        MainWindow window = Open(folder, (words, at) => ChildProcesses.DotnetCommand(words.Contains("--check") ? ["--version"] : words, at));
+        // dev-certs' check answers trusted (dotnet --version); its export writes the test's certificate under the run's password.
+        MainWindow window = Open(folder, (words, at) =>
+        {
+            if (words is ["dev-certs", "https", "-ep", string file, "-p", string password])
+            {
+                File.WriteAllBytes(file, throwaway.Export(X509ContentType.Pkcs12, password));
+            }
+            return ChildProcesses.DotnetCommand(["--version"], at);
+        });
         RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
         window.SetConfigurations([web], web.Name);
         try
@@ -487,20 +489,20 @@ public sealed class ContainerRunsTests
             Launched(window, "web to come up over HTTPS");
             string said = Docker.Run("compose", "-p", project, "port", "web", "8081").Split('\n')[0].Trim();
             int port = int.Parse(said[(said.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
-            string? subject = null;
+            string? served = null;
             using HttpClientHandler handler = new()
             {
                 ServerCertificateCustomValidationCallback = (_, certificate, _, _) =>
                 {
-                    subject = certificate?.Subject;
+                    served = certificate?.Thumbprint;
                     return true;
                 },
             };
             using HttpClient https = new(handler) { Timeout = TimeSpan.FromSeconds(5) };
             string? answer = null;
-            Assert.True(Waiting.Until(() => (answer = Get(https, new Uri($"https://localhost:{port}/"))) is not null, TimeSpan.FromMinutes(1)), $"Nothing answered over HTTPS on {port}");
+            Assert.True(Ui.Pumped(() => (answer = Get(https, new Uri($"https://localhost:{port}/"))) is not null, TimeSpan.FromMinutes(1)), $"Nothing answered over HTTPS on {port}");
             Assert.Equal("web 1", answer);
-            Assert.Equal("CN=localhost", subject);
+            Assert.Equal(throwaway.Thumbprint, served);
             string mounts = Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));
             Assert.Contains("/https", mounts, StringComparison.Ordinal);
             // The project's own secrets, from the run's folder of them, never the person's.
@@ -865,14 +867,6 @@ public sealed class ContainerRunsTests
     {
         button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Ui.Settle();
-    }
-
-    /// <summary>A port nothing listens on now, for a profile that names its own.</summary>
-    private static int FreePort()
-    {
-        using System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     /// <summary>A folder with a solution of two ASP.NET Core projects, each with a Dockerfile of .NET's own stages, and a

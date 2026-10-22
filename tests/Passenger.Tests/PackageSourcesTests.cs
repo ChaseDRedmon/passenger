@@ -15,7 +15,10 @@ namespace Passenger.Tests;
 /// private v3 feed on a loopback port that asks for the credentials the file gives. Sources lists them, adds a feed leaving
 /// the rest of the file as it was, and disables one, which leaves the chooser and search; the chooser searches All Feeds or
 /// one; an install restores with the credentials, which nothing logs; a credential provider gives what the file does not.
-/// The run's NuGet home stands in for the person's, so their nuget.config is never read or written.</summary>
+/// The run's NuGet home stands in for the person's, so their nuget.config is never read or written. Alone: NuGet and the
+/// IDE find a credential provider on this process's own PATH, which its test changes while it runs, so nothing may run
+/// beside it and inherit that PATH.</summary>
+[Collection(Alone.Name)]
 public sealed class PackageSourcesTests : IDisposable
 {
     private const string User = "tester";

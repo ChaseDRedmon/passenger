@@ -125,6 +125,48 @@ jobs:
       - name: Build
         run: dotnet build --no-restore
 
+      # Only Linux's runner runs Linux containers. The images the container tests run on (busybox from Docker Hub, which
+      # limits pulls, and .NET's from mcr.microsoft.com: tests/Passenger.Tests/ContainerImages.txt) come from a cache of
+      # them, pulled only when the cache lacks them, so no test pulls one: PASSENGER_TEST_PULL=never makes a test whose
+      # image is missing skip, saying which, where it would have pulled it on a developer's machine.
+      - name: Restore cached container images
+        id: images
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/container-images.tar
+          key: container-images-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/Passenger.Tests/ContainerImages.txt') }}
+
+      # A pull that fails is a warning, not the shard's failure: the container tests skip, saying which image is missing.
+      - name: The container images the tests run on
+        id: pulled
+        if: runner.os == 'Linux'
+        env:
+          IMAGES: ${{ runner.temp }}/container-images.tar
+        run: |
+          if [ -f "$IMAGES" ] && ! docker load -q -i "$IMAGES"; then
+            echo "::warning title=Container images::The cached images did not load, so they are pulled"
+            rm -f "$IMAGES"
+          fi
+          images=$(grep -v '^[[:space:]]*$' tests/Passenger.Tests/ContainerImages.txt)
+          missing=
+          for image in $images; do
+            docker image inspect "$image" > /dev/null 2>&1 && continue
+            docker pull -q "$image" || { echo "::warning title=Container image::$image could not be pulled, so the container tests skip"; missing=1; }
+          done
+          if [ -z "$missing" ] && [ ! -f "$IMAGES" ]; then
+            docker save -o "$IMAGES" $images
+            echo "saved=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "PASSENGER_TEST_PULL=never" >> "$GITHUB_ENV"
+
+      - name: Cache container images
+        if: runner.os == 'Linux' && matrix.shard == 1 && steps.images.outputs.cache-hit != 'true' && steps.pulled.outputs.saved == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/container-images.tar
+          key: ${{ steps.images.outputs.cache-primary-key }}
+
       # A file the .gitignore matches never reaches a clone (#58). After the build, so one that wrote beside the
       # sources shows too; and no tracked file may match a rule, since its folder's other files would not be seen.
       - name: No source is ignored by Git
