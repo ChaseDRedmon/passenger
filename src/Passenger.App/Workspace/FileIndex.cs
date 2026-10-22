@@ -25,6 +25,10 @@ public sealed class FileIndex
     /// <summary>Whether a walk is under way whose list has not landed: an agent's search waits for it, as the folder opens.</summary>
     public bool IsWalking { get; private set; }
 
+    /// <summary>The newest walk landed (its list, or the one before when it failed), on the UI thread: what else looks for files
+    /// among the folder's (its single-file AppHosts) takes them from it rather than walking the folder again.</summary>
+    public event EventHandler? Walked;
+
     /// <summary>Walks the folder again off the UI thread. The files found before stay searchable until the walk is done,
     /// and only the newest walk's list lands; another folder's list goes at once.</summary>
     public void Build(string root)
@@ -49,6 +53,7 @@ public sealed class FileIndex
                 if (walk == walks)
                 {
                     IsWalking = false;
+                    Walked?.Invoke(this, EventArgs.Empty);
                 }
             });
             held.Dispose();

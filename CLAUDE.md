@@ -778,8 +778,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
   WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
   `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
-  single-file `apphost.cs` (`AspireAppHosts.DiscoverFiles` over `PathNames.FoldersUnder`, no hidden or linked folder
-  entered), each a run configuration (`RunConfiguration.Aspire`, `LinkedAppHosts`). `AspireInteractions` is one
+  single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
+  files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#
+  file's head read as a walk first lists it and again only as the watcher says it changed, each a run configuration
+  (`RunConfiguration.Aspire`, `LinkedAppHosts`). `AspireInteractions` is one
   authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`, its C# checked in beside it): its resources,
   their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`), the display's streams followed only
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
@@ -1022,7 +1024,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   another process over the same state (an agent's `--mcp`) writes to it too: each append, each prune (from its read of the
   log to its last delete) and each reused blob's touch holds `localHistory/changes.lock` against that process (waited for
   on the history's queue, 10 s at most). `Workspace/FolderWalk`, beside `IgnoredFolders`, is the open folder's one walk
-  (Go to File's index, Local History, a folder's projects, `TestFinder`, the XAML class lookup), passing over hidden
+  (Go to File's index, whose walks the single-file AppHosts are found among, Local History, a folder's projects,
+  `TestFinder`, the XAML class lookup), passing over hidden
   folders only where it looks for what projects build, as MSBuild's globs do. `LocalHistoryView` is the tool
   window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
 - `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
