@@ -102,7 +102,7 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
         // An unknown name, or a condition that is not a bool, stops rather than going missing unseen.
         int id = response.Breakpoints[0].Id!.Value;
         BreakpointEvent said = await debugProtocolHost.WaitForEvent<BreakpointEvent>(e => e.Breakpoint.Id == id && e.Breakpoint.Message is not null && e.Breakpoint.Verified);
-        Assert.Contains(condition, said.Breakpoint.Message, StringComparison.Ordinal);
+        Assert.StartsWith(BreakpointConditions.NotEvaluated(condition), said.Breakpoint.Message, StringComparison.Ordinal);
         StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
         Assert.Equal(15, stoppedEvent.ReadStopInfo().line);
         Assert.Equal([id], stoppedEvent.HitBreakpointIds);

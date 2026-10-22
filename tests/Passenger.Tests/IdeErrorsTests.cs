@@ -322,23 +322,36 @@ public sealed class IdeErrorsTests : IDisposable
             }
         };
         Passenger.Core.ChildProcesses.Started += started;
+        string folder = window.Folder!;
+        string? missed = null;
         try
         {
-            // The next start's projects handed over, the window's thread is held until that start has come back and its server is gone.
+            // Its projects handed over, the window's thread is held until the log says the start came back and its server ended.
             Assert.NotNull(csharp.Feed);
             csharp.Feed = new EndingOnce(csharp.Feed, () =>
             {
-                Ui.Stall(TimeSpan.FromMilliseconds(500), "the server's start to come back to the held window");
-                using Process server = Process.GetProcessById(Volatile.Read(ref next));
-                server.Kill();
-                server.WaitForExit();
-                Ui.Stall(TimeSpan.FromMilliseconds(500), "the connection to the ended server to be closed");
+                int server = Volatile.Read(ref next);
+                if (!Waiting.Until(() => Said($"C# language server (process {server}) started for {folder}") > 0, TimeSpan.FromMinutes(2), every: TimeSpan.FromMilliseconds(50)))
+                {
+                    missed = $"the start of the server (process {server}) never came back";
+                    return;
+                }
+                int endedBefore = Said($"The C# language server (process {server}) ended");
+                using (Process ending = Process.GetProcessById(server))
+                {
+                    ending.Kill();
+                    ending.WaitForExit();
+                }
+                if (!Waiting.Until(() => Said($"The C# language server (process {server}) ended") > endedBefore, TimeSpan.FromMinutes(1), every: TimeSpan.FromMilliseconds(50)))
+                {
+                    missed = $"the end of the server (process {server}) was never heard";
+                }
             });
             Process.GetProcessById(first).Kill();
             Ui.WaitFor(() => next != 0 && !Running(next), "the server started again to be ended as its start came back");
+            Assert.True(missed is null, $"The window's thread was let go before its server's start and end had both come: {missed}");
             Ui.WaitFor(() => csharp.Session is { IsLoaded: true } session && session.Server.ProcessId != first && session.Server.ProcessId != next,
                 $"the language server ended as it started to be started again ({csharp.State})");
-            Assert.Contains($"process {next}) ended", Ui.IdeLog());
         }
         finally
         {
@@ -346,6 +359,9 @@ public sealed class IdeErrorsTests : IDisposable
         }
         TypeAnErrorAndSeeItReported(window);
         window.Close();
+
+        // How many of the IDE's log lines say it.
+        static int Said(string text) => Ui.IdeLog().Split('\n').Count(l => l.Contains(text, StringComparison.Ordinal));
     }
 
     /// <summary>The window's projects, the first time asked, then once on the window's thread what ends its server.</summary>

@@ -462,14 +462,22 @@ public sealed class CSharpService : IAsyncDisposable
                     return named;
                 }) : null;
                 IProjectFeed? feed = Feed;
-                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed), cancel);
+                started = await BackgroundWork.Run(async () =>
+                {
+                    RoslynSession begun = await RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed);
+                    // Said as its start comes back, however long the window's thread takes to get to it.
+                    if (!cancel.IsCancellationRequested)
+                    {
+                        IdeErrors.Write($"C# language server (process {begun.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
+                    }
+                    return begun;
+                }, cancel);
                 if (cancel.IsCancellationRequested)
                 {
                     // Disposed, or started again, just as this server started: nothing else will end it.
                     await started.DisposeAsync();
                     return;
                 }
-                IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
                 _ = TimeFirstColoursAsync(started, began);
                 _ = TimeActiveFileAsync(started, began);
             }
@@ -479,7 +487,7 @@ public sealed class CSharpService : IAsyncDisposable
             EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
             // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
             EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
-            EventHandler<string> onExited = (_, why) => UiThread.Post(() => OnExited(started, why));
+            EventHandler<string> onExited = (_, _) => UiThread.Post(() => OnExited(started));
             EventHandler<string> onHung = (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             started.Loaded += onLoaded;
             started.Server.ColoursRefreshRequested += onColours;
@@ -501,9 +509,9 @@ public sealed class CSharpService : IAsyncDisposable
             });
             session = started;
             // One that ended before Exited was listened to (as its start came back to this thread) is replaced as any that ends.
-            if (started.Server.Ended is { } gone)
+            if (started.Server.Ended is not null)
             {
-                UiThread.Post(() => OnExited(started, gone));
+                UiThread.Post(() => OnExited(started));
             }
             if (told != startedWith)
             {
@@ -576,14 +584,18 @@ public sealed class CSharpService : IAsyncDisposable
             UiThread.Post(() => OnShown(server, message));
         };
         EventHandler<WorkProgress> progressed = (_, progress) => UiThread.Post(() => OnProgress(server, progress));
+        // Said as it is heard, from its start on: one that ends before the window listens (OnExited) is in the log all the same.
+        EventHandler<string> ended = (_, why) => IdeErrors.Write($"The C# language server (process {server.ProcessId}) ended: {why}");
         server.Logged += logged;
         server.Shown += shown;
         server.Progressed += progressed;
+        server.Exited += ended;
         Hook(() =>
         {
             server.Logged -= logged;
             server.Shown -= shown;
             server.Progressed -= progressed;
+            server.Exited -= ended;
         });
     }
 
@@ -805,14 +817,13 @@ public sealed class CSharpService : IAsyncDisposable
         return last > 0 && text[..last].Contains(text[(last + 2)..], StringComparison.Ordinal) ? text[..(last + 1)] : text;
     }
 
-    /// <summary>The server ended on its own: it crashed, or something else ended it.</summary>
-    private void OnExited(RoslynSession lost, string why)
+    /// <summary>The server ended on its own: it crashed, or something else ended it (<see cref="Hear"/> logs why).</summary>
+    private void OnExited(RoslynSession lost)
     {
         if (disposed || session != lost || workspace is null)
         {
             return;
         }
-        IdeErrors.Write($"The C# language server (process {lost.Server.ProcessId}) ended: {why}");
         Replace(lost, workspace, "The C# language server ended");
     }
 

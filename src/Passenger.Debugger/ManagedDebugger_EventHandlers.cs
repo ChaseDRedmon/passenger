@@ -357,7 +357,7 @@ public partial class ManagedDebugger
             (bool holds, string? error) = await EvaluateBreakpointCondition(corThread, condition);
             if (error is not null)
             {
-                string message = $"The condition '{condition}' could not be evaluated, so the breakpoint stopped: {error}";
+                string message = $"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the breakpoint stopped: {error}";
                 managedBreakpoint.Message = message;
                 OnBreakpointChanged?.Invoke(managedBreakpoint);
                 OnConsole?.Invoke($"{message}\n");
@@ -779,7 +779,7 @@ public partial class ManagedDebugger
                 (bool holds, string? error) = await EvaluateBreakpointCondition(thread, condition);
                 if (error is not null)
                 {
-                    OnConsole?.Invoke($"The condition '{condition}' could not be evaluated, so the breakpoint on {exceptionType} stopped: {error}\n");
+                    OnConsole?.Invoke($"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the breakpoint on {exceptionType} stopped: {error}\n");
                 }
                 else if (!holds)
                 {

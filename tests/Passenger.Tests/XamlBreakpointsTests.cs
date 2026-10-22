@@ -233,7 +233,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         Say(window, "paint");
         stop = Stopped(window, "the stop where Width goes over 150");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Width = 200;"));
-        Assert.DoesNotContain("could not be evaluated", Console(window), StringComparison.Ordinal);
+        Assert.DoesNotContain(BreakpointConditions.NotEvaluated(DebugSession.EngineCondition(width)), Console(window), StringComparison.Ordinal);
         Resume(window);
 
         // A style, which a class added in code turns on: Delete's change, another control's, does not stop.

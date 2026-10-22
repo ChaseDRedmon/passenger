@@ -132,13 +132,17 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             started.AddRange([here, hereAdapter]);
             // The IDE ends it on the window's thread as the adapter's end lands there: the wait runs that thread's loop.
             Ui.PumpUntil(() => !Processes.IsRunning(here), "a session here to end the program its adapter let go of, left running");
+            DebugSession placed = window.Debugger.SessionNamed("Here")!;
+            string endedHere = DebugSession.EndedLeftRunning(Path.GetFileName(placed.Program), here);
+            Ui.WaitFor(() => window.Debugger.Output(placed).ToString().Contains(endedHere, StringComparison.Ordinal), $"the session here to say \"{endedHere}\"");
 
             (int program, int adapter) = LeftRunning(window, "Elsewhere", elsewhere: true);
             started.AddRange([program, adapter]);
             Assert.True(Processes.Gone(adapter), "The adapter that let the program go did not end");
             Ui.Hold(TimeSpan.FromSeconds(3), "the adapter's end to reach the session, which ends a program left running");
             Assert.True(Processes.IsRunning(program), "A session whose program is elsewhere ended the process of this machine that has its program's id");
-            Assert.DoesNotContain("was left running by the debugger, and is ended with it", window.Debugger.Output(window.Debugger.SessionNamed("Elsewhere")).ToString(), StringComparison.Ordinal);
+            DebugSession elsewhere = window.Debugger.SessionNamed("Elsewhere")!;
+            Assert.DoesNotContain(DebugSession.EndedLeftRunning(Path.GetFileName(elsewhere.Program), program), window.Debugger.Output(elsewhere).ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -200,6 +204,8 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Ui.WaitFor(() => attaching.IsCompleted, "the debugger to attach");
             Assert.Null(attaching.Result);
             Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Paused } && window.Debugger.Stop is not null, "the program to stop at the breakpoint");
+            // What a program attached to writes goes where it always went, as its tab's console says.
+            Assert.Contains(DebugController.AttachedConsole, window.Debugger.Output(window.Debugger.Session).ToString(), StringComparison.Ordinal);
             Assert.True(window.Debugger.HotReload is not null && window.Debugger.WhyNotApply() is null, $"Hot Reload was not offered for the attach: {window.Debugger.WhyNotApply()}");
 
             window.OpenFile(Counter);

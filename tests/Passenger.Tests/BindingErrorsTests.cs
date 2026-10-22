@@ -363,7 +363,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         {
             throw new Xunit.Sdk.XunitException($"The Live Visual Tree showed no details of a flooded row within {LiveApp.AnswerLimit.TotalSeconds} s: \"{tree.StatusLine}\"");
         }
-        Assert.DoesNotContain("did not answer", tree.StatusLine, StringComparison.Ordinal);
+        Assert.DoesNotContain(LiveApp.NotAnswered(window.LiveApp!.Name), tree.StatusLine, StringComparison.Ordinal);
 
         // Calmed, the app says how many failures Avalonia logged in all.
         window.ShowToolWindow("debug");

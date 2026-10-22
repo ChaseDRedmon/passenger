@@ -252,7 +252,8 @@ public sealed partial class McpTests
         madeFolders.Add(root);
         string state = Path.Combine(root, new string('s', 60), new string('t', 60));
         string notes = Plain("mcp-start-");
-        await using McpClient client = await Start(["--mcp-attach"], notes, new() { ["PASSENGER_SETTINGS"] = state });
+        Process proxy = StartPassenger(["--mcp-attach"], notes, new() { ["PASSENGER_SETTINGS"] = state });
+        await using McpClient client = await Connect(proxy, ["--mcp-attach"]);
 
         // Listed at once, with nothing running: the build's own tools, every one PassengerTools has.
         IList<McpClientTool> tools = await Exchange("Listing the tools", TimeSpan.FromMinutes(1), cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
@@ -269,15 +270,18 @@ public sealed partial class McpTests
         string sockets = McpHost.SocketFolderFor(state);
         madeFolders.Add(sockets);
         Assert.NotEqual(McpHost.SocketFolder, sockets);
-        Assert.False(Directory.Exists(sockets) && Directory.GetFiles(sockets, "*.sock").Length > 0, "Listing the tools started a Passenger");
+        // A Passenger it starts is its child from the moment it starts, well before that Passenger listens anywhere.
+        Assert.True(Started(proxy).Length == 0, $"Listing the tools started a Passenger: {string.Join("; ", Started(proxy).Select(Processes.Describe))}");
 
         // Its first call starts Passenger on the agent's folder, whose window asks the person and holds the call meanwhile.
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
         Task<CallToolResult> waiting = CallGivingUp(client, "workspace", new(), giveUp.Token);
         string? window = null;
+        // The window writes its socket's .folder as it opens: read beside that write, never failing on it.
         await Until(() => (window = Directory.Exists(sockets) ? Directory.GetFiles(sockets, "*.sock").FirstOrDefault(s =>
-            File.Exists(Path.ChangeExtension(s, ".folder")) && File.ReadAllText(Path.ChangeExtension(s, ".folder")) == PathNames.Canonical(notes)) : null) is not null,
+            Ui.Shared(Path.ChangeExtension(s, ".folder")) == PathNames.Canonical(notes)) : null) is not null,
             "Passenger to start with a window on the agent's folder");
+        Assert.Contains(McpHostProcess(window!), Started(proxy));
         Assert.True(System.Text.Encoding.UTF8.GetByteCount(window!) < 104, $"The window's socket is {window!.Length} characters long: {window}");
         if (!OperatingSystem.IsWindows())
         {
@@ -856,6 +860,25 @@ public sealed partial class McpTests
 
     /// <summary>The process a window's socket is named for (<c>PID-WINDOW.sock</c>).</summary>
     private static int McpHostProcess(string socket) => int.Parse(Path.GetFileNameWithoutExtension(socket).Split('-')[0], System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>The Passengers a process has started, as the system lists them now: those it started, at any depth, that are
+    /// its own program.</summary>
+    private static int[] Started(Process proxy)
+    {
+        string name = proxy.ProcessName;
+        return [.. Processes.Descendants(proxy.Id).Where(id =>
+        {
+            try
+            {
+                using Process child = Process.GetProcessById(id);
+                return child.ProcessName == name;
+            }
+            catch (Exception gone) when (gone is ArgumentException or InvalidOperationException)
+            {
+                return false;
+            }
+        })];
+    }
 
     /// <summary>Waits off the UI thread for a condition, failing with what Passenger said meanwhile.</summary>
     private async Task Until(Func<bool> condition, string what)

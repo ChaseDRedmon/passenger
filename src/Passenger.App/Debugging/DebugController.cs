@@ -21,6 +21,9 @@ namespace Passenger.App.Debugging;
 /// choosing its tab. A UI-thread object.</summary>
 public sealed class DebugController : IDisposable
 {
+    /// <summary>Rider's words in the console of a program attached to, whose output goes where it always went.</summary>
+    public const string AttachedConsole = "Console output is not available when the debugger is attached to a running process";
+
     private readonly EditorArea editors;
     private readonly DebugView view;
     private readonly List<string> watches = [];
@@ -476,8 +479,7 @@ public sealed class DebugController : IDisposable
         }
         else if (!launched)
         {
-            // Rider's words: what a program attached to writes goes where it always went.
-            shown.Append("Console output is not available when the debugger is attached to a running process\n");
+            shown.Append($"{AttachedConsole}\n");
         }
         Message?.Invoke(this, $"Debugging {name}");
         DebugSession? starting = null;

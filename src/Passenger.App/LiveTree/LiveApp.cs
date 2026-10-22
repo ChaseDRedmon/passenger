@@ -379,13 +379,16 @@ public sealed class LiveApp : IDisposable
         {
             // Forgotten, so its answer, if it ever comes, finds no one waiting.
             Drop(id, answer);
-            throw new LiveAppException($"{Name} did not answer within {AnswerLimit.TotalSeconds:0} s");
+            throw new LiveAppException(NotAnswered(Name));
         }
         return reply.Error is { } why ? throw new LiveAppException(why) : reply;
     }
 
     /// <summary>How long the app may take to answer: its UI thread busy, or the app paused under the debugger.</summary>
     public static readonly TimeSpan AnswerLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>What a question the app left unanswered past <see cref="AnswerLimit"/> fails with.</summary>
+    public static string NotAnswered(string app) => $"{app} did not answer within {AnswerLimit.TotalSeconds:0} s";
 
     /// <summary>Takes the app's one connection, then reads what it says until it goes.</summary>
     private async Task ServeAsync()

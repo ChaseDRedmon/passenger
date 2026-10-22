@@ -1246,9 +1246,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             // No answer but a fault of the IDE's: logged as one on the window's own thread is, and its words the agent's,
             // where the SDK would answer only "An error occurred invoking" the tool.
             IdeErrors.Report(error);
-            throw new ModelContextProtocol.McpException($"Passenger failed: {error.GetType().Name}: {error.Message}", error);
+            throw new ModelContextProtocol.McpException($"{Faulted}{error.GetType().Name}: {error.Message}", error);
         }
     }
+
+    /// <summary>How an answer begins when a tool met a fault of the IDE's own, never one of the refusals an agent can act on.</summary>
+    public const string Faulted = "Passenger failed: ";
 
     /// <summary>Sets the paused program going as the window's keys do, its tab chosen and the edits made while it was paused
     /// applied first.</summary>

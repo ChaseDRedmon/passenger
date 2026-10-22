@@ -162,7 +162,7 @@ public sealed partial class McpTests
             // A project's log is Compose's to read: the engine's refusal is the agent's answer, never a fault of Passenger's.
             CallToolResult merged = Await(Task.Run(() => Result(client, "container_logs", new() { ["container"] = "shop" })), "the project's log");
             Assert.True(merged.IsError == true && Text(merged).Contains("'compose' is not a docker command", StringComparison.Ordinal)
-                && !Text(merged).Contains("Passenger failed", StringComparison.Ordinal), $"The project's log answered: {Text(merged)}");
+                && !Text(merged).Contains(PassengerTools.Faulted, StringComparison.Ordinal), $"The project's log answered: {Text(merged)}");
         }
         finally
         {

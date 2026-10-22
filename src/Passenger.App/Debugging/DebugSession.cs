@@ -660,11 +660,14 @@ public sealed class DebugSession
             {
                 return;
             }
-            log($"{Path.GetFileName(Program)} (process {program.Id}) was left running by the debugger, and is ended with it");
+            log(EndedLeftRunning(Path.GetFileName(Program), program.Id));
             ChildProcesses.Kill(program);
             ChildProcesses.Kill(adapter);
         }
     }
+
+    /// <summary>What the session's console says as the IDE ends a launched program its adapter left running.</summary>
+    public static string EndedLeftRunning(string program, int processId) => $"{program} (process {processId}) was left running by the debugger, and is ended with it";
 
     /// <summary>A launched program's process, its handle opened at once on Windows so its id is never another's while held;
     /// null when it has gone already.</summary>
@@ -995,8 +998,7 @@ public sealed class DebugSession
         }
         BindingErrorBreakpoint? bindingErrors = BindingErrorsSending();
         functionsSent = FunctionSignature();
-        List<DapFunctionBreakpoint> requests = [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed,
-            $"breakpoint == {p.Id}" + (p.Condition is { } condition ? $" && ({condition})" : string.Empty), null, p.LogMessage, p.Suspend))];
+        List<DapFunctionBreakpoint> requests = [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed, EngineCondition(p), null, p.LogMessage, p.Suspend))];
         if (bindingErrors is not null)
         {
             requests.Add(new DapFunctionBreakpoint(Inspector.Wire.Failed, BindingErrorTerms(bindingErrors.Condition), bindingErrors.HitCondition,
@@ -1044,6 +1046,11 @@ public sealed class DebugSession
     /// <summary>A condition or log message of XAML Binding Errors as the debugger reads it: <c>$bindingError</c>, the name
     /// Variables shows the failure by, is the parameter of the method it stops in.</summary>
     private static string? BindingErrorTerms(string? text) => text?.Replace("$bindingError", "bindingError", StringComparison.Ordinal);
+
+    /// <summary>A property breakpoint's condition as the debugger is given it, on the one method every such breakpoint
+    /// stops in: its own id, then the person's condition, which a message about it names whole.</summary>
+    public static string EngineCondition(PropertyBreakpoint breakpoint) =>
+        $"breakpoint == {breakpoint.Id}" + (breakpoint.Condition is { } condition ? $" && ({condition})" : string.Empty);
 
     /// <summary>What the debugger said of XAML Binding Errors: until an Avalonia or WPF app's inspector has loaded, it has nowhere
     /// to stop, which is no fault of the breakpoint.</summary>

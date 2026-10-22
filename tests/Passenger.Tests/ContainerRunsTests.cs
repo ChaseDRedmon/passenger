@@ -259,7 +259,7 @@ public sealed class ContainerRunsTests
     [AvaloniaFact]
     public void A_Docker_Compose_projects_properties_and_launch_profiles_are_its_configurations_and_it_is_never_built_as_a_project()
     {
-        (string folder, string project) = Shop("dcproj");
+        (string folder, _) = Shop("dcproj");
         File.Move(Path.Combine(folder, "compose.yaml"), Path.Combine(folder, "docker-compose.yml"));
         Write(folder, "docker-compose.override.yml", "services:\n  web:\n    environment: { GREETING: hi }\n");
         Write(folder, "docker-compose.dcproj", """
@@ -306,7 +306,6 @@ public sealed class ContainerRunsTests
         // A plain compose configuration of the same files is not listed beside the project's own.
         Assert.DoesNotContain(window.Configurations, c => c.Name.StartsWith("Compose:", StringComparison.Ordinal));
         window.Close();
-        Assert.NotNull(project);
     }
 
     [AvaloniaFact]

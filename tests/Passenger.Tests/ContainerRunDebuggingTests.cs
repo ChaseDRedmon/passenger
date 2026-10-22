@@ -80,7 +80,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             }
             // Each tab's console is its container's log, which an attach gets none of through the debugger.
             Ui.WaitFor(() => window.Debugger.Output(web.Session).ToString().Contains("Now listening on", StringComparison.Ordinal), "web's log in its console");
-            Assert.DoesNotContain("not available", window.Debugger.Output(api.Session).ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(DebugController.AttachedConsole, window.Debugger.Output(api.Session).ToString(), StringComparison.Ordinal);
         }
         finally
         {

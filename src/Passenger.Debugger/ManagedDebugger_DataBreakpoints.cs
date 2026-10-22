@@ -483,7 +483,7 @@ public partial class ManagedDebugger
             (bool holds, string? error) = await EvaluateBreakpointCondition(thread, condition);
             if (error is not null)
             {
-                OnConsole?.Invoke($"The condition '{condition}' could not be evaluated, so the data breakpoint on {target.Description} stopped: {error}\n");
+                OnConsole?.Invoke($"{Passenger.Dap.BreakpointConditions.NotEvaluated(condition)}, so the data breakpoint on {target.Description} stopped: {error}\n");
             }
             else if (!holds)
             {
