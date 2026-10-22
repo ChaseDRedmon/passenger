@@ -28,49 +28,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
     }
 
     [AvaloniaFact]
-    public void A_script_completes_marks_a_syntax_error_goes_to_a_functions_declaration_and_renames_it_everywhere_it_is_called()
-    {
-        SkipWithoutNode(typescript: true);
-        MainWindow window = app.Open("wwwroot/js/site.js");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        OpenDocument document = window.EditorArea.Active!;
-        Ui.WaitFor(() => window.LanguageShown?.StartsWith("JavaScript · TypeScript ", StringComparison.Ordinal) == true,
-            "the status bar to name the TypeScript the script is read by");
-        Assert.EndsWith("(Passenger's)", window.LanguageShown, StringComparison.Ordinal);
-
-        Ui.PlaceAfter(editor, "console.log(message);");
-        Ui.Press(window, "ENTER");
-        window.KeyTextInput("console");
-        window.KeyTextInput(".");
-        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("log"), "console's members after its dot");
-        window.KeyTextInput("war");
-        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "warn", "the list narrowed to warn");
-        Ui.Press(window, "ENTER");
-        Assert.Equal("console.warn", editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line));
-
-        editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "\nlet broken = ;\n")]);
-        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the statement that is not JavaScript");
-        Marker error = document.Markers.First(m => m.Kind == MarkerKind.Error);
-        Assert.StartsWith("TS1109: Expression expected", error.Message, StringComparison.Ordinal);
-        Assert.Equal(";", editor.Document.Snapshot.GetText(error.Range.Start, Math.Max(1, error.Range.Length)));
-
-        Ui.PlaceAfter(editor, "const message = gre");
-        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
-        Ui.WaitFor(() => editor.CaretPosition.Line == 1, "the caret at the function's declaration");
-        Assert.Equal(new TextPosition(1, "function ".Length), editor.CaretPosition);
-
-        Ui.Run(window, AppActions.Rename);
-        Ui.WaitFor(() => window.Assist.Renaming == "greet", "the rename box on the function");
-        window.KeyTextInput("welcome");
-        Ui.Press(window, "ENTER");
-        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("const message = welcome(\"Ada\");", StringComparison.Ordinal),
-            "the call renamed with the function");
-        Assert.Contains("function welcome(name)", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void TypeScript_under_a_tsconfig_completes_a_numbers_members_marks_a_type_error_goes_to_a_declaration_in_another_file_and_renames_across_files()
+    public void TypeScript_under_a_tsconfig_and_a_script_beside_it_complete_mark_errors_go_to_declarations_and_rename_across_their_files()
     {
         SkipWithoutNode(typescript: true);
         MainWindow window = app.Open("Scripts/items.ts");
@@ -120,6 +78,46 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         string[] usages = [.. find.Rows.Where(r => r.Usage is not null).Select(r => r.Label)];
         Assert.Contains("const sum: number = sumOf(items);", usages);
         Assert.Contains("import { Item, sumOf } from \"./items\";", usages);
+
+        // A script outside the tsconfig, read by the same TypeScript: completion, a syntax error, a function's declaration
+        // and its rename everywhere it is called.
+        window.OpenFile(app.PathOf("wwwroot/js/site.js"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        editor.Focus();
+        Ui.WaitFor(() => window.LanguageShown?.StartsWith("JavaScript · TypeScript ", StringComparison.Ordinal) == true,
+            "the status bar to name the TypeScript the script is read by");
+        Assert.EndsWith("(Passenger's)", window.LanguageShown, StringComparison.Ordinal);
+
+        Ui.PlaceAfter(editor, "console.log(message);");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("console");
+        window.KeyTextInput(".");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("log"), "console's members after its dot");
+        window.KeyTextInput("war");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "warn", "the list narrowed to warn");
+        Ui.Press(window, "ENTER");
+        Assert.Equal("console.warn", editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line));
+
+        editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.Length, 0, "\nlet broken = ;\n")]);
+        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the statement that is not JavaScript");
+        Marker broken = document.Markers.First(m => m.Kind == MarkerKind.Error);
+        Assert.StartsWith("TS1109: Expression expected", broken.Message, StringComparison.Ordinal);
+        Assert.Equal(";", editor.Document.Snapshot.GetText(broken.Range.Start, Math.Max(1, broken.Range.Length)));
+
+        Ui.PlaceAfter(editor, "const message = gre");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.WaitFor(() => editor.CaretPosition.Line == 1, "the caret at the function's declaration");
+        Assert.Equal(new TextPosition(1, "function ".Length), editor.CaretPosition);
+
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "greet", "the rename box on the function");
+        window.KeyTextInput("welcome");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("const message = welcome(\"Ada\");", StringComparison.Ordinal),
+            "the call renamed with the function");
+        Assert.Contains("function welcome(name)", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
         window.Close();
     }
 
