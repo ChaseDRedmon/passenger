@@ -429,6 +429,23 @@ public sealed class ContainerEngine
     /// started again when the engine says it is ready, each follower told it stopped and started.</summary>
     private async Task FollowAsync()
     {
+        try
+        {
+            await KeepFollowingAsync();
+        }
+        catch (Exception failed)
+        {
+            // A fault of the IDE's: said as one, and the next follower starts the events again.
+            lock (gate)
+            {
+                keeping = false;
+            }
+            IdeErrors.Report(failed);
+        }
+    }
+
+    private async Task KeepFollowingAsync()
+    {
         TimeSpan wait = Retry;
         while (true)
         {
