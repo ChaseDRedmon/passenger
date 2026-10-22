@@ -231,11 +231,14 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             throw new ReadOnlyFileException(path);
         }
         byte[]? before = Wrote is not null && there ? Before(target) : null;
-        string temporary = target + SaveSuffix;
+        // A name of its own, made new: a link already there by a known name (a cloned repository's) took the save wherever it pointed.
+        string temporary = Path.Combine(Path.GetDirectoryName(target)!, Guid.NewGuid().ToString("N") + SaveSuffix);
+        bool made = false;
         try
         {
-            using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
+                made = true;
                 stream.Write(preamble);
                 stream.Write(body);
                 stream.Flush(flushToDisk: true);
@@ -252,8 +255,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         }
         catch
         {
-            // A failed save leaves the old file as it was, and nothing beside it.
-            File.Delete(temporary);
+            // A failed save leaves the old file as it was, and nothing of its own beside it.
+            if (made)
+            {
+                File.Delete(temporary);
+            }
             throw;
         }
         Wrote?.Invoke(path, before, preamble.Length == 0 ? body : [.. preamble, .. body]);

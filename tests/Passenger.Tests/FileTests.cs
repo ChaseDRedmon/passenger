@@ -228,6 +228,28 @@ public sealed class FileTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
     }
 
+    /// <summary>A save writes its temporary file under a name of its own, made new: a link a cloned repository carries
+    /// under the name a save once used (One.cs.passenger-save) took the save to whatever it pointed at.</summary>
+    [AvaloniaFact]
+    public void A_save_never_writes_through_a_link_left_where_its_temporary_file_would_go()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        string elsewhere = Path.Combine(TestFolders.Create("save-elsewhere-"), "kept.txt");
+        File.WriteAllText(path, "class One { }\n");
+        File.WriteAllText(elsewhere, "keep this file\n");
+        string planted = path + Passenger.App.Workspace.FileText.SaveSuffix;
+        TestFolders.Link(planted, elsewhere);
+        MainWindow window = Open();
+        Edit(window, "One.cs", "public ");
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+        Assert.True(File.ReadAllText(elsewhere) == "keep this file\n", "The save was written through a link beside the file, to the file it points at");
+        Assert.NotNull(new FileInfo(planted).LinkTarget);
+        Assert.Equal([planted], Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Edits_are_saved_when_the_focus_goes_to_the_terminal_unless_settings_say_not_and_before_another_folder_opens()
     {
