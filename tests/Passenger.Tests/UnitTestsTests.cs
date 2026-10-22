@@ -547,7 +547,9 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         Write(solution, "Tests.slnx", "<Solution>\n  <Project Path=\"Library/Library.csproj\" />\n  <Project Path=\"Xunit.Tests/Xunit.Tests.csproj\" />\n" +
             "  <Project Path=\"NUnit.Tests/NUnit.Tests.csproj\" />\n  <Project Path=\"MSTest.Tests/MSTest.Tests.csproj\" />\n</Solution>\n");
 
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        // No C# language server, which the tests found in code ask nothing of, and whose restore would ask nuget.org for the
+        // newest NUnit, NUnit3TestAdapter and MSTest (their versions float) every run.
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(solution);
         Tree(window);
@@ -698,7 +700,8 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
             "    [TestCategory(\"Fast\")]\n    [TestCategory(\"Slow\")]\n    public void Keeps() { }\n}\n");
         Write(solution, "Tests.slnx", "<Solution>\n  <Project Path=\"Xunit.Tests/Xunit.Tests.csproj\" />\n  <Project Path=\"NUnit.Tests/NUnit.Tests.csproj\" />\n" +
             "  <Project Path=\"MSTest.Tests/MSTest.Tests.csproj\" />\n</Solution>\n");
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        // No C# language server, nor its restore of the floating versions from nuget.org: the categories are read from code.
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(solution);
         Tree(window);

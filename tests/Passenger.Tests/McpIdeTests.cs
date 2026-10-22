@@ -130,7 +130,7 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
     [AvaloniaFact]
     public void An_agent_reads_and_changes_the_persons_settings_as_settings_does_once_they_allow_it()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, StartsLanguageServer = false };
         window.Show();
         window.KeepSettings();
         window.OpenFolder(Folder);
@@ -198,7 +198,7 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
         Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{Folder}\", \"spin.pid\"), Environment.ProcessId.ToString());\n"
             + "long turns = 0;\nwhile (true)\n{\n    turns = Spin.Turn(turns);\n}\n\n"
             + $"/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\nstatic class Spin\n{{\n    public static long Turn(long turns) => turns + 1;\n}}\n");
-        await using McpClient client = await Start(["--mcp", Folder]);
+        await using McpClient client = await Start(["--mcp", Folder], languageServer: false);
         CallToolResult unattached = await Result(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
         Assert.True(unattached.IsError == true, $"Attach Profiler with nothing running answered: {Text(unattached)}");
 

@@ -13,7 +13,7 @@ namespace Passenger.Tests;
 /// <summary>What the caret lights up in a C# file, through the whole window on a real project: the uses of the symbol it
 /// rests on from the language server, writes apart from reads and marked on the scrollbar, gone the moment the caret
 /// leaves them or the text changes; Highlight Usages in File keeping them; and the bracket at the caret with its pair,
-/// which Move Caret to Matching Brace goes between.</summary>
+/// which Move Caret to Matching Brace goes between, from the file's own parse, in windows with no language server.</summary>
 public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Project>
 {
     private const string Totals = "static class Totals\n{\n    public static int Sum(int[] values)\n    {\n        int total = 0;\n"
@@ -159,7 +159,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
     [AvaloniaFact]
     public void A_bracket_at_the_caret_and_its_pair_are_highlighted_nested_and_across_lines()
     {
-        MainWindow window = project.Open("Braces.cs");
+        MainWindow window = project.Open("Braces.cs", languageServer: false);
         CodeEditor editor = window.EditorArea.CodeEditor;
         int outer = Braces.IndexOf("((", StringComparison.Ordinal);
         int closing = Braces.IndexOf("));", StringComparison.Ordinal);
@@ -193,7 +193,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
     [AvaloniaFact]
     public void Move_caret_to_matching_brace_goes_to_the_pair_and_back()
     {
-        MainWindow window = project.Open("Braces.cs");
+        MainWindow window = project.Open("Braces.cs", languageServer: false);
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.Focus();
         int outer = Braces.IndexOf("((", StringComparison.Ordinal);

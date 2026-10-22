@@ -48,7 +48,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
     [AvaloniaFact]
     public void Surround_with_and_complete_current_statement_write_rider_s_code_around_and_after_what_is_chosen_or_typed()
     {
-        MainWindow window = project.Open("Sum.cs");
+        MainWindow window = project.Open("Sum.cs", languageServer: false);
         CodeEditor editor = window.EditorArea.CodeEditor;
         string before = editor.Document.Snapshot.ToString();
         foreach ((string template, string written, string first) in StatementTemplates)

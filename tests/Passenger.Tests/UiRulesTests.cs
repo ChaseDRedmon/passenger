@@ -1484,7 +1484,8 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                 TestGit.Run(Folder, "branch", "other");
                 TestGit.Run(Folder, "tag", "v1.0");
             }, Folder);
-            Prepare();
+            // Never restored: no window of the class starts a language server or builds, and the rules are the window's.
+            Prepare(restore: false);
         }
     }
 }

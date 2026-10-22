@@ -26,6 +26,19 @@ public static partial class McpHost
     /// the platform is: <c>--mcp</c> runs on the headless one alone.</summary>
     public static bool IsHeadless { get; private set; }
 
+    /// <summary>The variable a test sets for an <c>--mcp</c> Passenger whose agent asks nothing of C#: <c>off</c> starts no C#
+    /// language server (<see cref="MainWindow.StartsLanguageServer"/>), so the test pays no server's start, load or restore.</summary>
+    public const string LanguageServerVariable = "PASSENGER_MCP_LANGUAGE_SERVER";
+
+    /// <summary>Whether <c>--mcp</c>'s IDE starts the C# language server: always, unless <see cref="LanguageServerVariable"/>
+    /// says <c>off</c>; a value other than <c>off</c> or <c>on</c> is fatal as Passenger starts, as a malformed flag is.</summary>
+    public static bool StartsLanguageServer => Environment.GetEnvironmentVariable(LanguageServerVariable) switch
+    {
+        null or "" or "on" => true,
+        "off" => false,
+        string other => throw new FormatException($"{LanguageServerVariable} takes off or on, not '{other}'"),
+    };
+
     /// <summary>Where windows listen, one socket each, beside the process's <c>PID.open</c>: the state folder's socket folder
     /// (<see cref="SocketFolders"/>), where Passenger's other sockets are too.</summary>
     public static string SocketFolder => SocketFolders.For(StateStore.DefaultRoot);
@@ -233,7 +246,7 @@ public static partial class McpHost
             .SetupWithoutStarting();
 
         // The agent's own IDE, which no other agent joins.
-        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false, AgentsOwn = true };
+        MainWindow window = new() { Width = 1600, Height = 1000, AgentsAllowed = false, AgentsOwn = true, StartsLanguageServer = StartsLanguageServer };
         window.SetRenderScaling(2);
         window.Show();
         window.Start(launch);

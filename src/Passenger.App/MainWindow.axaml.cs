@@ -594,8 +594,9 @@ public partial class MainWindow : Window
     public WarmServer? WarmServer { get; init; }
 
     /// <summary>Whether the window starts the C# language server on a folder with a solution or project: always in the IDE.
-    /// A test of what asks nothing of C# (the Explorer's files, the Solution view, Git) turns it off, and pays no server's
-    /// start, load or restore of a project never restored.</summary>
+    /// A test of what asks nothing of C# (the Explorer's files, the Solution view, Git) turns it off, an <c>--mcp</c>
+    /// Passenger's through <see cref="Mcp.McpHost.LanguageServerVariable"/>, and pays no server's start, load or restore
+    /// of a project never restored.</summary>
     public bool StartsLanguageServer { get; init; } = true;
 
     /// <summary>The store of the window a person uses, the process's for its state folder, taken the first time it keeps

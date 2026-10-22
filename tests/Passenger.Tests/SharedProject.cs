@@ -32,12 +32,17 @@ public abstract class SharedProject : IDisposable
 
     public string PathOf(string name) => Path.Combine(Folder, name);
 
-    /// <summary>Restores the project, once its files are written, and takes them as the ones every test starts on.</summary>
-    protected void Prepare()
+    /// <summary>Restores the project, once its files are written, and takes them as the ones every test starts on; with no
+    /// restore (<paramref name="restore"/>) for a class whose windows start no C# language server and whose tests read
+    /// nothing a restore writes (the Solution view's projects and Find in Files' scopes are the MSBuild host's evaluation).</summary>
+    protected void Prepare(bool restore = true)
     {
         TestFolders.Prepare(() =>
         {
-            Restore.Run(Folder);
+            if (restore)
+            {
+                Restore.Run(Folder);
+            }
             folders.UnionWith(Directory.EnumerateDirectories(Folder, "*", SearchOption.AllDirectories).Where(Own));
             foreach (string file in Directory.EnumerateFiles(Folder, "*", SearchOption.AllDirectories).Where(Own))
             {
@@ -49,12 +54,14 @@ public abstract class SharedProject : IDisposable
 
     /// <summary>A window on the project, which never saves what its test typed, with a file open (when one is named) once C#
     /// is ready: on the server the class's last window left, or one of its own when there is none to take up; keeping its
-    /// settings in a state folder of the test's own when one is given.</summary>
-    public MainWindow Open(string? file, Action<MainWindow>? before = null, string? state = null)
+    /// settings in a state folder of the test's own when one is given. A test that asks nothing of C# (a web language's
+    /// server, the brackets' pairs, which are the file's own parse) opens it with no C# language server
+    /// (<paramref name="languageServer"/>), once the folder's opening work has landed, the warm server left for the next.</summary>
+    public MainWindow Open(string? file, Action<MainWindow>? before = null, string? state = null, bool languageServer = true)
     {
         MainWindow window = state is null
-            ? new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server }
-            : new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server, StateFolder = state };
+            ? new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server, StartsLanguageServer = languageServer }
+            : new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server, StateFolder = state, StartsLanguageServer = languageServer };
         window.Show();
         if (state is not null)
         {
@@ -67,7 +74,10 @@ public abstract class SharedProject : IDisposable
         }
         before?.Invoke(window);
         Ui.Settle();
-        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
+        if (languageServer)
+        {
+            Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
+        }
         return window;
     }
 

@@ -837,7 +837,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
     /// <summary>A window on a folder of the test's own, opened as the solution or project named.</summary>
     private static MainWindow OpenOwn(string opened)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(opened);
         Ui.Settle();
@@ -1100,10 +1100,12 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         }
 
         /// <summary>A window on the solution, with a file open when one is named, its Dockerfile server asking
-        /// <paramref name="dockerHub"/> for image tags when one is given.</summary>
+        /// <paramref name="dockerHub"/> for image tags when one is given; with no C# language server, which nothing the class
+        /// checks asks of (Docker's files are their servers', the Adds' projects the MSBuild host's evaluation), and which
+        /// would start cold on the solution in every window, never restored.</summary>
         public MainWindow Open(string? file, Uri? dockerHub = null)
         {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, DockerHub = dockerHub };
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, DockerHub = dockerHub, StartsLanguageServer = false };
             window.Show();
             window.OpenFolder(Folder);
             if (file is not null)

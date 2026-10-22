@@ -1750,8 +1750,12 @@ every test opens is the project's from the start (`LongFileAssistTests`' 20,000 
 back and the server kept once it holds it as written again, which it reads through its own watcher
 (`WarmServer.HoldsAsync`, 10 s at most, else it is ended); a file that came or went, or one the server holds no document of
 (a project file), ends it. A window test that asks nothing of C# opens its window without the language server
-(`Ui.OpenFolder(folder, languageServer: false)`, `MainWindow.StartsLanguageServer`), so it waits for no server's start,
-load or restore. A class whose tests each restore a fresh folder takes it from `RestoredFolders`, which makes and restores
+(`Ui.OpenFolder(folder, languageServer: false)`, a shared project's `Open(file, languageServer: false)`,
+`MainWindow.StartsLanguageServer`), so it waits for no server's start, load or restore (nor, for a project whose packages
+the package cache lacks, nuget.org's); an agent's `--mcp` Passenger likewise (`McpRig.Start(…, languageServer: false)`,
+which sets `PASSENGER_MCP_LANGUAGE_SERVER=off`, `McpHost.LanguageServerVariable`, a value other than off or on fatal). A
+shared project none of whose windows starts a server, and none of whose tests reads what a restore writes, is never
+restored (`SharedProject.Prepare(restore: false)`: `FindInFilesScopeTests`, `UiRulesTests`). A class whose tests each restore a fresh folder takes it from `RestoredFolders`, which makes and restores
 as many at once as the class has tests yet to take one, four at most; one whose tests mostly leave the project as written shares it and takes a
 fresh folder only for a test that changes it (`DebuggerTests.Sum` and `Fresh`), since `RestoredFolders.Take` may come in
 the test itself, its batch being no test's own (`TestFolders.Unowned`). A shared project that its first test builds

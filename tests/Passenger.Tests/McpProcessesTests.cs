@@ -54,7 +54,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         }
 
         // The agent's Passenger, on the same folder and state, changes a file the person never opened.
-        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder])), "the agent's Passenger starting");
+        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder], languageServer: false)), "the agent's Passenger starting");
         try
         {
             Await(Task.Run(() => Call(client, "open_file", new() { ["path"] = "Notes.txt" })), "the agent opening Notes.txt");
@@ -108,7 +108,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         const int Earlier = 40_000;
         File.WriteAllText(log, string.Concat(Enumerable.Range(0, Earlier).Select(i =>
             $"{{\"s\":{(now - 100_000_000) * 1000 + i},\"t\":{now - ((Earlier - i) * 200L)},\"k\":\"label\",\"n\":\"earlier {i}\"}}\n")));
-        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder])), "the agent's Passenger starting");
+        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder], languageServer: false)), "the agent's Passenger starting");
         long[] clock = [new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero).UtcTicks];
         global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = () => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero) };
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState, HistoryKeeping = day, StartsLanguageServer = false };
@@ -242,8 +242,9 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
 
     /// <summary>The MSBuild nodes a build of Passenger's leaves for its next build, which no other build takes up, end with
     /// Passenger, whether it ends as its agent leaves or is killed. The two projects build at once, each with a step of a
-    /// few seconds, so MSBuild runs one in a node the test sees. They are restored first: the language server restores a
-    /// solution never restored, and a build after that runs in the node its restore left, no process's child. MSBuild
+    /// few seconds, so MSBuild runs one in a node the test sees. They are restored first, and the agent's Passenger starts no
+    /// language server, whose restore of a solution never restored would leave a node no process's child that a build after
+    /// it runs in. MSBuild
     /// sometimes ends a node it meant to keep (<see cref="NodeBuilds"/>): the test builds until one stays.</summary>
     [Theory]
     [InlineData(false)]
@@ -271,7 +272,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         }
         await Restore.RunAsync(two);
         // No compiler server among what the build starts, which is the machine's to share.
-        Process passenger = StartPassenger(["--mcp", two], environment: new() { ["UseSharedCompilation"] = "false" });
+        Process passenger = StartPassenger(["--mcp", two], environment: new() { ["UseSharedCompilation"] = "false" }, languageServer: false);
         List<int> left = [];
         McpClient? client = null;
         try

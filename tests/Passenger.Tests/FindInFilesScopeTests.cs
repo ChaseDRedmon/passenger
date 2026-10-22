@@ -340,7 +340,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     private string Full(string relative) => PathNames.Canonical(Path.Combine(folder, relative));
 
     /// <summary>A solution of three projects, one nested in another's folder, with "total" in code, notes, generated code and
-    /// docs outside every project; each test starting on it as written, what a replacement wrote put back.</summary>
+    /// docs outside every project, never restored; each test starting on it as written, what a replacement wrote put back.</summary>
     public sealed class Shop : SharedProject
     {
         private static readonly string Project = TestProjects.Library();
@@ -360,7 +360,8 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
             Put("Lib/Money.cs", "record Money(decimal Total);\n");
             Put("Lib/Money.g.cs", "// generated: total\n");
             Put("docs/total.md", "total\n");
-            Prepare();
+            // Never restored: no window of the class starts a language server, and the scopes are the projects as evaluated.
+            Prepare(restore: false);
         }
 
         private void Put(string relative, string text)

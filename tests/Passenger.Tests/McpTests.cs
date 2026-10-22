@@ -36,7 +36,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         File.WriteAllText(Path.Combine(tests, "SumTests.cs"),
             "using Xunit;\n\nnamespace Sums;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four() => Assert.Equal(4, 2 + 2);\n\n"
             + "    [Fact]\n    public void Three_and_three_make_six() => Assert.Equal(6, 3 + 3);\n}\n");
-        await using McpClient client = await Start(["--mcp", tests]);
+        await using McpClient client = await Start(["--mcp", tests], languageServer: false);
         Assert.Equal(2, (await Call(client, "tests_list")).GetArrayLength());
         // A solution's thousands of tests narrowed as tests_run narrows them, by part of the name, and by the last run's state.
         JsonElement test = Assert.Single((await Call(client, "tests_list", new() { ["filter"] = "two_make_four" })).EnumerateArray());
@@ -61,7 +61,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         Write("Program.cs", "int count = \"three\";\nConsole.WriteLine(count);\n");
         Directory.CreateDirectory(Path.Combine(Folder, "Properties"));
         File.WriteAllText(Path.Combine(Folder, "Properties", "launchSettings.json"), "{\n  \"profiles\": {\n    \"Jobs\": { \"commandName\": \"RetryFailed\" }\n  }\n}\n");
-        await using McpClient client = await Start(["--mcp", Folder]);
+        await using McpClient client = await Start(["--mcp", Folder], languageServer: false);
         JsonElement built = await Call(client, "build");
         JsonElement error = built.GetProperty("problems").EnumerateArray().FirstOrDefault(p => p.GetProperty("severity").GetString() == "error");
         Assert.True(!built.GetProperty("succeeded").GetBoolean() && error.ValueKind == JsonValueKind.Object, $"The build of a string given to an int did not fail with an error: {built}");
@@ -96,7 +96,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         // Central package management: the version goes in Directory.Packages.props.
         File.WriteAllText(Path.Combine(library, "Directory.Packages.props"),
             "<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>\n  </PropertyGroup>\n</Project>\n");
-        await using McpClient client = await Start(["--mcp", library]);
+        await using McpClient client = await Start(["--mcp", library], languageServer: false);
         Dictionary<string, object?> project = new() { ["path"] = "Lib.csproj" };
         Dictionary<string, object?> versions = new() { ["path"] = "Directory.Packages.props" };
         Assert.DoesNotContain("Passenger.Sample", (await Call(client, "editor_text", project)).GetString(), StringComparison.Ordinal);
@@ -283,7 +283,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
     [Fact]
     public async Task An_agent_lists_every_action_the_ide_declares_and_one_it_runs_says_why_when_it_cannot()
     {
-        await using McpClient client = await Start(["--mcp", Folder]);
+        await using McpClient client = await Start(["--mcp", Folder], languageServer: false);
         string[] listed = [.. (await Call(client, "ide_actions")).EnumerateArray().Select(a => a.GetString()!)];
         HashSet<string> ids = [.. listed.Select(line => line[..line.IndexOf(": ", StringComparison.Ordinal)])];
         // Every id the IDE declares, the MVP's newest among them (Hot Reload, the Live Visual Tree's, the overlays, XAML's).
@@ -310,7 +310,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
     [Fact]
     public async Task An_agent_publishes_a_project_and_is_told_the_folder_it_landed_in_or_why_not()
     {
-        await using McpClient client = await Start(["--mcp", Folder]);
+        await using McpClient client = await Start(["--mcp", Folder], languageServer: false);
         JsonElement published = await Call(client, "build", new() { ["publish"] = "Sum" });
         Assert.True(published.GetProperty("succeeded").GetBoolean(), $"The publish ended: {published}");
         string landed = published.GetProperty("folder").GetString() ?? string.Empty;

@@ -70,18 +70,21 @@ public sealed class CommandLineTests : IDisposable
             $"'passenger {arguments}' was to be refused with exit code 2 saying \"{reason}\"; it exited {code} and wrote:\n{error}");
     }
 
+    private const string Milliseconds = "a whole number of milliseconds above 0";
+
     /// <summary>A variable the IDE or its debug adapter reads is checked as Passenger starts, before any window or server: a
     /// malformed evaluation limit had the IDE quietly take 5 s while each adapter it started refused it and exited, so every
     /// Debug failed with "connection closed".</summary>
     [Theory]
-    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3s")]
-    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "0")]
-    [InlineData(global::Passenger.App.Mcp.AgentCall.EveryVariable, "-1000")]
-    public async Task A_malformed_variable_ends_Passenger_with_exit_code_2_and_the_reason_before_anything_starts(string variable, string value)
+    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "3s", Milliseconds)]
+    [InlineData(global::Passenger.Dap.AdapterEnvironment.EvaluationTimeoutVariable, "0", Milliseconds)]
+    [InlineData(global::Passenger.App.Mcp.AgentCall.EveryVariable, "-1000", Milliseconds)]
+    [InlineData(global::Passenger.App.Mcp.McpHost.LanguageServerVariable, "no", "off or on")]
+    public async Task A_malformed_variable_ends_Passenger_with_exit_code_2_and_the_reason_before_anything_starts(string variable, string value, string takes)
     {
         (int code, string error) = await Run(["--mcp", "."], settings, new Dictionary<string, string> { [variable] = value });
 
-        string reason = $"passenger: {variable} takes a whole number of milliseconds above 0, not '{value}'";
+        string reason = $"passenger: {variable} takes {takes}, not '{value}'";
         Assert.True(code == 2 && error.StartsWith(reason, StringComparison.Ordinal),
             $"Passenger with {variable}={value} was to be refused with exit code 2 saying \"{reason}\"; it exited {code} and wrote:\n{error}");
     }

@@ -14,8 +14,9 @@ namespace Passenger.Tests;
 /// own &lt;style&gt; and &lt;script&gt;: each gets completion, a problem, go to declaration and rename from the language
 /// servers Passenger carries under web/ (TypeScript's, and VS Code's for HTML, CSS and JSON), run on the machine's
 /// Node.js, a Razor file's through Razor's own forwarding to the HTML server. Without a Node.js the files keep their
-/// colours and say why. Each test opens its own window, with web servers of its own, on the C# server the last one left
-/// running, warm, and on the app as written (<see cref="SharedProject"/>); a test that cannot find Node.js skips, saying
+/// colours and say why. Each test opens its own window, with web servers of its own, on the app as written (<see
+/// cref="SharedProject"/>): with no C# language server, which the scripts, stylesheets and JSON ask nothing of, but for the
+/// component's, whose Razor is Roslyn's, on the warm one the class shares; a test that cannot find Node.js skips, saying
 /// so.</summary>
 public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
 {
@@ -31,7 +32,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
     public void TypeScript_under_a_tsconfig_and_a_script_beside_it_complete_mark_errors_go_to_declarations_and_rename_across_their_files()
     {
         SkipWithoutNode(typescript: true);
-        MainWindow window = app.Open("Scripts/items.ts");
+        MainWindow window = app.Open("Scripts/items.ts", languageServer: false);
         OpenDocument items = window.EditorArea.Active!;
         window.OpenFile(app.PathOf("Scripts/cart.ts"));
         Ui.Settle();
@@ -125,7 +126,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
     public void A_stylesheet_completes_a_property_warns_of_an_unknown_one_shows_its_colours_goes_to_a_custom_propertys_declaration_and_renames_it()
     {
         SkipWithoutNode();
-        MainWindow window = app.Open("wwwroot/css/site.css");
+        MainWindow window = app.Open("wwwroot/css/site.css", languageServer: false);
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         Ui.WaitFor(() => document.ColourMarks.Count == 2, "a swatch beside each line that writes a colour");
@@ -188,7 +189,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
     public void Package_json_completes_and_checks_by_its_schema_goes_from_a_dependency_to_its_package_and_renames_a_script_with_its_runs()
     {
         SkipWithoutNode();
-        MainWindow window = app.Open("package.json");
+        MainWindow window = app.Open("package.json", languageServer: false);
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         int value = editor.Document.Snapshot.ToString().IndexOf("\"private\": true", StringComparison.Ordinal) + "\"private\": ".Length;
@@ -271,7 +272,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
     public void Without_a_Node_js_a_script_keeps_its_colours_and_its_banner_and_the_status_bar_say_why()
     {
         string missing = Path.Combine(TestRun.Root, "no-node-here", OperatingSystem.IsWindows() ? "node.exe" : "node");
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = app.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         try
         {
