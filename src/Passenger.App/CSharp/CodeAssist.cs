@@ -1564,6 +1564,25 @@ public sealed partial class CodeAssist
             ShowWebRename(own, json);
             return;
         }
+        // An Aspire resource's name in a string: the AppHost's declaration and its services' reads, else the server's rename.
+        if (AspireRoleOfShown != Aspire.AspireRole.None && editors.Active is { } aspire && MayNameResource(Editor.Selections.Primary.Caret))
+        {
+            int caret = Editor.Selections.Primary.Caret;
+            _ = Carried("Rename", async () =>
+            {
+                if (!await ShowAspireRename(aspire, caret) && editors.Active == aspire)
+                {
+                    ShowServerRename();
+                }
+            }, closeModal: false);
+            return;
+        }
+        ShowServerRename();
+    }
+
+    /// <summary>Rename through the language server at the editor's caret, a type's files offered with it.</summary>
+    private void ShowServerRename()
+    {
         if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;

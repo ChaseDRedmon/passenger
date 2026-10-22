@@ -82,6 +82,65 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         }
     }
 
+    /// <summary>Rename on a resource's name, where a service reads it or where the AppHost declares it, renames it in the
+    /// AppHost and in every service that reads it (a connection string's name, a ConnectionStrings: key, a discovered
+    /// service's address), and global undo takes the whole rename back; another resource's names stay as they were.</summary>
+    [AvaloniaFact]
+    public void Renaming_a_resource_renames_it_in_the_AppHost_and_the_services_that_read_it_and_one_undo_takes_it_back()
+    {
+        project.Write("Worker/Program.cs", Project.Worker.Replace("builder.Build().Run();",
+            "var store = builder.Configuration[\"ConnectionStrings:connected\"];\nbuilder.Build().Run();", StringComparison.Ordinal));
+        string[] files = ["Host/Program.cs", "Api/Program.cs", "Worker/Program.cs"];
+        Dictionary<string, string> before = files.ToDictionary(f => f, f => File.ReadAllText(project.PathOf(f)));
+        MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        try
+        {
+            // Open, as a person works on them, so the server reads each edit as it is made rather than from the disk.
+            window.OpenFile(project.PathOf("Worker/Program.cs"));
+            window.OpenFile(project.PathOf("Api/Program.cs"));
+            Ui.Settle();
+            Rename(window, "GetConnectionString(\"conn", "connected", "store");
+            Ui.Run(window, AppActions.SaveAll);
+            Assert.Contains("builder.AddConnectionString(\"store\")", File.ReadAllText(project.PathOf("Host/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("GetConnectionString(\"store\")", File.ReadAllText(project.PathOf("Api/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("GetConnectionString(\"db\")", File.ReadAllText(project.PathOf("Api/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("[\"ConnectionStrings:store\"]", File.ReadAllText(project.PathOf("Worker/Program.cs")), StringComparison.Ordinal);
+
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.Run(window, AppActions.SaveAll);
+            foreach (string file in files)
+            {
+                Assert.True(File.ReadAllText(project.PathOf(file)) == before[file], $"Undo of the rename left {file} changed:\n{File.ReadAllText(project.PathOf(file))}");
+            }
+
+            // From where the AppHost declares it: the worker's address follows.
+            window.OpenFile(project.PathOf("Host/Program.cs"));
+            Ui.Settle();
+            Rename(window, "AddProject<Projects.Api>(\"a", "api", "backend");
+            Ui.Run(window, AppActions.SaveAll);
+            Assert.Contains("AddProject<Projects.Api>(\"backend\")", File.ReadAllText(project.PathOf("Host/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("\"https+http://backend\"", File.ReadAllText(project.PathOf("Worker/Program.cs")), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static void Rename(MainWindow window, string after, string old, string name)
+        {
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.Rename);
+            Ui.WaitFor(() => window.Assist.Renaming == old, $"Rename's box on the resource {old}");
+            window.KeyTextInput(name);
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Status?.Contains($"{old} to {name}", StringComparison.Ordinal) == true,
+                $"the rename of {old} to {name} to be made, or say why not");
+            Assert.True(window.Status!.StartsWith($"Renamed {old} to {name}", StringComparison.Ordinal), $"The rename of {old} to {name} was not made: {window.Status}");
+        }
+    }
+
     [AvaloniaFact]
     public void Connection_completion_offers_only_connected_resources_and_a_connection_warning_offers_a_native_reference_fix_undo_takes_back()
     {
@@ -352,6 +411,8 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             builder.Build().Run();
             """;
 
+        internal const string Worker = "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n";
+
         internal const string Service = "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n";
 
         public Project() : base("aspire-help-")
@@ -365,7 +426,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
                 Put($"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
             }
             Put("Api/Program.cs", Service);
-            Put("Worker/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n");
+            Put("Worker/Program.cs", Worker);
             foreach (string name in new[] { "Host", "OtherHost" })
             {
                 Put($"{name}/{name}.csproj", $"""

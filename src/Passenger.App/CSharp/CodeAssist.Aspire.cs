@@ -101,6 +101,64 @@ public sealed partial class CodeAssist
         };
     }
 
+    /// <summary>Rename's box for the resource whose name the caret is on in an AppHost's or a service's string, placed at the
+    /// name; once a new one is typed, <see cref="RenameResourceAsync"/>. False where no resource's name is, or the text moved
+    /// on as the extension answered, for the server's rename.</summary>
+    private async Task<bool> ShowAspireRename(OpenDocument document, int caret)
+    {
+        LspDocument lsp = Now(document);
+        int version = document.Text.Version;
+        AspireRenaming described;
+        try
+        {
+            described = await lsp.ExtensionAsync<AspireRenaming>(Handlers.AspireRename, new AspireRenameRequest(lsp.PlaceOf(caret)));
+        }
+        catch (LanguageServerFailed)
+        {
+            return false;
+        }
+        if (described is not { Name: { } old, Start: { } start } || editors.Active != document || document.Text.Version != version)
+        {
+            return false;
+        }
+        int at = lsp.OffsetOf(new LspPosition(start.Line, start.Character));
+        RenameBox box = new(old);
+        ChangeTracker opened = new(Editor.Document);
+        ShowModal(box, at, async name =>
+        {
+            int now = opened.MapOffset(at);
+            if (name is null || name == old)
+            {
+                return;
+            }
+            RefactorOutcome made = await RenameResourceAsync(document, now, old, name, null);
+            Message?.Invoke(this, made.Problem ?? made.Said);
+        });
+        modalClosed = opened.Dispose;
+        return true;
+    }
+
+    /// <summary>The name of the resource whose name is at an offset of an AppHost's or a service's file; null where none is.</summary>
+    internal static async Task<string?> AspireResourceAtAsync(LspDocument lsp, int offset)
+    {
+        try
+        {
+            return (await lsp.ExtensionAsync<AspireRenaming>(Handlers.AspireRename, new AspireRenameRequest(lsp.PlaceOf(offset)))).Name;
+        }
+        catch (LanguageServerFailed)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A resource renamed from its name at an offset: where its AppHost declares it and wherever its services read it,
+    /// worked out again by the extension as it is made, one command of global undo; shared with the agents' rename.</summary>
+    internal Task<RefactorOutcome> RenameResourceAsync(OpenDocument document, int offset, string old, string name, Patience? patience) =>
+        MakeAsync($"Rename {old} to {name}", document,
+            async current => (await current.ExtensionAsync<AspireRenaming>(Handlers.AspireRename, new AspireRenameRequest(current.PlaceOf(offset), name))).Made
+                ?? new Refactored($"{old} was not renamed: no resource is named there any longer", []),
+            files => $"Renamed {old} to {name} in {Passenger.Core.Plural.Of(files, "file")}", patience);
+
     /// <summary>Aspire's Go to Declaration, in an AppHost's or a service's file: AddProject's project file, not its generated
     /// metadata type, and from a service's connection string or service-discovery name the AppHost's line that declares the
     /// resource; false elsewhere, for the server's own.</summary>

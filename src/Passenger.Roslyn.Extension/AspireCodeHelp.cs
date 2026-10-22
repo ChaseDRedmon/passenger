@@ -27,6 +27,13 @@ public sealed class AspireReferenceFix : IExtensionDocumentMessageHandler<Aspire
     private static int Compare(Place left, Place right) => left.Line == right.Line ? left.Character.CompareTo(right.Character) : left.Line.CompareTo(right.Line);
 }
 
+/// <summary>Rename of a resource's name across its AppHost and the services that read it, worked out again as it is made.</summary>
+public sealed class AspireRename : IExtensionDocumentMessageHandler<AspireRenameRequest, AspireRenaming>
+{
+    public Task<AspireRenaming> ExecuteAsync(AspireRenameRequest message, ExtensionMessageContext context, Document document, CancellationToken cancellationToken) =>
+        AspireSource.RenameAsync(document, message.At, message.NewName, cancellationToken);
+}
+
 /// <summary>Shares semantic AppHost resource identities with configurations and gutter actions.</summary>
 public sealed class AspireRunResources : IExtensionWorkspaceMessageHandler<AspireResourcesRequest, AspireRunResourcesResult>
 {
@@ -629,6 +636,99 @@ internal static class AspireSource
         int start = resource.NameExpression is LiteralExpressionSyntax { Token.Text: ['"', ..] } named ? named.SpanStart + 1 : resource.NameExpression.SpanStart;
         return new AspireProjectTarget(host.Document.FilePath, PlaceAt(host.Text, start));
     }
+
+    /// <summary>Rename of the resource whose name is at a place (where a service reads it, or where its AppHost declares it):
+    /// its name, the stretch of it there, and with a new name the edits that rename it where the AppHost declares it and
+    /// wherever its AppHost's services read it, worked out from the solution as it stands; no name where none is.</summary>
+    public static async Task<AspireRenaming> RenameAsync(Document document, Place at, string? newName, CancellationToken cancel)
+    {
+        SyntaxNode? root = await document.GetSyntaxRootAsync(cancel).ConfigureAwait(false);
+        if (root is null || await HostOfAsync(document, null, cancel).ConfigureAwait(false) is not ({ } host, _))
+        {
+            return new AspireRenaming(null, null, null, null);
+        }
+        Resource? resource = null;
+        TextSpan span = default;
+        if (await ReadAtAsync(document, at, cancel).ConfigureAwait(false) is { Read: { } read } && Named(host, read) is { } found)
+        {
+            (resource, span) = (found, read.Name);
+        }
+        else if (host.Document.Id == document.Id)
+        {
+            int offset = await Changes.OffsetAsync(document, at, cancel).ConfigureAwait(false);
+            resource = host.Resources.FirstOrDefault(r => r.NameExpression is LiteralExpressionSyntax literal && literal.SpanStart < offset && offset <= literal.Span.End);
+            span = resource?.NameExpression is LiteralExpressionSyntax named && NameSpan(named) is { } exact ? exact : resource?.NameExpression.Span ?? default;
+        }
+        if (resource is null)
+        {
+            return new AspireRenaming(null, null, null, null);
+        }
+        SourceText text = await document.GetTextAsync(cancel).ConfigureAwait(false);
+        AspireRenaming described = new(resource.Name, PlaceAt(text, span.Start), PlaceAt(text, span.End), null);
+        if (newName is null)
+        {
+            return described;
+        }
+        if (ResourceNameProblem(newName) is { } wrong)
+        {
+            return described with { Made = new Refactored(wrong, []) };
+        }
+        if (host.Resources.Any(r => r != resource && string.Equals(r.Name, newName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return described with { Made = new Refactored($"The AppHost has a resource named {newName} already", []) };
+        }
+        if (resource.NameExpression is not LiteralExpressionSyntax declared || NameSpan(declared) is not { } declaredName)
+        {
+            return described with { Made = new Refactored($"{resource.Name} is not named by a plain string in the AppHost, so it is renamed by hand", []) };
+        }
+        Dictionary<string, List<Edit>> edits = new(StringComparer.Ordinal) { [host.Document.FilePath!] = [new Edit(PlaceAt(host.Text, declaredName.Start), PlaceAt(host.Text, declaredName.End), newName)] };
+        HashSet<string> projects = [.. host.Resources.Select(r => r.ProjectPath).OfType<string>()];
+        foreach (Project project in host.Document.Project.Solution.Projects.Where(p => projects.Any(path => SamePath(path, p.FilePath))))
+        {
+            foreach (Document source in project.Documents)
+            {
+                SyntaxNode? sourceRoot = await source.GetSyntaxRootAsync(cancel).ConfigureAwait(false);
+                SemanticModel? model = await source.GetSemanticModelAsync(cancel).ConfigureAwait(false);
+                if (sourceRoot is null || model is null || source.FilePath is null)
+                {
+                    continue;
+                }
+                SourceText sourceText = await source.GetTextAsync(cancel).ConfigureAwait(false);
+                foreach (LiteralExpressionSyntax literal in sourceRoot.DescendantNodes().OfType<LiteralExpressionSyntax>())
+                {
+                    if (ReadOf(literal, model, cancel) is not { } use || Named(host, use) != resource)
+                    {
+                        continue;
+                    }
+                    if (!use.Exact)
+                    {
+                        return described with { Made = new Refactored($"{Path.GetFileName(source.FilePath)} reads {resource.Name} in a string written with escapes, so it is renamed by hand", []) };
+                    }
+                    if (!edits.TryGetValue(source.FilePath, out List<Edit>? file))
+                    {
+                        edits[source.FilePath] = file = [];
+                    }
+                    file.Add(new Edit(PlaceAt(sourceText, use.Name.Start), PlaceAt(sourceText, use.Name.End), newName));
+                }
+            }
+        }
+        return described with { Made = new Refactored(null, [.. edits.Select(e => new FileChange(e.Key, false, e.Value))]) };
+    }
+
+    /// <summary>The stretch of a plain string literal that is its text, between its quotes; null for one written otherwise
+    /// (escapes, verbatim, raw), whose text is not its characters one for one.</summary>
+    private static TextSpan? NameSpan(LiteralExpressionSyntax literal) =>
+        literal.IsKind(SyntaxKind.StringLiteralExpression) && literal.Token.Text == "\"" + literal.Token.ValueText + "\""
+            ? new TextSpan(literal.SpanStart + 1, literal.Token.ValueText.Length) : null;
+
+    /// <summary>Why a name is no resource's, by Aspire's rule for them: ASCII letters, digits and single dashes, beginning with
+    /// a letter and ending with no dash, at most 64 characters; null for one that is.</summary>
+    private static string? ResourceNameProblem(string name) =>
+        name.Length is 0 or > 64 ? "A resource's name has 1 to 64 characters"
+        : !char.IsAsciiLetter(name[0]) ? "A resource's name begins with a letter"
+        : name.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-') ? "A resource's name has only letters, digits and dashes"
+        : name.EndsWith('-') || name.Contains("--", StringComparison.Ordinal) ? "A resource's name has no dash at its end and no two together"
+        : null;
 
     internal static async Task<string?> ProjectPathAsync(Document document, InvocationExpressionSyntax call, SemanticModel model, CancellationToken cancel)
     {

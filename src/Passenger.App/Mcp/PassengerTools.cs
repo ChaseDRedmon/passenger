@@ -303,7 +303,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
         "Renames the symbol at a position everywhere it is used, as Rename does, and saves the files. A type's files named " +
-        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false. In XAML: an element's name and its " +
+        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false; an Aspire resource's name in a string, " +
+        "where its AppHost declares it and its services read it. In XAML: an element's name and its " +
         "code-behind field's uses. In the web languages, their server's; in JSON a property, and in package.json's scripts " +
         "every npm run of one. MSBuild files have none.")]
     public Task<string> Rename(string path, int line, int column, string newName,
@@ -323,6 +324,17 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         ServerServed server = (ServerServed)served;
         LspDocument lsp = server.Lsp;
+        if (server.Web is null && Session.AspireFiles.RoleOf(served.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireResourceAtAsync(lsp, offset) is { } resource)
+        {
+            RefactorOutcome made = await window.Assist.RenameResourceAsync(served.Document, offset, resource, newName, patience);
+            if (made.Problem is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            Editors.SaveAll();
+            return $"{made.Said}: {string.Join(", ", made.Files.Select(f => Relative(f.Path)).Distinct())}";
+        }
         (string Type, IReadOnlyList<string> Files)? named = server.Web is null && Session.CSharp?.Session?.Folder is { } folder
             ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
         DateTime asked = DateTime.UtcNow;

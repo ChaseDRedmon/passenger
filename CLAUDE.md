@@ -842,7 +842,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
   connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
   service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one
-  declaration path with MCP's `definition` (`CodeAssist.AspireDeclarationAsync`), and Edit Configurations and the gutter's
+  declaration path with MCP's `definition` (`CodeAssist.AspireDeclarationAsync`), Rename on such a name, or on the name
+  where the AppHost declares it, renames the resource there and wherever its AppHost's services read it (`AspireRename`,
+  worked out again as it is made, one command of global undo, MCP's `rename` too; `CodeAssist.RenameResourceAsync`),
+  and Edit Configurations and the gutter's
   `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost

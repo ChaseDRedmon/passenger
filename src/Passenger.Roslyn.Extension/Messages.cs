@@ -24,11 +24,13 @@ public static class Handlers
     public const string AspireCodeHelp = "Passenger.Roslyn.Extension.AspireCodeHelp";
     public const string AspireReferenceFix = "Passenger.Roslyn.Extension.AspireReferenceFix";
     public const string AspireRunResources = "Passenger.Roslyn.Extension.AspireRunResources";
+    public const string AspireRename = "Passenger.Roslyn.Extension.AspireRename";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
         DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
+        AspireRename,
     ];
 }
 
@@ -73,6 +75,13 @@ public sealed record AspireMissingReference(Place Start, Place End, string Servi
 
 /// <summary>Names valid at the caret's string argument and references missing from this service's AppHost.</summary>
 public sealed record AspireHelp(Place? Start, Place? End, IReadOnlyList<string> Names, IReadOnlyList<AspireMissingReference> Missing, string? Evidence = null);
+
+/// <summary>Rename of the resource whose name is at a place: described (no new name), or made with the new name.</summary>
+public sealed record AspireRenameRequest([property: JsonPropertyName("at")] Place At, [property: JsonPropertyName("newName")] string? NewName = null);
+
+/// <summary>The resource a rename would rename, by its name and the stretch of it at the place asked (none where no resource's
+/// name is), and once a new name is given, what renaming it changes or why it does not.</summary>
+public sealed record AspireRenaming(string? Name, Place? Start, Place? End, Refactored? Made);
 
 /// <summary>The AppHost whose proven project resources and source locations are read.</summary>
 public sealed record AspireResourcesRequest(string AppHost);
