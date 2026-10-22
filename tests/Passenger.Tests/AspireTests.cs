@@ -245,7 +245,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         Ui.Click(window.EditorArea.CodeEditor);
         Assert.Same(document, window.EditorArea.Active);
         Assert.Same(document.Text, window.EditorArea.CodeEditor.Document);
-        Ui.Press(window, "control A");
+        Ui.Run(window, Passenger.Editor.EditorActions.SelectAll);
         Ui.Await(Complete(window.Clipboard!.SetTextAsync(after)), "the edited source on the clipboard");
         Assert.Same(document, window.EditorArea.Active);
         Assert.Same(document.Text, window.EditorArea.CodeEditor.Document);
@@ -609,7 +609,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Ui.Click(form.Primary);
             Ui.WaitFor(() => File.Exists(answered), "the real AppHost's submitted value");
             Assert.Equal("latest value", File.ReadAllText(answered));
-            Ui.WaitFor(() => !window.OwnedWindows.OfType<AspireInteractionDialog>().Any(), "the completed native form to close");
+            // The form alone: the AppHost may say other things meanwhile, as that the development certificate is not trusted.
+            Ui.WaitFor(() => !window.OwnedWindows.OfType<AspireInteractionDialog>().Contains(form), "the completed form to close");
         }
         finally
         {

@@ -605,9 +605,9 @@ public sealed class AspireView : DockPanel, IDisposable
             throw new InvalidDataException("The owned AppHost snapshot exceeds 256 resources or has duplicate names.");
         }
         AspireResource? old = SelectedResource;
-        bool consoleChanged = !resources.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden"))
+        bool consoleChanged = !resources.Where(resource => !resource.IsHidden)
             .Select(resource => (resource.Name, resource.Generation)).OrderBy(item => item.Name)
-            .SequenceEqual(snapshot.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden"))
+            .SequenceEqual(snapshot.Where(resource => !resource.IsHidden)
                 .Select(resource => (resource.Name, resource.Generation)).OrderBy(item => item.Name));
         bool commandEnabled = commandBar.IsEnabled;
         updating = true;
@@ -660,7 +660,7 @@ public sealed class AspireView : DockPanel, IDisposable
             streamedResources.Clear();
             return;
         }
-        Dictionary<string, string> next = resources.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden"))
+        Dictionary<string, string> next = resources.Where(resource => !resource.IsHidden)
             .ToDictionary(resource => resource.Name, resource => resource.Generation, StringComparer.Ordinal);
         if (consoleReading is not null && next.Count == streamedResources.Count
             && next.All(pair => streamedResources.GetValueOrDefault(pair.Key) == pair.Value))
@@ -943,7 +943,7 @@ public sealed class AspireView : DockPanel, IDisposable
 
     private void SetVisibleResources(string? selectedName)
     {
-        AspireResource[] visible = resources.Where(resource => !AspireJson.Boolean(resource.Data, "isHidden")).ToArray();
+        AspireResource[] visible = resources.Where(resource => !resource.IsHidden).ToArray();
         HashSet<string> expanded = resourceNodes.Where(pair => pair.Value.IsExpanded).Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal);
         resourceNodes.Clear();
         Dictionary<string, string> parents = new(StringComparer.Ordinal);

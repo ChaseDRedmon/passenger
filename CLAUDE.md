@@ -1816,8 +1816,7 @@ the assembly's one collection, class after class; beside them run only the debug
 (`DebugSession.Collection`) and `Beside`'s classes, one after another: a class that opens no window, waits on nothing of
 the headless session's, changes nothing the process shares (its PATH, its environment) and holds nothing to a time, so a
 busy machine only lengthens it (`AspireExecutionServerTests`, `AspireTelemetryTests`, `McpLanguagesTests`, whose
-Passengers are processes of their own; not `AspireClientTests`, which changes the PATH, nor `McpTests`, which holds a git
-status to ten seconds). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
+Passengers are processes of their own; not `McpTests`, which holds a git status to ten seconds). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
 window answers, a profile's samples, the debugger's evaluation limit), or that debugs through the window, goes in
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
@@ -2017,8 +2016,9 @@ stand-in resource service the test drives (`AspireInteractionHost`, admitting on
 prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
 (BannedSymbols);
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
-its execution listener; `AspireExecutionServerTests`, `AspireTelemetryTests` and `AspireClientTests` speak to the
-execution server, a stand-in dashboard and a stand-in CLI (a shell script, so skipped on Windows) on loopback, and
+its execution listener; `AspireExecutionServerTests` and `AspireTelemetryTests` speak to the execution server and a
+stand-in dashboard on loopback, AspireStandInTests' windows run a stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`,
+a shell script, so skipped on Windows), and
 `AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive

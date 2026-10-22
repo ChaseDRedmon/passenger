@@ -502,7 +502,70 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
-    /// <summary>A stand-in aspire CLI in a folder of the test's: its version and ps answers files beside it.</summary>
+    /// <summary>An AppHost the window did not start is read through the CLI: its addresses shown without the credentials or
+    /// query keys they carried, one that is no web address not offered at all, and the CLI's failure said with its secrets
+    /// masked.</summary>
+    [AvaloniaFact]
+    public void An_AppHost_read_through_the_CLI_shows_its_addresses_without_credentials_and_its_failure_masked()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in aspire CLI is a shell script, and Windows runs no shell script as a program");
+        project.Reset();
+        string cli = StandInCli();
+        string folder = Path.GetDirectoryName(cli)!;
+        File.WriteAllText(Path.Combine(folder, "version"), "13.6.3\n");
+        File.WriteAllText(Path.Combine(folder, "ps.json"), JsonSerializer.Serialize(new[]
+        {
+            new { appHostPath = PathNames.Canonical(project.ProjectFile), appHostPid = Environment.ProcessId, status = "Running" },
+        }));
+        File.WriteAllText(Path.Combine(folder, "resources.json"), JsonSerializer.Serialize(new
+        {
+            resources = new[]
+            {
+                new
+                {
+                    name = "api",
+                    displayName = "api",
+                    state = "Running",
+                    healthStatus = "Healthy",
+                    properties = new { },
+                    environment = new { },
+                    commands = new { },
+                    urls = new[] { new { url = "http://user:password@localhost:8080/?api_key=private&view=1" }, new { url = "javascript:alert(1)" } },
+                },
+            },
+        }));
+        MainWindow window = OpenWithCli(cli);
+        try
+        {
+            FindAction(window, "Discover Aspire AppHosts");
+            Ui.WaitFor(() => window.Aspire.AppSelector.Items.Count == 1, $"the CLI's AppHost ({window.Aspire.Status})");
+            ComboBox chooser = window.Aspire.AppSelector;
+            Ui.Click(chooser);
+            Ui.Press(window, "HOME");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "api"), $"the CLI's resource ({window.Aspire.Status})");
+            FindAction(window, "Show Aspire Resources");
+            string[] Tips() => [.. window.Aspire.ResourceList.GetVisualDescendants().OfType<Button>().Select(button => ToolTip.GetTip(button) as string).OfType<string>()];
+            Ui.WaitFor(() => Tips().Any(tip => tip.TrimEnd('/') == "http://localhost:8080/?view=1"), $"the resource's address as a link ({string.Join(", ", Tips())})");
+            string[] tips = Tips();
+            Assert.DoesNotContain(tips, tip => tip.Contains("password", StringComparison.Ordinal) || tip.Contains("private", StringComparison.Ordinal)
+                || tip.StartsWith("javascript", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain("password", window.Aspire.ResourceSnapshots.Single().Data.GetRawText(), StringComparison.Ordinal);
+
+            File.WriteAllText(Path.Combine(folder, "failure"), "Configuration failed: Password=synthetic-password; Authorization=Bearer synthetic-token");
+            FindAction(window, "Refresh Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Status.Contains("Configuration failed", StringComparison.Ordinal), $"the CLI's failure said ({window.Aspire.Status})");
+            Assert.DoesNotContain("synthetic-password", window.Aspire.Status, StringComparison.Ordinal);
+            Assert.DoesNotContain("synthetic-token", window.Aspire.Status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A stand-in aspire CLI in a folder of the test's: its version, ps and describe answers files beside it, and a
+    /// failure file, when there is one, its error and exit code 9.</summary>
     private static string StandInCli()
     {
         string folder = TestFolders.Create("aspire-cli-");

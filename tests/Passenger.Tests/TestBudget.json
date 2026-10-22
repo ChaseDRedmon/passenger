@@ -76,7 +76,6 @@
     "AspireCodeHelpTests": 120,
     "AspireExternalDataTests": 120,
     "AspireTests": 1500,
-    "AspireClientTests": 60,
     "AspireTelemetryTests": 60,
     "AspireExecutionServerTests": 60,
     "AspireContainerRecoveryTests": 60
