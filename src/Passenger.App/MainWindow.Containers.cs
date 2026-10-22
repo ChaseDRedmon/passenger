@@ -2,6 +2,7 @@ using System.Text.Json;
 using Passenger.App.Containers;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
+using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
@@ -30,6 +31,8 @@ public partial class MainWindow
         view.StateRead += (_, state) => ShowEngine(state);
         view.Files.Opened += (_, copy) => OpenCopy(copy);
         view.Files.Problem += (_, problem) => status.Text = problem;
+        // The window's first use of it: Inspect's copies an earlier Passenger wrote unmasked go before anything reads them.
+        view.AttachedToVisualTree += (_, _) => _ = ForgetUnmaskedCopiesAsync();
         Dock.Add(new Docking.ToolWindow("containers", "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowContainers,
@@ -228,7 +231,8 @@ public partial class MainWindow
             return;
         }
         ContainerEngine engine = Engine;
-        string copy = Path.Combine(StateFolder, "cache", "containers", "inspect", $"{string.Concat(row.Name.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_'))}.json");
+        await ForgetUnmaskedCopiesAsync();
+        string copy = Path.Combine(ContainerSecrets.InspectCopies(StateFolder), $"{string.Concat(row.Name.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_'))}.json");
         string? problem = await BackgroundWork.Run(async () =>
         {
             try
@@ -250,6 +254,26 @@ public partial class MainWindow
             return;
         }
         OpenCopy(copy);
+    }
+
+    /// <summary>Inspect's copies an earlier Passenger wrote before it masked them, removed off the UI thread once a process
+    /// for the window's state (<see cref="ContainerSecrets.ForgetUnmasked"/>): as the window starts and at its Containers
+    /// window's first use. A tab that showed one closes, since its text holds the secret, and the status bar says why.</summary>
+    private async Task ForgetUnmaskedCopiesAsync()
+    {
+        string state = StateFolder;
+        IReadOnlyList<string> removed = await BackgroundWork.Run(() => ContainerSecrets.ForgetUnmasked(state));
+        if (removed.Count == 0)
+        {
+            return;
+        }
+        foreach (OpenDocument shown in Editors.Documents.Where(d => removed.Contains(d.Path)).ToList())
+        {
+            Editors.CloseDeleted(shown);
+        }
+        status.Text = removed.Count == 1
+            ? $"Removed {Path.GetFileName(removed[0])}, Inspect's copy written before Passenger masked the secrets in it"
+            : $"Removed {removed.Count} of Inspect's copies written before Passenger masked the secrets in them";
     }
 
     /// <summary>Inspect's JSON as it reads: indented, its characters (a masked secret's dots, an image's names) as they are.</summary>

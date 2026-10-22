@@ -85,7 +85,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         {
             if (resolved.TryGetValue(expression, out string? value))
             {
-                bool secret = Names(expression).Any(Secret) || NamesBefore(read, text, start).Any(Secret) || InPassword(text, start, end);
+                bool secret = Names(expression).Any(ContainerSecrets.Secret) || NamesBefore(read, text, start).Any(ContainerSecrets.Secret) || InPassword(text, start, end);
                 hints.Add(new InlayHint(end, $"= {Shown(value, secret)}", PadLeft: true, Kind: InlayHintKind.Value));
             }
         }
@@ -202,7 +202,7 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
                 }
                 if (At(after.RootElement, entry.Path) is { } now && Scalar(now) is { } ends && ends != value)
                 {
-                    bool secret = entry.Path.Any(Secret) || (ItemName().Match(written) is { Success: true } item && Secret(item.Groups["name"].Value));
+                    bool secret = entry.Path.Any(ContainerSecrets.Secret) || (ItemName().Match(written) is { Success: true } item && ContainerSecrets.Secret(item.Groups["name"].Value));
                     hints.Add(new InlayHint(entry.ValueEnd, $"{overrideName}: {Shown(ends, secret)}", PadLeft: true, Kind: InlayHintKind.Value));
                 }
             }
@@ -244,54 +244,6 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         _ => null,
     };
 
-    /// <summary>What a hint shows of a secret's value: the same dots whatever its length, so a shared screen never shows it.</summary>
-    private const string Masked = "••••••";
-
-    /// <summary>What makes a name a secret's anywhere in it, its case, underscores, dashes and dots aside (DBPASSWORD,
-    /// SECRETKEY, ConnectionStrings__Shop).</summary>
-    private static readonly string[] Anywhere = ["PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL", "CONNECTIONSTRING"];
-
-    /// <summary>What makes a name a secret's as a word of it (DB_PASS, MYSQL_PW, DB_PWD, API_KEY), or its plural.</summary>
-    private static readonly HashSet<string> Whole = new(StringComparer.Ordinal) { "PASS", "PW", "PWD", "KEY" };
-
-    /// <summary>The words that end in KEY and name no key (a word ending in KEY otherwise is one: APIKEY, ACCESSKEY).</summary>
-    private static readonly HashSet<string> Ordinary = new(StringComparer.Ordinal)
-    {
-        "MONKEY", "DONKEY", "TURKEY", "JOCKEY", "HOCKEY", "WHISKEY", "LACKEY", "FLUNKEY", "MALARKEY", "HOTKEY", "TURNKEY",
-    };
-
-    /// <summary>The shell's working folders, paths a compose file's volumes are written with, whose PWD is no password's.</summary>
-    private static readonly HashSet<string> Folders = new(StringComparer.Ordinal) { "PWD", "OLDPWD" };
-
-    /// <summary>Whether a name's value is a secret: it holds one of <see cref="Anywhere"/>, or a word of it (between
-    /// underscores, dashes or dots, or where its case turns, as apiKey's Key) is one of <see cref="Whole"/> or its plural,
-    /// or ends in KEY but for <see cref="Ordinary"/>'s words; so DBPASSWORD, APIKEY and DB_PASS are and MONKEY is not,
-    /// nor the shell's own PWD and OLDPWD (<see cref="Folders"/>).</summary>
-    internal static bool Secret(string name)
-    {
-        if (Folders.Contains(name))
-        {
-            return false;
-        }
-        string squeezed = name.Replace("_", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal)
-            .Replace(".", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
-        if (Anywhere.Any(s => squeezed.Contains(s, StringComparison.Ordinal)))
-        {
-            return true;
-        }
-        foreach (string word in Words().Split(name).Where(w => w.Length > 0).Select(w => w.ToUpperInvariant()))
-        {
-            string single = word.Length > 1 && word[^1] == 'S' ? word[..^1] : word;
-            if (Whole.Contains(word) || Whole.Contains(single)
-                || (word.EndsWith("KEY", StringComparison.Ordinal) && !Ordinary.Contains(word))
-                || (single.EndsWith("KEY", StringComparison.Ordinal) && !Ordinary.Contains(single)))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /// <summary>Every variable an expression reads, its default's included (<c>${A:-${DB_PASSWORD}}</c>).</summary>
     private static IEnumerable<string> Names(string expression) => VariableName().Matches(expression).Select(m => m.Groups[1].Value);
 
@@ -325,25 +277,23 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     {
         int lineStart = text.LastIndexOf('\n', Math.Max(0, start - 1)) + 1;
         int lineEnd = text.IndexOf('\n', end) is int next and >= 0 ? next : text.Length;
-        return UserBefore().IsMatch(text[lineStart..start]) && HostAfter().IsMatch(text[end..lineEnd]);
+        return ContainerSecrets.AtUrlPassword(text[lineStart..start], text[end..lineEnd]);
     }
 
-    /// <summary>A value as a hint shows it: a secret's as <see cref="Masked"/>; else with any URL's password masked, its
-    /// first line, cut at <see cref="Longest"/>, an empty one as "".</summary>
+    /// <summary>A value as a hint shows it, by Passenger's one rule for secrets (<see cref="ContainerSecrets"/>): a
+    /// secret's as its dots; else with a URL's password and a connection string's so masked, its first line, cut at
+    /// <see cref="Longest"/>, an empty one as "".</summary>
     private static string Shown(string value, bool secret)
     {
         if (secret)
         {
-            return Masked;
+            return ContainerSecrets.Masked;
         }
-        string bare = UrlPassword().Replace(value, $"${{head}}{Masked}@");
+        string bare = ContainerSecrets.InValue(value);
         int line = bare.IndexOfAny(['\r', '\n']);
         string shown = line < 0 ? bare : bare[..line] + "…";
         return shown.Length == 0 ? "\"\"" : shown.Length > Longest ? shown[..(Longest - 1)] + "…" : shown;
     }
-
-    [GeneratedRegex(@"[_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")]
-    private static partial Regex Words();
 
     [GeneratedRegex(@"\$\{?([A-Za-z_][A-Za-z0-9_]*)")]
     private static partial Regex VariableName();
@@ -353,15 +303,6 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
 
     [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_.\-]*)\s*[=:]\s*[""']?$")]
     private static partial Regex NameJustBefore();
-
-    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9+.\-]*://[^\s/@]*:[^\s/@]*$")]
-    private static partial Regex UserBefore();
-
-    [GeneratedRegex(@"^[^\s/@]*@")]
-    private static partial Regex HostAfter();
-
-    [GeneratedRegex(@"(?<head>[A-Za-z][A-Za-z0-9+.\-]*://[^\s/@:]*:)[^\s@]*@")]
-    private static partial Regex UrlPassword();
 
     /// <summary>What Compose said of the failure: its last line that is not one of its log's warnings.</summary>
     private static string Error(ChildResult result) =>

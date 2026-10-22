@@ -510,8 +510,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   copy's place is refused unless it is under the container's folder of the cache (links resolved), the tar is read as it
   comes and a file over 16 MB refused at its header, the copy written beside its place and renamed over it, and a copy
   opened again, as Inspect's is, takes its new text in the tab it has, `MainWindow.OpenCopy`). A container's secrets
-  (`ContainerSecrets`: a variable `ComposeCheck.Secret` names one, a URL's password, a connection string's part so named)
-  show masked in Details and in Inspect's JSON, whose copy is written masked. Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
+  (`ContainerSecrets`, Passenger's one rule and mask for secrets, which a compose file's hints follow too: a variable
+  `ContainerSecrets.Secret` names one, a URL's password, a connection string's part so named) show masked in Details and
+  in Inspect's JSON, whose copy is written masked; a copy an earlier Passenger wrote unmasked (one its masking would
+  change) is deleted off the UI thread once a process for each state folder, as the window starts and at its Containers
+  window's first use, a tab showing it closed and the status bar saying why (`ContainerSecrets.ForgetUnmasked`). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
   Remove ask first; a project's Remove is `down`, its volumes kept, and `container_action` reaches no volume or image.
   The status bar and Problems' Containers tab say the engine's problem, the link starting Docker Desktop where it is
   installed; a test run of a project referencing a `Testcontainers*` package asks the engine first
@@ -540,10 +543,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one
   whose variable, the key or list item's `KEY=` it is given to, or the name just before it (`Password=`) is a secret's
-  (`ComposeCheck.Secret`: PASSWORD, PASSWD, SECRET, TOKEN, CREDENTIAL or CONNECTIONSTRING anywhere in it, `_`, `-`, `.`
+  (`ContainerSecrets.Secret`: PASSWORD, PASSWD, SECRET, TOKEN, CREDENTIAL or CONNECTIONSTRING anywhere in it, `_`, `-`, `.`
   and case aside; or a word of it, split there and at case turns, PASS, PW, PWD or KEY, or its plural, or ending in KEY
   but for an ordinary word's, as MONKEY's; never the shell's own `PWD` and `OLDPWD`), or that stands as a URL's password
-  (`postgres://u:${PGPASS}@db`); a value holding such a URL shows it with its password as the dots. Their problems are Problems'
+  (`postgres://u:${PGPASS}@db`); a value holding such a URL shows it with its password as the dots, and one holding a
+  connection string its part so named (`ContainerSecrets.InValue`). Their problems are Problems'
   Containers tab by file
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a

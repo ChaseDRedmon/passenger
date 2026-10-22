@@ -304,6 +304,7 @@ public partial class MainWindow : Window
             welcome.FocusSearch();
         }
         PreloadTemplates();
+        _ = ForgetUnmaskedCopiesAsync();
     }
 
     private string? followed;

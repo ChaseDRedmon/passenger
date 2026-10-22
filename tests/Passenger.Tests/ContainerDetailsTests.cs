@@ -14,8 +14,9 @@ namespace Passenger.Tests;
 /// <summary>The Containers window's Details tab and Inspect, as a person reads a container whose health check fails: a
 /// Compose service's row shows its container's environment with each secret masked (a secret's variable, a URL's password,
 /// a connection string's), its health check's last outputs (so "unhealthy" says why), its port as a link, its volume,
-/// network and the service it waits for; and Inspect's JSON masks the secrets too, in its tab and in the copy it writes.
-/// Skipped, saying why, where no Linux engine runs; everything the test makes carries the run's label.</summary>
+/// network and the service it waits for; and Inspect's JSON masks the secrets too, in its tab and in the copy it writes,
+/// a copy an earlier Passenger wrote unmasked removed. The engine's test skips, saying why, where no Linux engine runs;
+/// everything it makes carries the run's label.</summary>
 public sealed class ContainerDetailsTests
 {
     private const string Secret = "hunter2";
@@ -117,6 +118,45 @@ public sealed class ContainerDetailsTests
             Assert.True(!File.ReadAllText(file).Contains(Secret, StringComparison.Ordinal), $"{file}, which Passenger wrote, holds the password");
         }
         window.Close();
+    }
+
+    /// <summary>Inspect's copies an earlier Passenger wrote before it masked them hold secrets whole: the window's first use of
+    /// the Containers window removes them (a tab that showed one closes, the status bar saying why), and keeps a copy written
+    /// masked, which still opens. No engine is needed: the copies are only files under the state's cache.</summary>
+    [AvaloniaFact]
+    public void Inspect_copies_written_before_secrets_were_masked_are_removed_and_those_written_masked_kept()
+    {
+        string state = TestFolders.Create("ctr-inspect-state-");
+        string copies = Path.Combine(state, "cache", "containers", "inspect");
+        Directory.CreateDirectory(copies);
+        string old = Path.Combine(copies, "shop-db-1.json");
+        string masked = Path.Combine(copies, "shop-web-1.json");
+        File.WriteAllText(old, $"[{{ \"Config\": {{ \"Env\": [\"POSTGRES_PASSWORD={Secret}\", \"PGDATA=/data\"] }} }}]\n");
+        File.WriteAllText(masked, $"[{{ \"Config\": {{ \"Env\": [\"DB_PASSWORD={ContainerSecrets.Masked}\", \"DATABASE_URL=postgres://app:{ContainerSecrets.Masked}@db/shop\", \"GREETING=hello\"] }} }}]\n");
+        MainWindow window = new() { Width = 1200, Height = 900, StateFolder = state };
+        window.Show();
+        try
+        {
+            window.OpenFolder(TestFolders.Create("ctr-inspect-window-"));
+            window.OpenFile(old);
+            Ui.Settle();
+            Assert.Equal(PathNames.Canonical(old), window.EditorArea.Active?.Path);
+
+            window.ShowToolWindow("containers");
+            Ui.Settle();
+            Assert.False(File.Exists(old), "Inspect's copy written before masking, holding a password, is still on disk");
+            Assert.True(File.Exists(masked), "Inspect's copy written masked was removed with the old one");
+            Assert.DoesNotContain(window.EditorArea.Documents, d => d.Path == PathNames.Canonical(old));
+            Assert.Equal("Removed shop-db-1.json, Inspect's copy written before Passenger masked the secrets in it", window.Status);
+
+            window.OpenFile(masked);
+            Ui.Settle();
+            Assert.Contains($"DB_PASSWORD={ContainerSecrets.Masked}", window.EditorArea.Active!.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     /// <summary>Every word the pane shows.</summary>
