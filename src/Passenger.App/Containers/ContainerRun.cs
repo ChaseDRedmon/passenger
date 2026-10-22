@@ -1184,6 +1184,11 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
         async Task<string?> RestartEachAsync(CancellationToken stop)
         {
+            // On Podman, stopped while another service keeps the run's log going: Compose's logs --follow crashes on Podman's late die.
+            if (made.Count > 0 && engine.Known is { IsPodman: true } && Plan.Touched.Except(made, StringComparer.Ordinal).Any())
+            {
+                await StreamAsync([.. Plan.Compose, "stop", "--", .. made], stop);
+            }
             foreach ((List<string> named, IReadOnlyList<string> words) in ((List<string>, IReadOnlyList<string>)[])[
                 (kept, [.. Plan.Compose, "restart", "--", .. kept]),
                 // As deployed, a service's image is built again from its Dockerfile and its container made anew from it.
