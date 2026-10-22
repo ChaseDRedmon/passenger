@@ -10,16 +10,17 @@ namespace Passenger.Inspector;
 /// <summary>The app's failed bindings, as Avalonia logs them in its Binding area: a sink of the inspector's takes Avalonia's
 /// logger from before the app's Main, and again over whichever sink the app sets (its LogToTrace), handing the app's sink
 /// everything it asked for, so the app logs as it always did. Each distinct failure (its control's XAML element, property,
-/// path and message) is sent the first time and its count again as it repeats, a quarter second apart at most. In a debugged
-/// app each failure, repeats too, also calls <see cref="Breaks.BindingFailed"/> before Avalonia goes on. Non-user code, so
-/// the stop there shows the app's own code below as where it stopped.</summary>
+/// path and message) is sent the first time and its count again as it repeats, a quarter second apart at most; past the
+/// most it lists, failures are only counted, their count said (untold) as repeats are. In a debugged app each failure,
+/// repeats too, also calls <see cref="Breaks.BindingFailed"/> before Avalonia goes on. Non-user code, so the stop there
+/// shows the app's own code below as where it stopped.</summary>
 [DebuggerNonUserCode]
 internal static partial class Bindings
 {
     /// <summary>How long repeats of a failure gather before their count is sent.</summary>
     private static readonly TimeSpan Gather = TimeSpan.FromMilliseconds(250);
 
-    /// <summary>Distinct failures past this are not counted: an app failing without end says nothing new.</summary>
+    /// <summary>Distinct failures past this are not listed, only counted: an app failing without end says nothing new.</summary>
     private const int Most = 1000;
 
     private static readonly object Gate = new();
@@ -29,6 +30,10 @@ internal static partial class Bindings
     private static Timer? timer;
     private static bool gathering;
     private static volatile bool stopped;
+
+    /// <summary>The failures past the most listed, every time each failed, and as many as were last said.</summary>
+    private static int untold;
+    private static int untoldSaid;
 
     /// <summary>Whether a sink of the inspector's has this call already, the app's own sink wrapping one of them.</summary>
     [ThreadStatic]
@@ -114,26 +119,29 @@ internal static partial class Bindings
             if (Seen.TryGetValue(key, out Failure? known))
             {
                 known.Count++;
-                if (!gathering)
-                {
-                    gathering = true;
-                    timer?.Change(Gather, Timeout.InfiniteTimeSpan);
-                }
+                FlushLater();
                 failure = known.First with { Count = known.Count };
             }
             else if (Seen.Count >= Most && !debugged)
             {
+                untold++;
+                FlushLater();
                 return;
             }
             else
             {
-                // Past the most counted, a debugged app's failure still stops, without the nearest names to offer.
+                // Past the most listed, a debugged app's failure still stops, without the nearest names to offer.
                 (string? type, string? member, IReadOnlyList<string> nearest) = Seen.Count < Most ? Missing(message) : (null, null, []);
                 failure = new BindingFailure(Seen.Count + 1, level.ToString(), control, property, path, point, message, place, type, member, nearest, 1);
                 if (Seen.Count < Most)
                 {
                     Seen[key] = new Failure(failure) { Count = 1, Sent = 1 };
                     send = failure;
+                }
+                else
+                {
+                    untold++;
+                    FlushLater();
                 }
             }
         }
@@ -150,10 +158,21 @@ internal static partial class Bindings
         }
     }
 
-    /// <summary>Sends the count of each failure that repeated since it was last sent.</summary>
+    /// <summary>A flush of the counts a moment from now, unless one is due already; under <see cref="Gate"/>.</summary>
+    private static void FlushLater()
+    {
+        if (!gathering)
+        {
+            gathering = true;
+            timer?.Change(Gather, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>Sends the count of each failure that repeated since it was last sent, and of those not listed.</summary>
     private static void Flush()
     {
         List<BindingFailure> repeated = [];
+        int? unlisted = null;
         lock (Gate)
         {
             gathering = false;
@@ -165,10 +184,18 @@ internal static partial class Bindings
                     repeated.Add(failure.First with { Count = failure.Count });
                 }
             }
+            if (untold > untoldSaid)
+            {
+                unlisted = untoldSaid = untold;
+            }
         }
         foreach (BindingFailure failure in repeated)
         {
             connection?.Send(new Reply { Event = Wire.BindingFailed, Binding = failure });
+        }
+        if (unlisted is int count)
+        {
+            connection?.Untold(count);
         }
     }
 

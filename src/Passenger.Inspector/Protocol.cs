@@ -8,7 +8,8 @@ namespace Passenger.Inspector;
 // one framework has not (Avalonia's overlays, frames and binding values) the other's inspector refuses. Passenger asks
 // (Request) and the app answers each by its id (Reply); the app also tells without being asked (a Reply with an Event): hello
 // once its UI runs, treeChanged as controls come and go, picked when the person points at one, bindingFailed as a binding
-// fails (from before hello, as the app starts). An agent's tools ask the same: the windows, the tree with each element's
+// fails (from before hello, as the app starts), untold when it could not tell all it had (failed bindings past the most it
+// lists, messages left out while too many waited). An agent's tools ask the same: the windows, the tree with each element's
 // layout and text, a picture the app draws of a window, and input to it as a person's goes. A property breakpoint (Break When
 // Value Changes) asks it to watch an element's property, which stops the debugged app at each change its hit count lets
 // through (PropertyBreaks.cs); in a debugged app each failed binding also calls a method the XAML Binding Errors breakpoint
@@ -22,7 +23,7 @@ namespace Passenger.Inspector;
 public static class Wire
 {
     /// <summary>Bumped by a change either end must know of: a hello of another version is refused, saying so.</summary>
-    public const int Version = 5;
+    public const int Version = 6;
 
     /// <summary>The app's environment: the socket's path, where it connects.</summary>
     public const string SocketVariable = "PASSENGER_INSPECTOR";
@@ -80,6 +81,9 @@ public static class Wire
 
     /// <summary>A property whose binding the last values read showed has changed since: what was read is out of date.</summary>
     public const string ValuesChanged = "valuesChanged";
+
+    /// <summary>What the app could not tell so far (<see cref="Untold"/>), said again as it grows.</summary>
+    public const string Untold = "untold";
 }
 
 /// <summary>What Passenger asks: the windows' tree, an element's details, Select Element on or off, an element outlined in
@@ -255,7 +259,15 @@ public sealed record Reply
     public InputDone? Done { get; init; }
 
     public XamlValues? Values { get; init; }
+
+    /// <summary>What the app could not tell, with Untold.</summary>
+    public Untold? Untold { get; init; }
 }
+
+/// <summary>What the app could not tell since it started, in all: the failed bindings it counted but does not list (each
+/// distinct failure past the most it lists, every time it failed), and the messages it left out while too many waited to
+/// be written (none of them an answer, a binding failure or one of the events it merges: the inspector's own errors).</summary>
+public sealed record Untold(int Bindings, int Messages);
 
 /// <summary>The app's first word: its process, the Avalonia it runs (its assembly's version), and why the inspector cannot
 /// serve it when it cannot (another major version of Avalonia, none at all).</summary>

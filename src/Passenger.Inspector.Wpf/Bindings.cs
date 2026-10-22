@@ -12,15 +12,15 @@ namespace Passenger.Inspector.Wpf;
 /// <summary>A WPF app's failed bindings, its System.Windows.Data Error and Warning lines: WPF's binding trace is turned on at
 /// Warning before Main, debugger or not, a listener takes each line as WPF words it, and BindingDiagnostics.BindingFailed gives
 /// the binding itself (its element, property, path and XAML place). Each distinct failure is sent once and its count as it
-/// repeats; in a debugged app each also calls <see cref="Breaks.BindingFailed"/>. Non-user code, so a stop there shows the
-/// app's own code below.</summary>
+/// repeats; past the most it lists, failures are only counted, their count said (untold) as repeats are. In a debugged app
+/// each also calls <see cref="Breaks.BindingFailed"/>. Non-user code, so a stop there shows the app's own code below.</summary>
 [DebuggerNonUserCode]
 internal static partial class Bindings
 {
     /// <summary>How long repeats of a failure gather before their count is sent.</summary>
     private static readonly TimeSpan Gather = TimeSpan.FromMilliseconds(250);
 
-    /// <summary>Distinct failures past this are not counted: an app failing without end says nothing new.</summary>
+    /// <summary>Distinct failures past this are not listed, only counted: an app failing without end says nothing new.</summary>
     private const int Most = 1000;
 
     private static readonly object Gate = new();
@@ -32,6 +32,10 @@ internal static partial class Bindings
     private static bool gathering;
     private static bool diagnosed;
     private static volatile bool stopped;
+
+    /// <summary>The failures past the most listed, every time each failed, and as many as were last said.</summary>
+    private static int untold;
+    private static int untoldSaid;
 
     /// <summary>The line WPF's trace wrote last on this thread, which BindingFailed, raised right after it, names by its code.</summary>
     [ThreadStatic]
@@ -143,15 +147,13 @@ internal static partial class Bindings
             if (Seen.TryGetValue(key, out Failure? known))
             {
                 known.Count++;
-                if (!gathering)
-                {
-                    gathering = true;
-                    timer?.Change(Gather, Timeout.InfiniteTimeSpan);
-                }
+                FlushLater();
                 failure = known.First with { Count = known.Count };
             }
             else if (Seen.Count >= Most && !debugged)
             {
+                untold++;
+                FlushLater();
                 return;
             }
             else
@@ -166,6 +168,11 @@ internal static partial class Bindings
                 {
                     Seen[key] = new Failure(failure) { Count = 1, Sent = 1 };
                     send = failure;
+                }
+                else
+                {
+                    untold++;
+                    FlushLater();
                 }
             }
         }
@@ -362,10 +369,21 @@ internal static partial class Bindings
         return d[a.Length, b.Length];
     }
 
-    /// <summary>Sends the count of each failure that repeated since it was last sent.</summary>
+    /// <summary>A flush of the counts a moment from now, unless one is due already; under <see cref="Gate"/>.</summary>
+    private static void FlushLater()
+    {
+        if (!gathering)
+        {
+            gathering = true;
+            timer?.Change(Gather, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>Sends the count of each failure that repeated since it was last sent, and of those not listed.</summary>
     private static void Flush()
     {
         List<BindingFailure> repeated = [];
+        int? unlisted = null;
         lock (Gate)
         {
             gathering = false;
@@ -377,10 +395,18 @@ internal static partial class Bindings
                     repeated.Add(failure.First with { Count = failure.Count });
                 }
             }
+            if (untold > untoldSaid)
+            {
+                unlisted = untoldSaid = untold;
+            }
         }
         foreach (BindingFailure failure in repeated)
         {
             connection?.Send(new Reply { Event = Wire.BindingFailed, Binding = failure });
+        }
+        if (unlisted is int count)
+        {
+            connection?.Untold(count);
         }
     }
 

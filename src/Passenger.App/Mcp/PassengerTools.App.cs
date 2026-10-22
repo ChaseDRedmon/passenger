@@ -309,7 +309,8 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "app_binding_errors", Title = "The app's failed bindings", ReadOnly = true), Description(
         "The bindings that failed in the Avalonia or WPF apps Run and Debug started last (or the one named), each once: its " +
         "control, property, path, the framework's message (and the nearest members when its source lacks the one named), its " +
-        "place in the XAML and how many times it failed. An app that ended keeps its list until the next of its kind starts.")]
+        "place in the XAML and how many times it failed. An app that ended keeps its list until the next of its kind starts. " +
+        "Failures past the first 1000 an app lists are counted in one last entry of level Untold.")]
     public Task<IReadOnlyList<AppBindingError>> AppBindingErrors([Description(AppChoice)] string? app = null, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         IEnumerable<LiveApp> apps = app switch
@@ -325,14 +326,19 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException("No Avalonia or WPF app has been run or debugged in this folder; run or debug_start one");
         }
-        return Task.FromResult<IReadOnlyList<AppBindingError>>([.. chosen.SelectMany(live => live.Bindings.Select(failure =>
+        return Task.FromResult<IReadOnlyList<AppBindingError>>([.. chosen.SelectMany(live =>
         {
-            BindingProblem placed = Builds.Placed(live, failure);
-            Passenger.App.Run.Problem problem = placed.Problem;
-            return new AppBindingError(live == Session.LiveApp ? "debug" : live == Session.RunApp ? "run" : "ide", failure.Level, failure.Control,
-                failure.Property, failure.Path, BindingErrors.Message(failure),
-                problem.Path is { } file ? $"{Relative(file)}:{problem.Position.Line + 1}:{problem.Position.Column + 1}" : null, failure.Count, failure.Nearest);
-        }))]);
+            string which = live == Session.LiveApp ? "debug" : live == Session.RunApp ? "run" : "ide";
+            IEnumerable<AppBindingError> listed = live.Bindings.Select(failure =>
+            {
+                BindingProblem placed = Builds.Placed(live, failure);
+                Passenger.App.Run.Problem problem = placed.Problem;
+                return new AppBindingError(which, failure.Level, failure.Control, failure.Property, failure.Path, BindingErrors.Message(failure),
+                    problem.Path is { } file ? $"{Relative(file)}:{problem.Position.Line + 1}:{problem.Position.Column + 1}" : null, failure.Count, failure.Nearest);
+            });
+            return live.Untold.Bindings == 0 ? listed : listed.Concat(BindingErrors.Untold(live).Take(1).Select(untold =>
+                new AppBindingError(which, "Untold", string.Empty, string.Empty, string.Empty, $"{untold.Said}: {untold.Why}", null, live.Untold.Bindings, [])));
+        })]);
     });
 
     /// <summary>The app a tool acts on, once its UI is up: the one named, or the one running (Run's or Debug's), refusing in

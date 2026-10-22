@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
@@ -8,14 +7,40 @@ using System.Text.Json.Serialization.Metadata;
 namespace Passenger.Inspector;
 
 /// <summary>The app's end of the socket Passenger listens on: requests read a line at a time, and replies and events written
-/// by a thread of its own, so the app's UI thread never waits on Passenger. Nothing here touches Avalonia.</summary>
+/// by a thread of its own, so the app's UI thread never waits on Passenger. Answers go before every event waiting, and an
+/// event waits merged with what is still waiting of its kind: a binding failure's newer count in place of its older, one
+/// word that the tree or the values changed, the last pick, the newest of what is untold. What could grow without end (the
+/// inspector's own errors, each kept once by its words) waits only up to <see cref="MostWaiting"/>; past it the rest are
+/// left out, counted and said as untold. Nothing here touches Avalonia or WPF.</summary>
 internal sealed class Connection : IDisposable
 {
+    /// <summary>The unmerged events that may wait: past it another is left out. Those merged are bounded already, by their
+    /// kinds, and binding failures by the most distinct ones the inspector sends.</summary>
+    private const int MostWaiting = 1024;
+
     private readonly Socket socket;
     private readonly StreamReader reader;
     private readonly Stream stream;
-    private readonly BlockingCollection<Reply> outgoing = new(boundedCapacity: 1024);
     private readonly Thread writer;
+    private readonly object gate = new();
+
+    /// <summary>Answers to Passenger's requests, as many as it asked.</summary>
+    private readonly Queue<Reply> answers = new();
+
+    /// <summary>Events in the order first told, each in a slot a later one of its kind writes over until the writer takes it.</summary>
+    private readonly Queue<Slot> events = new();
+    private readonly Dictionary<string, Slot> waiting = new(StringComparer.Ordinal);
+
+    /// <summary>The slots waiting that count towards <see cref="MostWaiting"/>.</summary>
+    private int bounded;
+
+    /// <summary>The binding failures the inspector counted but does not list, as it last said.</summary>
+    private int untoldBindings;
+
+    /// <summary>The events left out while <see cref="MostWaiting"/> waited.</summary>
+    private int leftOut;
+
+    private bool ending;
 
     private Connection(Socket socket)
     {
@@ -105,28 +130,120 @@ internal sealed class Connection : IDisposable
     /// <summary>Queues a reply or an event; from any thread, never waiting on Passenger, and nothing once it has gone.</summary>
     public void Send(Reply reply)
     {
-        try
+        lock (gate)
         {
-            outgoing.TryAdd(reply);
+            if (ending)
+            {
+                // Passenger went while the app's thread was saying something (a binding failing).
+                return;
+            }
+            if (reply.Id is not null)
+            {
+                answers.Enqueue(reply);
+            }
+            else if (!Tell(reply))
+            {
+                leftOut++;
+                Tell(UntoldNow());
+            }
+            Monitor.Pulse(gate);
         }
-        catch (InvalidOperationException)
+    }
+
+    /// <summary>Says how many binding failures the inspector has counted but does not list, in all; from any thread.</summary>
+    public void Untold(int bindings)
+    {
+        lock (gate)
         {
-            // Closed as Passenger went, while the app's thread was saying something (a binding failing).
+            if (ending)
+            {
+                return;
+            }
+            untoldBindings = bindings;
+            Tell(UntoldNow());
+            Monitor.Pulse(gate);
+        }
+    }
+
+    private Reply UntoldNow() => new() { Event = Wire.Untold, Untold = new Untold(untoldBindings, leftOut) };
+
+    /// <summary>Puts an event in its kind's waiting slot, or in a new one; false when it is to be left out.</summary>
+    private bool Tell(Reply told)
+    {
+        (string key, bool counts) = KindOf(told);
+        if (waiting.TryGetValue(key, out Slot? slot))
+        {
+            slot.Reply = told;
+            return true;
+        }
+        if (counts && bounded >= MostWaiting)
+        {
+            return false;
+        }
+        slot = new Slot(key, counts, told);
+        waiting[key] = slot;
+        events.Enqueue(slot);
+        bounded += counts ? 1 : 0;
+        return true;
+    }
+
+    /// <summary>What an event is merged by while it waits, and whether it counts towards <see cref="MostWaiting"/>.</summary>
+    private static (string Key, bool Counts) KindOf(Reply told) => told switch
+    {
+        { Event: Wire.BindingFailed, Binding: { } failure } => ($"{Wire.BindingFailed} {failure.Id}", false),
+        { Event: Wire.Picked or Wire.PickEnded } => (Wire.Picked, false),
+        { Event: Wire.Hello or Wire.TreeChanged or Wire.ValuesChanged or Wire.Untold } => (told.Event, false),
+        _ => ($"{told.Event}\n{told.Error}", true),
+    };
+
+    /// <summary>The next to write, answers first, waiting for one; null once ending with nothing left.</summary>
+    private Reply? Next()
+    {
+        lock (gate)
+        {
+            while (true)
+            {
+                if (answers.TryDequeue(out Reply? answer))
+                {
+                    return answer;
+                }
+                if (events.TryDequeue(out Slot? slot))
+                {
+                    waiting.Remove(slot.Key);
+                    bounded -= slot.Counts ? 1 : 0;
+                    return slot.Reply;
+                }
+                if (ending)
+                {
+                    return null;
+                }
+                Monitor.Wait(gate);
+            }
         }
     }
 
     /// <summary>Waits a moment for what is queued to be written, as the inspector gives up on an app it cannot serve.</summary>
     internal void Drain()
     {
-        outgoing.CompleteAdding();
+        End();
         writer.Join(TimeSpan.FromSeconds(1));
+    }
+
+    /// <summary>Takes nothing more; the writer writes what waits and goes.</summary>
+    private void End()
+    {
+        lock (gate)
+        {
+            ending = true;
+            Monitor.Pulse(gate);
+        }
     }
 
     private void Write()
     {
         try
         {
-            foreach (Reply reply in outgoing.GetConsumingEnumerable())
+            while (Next() is { } reply)
             {
                 byte[] line;
                 try
@@ -151,7 +268,7 @@ internal sealed class Connection : IDisposable
 
     public void Dispose()
     {
-        outgoing.CompleteAdding();
+        End();
         try
         {
             socket.Shutdown(SocketShutdown.Both);
@@ -160,5 +277,15 @@ internal sealed class Connection : IDisposable
         {
         }
         reader.Dispose();
+    }
+
+    /// <summary>An event waiting, written over by a later one of its kind until the writer takes it.</summary>
+    private sealed class Slot(string key, bool counts, Reply reply)
+    {
+        public string Key { get; } = key;
+
+        public bool Counts { get; } = counts;
+
+        public Reply Reply { get; set; } = reply;
     }
 }

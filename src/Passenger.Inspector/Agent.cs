@@ -53,6 +53,8 @@ public static class Agent
         catch (Exception error)
         {
             connection.Send(new Reply { Event = Wire.Hello, Hello = new Hello(Wire.Version, Environment.ProcessId, avalonia, $"The inspector could not start: {error.Message}") });
+            // Written before the connection closes, so Passenger shows why rather than an app gone silent.
+            connection.Drain();
             Bindings.Stop();
             return;
         }

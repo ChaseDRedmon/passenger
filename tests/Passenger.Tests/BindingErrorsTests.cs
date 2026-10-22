@@ -298,6 +298,85 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
+    /// <summary>The app's flood (tests/Debuggees/BindingErrorsApp/Flood.cs): 3,000 rows whose bindings fail as its window opens
+    /// and again every 50 ms until it is calmed, far more than its inspector lists. Asked meanwhile, the Live Visual Tree is
+    /// answered, its answers going ahead of the failures waiting to be said; once the app is calm, every failure Avalonia
+    /// logged is either listed in Problems' Bindings, counted on its row, or counted under them as not listed.</summary>
+    [AvaloniaFact]
+    public void An_app_failing_thousands_of_bindings_as_it_opens_answers_the_live_visual_tree_and_problems_counts_every_failure()
+    {
+        MainWindow window = Opened();
+        // While the app floods, its failures keep the window busy: the waits run its loop rather than wait for it to be quiet.
+        Task<string?> launch = window.DebugAsync("flood");
+        Ui.PumpUntil(() => launch.IsCompleted, "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
+        Assert.True(launch.Result is null, $"The window refused to debug the app: {launch.Result}{Ui.BuildErrors(window)}");
+        LiveTreeView tree = window.LiveTree;
+        Ui.PumpUntil(() => window.LiveApp?.State is LiveAppState.Connected or LiveAppState.Refused or LiveAppState.Ended, "the app's inspector to say hello", TimeSpan.FromMinutes(2));
+        Assert.True(window.LiveApp?.State == LiveAppState.Connected, $"The app's inspector did not connect: {window.LiveApp?.State} {window.LiveApp?.Problem}");
+        // Past its first thousand failed bindings as it opens, the Debug console says the rest are counted, not listed (looked
+        // at as it comes, before the repeats' lines push it out of the console's head).
+        OutputView console = window.BottomPanel.Debug.Console;
+        Ui.PumpUntil(() =>
+        {
+            console.Flush();
+            return console.Document.Snapshot.ToString().Contains("binding errors past the first 1000 failed bindings are counted, not listed", StringComparison.Ordinal);
+        }, "the Debug console to say the failures past the first thousand are counted, not listed", TimeSpan.FromMinutes(1));
+        // Asked as the app connected: its answer comes within the time the window waits for one, the flood going on.
+        string last = $"Flooded{3000 - 1}";
+        if (!Ui.Pumped(() => tree.Rows.Any(r => r.Element.Name == last), LiveApp.AnswerLimit))
+        {
+            throw new Xunit.Sdk.XunitException($"The Live Visual Tree showed no flooded rows within {LiveApp.AnswerLimit.TotalSeconds} s of the app's hello: \"{tree.StatusLine}\"");
+        }
+        tree.Tree.SelectedItem = tree.Rows.First(r => r.Element.Name == "Flooded1500");
+        if (!Ui.Pumped(() => tree.Details?.Name == "Flooded1500", LiveApp.AnswerLimit))
+        {
+            throw new Xunit.Sdk.XunitException($"The Live Visual Tree showed no details of a flooded row within {LiveApp.AnswerLimit.TotalSeconds} s: \"{tree.StatusLine}\"");
+        }
+        Assert.DoesNotContain("did not answer", tree.StatusLine, StringComparison.Ordinal);
+
+        // Calmed, the app says how many failures Avalonia logged in all.
+        window.ShowToolWindow("debug");
+        window.BottomPanel.Debug.ShowTab(console: true);
+        Ui.PumpUntil(() => console.Editor.IsEffectivelyVisible && console.Editor.Bounds.Width > 0, "the Debug window's console to show");
+        console.Editor.Focus();
+        window.KeyTextInput("calm");
+        window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+        window.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+        int failed = 0;
+        Ui.PumpUntil(() =>
+        {
+            console.Flush();
+            string? calm = console.Document.Snapshot.ToString().Split('\n').FirstOrDefault(l => l.StartsWith("Calm after ", StringComparison.Ordinal));
+            return calm is not null && int.TryParse(calm.Split(' ')[2], out failed);
+        }, "the app to say how many of its bindings failed", TimeSpan.FromMinutes(1));
+        Assert.True(failed >= 2 * 3001, $"The app's 3,001 failing bindings failed only {failed} times before it was calmed, not as it opened and again since");
+
+        // Problems lists the first thousand, each with its count, and counts the rest beneath them: every failure, once.
+        ProblemsView problems = window.BottomPanel.Problems;
+        LiveApp app = window.LiveApp!;
+        int Accounted() => problems.BindingProblems.Sum(b => b.Failure.Count) + app.Untold.Bindings;
+        try
+        {
+            Ui.WaitFor(() => Accounted() == failed, $"Problems to account for all {failed} failures, listed or counted");
+        }
+        catch (TimeoutException)
+        {
+            throw new Xunit.Sdk.XunitException($"Of the app's {failed} binding failures, Problems listed {problems.BindingProblems.Sum(b => b.Failure.Count)} "
+                + $"(in {problems.BindingProblems.Count} rows) and counted {app.Untold.Bindings} more: {failed - Accounted()} went untold");
+        }
+        Assert.Equal(1000, problems.BindingProblems.Count);
+        Assert.Equal(0, app.Untold.Messages);
+        window.Perform(AppActions.ShowProblems);
+        problems.Shown = ProblemsTab.Bindings;
+        Ui.Settle();
+        Assert.Contains(problems.Rows, r => r.Problem is null && r.Label == $"{app.Untold.Bindings} more binding failures, not listed"
+            && r.Detail == "BindingErrorsApp lists its first 1000 failed bindings and only counts the failures of any after them");
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
+        window.Close();
+    }
+
     /// <summary>Text typed after XAML Binding Errors' condition in the Breakpoints window.</summary>
     private static void Condition(MainWindow window, string typed)
     {

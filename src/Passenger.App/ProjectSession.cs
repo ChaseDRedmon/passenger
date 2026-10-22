@@ -325,7 +325,10 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The bindings that failed in the apps Run and Debug launched last, each once with its count: those of an app
     /// that ended stay until the next of its kind launches.</summary>
     public IEnumerable<(LiveApp App, BindingFailure Failure)> FailedBindings =>
-        new[] { RunApp, LiveApp }.OfType<LiveApp>().SelectMany(app => app.Bindings.Select(failure => (app, failure)));
+        InspectedApps.SelectMany(app => app.Bindings.Select(failure => (app, failure)));
+
+    /// <summary>The apps Run and Debug launched last with an inspector in them, whose failed bindings Problems lists.</summary>
+    public IEnumerable<LiveApp> InspectedApps => new[] { RunApp, LiveApp }.OfType<LiveApp>();
 
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();

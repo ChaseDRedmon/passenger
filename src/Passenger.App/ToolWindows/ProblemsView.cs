@@ -70,6 +70,7 @@ public sealed class ProblemsView : DockPanel
     private IReadOnlyList<Problem>? solution;
     private IReadOnlyList<Problem> toolset = [];
     private IReadOnlyList<BindingProblem> bindings = [];
+    private IReadOnlyList<(string Said, string Why)> bindingsUntold = [];
     private IReadOnlyList<Problem>? hotReload;
     private string hotReloadSaid = string.Empty;
     private IReadOnlyList<Problem> containers = [];
@@ -299,12 +300,14 @@ public sealed class ProblemsView : DockPanel
         Refresh();
     }
 
-    /// <summary>The failed bindings, in Bindings, as often as their counts change: the row chosen stays chosen, and another
-    /// tab shown is left as it is but for the count on Bindings' own.</summary>
-    public void ShowBindings(IReadOnlyList<BindingProblem> problems)
+    /// <summary>The failed bindings, in Bindings, as often as their counts change, with what the apps could not tell of theirs
+    /// under them (<see cref="BindingErrors.Untold"/>): the row chosen stays chosen, and another tab shown is left as it is
+    /// but for the count on Bindings' own.</summary>
+    public void ShowBindings(IReadOnlyList<BindingProblem> problems, IReadOnlyList<(string Said, string Why)> untold)
     {
         bindings = [.. problems.OrderBy(b => b.Problem.Severity).ThenBy(b => b.Problem.Path, StringComparer.Ordinal)
             .ThenBy(b => b.Problem.Position.Line).ThenBy(b => b.Problem.Position.Column).ThenBy(b => b.Failure.Id)];
+        bindingsUntold = untold;
         if (Shown != ProblemsTab.Bindings)
         {
             Titles();
@@ -379,6 +382,10 @@ public sealed class ProblemsView : DockPanel
                     {
                         rows.Add(new ProblemRow(1, binding.Problem.Message, binding.Detail, binding.Problem));
                     }
+                }
+                foreach ((string said, string why) in bindingsUntold)
+                {
+                    rows.Add(new ProblemRow(0, said, why, null));
                 }
                 empty.Text = "No failed bindings: those of an Avalonia or WPF app run or debugged here are listed as they fail";
                 break;

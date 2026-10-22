@@ -53,6 +53,10 @@ public sealed class LiveApp : IDisposable
     private readonly CancellationTokenSource closing = new();
     private readonly Dictionary<int, TaskCompletionSource<Reply>> asked = [];
     private readonly SemaphoreSlim writing = new(1, 1);
+
+    /// <summary>What the app told unasked and the UI thread has yet to hear, which it hears all at once: an app saying
+    /// thousands of things at once (its bindings failing as it opens) is one crossing, not one each.</summary>
+    private readonly List<Reply> heard = [];
     private NetworkStream? stream;
     private int next;
 
@@ -189,6 +193,13 @@ public sealed class LiveApp : IDisposable
     public IReadOnlyList<BindingFailure> Bindings => [.. bindings.Values];
 
     private readonly Dictionary<int, BindingFailure> bindings = [];
+
+    /// <summary>What the app could not tell, as it last said: the binding failures it counted past those it lists, and the
+    /// messages its inspector left out while too many waited.</summary>
+    public Untold Untold { get; private set; } = new(0, 0);
+
+    /// <summary>The app said it could not tell more than it had said (<see cref="Untold"/>).</summary>
+    public event EventHandler? UntoldChanged;
 
     /// <summary>The live app for a plan whose program is built with Avalonia (Avalonia.Base beside its assembly), showing
     /// these renderer debug overlays from its first window, or, with <paramref name="wpf"/>, on Windows with WPF (its
@@ -418,10 +429,17 @@ public sealed class LiveApp : IDisposable
                 if (reply.Id is int id)
                 {
                     Answered(id, reply);
+                    continue;
                 }
-                else
+                bool first;
+                lock (heard)
                 {
-                    UiThread.Post(() => Told(reply));
+                    first = heard.Count == 0;
+                    heard.Add(reply);
+                }
+                if (first)
+                {
+                    UiThread.Post(Hear);
                 }
             }
         }
@@ -472,6 +490,21 @@ public sealed class LiveApp : IDisposable
         }
     }
 
+    /// <summary>Everything the app has told unasked since the UI thread last heard it, in the order told.</summary>
+    private void Hear()
+    {
+        List<Reply> told;
+        lock (heard)
+        {
+            told = [.. heard];
+            heard.Clear();
+        }
+        foreach (Reply reply in told)
+        {
+            Told(reply);
+        }
+    }
+
     /// <summary>What the app tells unasked, on the UI thread.</summary>
     private void Told(Reply reply)
     {
@@ -517,6 +550,14 @@ public sealed class LiveApp : IDisposable
                 break;
             case Wire.BindingFailed when reply.Error is { } why:
                 IdeErrors.Write($"{Name}: {why}");
+                break;
+            case Wire.Untold when reply.Untold is { } untold && untold != Untold:
+                if (untold.Messages > Untold.Messages)
+                {
+                    IdeErrors.Write($"{Name}'s inspector left out {untold.Messages - Untold.Messages} of its own messages, too many waiting to be sent at once");
+                }
+                Untold = untold;
+                UntoldChanged?.Invoke(this, EventArgs.Empty);
                 break;
         }
     }

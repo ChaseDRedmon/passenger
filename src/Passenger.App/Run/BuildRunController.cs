@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Passenger.App.Containers;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
@@ -721,26 +722,59 @@ public sealed partial class BuildRunController
     }
 
     /// <summary>An app's failed bindings as they come: each a line of its console linked to its XAML (none for a program in
-    /// the terminal, whose text is its own), and Problems' Bindings.</summary>
+    /// the terminal, whose text is its own), and Problems' Bindings, with what the app could not tell. Those told at once
+    /// (thousands, as a window opens) are written and listed once, after the last of them.</summary>
     private void WatchBindings(LiveApp? app, OutputView? console)
     {
         if (app is null)
         {
             return;
         }
+        StringBuilder said = new();
+        bool due = false;
+        bool untoldSaid = false;
         app.BindingFailed += (_, failed) =>
         {
-            if (session.IsEnded)
+            said.Append(BindingErrors.Line(Placed(app, failed.Failure), session.Folder));
+            Show();
+        };
+        app.UntoldChanged += (_, _) =>
+        {
+            if (app.Untold.Bindings > 0 && !untoldSaid)
+            {
+                untoldSaid = true;
+                said.Append(BindingErrors.UntoldLine(app));
+            }
+            Show();
+        };
+
+        void Show()
+        {
+            if (due)
             {
                 return;
             }
-            console?.Append(BindingErrors.Line(Placed(app, failed.Failure), session.Folder), error: true);
-            ShowBindings();
-        };
+            due = true;
+            UiThread.Post(() =>
+            {
+                due = false;
+                if (session.IsEnded)
+                {
+                    return;
+                }
+                if (said.Length > 0)
+                {
+                    console?.Append(said.ToString(), error: true);
+                    said.Clear();
+                }
+                ShowBindings();
+            });
+        }
     }
 
-    /// <summary>The failed bindings of the apps Run and Debug launched last, in Problems' Bindings.</summary>
-    public void ShowBindings() => parts.Views.Problems.ShowBindings([.. session.FailedBindings.Select(b => Placed(b.App, b.Failure))]);
+    /// <summary>The failed bindings of the apps Run and Debug launched last, and what each could not tell, in Problems' Bindings.</summary>
+    public void ShowBindings() => parts.Views.Problems.ShowBindings([.. session.FailedBindings.Select(b => Placed(b.App, b.Failure))],
+        [.. session.InspectedApps.SelectMany(BindingErrors.Untold)]);
 
     /// <summary>A failure with its problem, which is placed once, when it first fails: at its misspelt member where its XAML
     /// has it, else at its control's element.</summary>

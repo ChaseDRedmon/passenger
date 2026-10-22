@@ -1320,7 +1320,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   default 64. Its wire's types are made ready as it connects, before the app's Main
   (`Connection.Configure`): System.Text.Json readies a type on first use under one lock for all of a context's types,
   which a thread the debugger stopped can hold from an evaluation at the stop (the binding values), which then waits on
-  it until the app runs on. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
+  it until the app runs on. `Send` never waits on Passenger and never leaves out an answer: answers queue apart, written
+  before any event; an event waits merged with its kind's (a failure's newer count by its id, one `treeChanged`,
+  `valuesChanged`, pick, hello, `untold`), and only the inspector's own errors queue unmerged, up to 1024 waiting, the
+  rest left out, counted and said in protocol v6 `untold` (`Untold.Messages`, which the IDE logs).
+  `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging; what the app tells unasked is
+  heard on the UI thread a batch at a time); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
   selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools (`app_*`,
   `Mcp/PassengerTools.App.cs`) ask the same inspector: its windows, the tree with each element's box, text and state,
@@ -1351,7 +1356,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   carried under `inspector/wpf/` only by a Windows build or win-* publish): `LiveApp.For` gives it (`LiveAppKind.Wpf`) to
   a Run or Debug launch on Windows whose runtimeconfig names Microsoft.WindowsDesktop.App and whose assembly references
   PresentationFramework, with `ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1`. It links Protocol.cs and Connection.cs (the same
-  socket, protocol v5, `Hello.Framework`), runs in the default load context, and retries a main-thread dispatcher WPF is
+  socket, protocol v6, `Hello.Framework`), runs in the default load context, and retries a main-thread dispatcher WPF is
   still making. Value sources are `DependencyPropertyHelper.GetValueSource`; places `VisualDiagnostics.GetXamlSourceInfo`
   turned into files through the assembly's PDB; binding errors come from `PresentationTraceSources` and
   `BindingDiagnostics.BindingFailed`, and `Breaks.BindingFailed`/`Changed` keep their names so one function breakpoint
@@ -1361,7 +1366,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   that answer (`DebugSession.TakeStopAfter`), so a property or binding-error stop is known as one.
   The inspector also takes Avalonia's logger before the app's Main (`Bindings.cs`, put back over any sink the app sets,
   which is still fed) and tells of each failed binding (`bindingFailed`: control, property, path, message, XAML place,
-  and for a member the source's type lacks its nearest members) once, then its count at most every 250 ms. Run gives an
+  and for a member the source's type lacks its nearest members) once, then its count at most every 250 ms; past its
+  first 1000 distinct failures (`Most`, both inspectors) it lists none, counting their every failure as `Untold.Bindings`,
+  said with the counts, which Problems' Bindings says under its list, the console once and `app_binding_errors` as a
+  last entry of level Untold, so every failure is listed or counted. Run gives an
   Avalonia app the inspector too (`ProjectSession.InspectedRun`, `RunApp`; none under Hot Reload, whose dotnet watch
   would load it); the Live Visual Tree follows only the debugger's `LiveApp`. `App/LiveTree/BindingErrors` is how a
   failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),
@@ -1621,7 +1629,10 @@ its own, and `race` races a step's end with another thread's breakpoint, the hit
 with its exception's handler found, which an exception breakpoint's condition is tried at). `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
 for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErrorsApp` (written the same way), whose
-caption binds a misspelt Name; "rebind" typed into its console makes it fail again. `XamlBreakpointsTests` debug
+caption binds a misspelt Name; "rebind" typed into its console makes it fail again. Its `flood` argument (`Flood.cs`)
+adds 3,000 rows binding members the view model lacks, failing as it opens and every 50 ms until "calm" is typed, which
+writes how many failures Avalonia logged (a log sink of the app's own, which the inspector's feeds); the test runs its
+waits with `Ui.PumpUntil` meanwhile, since the failures keep the window busy. `XamlBreakpointsTests` debug
 `tests/Debuggees/XamlBreakpointsApp` the same way ("paint", "warn" and "rename" typed into its console change Save's
 background and width, the buttons' style class, and the caption's binding). `XamlEditingTests` drive each XAML editing
 tool in an Avalonia app and a WPF app of their own (`AvaloniaGallery`, `WpfGallery`), the MVVM Toolkit stood in by its
