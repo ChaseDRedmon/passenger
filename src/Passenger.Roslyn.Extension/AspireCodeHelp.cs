@@ -21,7 +21,7 @@ public sealed class AspireReferenceFix : IExtensionDocumentMessageHandler<Aspire
         AspireHelp help = await AspireSource.HelpAsync(document, null, false, cancellationToken).ConfigureAwait(false);
         return help.Missing.FirstOrDefault(m => m.Service == message.Service && m.Resource == message.Resource
             && Compare(m.Start, message.At) <= 0 && Compare(message.At, m.End) <= 0)?.Fix
-            ?? new Refactored("The missing Aspire reference is no longer proven at this location", []);
+            ?? new Refactored("The Aspire reference was not added: the source changed since the fix was offered, and the reference is no longer missing there; request the fix again", []);
     }
 
     private static int Compare(Place left, Place right) => left.Line == right.Line ? left.Character.CompareTo(right.Character) : left.Line.CompareTo(right.Line);

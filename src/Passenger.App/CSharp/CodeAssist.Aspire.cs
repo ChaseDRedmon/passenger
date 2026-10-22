@@ -15,7 +15,6 @@ public sealed partial class CodeAssist
         }
         OpenDocument document = editors.Active;
         int version = document.Text.Version;
-        int? graphVersion = service()?.AspireVersion;
         AspireHelp help;
         try
         {
@@ -25,7 +24,8 @@ public sealed partial class CodeAssist
         {
             return false;
         }
-        if (cancel.IsCancellationRequested || editors.Active != document || document.Text.Version != version || graphVersion != service()?.AspireVersion)
+        // Not the graph's version, which every diagnostics refresh moves: the names are the server's as it answered.
+        if (cancel.IsCancellationRequested || editors.Active != document || document.Text.Version != version)
         {
             return true;
         }
@@ -58,7 +58,6 @@ public sealed partial class CodeAssist
             return false;
         }
         int version = document.Text.Version;
-        int? graphVersion = service()?.AspireVersion;
         AspireHelp help;
         try
         {
@@ -68,7 +67,7 @@ public sealed partial class CodeAssist
         {
             return false;
         }
-        if (editors.Active != document || document.Text.Version != version || graphVersion != service()?.AspireVersion)
+        if (editors.Active != document || document.Text.Version != version)
         {
             return true;
         }
@@ -85,7 +84,8 @@ public sealed partial class CodeAssist
             {
                 return;
             }
-            if (document.Text.Version != version || graphVersion != service()?.AspireVersion)
+            // The server works the edge out again as it is chosen, so a diagnostics refresh meanwhile voids no offer.
+            if (document.Text.Version != version)
             {
                 Message?.Invoke(this, "The Aspire reference was not added: source changed; request the fix again");
                 return;

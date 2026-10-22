@@ -60,9 +60,21 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
 
         Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"d");
         Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Add WithReference(db) to api"), "the native reference fix to be offered");
+        // Another file of the solution changed while the fix is offered, which the server says by asking for diagnostics again.
+        TaskCompletionSource refreshed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler heard = (_, _) => refreshed.TrySetResult();
+        Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+        server.DiagnosticsRefreshRequested += heard;
+        File.WriteAllText(project.PathOf("OtherHost/Program.cs"), "System.Console.WriteLine(\"Still no graph\");\n");
+        Ui.WaitFor(() => refreshed.Task.IsCompleted, "the language server to ask for diagnostics again once another file changed");
+        server.DiagnosticsRefreshRequested -= heard;
         Choose(window, "Add WithReference(db) to api");
-        Ui.WaitFor(() => File.ReadAllText(project.PathOf("Host/Program.cs")).Contains("api.WithReference(db);", StringComparison.Ordinal),
-            "the native fix to add the missing AppHost edge");
+        // Its refusals all name the Aspire reference, which its success does not.
+        Ui.WaitFor(() => File.ReadAllText(project.PathOf("Host/Program.cs")).Contains("api.WithReference(db);", StringComparison.Ordinal)
+            || window.Status?.Contains("Aspire reference", StringComparison.Ordinal) == true, "the native fix to add the missing AppHost edge, or say why not");
+        Assert.True(File.ReadAllText(project.PathOf("Host/Program.cs")).Contains("api.WithReference(db);", StringComparison.Ordinal),
+            $"The native fix chosen after another file changed added nothing to the AppHost: {window.Status}");
         Ui.WaitFor(() => !HasMissing(window), "the service warning to clear after adding its reference");
         Assert.Equal(service, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
         Ui.Run(window, AppActions.FocusExplorer);
