@@ -1175,7 +1175,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         /// YAML server, <paramref name="yaml"/>) one older than it needs.</summary>
         public static void SkipWithoutNode(bool yaml = false)
         {
-            WebLanguagesTests.Shop.SkipWithoutNode();
+            WebLanguagesTests.SkipWithoutNode();
             if (yaml)
             {
                 Passenger.App.Web.NodeRuntime node = Task.Run(() => Passenger.App.Web.NodeRuntime.FindAsync(null)).GetAwaiter().GetResult();

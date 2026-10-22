@@ -17,13 +17,17 @@ namespace Passenger.Tests;
 /// with its code in a code-behind, Tally.razor.cs, and no <c>@code</c>) and a Razor Page: a component's colours and its
 /// errors, completion of components, their parameters, HTML's elements and the C#, go to declaration from a tag, rename
 /// across markup and code, the code-behind's members completed, checked, found and renamed from the markup and back, and a
-/// Razor Page's errors and completion, all from Roslyn's server with Razor cohosted in it. Each test opens its own
-/// window, so its own server.</summary>
-public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
+/// Razor Page's errors and completion, all from Roslyn's server with Razor cohosted in it. Each test opens its own window,
+/// on the server the last one left running, warm, and on the app as written (<see cref="SharedProject"/>).</summary>
+public sealed class RazorTests : IClassFixture<BlazorShop>
 {
-    private readonly Blazor app;
+    private readonly BlazorShop app;
 
-    public RazorTests(Blazor app) => this.app = app;
+    public RazorTests(BlazorShop app)
+    {
+        this.app = app;
+        app.Reset();
+    }
 
     [AvaloniaFact]
     public void A_component_shows_its_markup_and_code_in_their_colours_and_a_name_mistyped_in_its_code_block_as_an_error()
@@ -128,32 +132,22 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
     [AvaloniaFact]
     public void Renaming_a_components_parameter_renames_it_where_the_markup_sets_it()
     {
-        string greeting = File.ReadAllText(app.PathOf("Components/Greeting.razor"));
-        string home = File.ReadAllText(app.PathOf("Components/Pages/Home.razor"));
         MainWindow window = app.Open("Components/Pages/Home.razor");
-        try
-        {
-            OpenDocument page = window.EditorArea.Active!;
-            window.OpenFile(app.PathOf("Components/Greeting.razor"));
-            Ui.Settle();
-            CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "public string Na");
-            Ui.Run(window, AppActions.Rename);
-            Ui.WaitFor(() => window.Assist.Renaming == "Name", "the rename box on the parameter");
-            window.KeyTextInput("Person");
-            Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => page.Text.Snapshot.ToString().Contains("<Greeting Person=\"Ada\"", StringComparison.Ordinal),
-                "the page that sets the parameter to set it by its new name");
-            string renamed = editor.Document.Snapshot.ToString();
-            Assert.Contains("public string Person { get; set; }", renamed, StringComparison.Ordinal);
-            Assert.Contains("Hello, @Person!", renamed, StringComparison.Ordinal);
-        }
-        finally
-        {
-            window.Close();
-            File.WriteAllText(app.PathOf("Components/Greeting.razor"), greeting);
-            File.WriteAllText(app.PathOf("Components/Pages/Home.razor"), home);
-        }
+        OpenDocument page = window.EditorArea.Active!;
+        window.OpenFile(app.PathOf("Components/Greeting.razor"));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "public string Na");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "Name", "the rename box on the parameter");
+        window.KeyTextInput("Person");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => page.Text.Snapshot.ToString().Contains("<Greeting Person=\"Ada\"", StringComparison.Ordinal),
+            "the page that sets the parameter to set it by its new name");
+        string renamed = editor.Document.Snapshot.ToString();
+        Assert.Contains("public string Person { get; set; }", renamed, StringComparison.Ordinal);
+        Assert.Contains("Hello, @Person!", renamed, StringComparison.Ordinal);
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -259,41 +253,33 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
     public void Renaming_a_code_behinds_member_renames_it_in_the_markup_and_renaming_it_in_the_markup_renames_it_in_the_code_behind()
     {
         MainWindow window = app.Open("Components/Pages/Tally.razor.cs");
-        try
-        {
-            window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
-            Ui.Settle();
-            OpenDocument markup = window.EditorArea.Active!;
-            window.OpenFile(app.PathOf("Components/Pages/Tally.razor.cs"));
-            Ui.Settle();
-            CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "private int cli");
-            Ui.Run(window, AppActions.Rename);
-            Ui.WaitFor(() => window.Assist.Renaming == "clicks", "the rename box on the field");
-            window.KeyTextInput("taps");
-            Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => markup.Text.Snapshot.ToString().Contains("<p>Clicks: @taps</p>", StringComparison.Ordinal),
-                "the markup that shows the field to show it by its new name");
-            Assert.Contains("taps++;", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+        Ui.Settle();
+        OpenDocument markup = window.EditorArea.Active!;
+        window.OpenFile(app.PathOf("Components/Pages/Tally.razor.cs"));
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "private int cli");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "clicks", "the rename box on the field");
+        window.KeyTextInput("taps");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => markup.Text.Snapshot.ToString().Contains("<p>Clicks: @taps</p>", StringComparison.Ordinal),
+            "the markup that shows the field to show it by its new name");
+        Assert.Contains("taps++;", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
 
-            window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
-            Ui.Settle();
-            OpenDocument code = window.EditorArea.Documents.First(d => d.Name == "Tally.razor.cs");
-            PlaceAfter(window.EditorArea.CodeEditor, "@onclick=\"AddC");
-            Ui.Run(window, AppActions.Rename);
-            Ui.WaitFor(() => window.Assist.Renaming == "AddClick", "the rename box on the method in the markup");
-            window.KeyTextInput("Tap");
-            Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => code.Text.Snapshot.ToString().Contains("private void Tap()", StringComparison.Ordinal),
-                "the code-behind to declare the method by the name given in the markup");
-            Assert.Contains("@onclick=\"Tap\"", markup.Text.Snapshot.ToString(), StringComparison.Ordinal);
-        }
-        finally
-        {
-            window.Close();
-            File.WriteAllText(app.PathOf("Components/Pages/Tally.razor"), BlazorApp.TallyMarkup);
-            File.WriteAllText(app.PathOf("Components/Pages/Tally.razor.cs"), BlazorApp.TallyCode);
-        }
+        window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+        Ui.Settle();
+        OpenDocument code = window.EditorArea.Documents.First(d => d.Name == "Tally.razor.cs");
+        PlaceAfter(window.EditorArea.CodeEditor, "@onclick=\"AddC");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "AddClick", "the rename box on the method in the markup");
+        window.KeyTextInput("Tap");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => code.Text.Snapshot.ToString().Contains("private void Tap()", StringComparison.Ordinal),
+            "the code-behind to declare the method by the name given in the markup");
+        Assert.Contains("@onclick=\"Tap\"", markup.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
     }
 
     private static void PlaceAfter(CodeEditor editor, string text)
@@ -320,55 +306,6 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
         }
         TokenKind?[] seen = [.. kinds.Where((_, i) => !char.IsWhiteSpace(stretch[i])).Distinct()];
         return seen.Length == 1 ? seen[0] : null;
-    }
-
-    /// <summary>A Blazor app from <c>dotnet new blazor</c> with a component that takes parameters, a page that sets them,
-    /// and a Razor Page whose markup misnames a member of its model; restored once for every test, never built. The tests
-    /// share it, so a window never saves what its test typed.</summary>
-    public sealed class Blazor : IDisposable
-    {
-        private readonly string folder = TestFolders.Create("razor-");
-
-        public Blazor()
-        {
-            TestFolders.Prepare(() =>
-            {
-                BlazorApp.Create(folder);
-                Write("Components/Greeting.razor",
-                    "<p>Hello, @Name!</p>\n\n@code {\n    [Parameter]\n    public string Name { get; set; } = \"\";\n\n    [Parameter]\n    public int Times { get; set; }\n}\n");
-                Write("Components/Pages/Home.razor", "@page \"/\"\n\n<PageTitle>Home</PageTitle>\n\n<Greeting Name=\"Ada\" />\n");
-                Write("Components/Pages/Tally.razor", BlazorApp.TallyMarkup);
-                Write("Components/Pages/Tally.razor.cs", BlazorApp.TallyCode);
-                Write("Pages/Hello.cshtml", "@page\n@model Shop.Pages.HelloModel\n\n<h1>@Model.Greeting</h1>\n<p>@Model.Cont</p>\n");
-                Write("Pages/Hello.cshtml.cs",
-                    "using Microsoft.AspNetCore.Mvc.RazorPages;\n\nnamespace Shop.Pages;\n\npublic class HelloModel : PageModel\n{\n"
-                    + "    public string Greeting { get; set; } = \"Hi\";\n\n    public int Count { get; set; }\n\n    public void OnGet()\n    {\n        Count = 3;\n    }\n}\n");
-                Restore.Run(folder);
-            }, folder);
-        }
-
-        public string PathOf(string relative) => Path.Combine(PathNames.Canonical(folder), relative);
-
-        /// <summary>A window on the app with a file open, once C# is ready.</summary>
-        public MainWindow Open(string file)
-        {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
-            window.Show();
-            window.OpenFolder(folder);
-            window.OpenFile(PathOf(file));
-            Ui.Settle();
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            return window;
-        }
-
-        private void Write(string relative, string text)
-        {
-            string path = PathOf(relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, text);
-        }
-
-        public void Dispose() => TestFolders.Delete(folder);
     }
 }
 
@@ -497,4 +434,73 @@ internal static class BlazorApp
             limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
         Assert.True(made.Succeeded, $"dotnet new blazor did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
     }
+}
+
+/// <summary>The Blazor app the Razor and web tests open, restored once a class and never built, its warm server shared
+/// (<see cref="SharedProject"/>): for Razor, a component that takes parameters and a page that sets them, a component whose
+/// code is all in its code-behind, and a Razor Page whose markup misnames a member of its model; for the web languages,
+/// the files a web project carries beside its C#: wwwroot/js/site.js, TypeScript under Scripts/ with its tsconfig.json,
+/// wwwroot/css/site.css, a package.json with a dependency installed in node_modules, and a component with a &lt;style&gt;
+/// and a &lt;script&gt;.</summary>
+public sealed class BlazorShop : SharedProject
+{
+    public const string Script = "// Greets whoever opens the page.\nfunction greet(name) {\n    return \"Hello, \" + name;\n}\n\nconst message = greet(\"Ada\");\nconsole.log(message);\n";
+
+    public const string Items = "export interface Item {\n    name: string;\n    price: number;\n}\n\nexport function total(items: Item[]): number {\n"
+        + "    return items.reduce((sum, item) => sum + item.price, 0);\n}\n";
+
+    public const string Cart = "import { Item, total } from \"./items\";\n\nconst items: Item[] = [{ name: \"tea\", price: 3 }];\nconst sum: number = total(items);\n"
+        + "const label: string = sum;\nconsole.log(label);\n";
+
+    public const string Config = "{\n  // The scripts compile to wwwroot/js.\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ES2022\",\n"
+        + "    \"strict\": true,\n    \"outDir\": \"wwwroot/js/out\"\n  },\n  \"include\": [\"Scripts/**/*.ts\"]\n}\n";
+
+    public const string Style = ":root {\n    --accent: #1b6ec2;\n}\n\n.btn-primary {\n    color: var(--accent);\n    background-color: #ffffff;\n}\n";
+
+    public const string Package = "{\n  \"name\": \"shop-client\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"scripts\": {\n"
+        + "    \"build\": \"tsc -p .\",\n    \"watch\": \"npm run build -- --watch\"\n  },\n  \"devDependencies\": {\n    \"left-pad\": \"^1.3.0\"\n  }\n}\n";
+
+    public const string Component = "@page \"/styled\"\n\n<h1 class=\"title\">Styled</h1>\n\n<style>\n    .title {\n        color: #1b6ec2;\n    }\n</style>\n\n"
+        + "<script>\n    function shout(text) {\n        return text.toUpperCase();\n    }\n    shout(\"hi\");\n</script>\n";
+
+    private static readonly (string Path, string Text)[] Files =
+    [
+        ("Components/Greeting.razor",
+            "<p>Hello, @Name!</p>\n\n@code {\n    [Parameter]\n    public string Name { get; set; } = \"\";\n\n    [Parameter]\n    public int Times { get; set; }\n}\n"),
+        ("Components/Pages/Home.razor", "@page \"/\"\n\n<PageTitle>Home</PageTitle>\n\n<Greeting Name=\"Ada\" />\n"),
+        ("Components/Pages/Tally.razor", BlazorApp.TallyMarkup),
+        ("Components/Pages/Tally.razor.cs", BlazorApp.TallyCode),
+        ("Pages/Hello.cshtml", "@page\n@model Shop.Pages.HelloModel\n\n<h1>@Model.Greeting</h1>\n<p>@Model.Cont</p>\n"),
+        ("Pages/Hello.cshtml.cs", "using Microsoft.AspNetCore.Mvc.RazorPages;\n\nnamespace Shop.Pages;\n\npublic class HelloModel : PageModel\n{\n"
+            + "    public string Greeting { get; set; } = \"Hi\";\n\n    public int Count { get; set; }\n\n    public void OnGet()\n    {\n        Count = 3;\n    }\n}\n"),
+        ("wwwroot/js/site.js", Script),
+        ("Scripts/items.ts", Items),
+        ("Scripts/cart.ts", Cart),
+        ("tsconfig.json", Config),
+        ("wwwroot/css/site.css", Style),
+        ("package.json", Package),
+        ("node_modules/left-pad/package.json", "{\n  \"name\": \"left-pad\",\n  \"version\": \"1.3.0\",\n  \"main\": \"index.js\"\n}\n"),
+        ("node_modules/left-pad/index.js", "module.exports = (text, length) => text.padStart(length);\n"),
+        ("Components/Pages/Styled.razor", Component),
+    ];
+
+    public BlazorShop()
+        : base("blazor-")
+    {
+        TestFolders.Prepare(() =>
+        {
+            BlazorApp.Create(Folder);
+            foreach ((string path, string text) in Files)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PathOf(path))!);
+                File.WriteAllText(PathOf(path), text);
+            }
+            // The first window's design-time build makes bin, which a reset would take for a file the test added: made now, it stays.
+            Directory.CreateDirectory(PathOf("bin"));
+        }, Folder);
+        Prepare();
+    }
+
+    /// <summary>A file's path as the IDE names it: canonical, its '/' Windows' '\' there, so it compares with an open file's.</summary>
+    public string Named(string relative) => PathNames.Canonical(PathOf(relative));
 }

@@ -142,7 +142,7 @@ public sealed partial class McpTests
     [Fact]
     public async Task An_agent_reads_navigates_renames_fixes_and_formats_the_web_languages_through_their_servers_eslint_and_prettier()
     {
-        WebLanguagesTests.Shop.SkipWithoutNode(typescript: true);
+        WebLanguagesTests.SkipWithoutNode(typescript: true);
         EslintPrettierTests.Project.SkipWithoutNode();
         string web = Made("mcpweb-", made =>
         {
