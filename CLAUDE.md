@@ -504,7 +504,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   refused; an advisory's address from a feed is a link only when it is http or https (`Advisory.Link`, `Releases.Web`).
   `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
-  Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
+  Packages and Sources tabs, and every package change's one path (`InstallAsync`/`RemoveAsync`: one at a time, under
+  `Changing`, answering a `PackageOutcome`), which MCP's `nuget_install` and `nuget_remove` take too. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
   restore's NuGetAudit does; the window marks vulnerable installed versions and offers the lowest that fixes them.
   `StandInFeed` is the tests' v3 feed on loopback (optional credentials, an advisory resource); tests never reach

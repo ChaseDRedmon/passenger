@@ -327,6 +327,88 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.False(removed.Contains("Passenger.Sample", StringComparison.Ordinal), $"nuget_remove answered with the open project file still holding the package:\n{removed}");
     }
 
+    /// <summary>An agent's package change is the NuGet window's own: the window shows it as its work while dotnet runs and
+    /// lists the package installed once it is, and while the window's own change runs the agent's is refused, saying what is
+    /// under way, where it ran dotnet on the same project beside it unseen.</summary>
+    [AvaloniaFact]
+    public void An_agents_package_change_shows_as_the_nuget_windows_work_and_waits_its_turn_behind_the_windows_own()
+    {
+        string library = PathNames.Canonical(TestFolders.Create("mcp-nuget-window-"));
+        madeFolders.Add(library);
+        string feed = Directory.CreateDirectory(Path.Combine(library, "feed")).FullName;
+        File.WriteAllBytes(Path.Combine(feed, "Passenger.Sample.1.0.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.0.0"));
+        File.WriteAllBytes(Path.Combine(feed, "Passenger.Other.2.0.0.nupkg"), StandInFeed.Package("Passenger.Other", "2.0.0"));
+        File.WriteAllText(Path.Combine(library, "nuget.config"),
+            "<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"local\" value=\"feed\" />\n  </packageSources>\n"
+            + "  <config>\n    <add key=\"globalPackagesFolder\" value=\"packages\" />\n  </config>\n</configuration>\n");
+        string lib = Path.Combine(library, "Lib.csproj");
+        File.WriteAllText(lib, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        // dotnet add package's restore graph, held once the test puts "hold" there until it puts "go" (ten minutes at most).
+        File.WriteAllText(Path.Combine(library, "Directory.Build.targets"), """
+            <Project>
+              <Target Name="Held" BeforeTargets="GenerateRestoreGraphFile" Condition="Exists('hold')">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="rm -f hold; touch held; n=0; while [ ! -f go ] &amp;&amp; [ $n -lt 2400 ]; do sleep 0.25; n=`expr $n + 1`; done" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Remove-Item hold; New-Item held -ItemType File | Out-Null; $n = 0; while (-not (Test-Path go) -and $n -lt 2400) { Start-Sleep -Milliseconds 250; $n++ }&quot;" />
+              </Target>
+            </Project>
+            """);
+        MainWindow window = AgentsWindow(library);
+        global::Passenger.App.ToolWindows.NuGetView nuget = window.NuGet;
+        window.Perform(AppActions.ShowNuGet);
+        Ui.Settle();
+        nuget.Query = "sample";
+        Task searched = nuget.RefreshAsync();
+        Ui.Landed(() => searched.IsCompleted && nuget.Selected?.Id == "Passenger.Sample", "the NuGet window to list Passenger.Sample");
+        Assert.False(nuget.Selected!.IsInstalled);
+        List<string> worked = [];
+        window.Actions.Work.Changed += (_, change) =>
+        {
+            if (change.Work.Id == global::Passenger.App.ToolWindows.NuGetView.Changing && !change.Ended)
+            {
+                worked.Add(change.Work.Stage);
+            }
+        };
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Task<JsonElement> installing = Task.Run(() => Call(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample" }));
+            Press(Question(window, "the question for the agent's install"), "Allow");
+            JsonElement installed = Await(installing, "the agent's install");
+            Assert.Equal(["Lib.csproj"], installed.GetProperty("changed").EnumerateArray().Select(f => f.GetString()!));
+            Assert.True(worked.Contains("Installing Passenger.Sample 1.0.0 in Lib…"), $"The agent's install did not show as the NuGet window's work; it showed: {string.Join(" | ", worked)}");
+            WaitFor(() => nuget.Selected is { Id: "Passenger.Sample", IsInstalled: true }, "the NuGet window to list the agent's package as installed");
+
+            // The window's own install, held in its restore graph: the agent's change waits for no one's turn but is refused.
+            nuget.Query = "other";
+            searched = nuget.RefreshAsync();
+            Ui.Landed(() => searched.IsCompleted && nuget.Selected?.Id == "Passenger.Other" && nuget.Versions.Count == 1, "Passenger.Other and its version");
+            File.WriteAllText(Path.Combine(library, "hold"), string.Empty);
+            Task<bool> windows = nuget.InstallAsync(Assert.Single(window.Projects));
+            Ui.PumpUntil(() => File.Exists(Path.Combine(library, "held")), "the window's install to reach its held restore", TimeSpan.FromMinutes(2));
+            Task<CallToolResult> again = Task.Run(() => Result(client, "nuget_install", new() { ["project"] = "Lib", ["id"] = "Passenger.Sample", ["version"] = "1.0.0" }));
+            Ui.PumpUntil(() => again.IsCompleted, "the agent's install while the window's runs", AgentLimit);
+            CallToolResult refused = again.GetAwaiter().GetResult();
+            Assert.True(refused.IsError == true && Text(refused).Contains("Already under way: Installing Passenger.Other 2.0.0 in Lib…", StringComparison.Ordinal),
+                $"The agent's install while the window's ran was answered: {Text(refused)}");
+            File.WriteAllText(Path.Combine(library, "go"), string.Empty);
+            Ui.Landed(() => windows.IsCompleted, "the window's install to end");
+            Assert.True(windows.Result, nuget.Log);
+            string written = File.ReadAllText(lib);
+            Assert.True(written.Contains("Passenger.Other", StringComparison.Ordinal) && written.Contains("Passenger.Sample", StringComparison.Ordinal),
+                $"Lib.csproj after both installs:\n{written}");
+        }
+        finally
+        {
+            File.WriteAllText(Path.Combine(library, "go"), string.Empty);
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
     [Fact]
     public async Task An_agent_attaches_to_a_program_already_running_stops_it_at_a_breakpoint_and_detaches_leaving_it_running()
     {

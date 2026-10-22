@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.App.Packages;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.ToolWindows;
@@ -61,6 +62,9 @@ public sealed class NuGetView : DockPanel
     private Task<VulnerabilityData>? audit;
     private bool choosing;
     private bool busy;
+
+    /// <summary>The package change under way, as its work says it.</summary>
+    private string? changing;
 
     /// <param name="projects">The workspace's projects, whose packages the window lists and changes.</param>
     /// <param name="root">The folder NuGet's configuration is read from: the solution's, else the one open.</param>
@@ -155,8 +159,9 @@ public sealed class NuGetView : DockPanel
         };
     }
 
-    /// <summary>Raised after a project's packages changed, so the solution is read again.</summary>
-    public event EventHandler? Changed;
+    /// <summary>Raised after a package change, done or not, with the files it changed, so the editors take them from disk and
+    /// the solution is read again before whoever asked for it is answered.</summary>
+    public event EventHandler<PackageOutcome>? Changed;
 
     /// <summary>Saves the open files before a change rewrites a project or a nuget.config, so what is rewritten holds their
     /// edits.</summary>
@@ -454,12 +459,19 @@ public sealed class NuGetView : DockPanel
     }
 
     /// <summary>Adds the chosen package to a project at the chosen version, or moves it there.</summary>
-    public Task<bool> InstallAsync(ProjectModel project) =>
-        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version
-            ? ChangeAsync($"Installing {row.Id} {version} in {project.Name}…", () => manager.InstallAsync(project.Path, row.Id, version)) : Task.FromResult(false);
+    public async Task<bool> InstallAsync(ProjectModel project) =>
+        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version && (await InstallAsync(project, row.Id, version)).Done;
 
-    public Task<bool> RemoveAsync(ProjectModel project) =>
-        Selected is { } row ? ChangeAsync($"Removing {row.Id} from {project.Name}…", () => manager.RemoveAsync(project.Path, row.Id)) : Task.FromResult(false);
+    public async Task<bool> RemoveAsync(ProjectModel project) => Selected is { } row && (await RemoveAsync(project, row.Id)).Done;
+
+    /// <summary>Adds a package to a project at a version, or moves it to that version, as the window's Install and Update do
+    /// and an agent's nuget_install: the one way a package goes in (<see cref="ChangeAsync"/>).</summary>
+    public Task<PackageOutcome> InstallAsync(ProjectModel project, string id, string version) =>
+        ChangeAsync($"Installing {id} {version} in {project.Name}…", project, () => manager.InstallAsync(project.Path, id, version));
+
+    /// <summary>Takes a package out of a project, as the window's Remove does and an agent's nuget_remove.</summary>
+    public Task<PackageOutcome> RemoveAsync(ProjectModel project, string id) =>
+        ChangeAsync($"Removing {id} from {project.Name}…", project, () => manager.RemoveAsync(project.Path, id));
 
     /// <summary>What a package change's work is held under in the window, which no action names.</summary>
     public const string Changing = "nuget.change";
@@ -524,30 +536,73 @@ public sealed class NuGetView : DockPanel
         return tab;
     }
 
-    private async Task<bool> ChangeAsync(string stage, Func<Task<bool>> change)
+    /// <summary>A package change, whoever asks for it: one at a time (another asked meanwhile is refused, saying what is under
+    /// way), the open files saved first, shown as the window's work under <see cref="Changing"/>, which <see cref="StopChange"/>
+    /// ends; then the files it changed told (<see cref="Changed"/>) and the list read again.</summary>
+    private async Task<PackageOutcome> ChangeAsync(string stage, ProjectModel project, Func<Task<bool>> change)
     {
         if (busy)
         {
-            return false;
+            return new PackageOutcome(false, [], []) { Refused = Work?.Of(Changing) is { } under ? ActionWork.Busy(under) : $"Already under way: {changing}" };
         }
         busy = true;
+        changing = stage;
         status.Text = "Working...";
         using IDisposable held = BackgroundWork.Scope();
         using Working? working = Work?.Begin(Changing, stage, stoppable: false);
+        List<string> said = [];
+        EventHandler<string> heard = (_, line) => said.Add(line);
+        manager.Line += heard;
+        IReadOnlyList<string> files = PackageFiles(project);
+        byte[]?[] before;
         bool done;
         try
         {
             SaveFirst?.Invoke();
+            // Read once the open files are saved: what the save wrote is not the change's.
+            before = [.. files.Select(Bytes)];
             done = await change();
         }
         finally
         {
             busy = false;
+            changing = null;
+            manager.Line -= heard;
         }
+        PackageOutcome outcome = new(done, [.. files.Where((file, i) => !(Bytes(file) ?? []).AsSpan().SequenceEqual(before[i] ?? []))], said);
         status.Text = done ? "Done" : "The change failed; the log says why";
-        Changed?.Invoke(this, EventArgs.Empty);
+        Changed?.Invoke(this, outcome);
         await RefreshAsync();
-        return done;
+        return outcome;
+
+        static byte[]? Bytes(string file)
+        {
+            try
+            {
+                return File.Exists(file) ? File.ReadAllBytes(file) : null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+    }
+
+    /// <summary>The files a package change can write: the project, and under central package management the nearest
+    /// Directory.Packages.props, where dotnet add package puts the version.</summary>
+    private static IReadOnlyList<string> PackageFiles(ProjectModel project)
+    {
+        List<string> files = [project.Path];
+        for (string? at = Path.GetDirectoryName(project.Path); at is not null; at = Path.GetDirectoryName(at))
+        {
+            string props = Path.Combine(at, "Directory.Packages.props");
+            if (File.Exists(props))
+            {
+                files.Add(PathNames.Canonical(props));
+                break;
+            }
+        }
+        return files;
     }
 
     /// <summary>The packages the projects reference: by package, each project's version (null where only central

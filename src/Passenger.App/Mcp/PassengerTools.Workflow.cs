@@ -209,16 +209,9 @@ public sealed partial class PassengerTools
         IPackageFeed feeds = await window.NuGet.FeedAsync(null);
         string at = version ?? (await feeds.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
             ?? throw new ArgumentException($"{feeds.Name} has no package {id}");
-        AgentCall.Say($"Installing {id} {at} into {chosen.Name} and restoring it");
-        PackageManager manager = new();
-        List<string> said = [];
-        manager.Line += (_, line) => said.Add(line);
-        // What dotnet add package rewrites holds the open files' edits, as the NuGet window's install does.
-        Editors.SaveAll();
-        Func<IReadOnlyList<string>> changed = Changes(PackageFiles(chosen));
-        bool done = await manager.InstallAsync(chosen.Path, id, at);
-        IReadOnlyList<string> files = Changed(changed());
-        return done ? new PackageChange(id, at, chosen.Name, files) : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
+        AgentCall.Say(null);
+        AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
+        return new PackageChange(id, at, chosen.Name, Changed(await window.NuGet.InstallAsync(chosen, id, at)));
     });
 
     [McpServerTool(Name = "nuget_remove", Title = "Remove a package", Destructive = true), Description(
@@ -226,44 +219,16 @@ public sealed partial class PassengerTools
     public Task<PackageChange> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
-        AgentCall.Say($"Removing {id} from {chosen.Name}");
-        PackageManager manager = new();
-        List<string> said = [];
-        manager.Line += (_, line) => said.Add(line);
-        Editors.SaveAll();
-        Func<IReadOnlyList<string>> changed = Changes(PackageFiles(chosen));
-        bool done = await manager.RemoveAsync(chosen.Path, id);
-        IReadOnlyList<string> files = Changed(changed());
-        return done ? new PackageChange(id, null, chosen.Name, files) : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
+        AgentCall.Follow(window.Actions.Work, ToolWindows.NuGetView.Changing);
+        return new PackageChange(id, null, chosen.Name, Changed(await window.NuGet.RemoveAsync(chosen, id)));
     });
 
-    /// <summary>The files a package change wrote, taken into the editors that show them and named as the answer names them;
-    /// the projects read again.</summary>
-    private IReadOnlyList<string> Changed(IReadOnlyList<string> written)
-    {
-        window.FollowWritten(written);
-        Session.ReadAgain();
-        return [.. written.Select(Relative)];
-    }
-
-    /// <summary>Which of some files differ, when asked, from what they hold now.</summary>
-    private static Func<IReadOnlyList<string>> Changes(IReadOnlyList<string> files)
-    {
-        byte[]?[] before = [.. files.Select(Bytes)];
-        return () => [.. files.Where((file, i) => !(Bytes(file) ?? []).AsSpan().SequenceEqual(before[i] ?? []))];
-
-        static byte[]? Bytes(string file)
-        {
-            try
-            {
-                return File.Exists(file) ? File.ReadAllBytes(file) : null;
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                return null;
-            }
-        }
-    }
+    /// <summary>The files a package change wrote, named as the answer names them (the window's change took them into the
+    /// editors and read the projects again); one refused, or that dotnet failed, is an error saying why.</summary>
+    private IReadOnlyList<string> Changed(PackageOutcome outcome) =>
+        outcome.Refused is { } why ? throw new InvalidOperationException(why)
+        : outcome.Done ? [.. outcome.Changed.Select(Relative)]
+        : throw new InvalidOperationException(string.Join('\n', outcome.Said.TakeLast(15)));
 
     // The profiler
 
@@ -513,23 +478,6 @@ public sealed partial class PassengerTools
     /// <summary>The text before the cursor on its line, which at a shell waiting for a command is its prompt.</summary>
     private static string Prompt(TerminalScreen screen) =>
         screen.IsAlternate ? string.Empty : screen.Lines[screen.CursorRow].Text(0, screen.CursorColumn);
-
-    /// <summary>What a package change may write: the project file, and the Directory.Packages.props nearest above it,
-    /// where under central package management an install puts the version.</summary>
-    private static IReadOnlyList<string> PackageFiles(ProjectModel project)
-    {
-        List<string> files = [project.Path];
-        for (string? at = Path.GetDirectoryName(project.Path); at is not null; at = Path.GetDirectoryName(at))
-        {
-            string props = Path.Combine(at, "Directory.Packages.props");
-            if (File.Exists(props))
-            {
-                files.Add(props);
-                break;
-            }
-        }
-        return files;
-    }
 
     private ProjectModel Project(string project)
     {
