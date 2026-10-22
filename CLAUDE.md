@@ -1920,10 +1920,16 @@ Run brings it up and open another folder as Debug does (its cache answering its 
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
 run up, each leaving no container of the project. Aspire's tests (#338): the run gives every `aspire` CLI and AppHost it
-starts a home of its own (`ASPIRE_HOME`), telemetry and version checks off (`TestRun`), but an AppHost and the CLI keep
-their record of running AppHosts in `$HOME/.aspire/cli/bch` whatever `ASPIRE_HOME` says (on Windows in the person's
-profile whatever the environment says), so `AspireTests` (Alone), `AspireExternalDataTests` and `McpAspireTests`' tests of
-a real AppHost skip, saying why (`AspireApp.CliSkipped`), until they run with a home of the run's own; `AspireApp` makes two of
+starts a home of its own (`ASPIRE_HOME`), telemetry, version checks and certificate making off (`TestRun`), and since an
+AppHost and the CLI keep their record of running AppHosts in `$HOME/.aspire/cli/bch` whatever `ASPIRE_HOME` says, a HOME
+of the run's own too (`AspireCli.Home`, `/tmp/passenger-aspire-<pid>`, short for macOS's 104-byte socket paths, removed
+with the run): the fixtures' AppHosts' launch profiles name it, and on macOS and Linux the run's PATH starts with a wrapper
+named `aspire` that runs the run's own CLI there (`Aspire.Cli.<rid>`, a PackageDownload where `PassengerAspireRuntime` is
+true, its bundle unpacked beside it in the package cache) or refuses, so neither the IDE nor a test ever runs the person's
+CLI or reaches their ~/.aspire. On Windows an AppHost keeps that record in the person's profile whatever its environment
+says, so there `AspireTests` (Alone) and `McpAspireTests`' tests of a real AppHost skip (`AspireApp.Unavailable`), and
+`AspireExternalDataTests` (`AspireApp.CliUnavailable`), which runs `aspire run` through ChildProcesses, finds its AppHost
+in the window and ends it with its process group, waiting until no service or orchestrator of it is left; `AspireApp` makes two of
 Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`), as do `AspireOrchestrationTests`, on a
 solution of the tests' own target, the rest from the package cache: `tests/AspireGraphs` (an AppHost's, ServiceDefaults'

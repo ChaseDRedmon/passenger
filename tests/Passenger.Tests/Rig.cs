@@ -153,6 +153,10 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable("ASPIRE_CLI_TELEMETRY_OPTOUT", "1");
         Environment.SetEnvironmentVariable("features__updateNotificationsEnabled", "false");
         Environment.SetEnvironmentVariable("ASPIRE_VERSION_CHECK_DISABLED", "true");
+        // Nor the person's aspire CLI, nor their ~/.aspire: the run's own CLI, with a home of the run's own, is the only aspire
+        // on the run's PATH (AspireCli), and it makes no development certificate where it would only check one.
+        Environment.SetEnvironmentVariable("ASPIRE_CLI_GENERATE_HTTPS_CERTIFICATE", "false");
+        AspireCli.Begin(Root);
         // Waits a person never notices, which a test that holds the IDE to them would wait out in full, made short: the
         // debugger gives up on an evaluation after 3 s, not 5 (Passenger.Dap's AdapterEnvironment.EvaluationTimeoutVariable;
         // 1 s timed out a program's first LINQ evaluation on CI's Linux runner), and dotnet watch's words after what it
@@ -220,7 +224,7 @@ public sealed class TestRun : IDisposable
         // No child holds a container: what the run's tests made, and what they had the IDE make, goes by its labels.
         Docker.RemoveEverything();
         // The windows' agent sockets are in a folder named for the run's state, outside it.
-        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder])
+        foreach (string folder in (string[])[Root, Passenger.App.Mcp.McpHost.SocketFolder, AspireCli.Home])
         {
             try
             {

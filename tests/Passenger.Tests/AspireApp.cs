@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Passenger.App;
@@ -16,11 +17,14 @@ public sealed class AspireApp : SharedProject
     public const string Name = "PassengerAspire";
     public const string CompanionName = "CompanionAspire";
     public const string RequestLog = "Passenger request {RequestValue}";
-    /// <summary>Why the tests that run a real AppHost or the aspire CLI skip. The run gives both a home of its own (ASPIRE_HOME,
-    /// TestRun), but an AppHost and the CLI keep their record of running AppHosts (aspire ps's) in $HOME/.aspire/cli/bch
-    /// whatever ASPIRE_HOME says, on Windows in the person's profile whatever the environment says, a script-installed
-    /// CLI its whole home beside itself, in ~/.aspire; and no CLI of the run's own is downloaded yet (#400).</summary>
-    public const string CliSkipped = "Runs a real AppHost or the aspire CLI, which keep their record of running AppHosts in the person's own ~/.aspire whatever ASPIRE_HOME says: skipped until they run with a home of the run's own";
+    /// <summary>Why a test that runs a real AppHost skips (<see cref="Unavailable"/>): Aspire's dashboard and orchestrator not
+    /// downloaded, or Windows, where an AppHost keeps its record of running AppHosts in the person's profile whatever its
+    /// environment says, so no home of the run's own (<see cref="AspireCli.Home"/>) keeps it from theirs.</summary>
+    public const string AppHostSkipped = "Runs a real AppHost, which needs Aspire's dashboard and orchestrator (PassengerAspireRuntime=true) and, to keep out of the person's ~/.aspire, macOS or Linux";
+
+    /// <summary>Why a test that runs the aspire CLI skips (<see cref="CliUnavailable"/>): as <see cref="AppHostSkipped"/>, or
+    /// no CLI of the run's own (<see cref="AspireCli.Program"/>); the person's is never run.</summary>
+    public const string CliSkipped = "Runs the aspire CLI, the run's own, which the build downloads with Aspire's dashboard and orchestrator (PassengerAspireRuntime=true) on macOS and Linux; the person's is never run";
 
     public AspireApp() : base("aspire-")
     {
@@ -36,7 +40,7 @@ public sealed class AspireApp : SharedProject
             new[] { ("First", Name), ("Second", CompanionName) }.SelectMany(app =>
                 new[] { "AppHost", "ApiService", "Web", "ServiceDefaults" }.Select(project =>
                     $"  <Project Path=\"{app.Item1}/{app.Item2}.{project}/{app.Item2}.{project}.csproj\" />\n"))) + "</Solution>\n");
-        Prepare();
+        Prepare(byRealPath: true);
         using JsonDocument assets = JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(Host)!, "obj", "project.assets.json")));
         Assert.True(assets.RootElement.GetProperty("libraries").TryGetProperty("MessagePack/2.5.307", out _),
             "The 13.6.2 AppHost must restore the fixed MessagePack dependency.");
@@ -46,7 +50,13 @@ public sealed class AspireApp : SharedProject
 
     public static bool IsUnavailable => Unavailable is not null;
 
-    public static string? Unavailable => RuntimeDownloaded ? CliSkipped : RuntimeMissing;
+    public static string? Unavailable => !RuntimeDownloaded ? RuntimeMissing
+        : OperatingSystem.IsWindows() ? "On Windows an AppHost keeps its record of running AppHosts in the person's profile whatever its environment says, which no test may touch" : null;
+
+    public static bool IsCliUnavailable => CliUnavailable is not null;
+
+    public static string? CliUnavailable => Unavailable
+        ?? (AspireCli.Program is null ? "The build downloaded no aspire CLI of the run's own for this machine" : null);
 
     /// <summary>Whether the test project downloaded Aspire's dashboard and orchestrator, which running an AppHost needs: only
     /// where PassengerAspireRuntime was true as it restored (Passenger.Tests.csproj); elsewhere a folder's AppHosts restore
@@ -171,6 +181,8 @@ public sealed class AspireApp : SharedProject
         http["environmentVariables"]!["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"] = $"http://localhost:{FreePort()}";
         http["environmentVariables"]!["ASPIRE_ALLOW_UNSECURED_TRANSPORT"] = "true";
         http["environmentVariables"]!["ASPIRE_VERSION_CHECK_DISABLED"] = "true";
+        // Where the AppHost keeps its record of running AppHosts (aspire ps's), the run's own, never the person's ~/.aspire.
+        http["environmentVariables"]!["HOME"] = AspireCli.Home;
         string dashboardData = Path.Combine(hostFolder, ".passenger-dashboard");
         if (OperatingSystem.IsWindows())
         {
@@ -233,4 +245,52 @@ public sealed class AspireApp : SharedProject
 
     private static ChildResult Run(IReadOnlyList<string> arguments, string? folder) => Task.Run(() =>
         ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments, folder), limit: TimeSpan.FromMinutes(3).Scaled())).GetAwaiter().GetResult();
+}
+
+/// <summary>The run's own aspire CLI, and the home it and the AppHosts the tests run take in place of the person's: an AppHost
+/// and the CLI keep their record of running AppHosts (which aspire ps and stop read, and ps's own clean-up ends) in
+/// $HOME/.aspire/cli/bch whatever ASPIRE_HOME says, so the run gives them a HOME of its own. On macOS and Linux the run's PATH
+/// starts with a wrapper named aspire that runs the CLI the build downloaded (Passenger.Tests.csproj) in that home, or
+/// refuses where it downloaded none, so the IDE and the tests never run the person's.</summary>
+public static class AspireCli
+{
+    /// <summary>The CLI the build downloaded for this machine, null where it downloaded none (PassengerAspireRuntime off,
+    /// Windows); its bundle unpacks beside it, in the package cache, as it first runs.</summary>
+    public static string? Program { get; } = typeof(AspireCli).Assembly.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>()
+        .FirstOrDefault(attribute => attribute.Key == "AspireCli")?.Value is { } path && File.Exists(path) ? path : null;
+
+    private const string Prefix = "/tmp/passenger-aspire-";
+
+    /// <summary>The run's home for the CLI and the AppHosts, short as macOS's 104-byte socket paths ask: the record of a running
+    /// AppHost is a socket at $HOME/.aspire/cli/bch/ and 20 characters more, its process's id after them. Gone with the run.</summary>
+    public static string Home { get; } = Prefix + Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Puts the wrapper first on the run's PATH, before anything starts, and removes the homes of runs whose process
+    /// is gone. Windows finds aspire.exe alone, which no script can stand in for, so there nothing is put.</summary>
+    internal static void Begin(string root)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        foreach (string left in Directory.EnumerateDirectories("/tmp", "passenger-aspire-*"))
+        {
+            if (int.TryParse(left[Prefix.Length..], NumberStyles.None, CultureInfo.InvariantCulture, out int id) && id != Environment.ProcessId
+                && !Processes.IsRunning(id))
+            {
+                TestFolders.Delete(left);
+            }
+        }
+        // .NET takes a HOME that is not there for none at all, and the CLI then refuses to start.
+        Directory.CreateDirectory(Home, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        string folder = Directory.CreateDirectory(Path.Combine(root, "aspire-bin")).FullName;
+        string wrapper = Path.Combine(folder, "aspire");
+        File.WriteAllText(wrapper, Program is { } program
+            ? $"#!/bin/sh\nHOME={Quoted(Home)} exec {Quoted(program)} \"$@\"\n"
+            : "#!/bin/sh\necho \"The test run has no aspire CLI of its own: build the tests with PassengerAspireRuntime=true on macOS or Linux; the person's is never run.\" >&2\nexit 127\n");
+        File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        Environment.SetEnvironmentVariable("PATH", folder + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
+    }
+
+    private static string Quoted(string text) => "'" + text.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 }
