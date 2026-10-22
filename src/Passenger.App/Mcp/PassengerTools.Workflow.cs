@@ -239,7 +239,7 @@ public sealed partial class PassengerTools
         "longest, measure, arrange, render and compositor totals, the layout table by control type with the heaviest controls " +
         "and their XAML lines, and the longest frame's breakdown (or 0 and why). With attach, Attach Profiler instead: the " +
         "debugged program, else Run's, or with container the .NET program in it (debug_processes lists them), from now for " +
-        "seconds (else until it ends), left running. With resource, that Aspire resource as it runs.")]
+        "seconds (else until it ends), left running. With resource, that Aspire resource or compose service as it runs.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -271,7 +271,7 @@ public sealed partial class PassengerTools
         AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler, AppActions.RunProgram);
         using (LaunchBuild built = new(Builds))
         {
-            Task<string?> started = resource is not null ? ProfileAspireTarget()
+            Task<string?> started = resource is not null ? ComposeService(resource) is { } service ? window.ServiceActionAsync(AppActions.ServiceProfile, service) : ProfileAspireTarget()
                 : !attach ? window.ProfileAsync(arguments)
                 : container is null ? window.AttachProfilerAsync()
                 : window.AttachProfilerAsync(await ProfiledIn(container));
