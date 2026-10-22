@@ -486,33 +486,40 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
 
         public Project() : base("aspire-help-")
         {
-            Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /><Project Path=\"Plain/Plain.csproj\" /></Solution>");
-            // A project no AppHost references, whose files Aspire's help leaves alone.
-            Put("Plain/Plain.csproj", TestProjects.Library());
-            Put("Plain/Notes.cs", "namespace Plain;\n\npublic static class Notes\n{\n    // Typed here:\n    public static int Count()\n    {\n        int value = 1;\n        return Twice(value);\n    }\n}\n");
-            foreach (string name in new[] { "Api", "Worker" })
-            {
-                Put($"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
-            }
-            Put("Api/Program.cs", Service);
-            Put("Worker/Program.cs", Worker);
-            foreach (string name in new[] { "Host", "OtherHost" })
-            {
-                Put($"{name}/{name}.csproj", $"""
-                    <Project Sdk="Microsoft.NET.Sdk">
-                      <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
-                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle>{(name == "Host" ? $"<UserSecretsId>{SecretsId}</UserSecretsId>" : "")}</PropertyGroup>
-                      <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
-                    </Project>
-                    """);
-            }
-            Put("Host/Program.cs", Host);
-            Put("OtherHost/Program.cs", "System.Console.WriteLine(\"No graph\");\n");
+            WriteTo(Folder, SecretsId);
             // The AppHosts' graph is the starter's, in the package cache the test project's restore filled: never nuget.org.
             AspireApp.UseFeed(Folder);
             Prepare(byRealPath: true);
         }
 
-        private void Put(string name, string text) => TestFolders.Write(Folder, name, text);
+        /// <summary>The solution's files written into a folder, the Host's user secrets kept under <paramref name="secretsId"/>:
+        /// this class's and an agent's test of the same code help (McpLanguagesTests).</summary>
+        internal static void WriteTo(string folder, string secretsId)
+        {
+            Put(folder, "Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /><Project Path=\"Plain/Plain.csproj\" /></Solution>");
+            // A project no AppHost references, whose files Aspire's help leaves alone.
+            Put(folder, "Plain/Plain.csproj", TestProjects.Library());
+            Put(folder, "Plain/Notes.cs", "namespace Plain;\n\npublic static class Notes\n{\n    // Typed here:\n    public static int Count()\n    {\n        int value = 1;\n        return Twice(value);\n    }\n}\n");
+            foreach (string name in new[] { "Api", "Worker" })
+            {
+                Put(folder, $"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
+            }
+            Put(folder, "Api/Program.cs", Service);
+            Put(folder, "Worker/Program.cs", Worker);
+            foreach (string name in new[] { "Host", "OtherHost" })
+            {
+                Put(folder, $"{name}/{name}.csproj", $"""
+                    <Project Sdk="Microsoft.NET.Sdk">
+                      <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
+                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle>{(name == "Host" ? $"<UserSecretsId>{secretsId}</UserSecretsId>" : "")}</PropertyGroup>
+                      <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
+                    </Project>
+                    """);
+            }
+            Put(folder, "Host/Program.cs", Host);
+            Put(folder, "OtherHost/Program.cs", "System.Console.WriteLine(\"No graph\");\n");
+        }
+
+        private static void Put(string folder, string name, string text) => TestFolders.Write(folder, name, text);
     }
 }

@@ -187,6 +187,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync(cancel);
+        // Aspire's own, as the editor marks them: a service's missing references, an AppHost's parameters with no value.
+        if (Session.CSharp?.For(document) is { } csharp)
+        {
+            found = [.. found, .. await csharp.AspireFindingsAsync(lsp, cancel)];
+        }
         TextSnapshot answered = lsp.Text.Snapshot;
         return (IReadOnlyList<Finding>)[.. found.Select(d =>
         {
@@ -375,6 +380,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
         int offset = Offset(served.Document, line, column);
+        await AspireMarked(served, cancel);
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         return (IReadOnlyList<string>)[.. window.Assist.OwnFixes(served.Document, offset).Select(f => $"{f.Title} [quickfix]"),
             .. linted.Select(f => f.Action.Kind is { Length: > 0 } kind ? $"{f.Title} [{kind}]" : f.Title),
@@ -402,6 +408,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         ServerServed server = (ServerServed)served;
         int offset = Offset(served.Document, line, column);
+        await AspireMarked(served, cancel);
         if (window.Assist.OwnFixes(served.Document, offset).FirstOrDefault(f => f.Title == title) is { } own)
         {
             return await ApplyOwnFix(served.Document, own, patience, name);

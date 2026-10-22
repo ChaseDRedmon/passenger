@@ -183,7 +183,17 @@ public sealed partial class PassengerTools
             && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
             ? await PlacesOf([place], cancel) : null;
 
-    /// <summary>Rename in JSON, whose server has none:the property's name, and in a package.json's scripts every run of a
+    /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, so the fixes Passenger offers on
+    /// Aspire's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
+    private async Task AspireMarked(Served served, CancellationToken cancel)
+    {
+        if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { AspireRole: not Aspire.AspireRole.None } csharp)
+        {
+            await csharp.PullNowAsync(cancel);
+        }
+    }
+
+    /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a
     /// script renamed with it, one undoable edit, saved.</summary>
     private async Task<string> JsonRename(ServerServed json, int offset, string newName)
     {

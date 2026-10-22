@@ -883,11 +883,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
   references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
-  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings, an AppHost's edit pulls its
-  open services' again, and any other file's typing pause, completion, actions and declarations cost Aspire nothing
-  (AspireCodeHelpTests holds a pause to it by what it allocates). An agent's `run`, `debug_start`, `debug_attach`,
-  `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace`
-  lists the AppHosts running with each resource's target, and `aspire_telemetry` reads their logs and traces.
+  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings and an AppHost's its
+  parameters' (`CSharpDocument.AspireFindingsAsync`, which an agent's `diagnostics` adds too, and whose pull its
+  `code_actions` and `apply_code_action` make first, `PullNowAsync`), an AppHost's edit pulls its open services' again,
+  and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
+  pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
+  `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
+  (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each resource's target, and
+  `aspire_telemetry` reads their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
