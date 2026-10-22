@@ -33,7 +33,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
     {
         MainWindow window = project.Open("Dotted.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "        Console");
+        Ui.PlaceAfter(editor, "        Console");
         editor.Focus();
         Ui.Settle();
 
@@ -269,13 +269,6 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         }
     }
 
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-    }
-
     /// <summary>A small console project on disk with two files of 20,000 lines, restored once for every test, and the warm
     /// server they share on it, which loads and compiles the files once.</summary>
     public sealed class Project : SharedProject
@@ -290,7 +283,7 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
             : base("long-assist-")
         {
             File.WriteAllText(PathOf("Sample.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
             File.WriteAllText(PathOf("Long.cs"), Long);
             File.WriteAllText(PathOf("Dotted.cs"), Dotted);

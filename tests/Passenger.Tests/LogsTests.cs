@@ -20,7 +20,7 @@ public sealed class LogsTests : IDisposable
     public void A_project_naming_a_missing_sdk_says_why_in_the_status_bar_and_the_ides_log()
     {
         File.WriteAllText(Path.Combine(folder, "Bad.csproj"),
-            "<Project Sdk=\"Missing.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            $"<Project Sdk=\"Missing.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(folder, "Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
         MainWindow window = new() { Width = 1400, Height = 800 };
         window.Show();
@@ -57,7 +57,7 @@ public sealed class LogsTests : IDisposable
         Directory.CreateDirectory(Path.Combine(folder, "App"));
         Directory.CreateDirectory(Path.Combine(folder, "Scripts"));
         File.WriteAllText(Path.Combine(folder, "App", "App.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Library());
         File.WriteAllText(Path.Combine(folder, "App", "App.cs"), "class App { }\n");
         File.WriteAllText(Path.Combine(folder, "Scripts", "Loose.cs"), "class Loose { }\n");
         MainWindow window = new() { Width = 1400, Height = 800 };
@@ -93,7 +93,7 @@ public sealed class LogsTests : IDisposable
         Directory.CreateDirectory(Path.Combine(folder, "App"));
         Directory.CreateDirectory(Path.Combine(folder, "Scripts"));
         File.WriteAllText(Path.Combine(folder, "App", "App.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Library());
         File.WriteAllText(Path.Combine(folder, "App", "App.cs"), "class App { }\n");
         File.WriteAllText(Path.Combine(folder, "Scripts", "Loose.cs"), "class Loose { }\n");
         Restore.Run(Path.Combine(folder, "App"));
@@ -129,7 +129,7 @@ public sealed class LogsTests : IDisposable
     public void Tracing_writes_the_language_servers_messages_to_lsp_log_and_every_program_to_the_ides_log_until_turned_off()
     {
         File.WriteAllText(Path.Combine(folder, "Sample.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console());
         File.WriteAllText(Path.Combine(folder, "Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
         Restore.Run(folder);
         MainWindow window = new() { Width = 1200, Height = 800 };
@@ -180,7 +180,7 @@ public sealed class LogsTests : IDisposable
     public void Tracing_writes_the_debuggers_messages_to_dap_log_beside_each_sessions_start_and_end()
     {
         File.WriteAllText(Path.Combine(folder, "Sum.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console());
         File.WriteAllText(Path.Combine(folder, "Program.cs"), "System.Console.WriteLine(\"total 6\");\n");
         Restore.Run(folder);
         MainWindow window = new() { Width = 1200, Height = 800 };
@@ -217,7 +217,7 @@ public sealed class LogsTests : IDisposable
         // Named for the test's folder, since the log is the whole run's.
         string untracked = $"Untracked{Path.GetFileName(folder)}";
         File.WriteAllText(Path.Combine(folder, "Logs.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Library());
         File.WriteAllText(Path.Combine(folder, "Tracked.cs"), "class Tracked { }\n");
         Restore.Run(folder);
         TestGit.Init(folder);

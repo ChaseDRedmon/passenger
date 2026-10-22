@@ -161,6 +161,19 @@ internal static class Docker
     public static bool NoneLeft(string project, params string[] labels) =>
         Said(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", .. labels.SelectMany(l => (string[])["--filter", $"label={l}"])]) is "";
 
+    /// <summary>Waits, the window running, until a Compose project has no container left (of those carrying each label given
+    /// too), failing with what was to take them down.</summary>
+    public static void TakenDown(string project, string what, params string[] labels) =>
+        Ui.WaitFor(() => NoneLeft(project, labels), what, TimeSpan.FromMinutes(2));
+
+    /// <summary>The window's Stop of its container run, and the wait until its project has no container left (as
+    /// <see cref="TakenDown"/>).</summary>
+    public static void Stopped(MainWindow window, string project, string what, params string[] labels)
+    {
+        window.Perform(AppActions.Stop);
+        TakenDown(project, what, labels);
+    }
+
     /// <summary>A folder of the test's own holding a Compose file whose services and network carry the run's label, brought
     /// up and waited for until healthy; its project's name is the test run's and the folder's.</summary>
     public static (string Folder, string Project) ComposeUp(string name, string services)
@@ -269,7 +282,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         (string folder, string project) = Docker.ComposeUp("list", Shop);
-        MainWindow window = Open(folder);
+        MainWindow window = Ui.OpenFolder(folder);
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Rows.Any(r => r.Kind == ContainerRowKind.Project && r.Label == project), $"{project} listed under Compose");
 
@@ -285,10 +298,7 @@ public sealed class ContainersTests
         Ui.WaitFor(() => view.Choose(r => r.Key == web.Key)
             && (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort" && Equals(b.Content, port.ToString()))) is not null,
             "web's port link");
-        Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(link!);
         Assert.Contains(new Uri($"http://localhost:{port.HostPort}/"), window.Browsed);
         window.Close();
     }
@@ -298,7 +308,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         (string folder, string project) = Docker.ComposeUp("log", Shop);
-        MainWindow window = Open(folder);
+        MainWindow window = Ui.OpenFolder(folder);
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == "web"), "web's row");
         OutputView console = view.Log.Console;
@@ -332,7 +342,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("solo", "trap 'exit 0' TERM; while true; do sleep 1; done");
-        MainWindow window = Open(TestFolders.Create("ctr-solo-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-solo-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
 
@@ -354,7 +364,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string folder = TestFolders.Create("ctr-project-");
-        MainWindow window = Open(folder);
+        MainWindow window = Ui.OpenFolder(folder);
         string project = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}ours";
         // web as Passenger's own up makes it, with the folder's labels; db as the person started it, with none of Passenger's.
         string ours = string.Join(", ", window.Session.Containers.Labels.Where(w => w != "--label").Append(Docker.RunLabel).Select(l => l.Split('=', 2)).Select(l => $"\"{l[0]}\": \"{l[1]}\""));
@@ -379,7 +389,7 @@ public sealed class ContainersTests
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string volume = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}data";
         Docker.Run("volume", "create", "--label", Docker.RunLabel, volume);
-        MainWindow window = Open(TestFolders.Create("ctr-volume-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-volume-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Rows.Any(r => r.Key == "group:Volumes"), "the Volumes heading");
         view.Toggle(view.Rows.First(r => r.Key == "group:Volumes"));
@@ -389,12 +399,12 @@ public sealed class ContainersTests
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
         ConfirmDialog asked = DialogButtonsTests.Check(Asked(window));
         Assert.Contains(Texts(asked), t => t.StartsWith($"Remove the volume {volume} and the data it holds?", StringComparison.Ordinal));
-        Press(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.True(Docker.VolumeExists(volume), "The volume was removed though the question was cancelled");
 
         // Allowed, it goes.
         Assert.True(window.Perform(AppActions.ContainerRemove), "Remove did not run");
-        Press(Asked(window), "Remove");
+        Ui.ClickButton(Asked(window), "Remove");
         Ui.WaitFor(() => !Docker.VolumeExists(volume) && !view.Rows.Any(r => r.Label == volume),
             $"{volume} removed, and gone from the window");
         window.Close();
@@ -406,13 +416,6 @@ public sealed class ContainersTests
         }
 
         static string[] Texts(Window dialog) => [.. dialog.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
-
-        static void Press(Window dialog, string button)
-        {
-            dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button)
-                .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Ui.Settle();
-        }
     }
 
     [AvaloniaFact]
@@ -420,7 +423,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("busy", "while true; do :; done");
-        MainWindow window = Open(TestFolders.Create("ctr-stats-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-stats-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
         view.ShowTab("Stats");
@@ -475,7 +478,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("files", "echo 'from inside' > /tmp/note.txt; sleep 600");
-        MainWindow window = Open(TestFolders.Create("ctr-files-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-files-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
         view.ShowTab("Files");
@@ -504,7 +507,7 @@ public sealed class ContainersTests
         string name = Docker.Container("escape",
             $"echo first > /note.txt; dd if=/dev/zero of=/big bs=1048576 count=20 2>/dev/null; mkdir -p '/{outside.TrimStart('/')}'; " +
             $"echo inside > '/{outside.TrimStart('/')}/escaped.txt'; rm /bin/ls; printf '%s\\n' {ls} > /bin/ls; chmod +x /bin/ls; sleep 600");
-        MainWindow window = Open(TestFolders.Create("ctr-escape-window-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-escape-window-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
         view.ShowTab("Files");
@@ -553,7 +556,7 @@ public sealed class ContainersTests
         string name = Docker.Container("heap", "sleep 600");
         Docker.Run("cp", Path.Combine(tools, "."), $"{name}:{ContainerTools.Copied}");
         Docker.Run("cp", Path.Combine(frames, "."), $"{name}:/tmp/frames");
-        MainWindow window = Open(TestFolders.Create("ctr-heap-window-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-heap-window-"));
         try
         {
             DotnetProcess program = new(7, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = name };
@@ -722,7 +725,7 @@ public sealed class ContainersTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("shell", "sleep 600");
-        MainWindow window = Open(TestFolders.Create("ctr-shell-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-shell-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
         Assert.True(window.Perform(AppActions.ContainerShell), "Open Shell did not run");
@@ -815,10 +818,7 @@ public sealed class ContainersTests
             ContainersView view = Shown(window);
             Button? link = null;
             Ui.WaitFor(() => (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort")) is not null, "web's port link");
-            Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(at, MouseButton.Left);
-            window.MouseUp(at, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(link!);
             Assert.Contains(new Uri("http://engine.example:8080/"), window.Browsed);
         }
         finally
@@ -833,7 +833,7 @@ public sealed class ContainersTests
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("stopped", "for i in 1 2 3 4 5; do echo \"stopped line $i\"; done");
         Ui.WaitFor(() => Docker.State(name) == "exited", $"{name} to end");
-        MainWindow window = Open(TestFolders.Create("ctr-stopped-"));
+        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-stopped-"));
         try
         {
             ContainersView view = Shown(window);
@@ -951,15 +951,6 @@ public sealed class ContainersTests
         File.WriteAllText(sh, $"#!/bin/sh\nif [ \"$1\" = version ]; then echo '{Client}'; echo '{Error}' >&2; exit 1; fi\nexit 1\n");
         File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         return sh;
-    }
-
-    private static MainWindow Open(string folder)
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
     }
 
     private static ContainersView Shown(MainWindow window)

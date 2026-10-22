@@ -89,10 +89,10 @@ public sealed class MemorySnapshotsTests : IDisposable
         Assert.Same(second, memory.Snapshot);
 
         // Compare with… on the newer: the older chosen from its menu.
-        Click(memory, "Compare with…");
+        Ui.ClickButton(memory, "Compare with…");
         MenuItem older = Assert.Single(memory.CompareMenu!.Items.OfType<MenuItem>());
         Assert.StartsWith("Snapshot #1", (string?)older.Header, StringComparison.Ordinal);
-        older.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        Ui.Click(older, settle: false);
         memory.CompareMenu.Hide();
         Ui.WaitFor(() => memory.Comparison is not null, "the comparison");
         Assert.Equal("Snapshot #2 › Comparison of Snapshot #1 to Snapshot #2", memory.Trail);
@@ -108,7 +108,7 @@ public sealed class MemorySnapshotsTests : IDisposable
         Assert.Equal(survivors.SurvivedBytes, first.Types.Single(t => t.Name == "Survivor").Bytes);
 
         memory.Choose(survivors);
-        Click(memory, "Open Survived Objects");
+        Ui.ClickButton(memory, "Open Survived Objects");
         Ui.WaitFor(() => memory.Set is not null, "the survived objects");
         Assert.Equal("Survived objects of the type Survivor", memory.Set!.Title);
         HashSet<ulong> before = [.. Ui.Await(Task.Run(() => first.ObjectsOf(first.Types.Single(t => t.Name == "Survivor")).Objects.Select(o => o.Address).ToList()), "the first snapshot's survivors")];
@@ -118,11 +118,10 @@ public sealed class MemorySnapshotsTests : IDisposable
 
         // Back along the trail, the new objects of the type that grew opened: each one listed, in the newer snapshot.
         Button back = memory.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Comparison of Snapshot #1 to Snapshot #2");
-        back.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(back);
         Assert.NotNull(memory.Comparison);
         memory.Choose(memory.DeltaRows[0]);
-        Click(memory, "Open New Objects");
+        Ui.ClickButton(memory, "Open New Objects");
         Ui.WaitFor(() => memory.Set is not null, "the new objects");
         Assert.Equal("Snapshot #2 › Comparison of Snapshot #1 to Snapshot #2 › New objects of the type Leak", memory.Trail);
         Assert.Same(second, memory.Set!.Snapshot);
@@ -132,10 +131,9 @@ public sealed class MemorySnapshotsTests : IDisposable
 
         // Its dead objects are the older snapshot's.
         back = memory.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Comparison of Snapshot #1 to Snapshot #2");
-        back.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(back);
         memory.Choose(doomed);
-        Click(memory, "Open Dead Objects");
+        Ui.ClickButton(memory, "Open Dead Objects");
         Ui.WaitFor(() => memory.Set is not null, "the dead objects");
         Assert.Equal("Dead objects of the type Doomed", memory.Set!.Title);
         Assert.Same(first, memory.Set.Snapshot);
@@ -195,7 +193,7 @@ public sealed class MemorySnapshotsTests : IDisposable
         ulong held = memory.ObjectRows.Single(o => set.Snapshot.ObjectAt(o.Address)!.ShortestPathsToRoots().Children[0].Root?.Kind == RootKind.Handle).Address;
 
         // Shortest Paths to Roots: the static field's, open from the entries down to it through what holds them.
-        Click(memory, "Shortest Paths to Roots");
+        Ui.ClickButton(memory, "Shortest Paths to Roots");
         Assert.Equal(1, memory.SetTab);
         string[] shown = [.. memory.PathRows.Select(r => $"{new string(' ', r.Depth)}{r.Node.Text} {r.Node.Objects}")];
         Assert.Equal(
@@ -216,7 +214,7 @@ public sealed class MemorySnapshotsTests : IDisposable
         Assert.Equal(RootKind.Handle, memory.PathRows[4].Node.Root?.Kind);
 
         // Key Retention Paths: each from its root, the most retaining first.
-        Click(memory, "Key Retention Paths");
+        Ui.ClickButton(memory, "Key Retention Paths");
         Assert.Equal(
             [
                 "Static reference: Cache.Entries → System.Collections.Generic.List<Entry>._items → Entry[] elements → Entry",
@@ -226,7 +224,7 @@ public sealed class MemorySnapshotsTests : IDisposable
         Assert.Equal((1000, cached), (memory.KeyPathRows[0].Objects, memory.KeyPathRows[0].RetainedBytes));
 
         // One entry opened alone: its own path, the element of the array it is.
-        Click(memory, "Objects");
+        Ui.ClickButton(memory, "Objects");
         HeapObject one = memory.ObjectRows.First(o => o.Address != held);
         Focus(memory.ObjectList, one);
         Ui.Press(window, "enter");
@@ -289,7 +287,7 @@ public sealed class MemorySnapshotsTests : IDisposable
 
         clock.Restart();
         memory.Choose(nodes);
-        Click(memory, "Open New Objects");
+        Ui.ClickButton(memory, "Open New Objects");
         Responsive(() => memory.Set is not null, "the new nodes and their paths", s => stall = s > stall ? s : stall);
         TimeSpan opened = clock.Elapsed;
         Assert.Equal(200_000, memory.ObjectRows.Count);
@@ -338,7 +336,7 @@ public sealed class MemorySnapshotsTests : IDisposable
         Focus(memory.TypeList, items);
         Ui.Press(window, "enter");
         Ui.WaitFor(() => memory.Set is not null, "the items");
-        Click(memory, "Shortest Paths to Roots");
+        Ui.ClickButton(memory, "Shortest Paths to Roots");
         Assert.Equal("Static reference: Kept.Items", memory.PathRows[^1].Node.Text);
         Assert.False(window.Profiling!.HasExited, "The program profiled ended with its memory snapshot");
         window.Profiling.Kill();
@@ -346,7 +344,7 @@ public sealed class MemorySnapshotsTests : IDisposable
     }
 
     /// <summary>A console project, built and started under the profiler from the window, run until it says it is ready.</summary>
-    private MainWindow Profiled(string name, string program, string framework = "net10.0")
+    private MainWindow Profiled(string name, string program, string framework = TestProjects.Framework)
     {
         string project = Path.Combine(folder, name);
         Directory.CreateDirectory(project);
@@ -367,7 +365,7 @@ public sealed class MemorySnapshotsTests : IDisposable
     /// <summary>Get Memory Snapshot pressed, and its snapshot listed, the window answering meanwhile.</summary>
     private static MemorySnapshot Snapshot(MainWindow window, int number, Action<TimeSpan>? stalled = null)
     {
-        Click(window.ProfilerView, "Get Memory Snapshot");
+        Ui.ClickButton(window.ProfilerView, "Get Memory Snapshot");
         // Bounded, so a createdump that never finishes fails here, not the run.
         Responsive(() => window.ProfilerView.Memory?.Number == number || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
             $"memory snapshot #{number}", stalled ?? (_ => { }));
@@ -394,14 +392,6 @@ public sealed class MemorySnapshotsTests : IDisposable
             Ui.Hold(turn, "a turn of the window's loop, as a person's clicks come, whose overrun is how long the window did not answer");
             stalled(each.Elapsed - turn);
         }
-    }
-
-    private static void Click(Avalonia.Visual within, string label)
-    {
-        Control found = within.GetVisualDescendants().OfType<Control>()
-            .First(c => c is Button { Content: string text } && text == label || c is ToggleButton { Content: string tab } && tab == label);
-        found.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
     }
 
     /// <summary>A row chosen and given the keys, as a click on it gives them.</summary>

@@ -130,7 +130,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         string button = avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\"" : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"";
         Insert(editor, button, " Margin=\"12\"");
 
-        PlaceAfter(editor, "<StackPanel Margin=\"1");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"1");
         Ui.Run(window, AppActions.RefactorThis);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Refactor This's list on the panel's margin");
         Assert.Equal(["Extract Resource…", "Extract Style…"], window.Assist.Offered);
@@ -162,7 +162,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         // A brush to the application's resources: two files, one command, Undo asking first.
         string appText = File.ReadAllText(app.PathOf(appFile));
         Insert(editor, avaloniaXaml ? "<TextBlock Name=\"Title\"" : "<TextBlock Style=\"{StaticResource Heading}\"", " Foreground=\"#E2A33F\"");
-        PlaceAfter(editor, "Foreground=\"#E2");
+        Ui.PlaceAfter(editor, "Foreground=\"#E2");
         Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
         resource = Shown<ExtractResourceDialog>(window, "Extract Resource");
         Assert.Equal("ForegroundBrush", resource.NameBox.Text);
@@ -181,7 +181,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Assert.DoesNotContain("ForegroundBrush", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
 
         // The button's margin and background to a style: WPF's keyed one it names, Avalonia's selecting a class it takes.
-        PlaceAfter(editor, "<Butt");
+        Ui.PlaceAfter(editor, "<Butt");
         Assert.True(window.RunFromMenu(AppActions.ExtractStyle), window.Status);
         ExtractStyleDialog style = Shown<ExtractStyleDialog>(window, "Extract Style");
         Assert.Equal(avaloniaXaml ? "buttonStyle" : "ButtonStyle", style.NameBox.Text);
@@ -193,7 +193,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Ui.Settle();
         Assert.Equal("At least one property must be selected", style.Problem);
         style.Properties[1].IsChecked = true;
-        Click(style, style.Properties[2]);
+        Ui.Click(style.Properties[2]);
         Next(style);
         text = editor.Document.Snapshot.ToString();
         if (avaloniaXaml)
@@ -229,7 +229,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         // A property the view model lacks, typed as the TextBlock's Text reads it.
         Replace(editor, "{Binding Greeting}", "{Binding Subtitle}");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Subtitle'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
-        PlaceAfter(editor, "{Binding Subt");
+        Ui.PlaceAfter(editor, "{Binding Subt");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
         Assert.Equal("Create property 'Subtitle'", window.Assist.Offered[0]);
@@ -241,7 +241,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         // A command for a button's Command: an ICommand property, its using added.
         Insert(editor, avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\"" : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\"", " Command=\"{Binding SaveCommand}\"");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'SaveCommand'", StringComparison.Ordinal)), "the command the view model lacks marked");
-        PlaceAfter(editor, "{Binding Save");
+        Ui.PlaceAfter(editor, "{Binding Save");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the command's line");
         Assert.Equal("Create property 'SaveCommand'", window.Assist.Offered[0]);
@@ -256,7 +256,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Insert(editor, avaloniaXaml ? "<TextBlock Text=\"{Binding #Go.Content}\" />" : "<TextBlock Text=\"{Binding Content, ElementName=Go}\" />",
             "\n        <TextBlock Text=\"{Binding Greeting, Converter={StaticResource ShoutConverter}}\" />");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message == "Resource 'ShoutConverter' is not found"), "the converter nothing defines marked");
-        PlaceAfter(editor, "{StaticResource Shout");
+        Ui.PlaceAfter(editor, "{StaticResource Shout");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the converter's line");
         Assert.Equal("Create converter 'ShoutConverter'", window.Assist.Offered[0]);
@@ -288,13 +288,13 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         OpenDocument shopView = window.EditorArea.Active!;
         Insert(shop, "<TextBlock Text=\"{Binding Name}\" />", "\n        <TextBlock Text=\"{Binding Title}\" />\n        <Button Command=\"{Binding BuyCommand}\" />");
         Ui.WaitFor(() => shopView.Markers.Count == 2, "the property and the command the shop's view model lacks marked");
-        PlaceAfter(shop, "{Binding Tit");
+        Ui.PlaceAfter(shop, "{Binding Tit");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the property's line");
         Assert.Equal("Create property 'Title'", window.Assist.Offered[0]);
         Ui.Press(window, "ENTER");
         Ui.Settle();
-        PlaceAfter(shop, "{Binding Buy");
+        Ui.PlaceAfter(shop, "{Binding Buy");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the command's line");
         Assert.Equal("Create property 'BuyCommand'", window.Assist.Offered[0]);
@@ -318,7 +318,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         OpenDocument document = window.EditorArea.Active!;
         Insert(editor, "<TextBlock Text=\"{Binding Name}\" />", "\n        <TextBlock Text=\"{Binding Price}\" />");
         Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("'Price'", StringComparison.Ordinal)), "the binding path the view model lacks marked");
-        PlaceAfter(editor, "{Binding Pri");
+        Ui.PlaceAfter(editor, "{Binding Pri");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
         Assert.Equal("Create property 'Price'", window.Assist.Offered[0]);
@@ -343,7 +343,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         string button = avaloniaXaml ? "<Button Name=\"Go\" Content=\"Go\" Background=\"{StaticResource Accent}\" />"
             : "<Button x:Name=\"Go\" Content=\"Go\" Click=\"OnGo\" Background=\"{StaticResource Accent}\" />";
         string title = avaloniaXaml ? "<TextBlock Name=\"Title\" Text=\"{Binding Greeting}\" />" : "<TextBlock Style=\"{StaticResource Heading}\" Text=\"{Binding Greeting}\" />";
-        PlaceAfter(editor, "<Butt");
+        Ui.PlaceAfter(editor, "<Butt");
         Ui.Run(window, AppActions.SurroundWith);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Surround With's templates");
         Assert.Equal(avaloniaXaml ? ["tag", "Grid", "StackPanel", "Border", "ScrollViewer", "DockPanel", "WrapPanel", "Canvas", "Viewbox", "Panel"]
@@ -383,7 +383,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         MainWindow window = avalonia.Open(avalonia.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         Insert(editor, "Title=\"Gallery\">", $"\n    {pasted}");
-        PlaceAfter(editor, "<Button Name=\"G");
+        Ui.PlaceAfter(editor, "<Button Name=\"G");
         Ui.Run(window, AppActions.FindUsages);
         Ui.WaitFor(() => window.Find.Rows.Any(r => r.Usage is not null), "the usages in the Find window");
         List<Usage> found = [.. window.Find.Rows.Select(r => r.Usage).OfType<Usage>().Where(u => u.Path.EndsWith("MainWindow.axaml", StringComparison.Ordinal))];
@@ -399,7 +399,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         Ui.Settle();
         window.OpenFile(avalonia.PathOf("MainWindow.axaml"));
         Ui.Settle();
-        PlaceAfter(editor, "{Binding Gree");
+        Ui.PlaceAfter(editor, "{Binding Gree");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainViewModel.cs", window.EditorArea.Active?.Name);
@@ -407,7 +407,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
 
         window.OpenFile(avalonia.PathOf("MainWindow.axaml"));
         Ui.Settle();
-        PlaceAfter(editor, "<StackPanel Margin=\"1");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"1");
         Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
         ExtractResourceDialog resource = Shown<ExtractResourceDialog>(window, "Extract Resource");
         resource.NameBox.Text = "PanelMargin";
@@ -441,19 +441,9 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
     private static void Next(RefactoringDialog dialog)
     {
         Assert.True(dialog.NextButton.IsEnabled, $"Next is disabled: {dialog.Problem}");
-        Click(dialog, dialog.NextButton);
+        Ui.Click(dialog.NextButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem.Length > 0, "the refactoring to be made");
         Assert.False(dialog.IsVisible, $"The dialog stayed open: {dialog.Problem}");
-    }
-
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not in the dialog");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>Agrees to every question the window asks, keeping each one's text in order.</summary>

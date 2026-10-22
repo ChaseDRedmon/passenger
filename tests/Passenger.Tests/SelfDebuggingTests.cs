@@ -22,7 +22,7 @@ public sealed class SelfDebuggingTests : IDisposable
     public SelfDebuggingTests()
     {
         File.WriteAllText(Path.Combine(folder, "Sum.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console());
         File.WriteAllText(Path.Combine(folder, "Program.cs"), "System.Console.WriteLine(1 + 2);\n");
         TestFolders.Prepare(() => Restore.Run(folder), folder, state);
     }

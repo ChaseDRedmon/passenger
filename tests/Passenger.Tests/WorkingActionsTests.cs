@@ -27,7 +27,7 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
     {
         Write(made, "Sample.slnx", "<Solution>\n  <Project Path=\"Hello/Hello.csproj\" />\n</Solution>\n");
         Write(made, "Hello/Hello.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         Write(made, "Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
         return Path.Combine(made, "Sample.slnx");
     });
@@ -61,7 +61,7 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         int builds = 0;
         window.Builder.Exited += (_, _) => builds++;
 
-        Click(window, run);
+        Ui.Click(run, settle: false);
         Assert.True(ActionButtons.IsWorking(run), "Run should show it is working the moment it is clicked");
         Assert.StartsWith("Working out how to run Hello", window.Status, StringComparison.Ordinal);
         Assert.True(Toolbar(window, "StopButton").IsEnabled, "Stop should be there to click from the click on, to end the start");
@@ -72,7 +72,7 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         int drawn = Ring(window, run).Count(c => Math.Abs(c.R - accent.R) + Math.Abs(c.G - accent.G) + Math.Abs(c.B - accent.B) < 90);
         Assert.True(drawn >= 9, $"Run's ring should be drawn round its icon in the accent in the frame after the click, but {drawn} of 16 points round it were");
 
-        Click(window, run);
+        Ui.Click(run, settle: false);
         Assert.StartsWith("Already under way: ", window.Status, StringComparison.Ordinal);
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to run to its end", TimeSpan.FromMinutes(2));
         Assert.True(builds == 1, $"Two clicks on Run built {builds} times, where the second should have started nothing");
@@ -97,8 +97,8 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
             }
         };
 
-        Click(window, debug);
-        Click(window, debug);
+        Ui.Click(debug, settle: false);
+        Ui.Click(debug, settle: false);
         Assert.StartsWith("Already under way: Working out how to debug Hello", window.Status, StringComparison.Ordinal);
         Ui.WaitFor(() => !ActionButtons.IsWorking(debug) && !window.Debugger.IsDebugging, "the debugged program to start and end", TimeSpan.FromMinutes(3));
         Assert.True(builds == 1 && sessions.Count == 1, $"A double click on Debug built {builds} times and opened {sessions.Count} sessions, where it should have done each once");
@@ -112,8 +112,8 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         Button run = Toolbar(window, "RunButton");
         Button stop = Toolbar(window, "StopButton");
 
-        Click(window, run);
-        Click(window, stop);
+        Ui.Click(run, settle: false);
+        Ui.Click(stop, settle: false);
         Ui.WaitFor(() => !ActionButtons.IsWorking(run), "Run's start to end");
         Ui.Settle();
         Assert.Equal("Hello was stopped as it started", Ui.Said(window));
@@ -149,27 +149,10 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         }
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(Folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(Folder);
 
     private static Button Toolbar(MainWindow window, string name) =>
         window.FindControl<Button>(name) ?? throw new InvalidOperationException($"The toolbar has no {name}");
-
-    /// <summary>A click as a person's: pressed and let go over the button's centre, the window's loop not run after, so
-    /// what it shows is what the click itself did.</summary>
-    private static void Click(MainWindow window, Button button)
-    {
-        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException($"{button.Name} is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-    }
 
     /// <summary>The window's pixels at sixteen points of the circle the ring round a button's icon is drawn on.</summary>
     private static Color[] Ring(MainWindow window, Button button)

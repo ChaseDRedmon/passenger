@@ -90,7 +90,7 @@ public sealed class ProjectWindowsTests : IDisposable
     public void Opening_another_folder_in_this_window_ends_what_the_first_ran_and_Run_runs_the_seconds_own()
     {
         File.WriteAllText(Path.Combine(alpha, "Alpha.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n"
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n"
             + "  <Target Name=\"Warn\" BeforeTargets=\"Build\">\n    <Warning Code=\"ALPHA1\" Text=\"alpha warns at every build\" />\n  </Target>\n</Project>\n");
         string program = Path.Combine(alpha, "Program.cs");
         File.WriteAllText(program, "string name = System.Diagnostics.Debugger.IsAttached ? \"debugged.pid\" : \"run.pid\";\n"
@@ -117,7 +117,7 @@ public sealed class ProjectWindowsTests : IDisposable
 
             // This Window: the first folder's session ends before the second's begins.
             Assert.Null(window.Open(beta));
-            Press(Asked(window), OpenProjectDialog.ThisWindow);
+            Ui.ClickButton(Asked(window), OpenProjectDialog.ThisWindow);
             Ui.WaitFor(() => window.Folder == PathNames.Canonical(beta), "the second folder to open in the window");
             Assert.True(Processes.Gone(running), "The first folder's program still runs after the second folder opened in its window");
             Assert.True(Processes.Gone(debugged), "The first folder's debugged program still runs after the second folder opened in its window");
@@ -155,18 +155,18 @@ public sealed class ProjectWindowsTests : IDisposable
         string[] order = [OpenProjectDialog.ThisWindow, OpenProjectDialog.NewWindow, "Cancel"];
         Assert.Equal(OperatingSystem.IsMacOS() ? order.Reverse() : order, Buttons(asked).Select(b => (string?)b.Content));
         Assert.Equal(OpenProjectDialog.ThisWindow, (string?)Assert.Single(Buttons(asked), b => b.IsDefault).Content);
-        Press(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.True(window.Folder == PathNames.Canonical(alpha) && PassengerApp.Windows.Count == 1, "Cancel opened the folder anyway");
 
         // This Window: the folder takes this one's place.
         window.Open(beta);
-        Press(Asked(window), OpenProjectDialog.ThisWindow);
+        Ui.ClickButton(Asked(window), OpenProjectDialog.ThisWindow);
         Assert.Equal(PathNames.Canonical(beta), window.Folder);
         Assert.Equal([window], PassengerApp.Windows);
 
         // New Window: the folder in a window of its own, in front, this one keeping its own.
         window.Open(alpha);
-        Press(Asked(window), OpenProjectDialog.NewWindow);
+        Ui.ClickButton(Asked(window), OpenProjectDialog.NewWindow);
         MainWindow other = Assert.Single(PassengerApp.Windows, w => w != window);
         Assert.Equal((PathNames.Canonical(beta), PathNames.Canonical(alpha)), (window.Folder, other.Folder));
         Assert.Equal(other, PassengerApp.Front);
@@ -182,7 +182,7 @@ public sealed class ProjectWindowsTests : IDisposable
         window.Open(gamma);
         OpenProjectDialog again = Asked(window);
         again.GetVisualDescendants().OfType<CheckBox>().Single(c => (string?)c.Content == "Don't ask again").IsChecked = true;
-        Press(again, OpenProjectDialog.ThisWindow);
+        Ui.ClickButton(again, OpenProjectDialog.ThisWindow);
         Assert.Equal(PathNames.Canonical(gamma), window.Folder);
         Assert.Equal((OpenProjectIn.CurrentWindow, OpenProjectIn.CurrentWindow), (window.Settings.OpenProjectIn, other.Settings.OpenProjectIn));
         Assert.Null(other.Open(beta));
@@ -305,7 +305,7 @@ public sealed class ProjectWindowsTests : IDisposable
 
         // Handed one while it runs, the window in front asks where, as Open does.
         PassengerApp.OpenFromSystem([alpha]);
-        Press(Asked(handed), OpenProjectDialog.NewWindow);
+        Ui.ClickButton(Asked(handed), OpenProjectDialog.NewWindow);
         Assert.Equal(PathNames.Canonical(alpha), PassengerApp.Front?.Folder);
         Assert.Equal(2, PassengerApp.Windows.Count);
         PassengerApp.Quit();
@@ -346,10 +346,10 @@ public sealed class ProjectWindowsTests : IDisposable
 
             // File, Exit closes the last opened first, which asks; kept open, the quit is given up and both stay.
             Assert.True(first.Perform(AppActions.Exit));
-            Press(Unsaved(second), "Cancel");
+            Ui.ClickButton(Unsaved(second), "Cancel");
             Assert.True(first.IsVisible && second.IsVisible, "Cancel kept the window with the read-only file open, but not every other");
             Assert.True(first.Perform(AppActions.Exit));
-            Press(Unsaved(second), "Close Without Saving");
+            Ui.ClickButton(Unsaved(second), "Close Without Saving");
             Ui.WaitFor(() => !first.IsVisible && !second.IsVisible, "Exit to close every window once the read-only file's question was answered");
             Assert.Empty(PassengerApp.Windows);
             Assert.Equal("class Locked { }\n", File.ReadAllText(locked));
@@ -363,7 +363,7 @@ public sealed class ProjectWindowsTests : IDisposable
             {
                 close.Invoke(window, [WindowCloseReason.ApplicationShutdown, false, false]);
             }
-            Press(Unsaved(other), "Close Without Saving");
+            Ui.ClickButton(Unsaved(other), "Close Without Saving");
             Ui.WaitFor(() => !again.IsVisible && !other.IsVisible, "the system's quit to close every window once the read-only file's question was answered");
             Assert.Empty(PassengerApp.Windows);
             Reopened();
@@ -468,7 +468,7 @@ public sealed class ProjectWindowsTests : IDisposable
     private static MainWindow InNewWindow(MainWindow from, string folder)
     {
         Assert.Null(from.Open(folder));
-        Press(Asked(from), OpenProjectDialog.NewWindow);
+        Ui.ClickButton(Asked(from), OpenProjectDialog.NewWindow);
         return PassengerApp.Windows.Single(w => w.Folder == PathNames.Canonical(folder));
     }
 
@@ -489,18 +489,12 @@ public sealed class ProjectWindowsTests : IDisposable
 
     private static Button[] Buttons(Window dialog) => [.. dialog.GetVisualDescendants().OfType<Button>().Where(b => b is not Avalonia.Controls.Primitives.ToggleButton)];
 
-    private static void Press(Window dialog, string button)
-    {
-        Buttons(dialog).First(b => (string?)b.Content == button).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
-    }
-
     /// <summary>A console project whose Program.cs prints its name with a total, has a local it never uses (a warning) and
     /// a local only the language server colours as one.</summary>
     private static void Project(string folder, string name)
     {
         File.WriteAllText(Path.Combine(folder, $"{name}.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         string lower = name.ToLowerInvariant();
         File.WriteAllText(Path.Combine(folder, "Program.cs"),
             $"int {lower}Total = 2 * 3;\nint {lower}Unused = 1;\nConsole.WriteLine($\"{lower} runs {{{lower}Total}}\");\n");

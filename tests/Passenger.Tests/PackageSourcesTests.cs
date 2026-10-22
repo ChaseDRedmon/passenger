@@ -163,7 +163,7 @@ public sealed class PackageSourcesTests : IDisposable
         Button install = Descendants<StackPanel>(nuget).Where(l => l.Children.FirstOrDefault() is TextBlock { Text: "Lib" })
             .SelectMany(l => l.Children.OfType<Button>()).FirstOrDefault(b => (string?)b.Content == "Install")
             ?? throw new Xunit.Sdk.XunitException("The NuGet window offers no Install on Lib's line");
-        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(install, settle: false);
         Ui.WaitFor(() => !nuget.IsBusy && Version(window) is not null, "the private package installed in Lib", TimeSpan.FromMinutes(3));
         Assert.True(Version(window) == "3.1.0", $"Lib has Passenger.Private {Version(window)}, not 3.1.0:\n{nuget.Log}");
         Assert.True(File.Exists(Path.Combine(folder, "packages", "passenger.private", "3.1.0", "passenger.private.3.1.0.nupkg")),
@@ -187,13 +187,12 @@ public sealed class PackageSourcesTests : IDisposable
         NuGetView nuget = window.NuGet;
         ShowSources(nuget);
         Button add = Descendants<Button>(nuget.Sources).Single(b => b.Name == "AddFeed");
-        add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(add);
         FeedDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<FeedDialog>()));
         Assert.Equal("New feed", dialog.Title);
         dialog.FeedName = "team";
         dialog.Url = "https://nuget.example.com/v3/index.json";
-        Descendants<Button>(dialog).Single(b => (string?)b.Content == "OK").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.ClickButton(dialog, "OK");
         Ui.Landed(() => nuget.FeedChoices.Contains("team"), "the new feed in the chooser");
 
         string line = $"    <add key=\"private\" value=\"{feed.Index}\" protocolVersion=\"3\" allowInsecureConnections=\"true\" />";
@@ -309,7 +308,7 @@ public sealed class PackageSourcesTests : IDisposable
     private static void ShowSources(NuGetView nuget)
     {
         ToggleButton tab = ((Panel)nuget.Tabs).Children.OfType<ToggleButton>().Single(t => (string?)t.Content == "Sources");
-        tab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(tab, settle: false);
         Ui.Landed(() => nuget.ShowsSources && nuget.Sources.Files.Count > 0, "the Sources tab with the folder's nuget.config files");
     }
 

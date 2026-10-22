@@ -182,11 +182,7 @@ public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
 

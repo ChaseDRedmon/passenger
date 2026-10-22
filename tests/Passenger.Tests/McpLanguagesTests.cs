@@ -253,7 +253,7 @@ public sealed class McpLanguagesTests : McpRig
         string shop = Made("mcpmsbuild-", made =>
         {
             File.WriteAllText(Path.Combine(made, "Directory.Build.props"), "<Project>\n  <PropertyGroup>\n    <Company>Passenger</Company>\n  </PropertyGroup>\n</Project>\n");
-            File.WriteAllText(Path.Combine(made, "Shop.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            File.WriteAllText(Path.Combine(made, "Shop.csproj"), $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
                 + "    <Product>$(Company) Shop</Product>\n  </PropertyGroup>\n  <Target Name=\"Greet\" AfterTargets=\"Build\">\n    <Message Text=\"$(Product)\" />\n  </Target>\n"
                 + "  <Target Name=\"Wave\" DependsOnTargets=\"Greet\" />\n</Project>\n");
         });
@@ -277,7 +277,7 @@ public sealed class McpLanguagesTests : McpRig
             $"The SDK's definition is not its own files: {string.Join(", ", sdk)}");
 
         string outline = (await Call(client, "outline", new() { ["path"] = "Shop.csproj" })).GetString()!;
-        Assert.Equal("Project Sdk=\"Microsoft.NET.Sdk\" (line 1)\n  PropertyGroup (line 2)\n    TargetFramework = net10.0 (property, line 3)\n"
+        Assert.Equal($"Project Sdk=\"Microsoft.NET.Sdk\" (line 1)\n  PropertyGroup (line 2)\n    TargetFramework = {TestProjects.Framework} (property, line 3)\n"
             + "    Product = $(Company) Shop (property, line 4)\n  Target Name=\"Greet\" (target, line 6)\n    Message (task, line 7)\n  Target Name=\"Wave\" (target, line 9)", outline);
 
         // What MSBuild files have no command for is said, with what they have.

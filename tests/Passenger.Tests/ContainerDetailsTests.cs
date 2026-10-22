@@ -98,10 +98,7 @@ public sealed class ContainerDetailsTests
         Button link = view.Details.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "detailsPort");
         link.BringIntoView();
         Ui.Settle();
-        Point at = link.TranslatePoint(new Point(link.Bounds.Width / 2, link.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(link);
         Assert.Contains(new Uri($"http://localhost:{port}/"), window.Browsed);
 
         Assert.True(window.Perform(AppActions.ContainerInspect), "Inspect did not run");

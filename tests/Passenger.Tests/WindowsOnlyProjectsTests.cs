@@ -85,14 +85,14 @@ public sealed class WindowsOnlyProjectsTests : IClassFixture<WindowsOnlyProjects
 
             // The toolbar's chooser lists both, greyed with why, and either can still be chosen.
             Assert.Equal("Gallery cannot run here: WPF runs only on Windows", ToolTip.GetTip(window.FindControl<Button>("RunConfigButton")!));
-            Click(window.FindControl<Button>("RunConfigButton")!);
+            Ui.Click(window.FindControl<Button>("RunConfigButton")!);
             ContextMenu chooser = Assert.IsType<ContextMenu>(window.OpenContextMenu);
             MenuItem[] items = [.. chooser.Items.OfType<MenuItem>()];
             Assert.Equal(["Gallery cannot run here: WPF runs only on Windows", "Forms cannot run here: Windows Forms runs only on Windows"],
                 items.Take(2).Select(i => ToolTip.GetTip(i) as string));
             Assert.True(items.Take(2).All(i => i.Header is StackPanel { Children: [TextBlock { Classes: var named }, TextBlock] } && named.Contains("muted")),
                 "A configuration that cannot run here is listed as one that can, not greyed");
-            Click(items[1]);
+            Ui.Click(items[1]);
             chooser.Close();
             Assert.Equal("Forms", window.Configuration?.Name);
 
@@ -133,12 +133,6 @@ public sealed class WindowsOnlyProjectsTests : IClassFixture<WindowsOnlyProjects
         {
             Assert.Fail(failure());
         }
-    }
-
-    private static void Click(Control control)
-    {
-        control.RaiseEvent(new RoutedEventArgs(control is MenuItem ? MenuItem.ClickEvent : Button.ClickEvent));
-        Ui.Settle();
     }
 
     /// <summary>The two apps as dotnet new made them, in a solution, with the run's local feed and no restore: each with a

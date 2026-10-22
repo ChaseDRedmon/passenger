@@ -19,7 +19,7 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
 {
     /// <summary>xUnit v3 on the platform alone: its own program, with no test SDK or VSTest adapter.</summary>
     private const string XunitProject =
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
+        $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
         "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"4.0.2\" />\n  </ItemGroup>\n</Project>\n";
 
     private readonly string folder;
@@ -212,13 +212,13 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
     {
         string solution = NewFolder();
         Write(solution, "Vs.Tests/Vs.Tests.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n" +
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n" +
             "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
             "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
         Write(solution, "Vs.Tests/AddTests.cs", "using Xunit;\n\nnamespace Vs.Tests;\n\npublic class AddTests\n{\n    [Fact]\n    public void Adds() => Assert.Equal(3, 1 + 2);\n}\n");
         // MSTest on its own runner: an executable with no test SDK, which vstest.console could not run.
         Write(solution, "Store.Tests/Store.Tests.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
             "    <EnableMSTestRunner>true</EnableMSTestRunner>\n  </PropertyGroup>\n  <ItemGroup>\n" +
             "    <PackageReference Include=\"MSTest.TestFramework\" Version=\"4.5.1\" />\n    <PackageReference Include=\"MSTest.TestAdapter\" Version=\"4.5.1\" />\n  </ItemGroup>\n</Project>\n");
         Write(solution, "Store.Tests/StoreTests.cs",

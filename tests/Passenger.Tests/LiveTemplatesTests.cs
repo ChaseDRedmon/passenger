@@ -39,7 +39,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Assert.True(page.Choose("cw"), "The Live Templates page does not list cw");
         Ui.Settle();
         Assert.Equal("Console.WriteLine($END$);", page.TextBox.Text);
-        Click(dialog, page.EnabledBox("cw")!);
+        Ui.Click(page.EnabledBox("cw")!);
         Assert.False(page.Chosen?.Enabled, "cw's check box did not turn it off");
         Assert.True(page.Choose("thr"), "The Live Templates page does not list thr");
         Type(page.TextBox, "throw new $EXCEPTION$(\"$MESSAGE$\");");
@@ -81,7 +81,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         CodeEditor editor = window.EditorArea.CodeEditor;
         SettingsDialog dialog = LiveTemplates(window);
         LiveTemplatesPane page = dialog.Templates;
-        Click(dialog, page.NewButton);
+        Ui.Click(page.NewButton);
         Assert.True(page.ShortcutBox.IsFocused, "A template just added does not have its shortcut ready to type");
         Type(page.ShortcutBox, "hello");
         Type(page.DescriptionBox, "Says hello");
@@ -90,23 +90,23 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Assert.True(page.GenerationButton.IsChecked == true, "A template added is not typed by its shortcut");
 
         // Edit variables: TYPE is the containing type's name, not to be typed over; WHO is the constant "world".
-        Click(dialog, page.EditVariablesButton);
+        Ui.Click(page.EditVariablesButton);
         TemplateVariablesDialog variables = DialogButtonsTests.Check(Assert.Single(dialog.OwnedWindows.OfType<TemplateVariablesDialog>()));
         Assert.Equal(["TYPE", "WHO"], variables.Variables.Select(v => v.Name));
         Assert.Equal("No macro selected", variables.MacroText);
         Choose(variables, "Containing type name");
-        Click(variables, variables.EditableBox);
+        Ui.Click(variables.EditableBox);
         Assert.True(variables.Choose("WHO"));
         Choose(variables, "Constant value");
         Type(variables.ParameterBox, "world");
-        Click(variables, variables.DoneButton);
+        Ui.Click(variables.DoneButton);
         Assert.Equal([new TemplateVariable("TYPE", "typeName", string.Empty, Editable: false), new TemplateVariable("WHO", "constant", "world")],
             page.Chosen?.Variables ?? []);
 
         // A built-in one turned off, as the other kinds of change, to be kept with it.
         Assert.True(page.Choose("while"));
         Ui.Settle();
-        Click(dialog, page.EnabledBox("while")!);
+        Ui.Click(page.EnabledBox("while")!);
         dialog.Ok();
         Ui.Settle();
 
@@ -205,7 +205,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Assert.Equal([SettingsDialog.PostfixPage], dialog.Pages);
         Assert.True(dialog.Postfix.Choose("par"), "The Postfix Completion page does not list par");
         Ui.Settle();
-        Click(dialog, dialog.Postfix.EnabledBox("par")!);
+        Ui.Click(dialog.Postfix.EnabledBox("par")!);
         dialog.Ok();
         Ui.Settle();
 
@@ -224,7 +224,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
         dialog.Page = SettingsDialog.PostfixPage;
         Ui.Settle();
-        Click(dialog, dialog.Postfix.AutopopupBox);
+        Ui.Click(dialog.Postfix.AutopopupBox);
         dialog.Ok();
         Ui.Settle();
         NewLine(window, "int count = 2;");
@@ -242,7 +242,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
         dialog.Page = SettingsDialog.PostfixPage;
         Ui.Settle();
-        Click(dialog, dialog.Postfix.EnableBox);
+        Ui.Click(dialog.Postfix.EnableBox);
         dialog.Ok();
         Ui.Settle();
         NewLine(window, "int count = 2;");
@@ -268,10 +268,10 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
     /// <summary>Edit variables' Change macro, choosing a macro by what Choose macro calls it.</summary>
     private static void Choose(TemplateVariablesDialog variables, string macro)
     {
-        Click(variables, variables.ChangeMacroButton);
+        Ui.Click(variables.ChangeMacroButton);
         ChooseMacroDialog macros = DialogButtonsTests.Check(Assert.Single(variables.OwnedWindows.OfType<ChooseMacroDialog>()));
         Assert.True(macros.Choose(macro), $"Choose macro does not offer {macro}");
-        Click(macros, macros.OkButton);
+        Ui.Click(macros.OkButton);
         Assert.Equal(macro, variables.MacroText);
     }
 
@@ -297,30 +297,9 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
     }
 
-    /// <summary>A click at a control's middle, scrolled into view first as a person would, as the pointer gives it.</summary>
-    private static void Click(Window window, Control control)
-    {
-        control.BringIntoView();
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>A window that keeps its settings in the test's own folder, on the project with a file open once C# is ready,
     /// on the server the class's last window left running.</summary>
-    private MainWindow Open(string file)
-    {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StateFolder = settings, WarmServer = project.Server };
-        window.Show();
-        window.KeepSettings();
-        window.OpenFolder(project.Folder);
-        window.OpenFile(Path.Combine(project.Folder, file));
-        Ui.Settle();
-        Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-        return window;
-    }
+    private MainWindow Open(string file) => project.Open(Path.Combine(project.Folder, file), state: settings);
 
     /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it; a
     /// window never saves what its test typed.</summary>
@@ -330,7 +309,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
             : base("templates-")
         {
             File.WriteAllText(PathOf("Templates.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int sum = Sum.Of();\n    }\n}\n");
             File.WriteAllText(PathOf("Sum.cs"), "using System;\n\nstatic class Sum\n{\n    public static int Of()\n    {\n        int total = 0;\n        return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Pair.cs"), "class Pair\n{\n    public int First;\n\n    public int Both(Pair other)\n    {\n        int count = 2;\n        return count;\n    }\n}\n");

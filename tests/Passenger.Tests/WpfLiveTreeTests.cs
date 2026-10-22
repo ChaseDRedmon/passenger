@@ -115,7 +115,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         // Go to source lands on the element in its XAML, from WPF's own record of where it was made.
         Choose(window, "Delete");
         Assert.NotNull(tree.GoToSource);
-        Click(tree.GoToSource!);
+        Ui.Click(tree.GoToSource!);
         Assert.Equal(Xaml, window.EditorArea.Active?.Path);
         Assert.Equal(Line(Xaml, "x:Name=\"Delete\"") - 1, window.EditorArea.CodeEditor.CaretPosition.Line);
 
@@ -154,7 +154,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         Assert.Contains("'Nmae' property not found", line, StringComparison.Ordinal);
         Assert.Contains("System.Windows.Data Error: 40", line, StringComparison.Ordinal);
         Assert.Contains("Did you mean Name?", line, StringComparison.Ordinal);
-        ClickLink(window, console, line);
+        Ui.ClickLink(console, line);
         Assert.Equal((Xaml, Misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
 
         // In Problems' Bindings, once, with its element, property, path and count, at the misspelt member.
@@ -166,7 +166,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         Assert.Equal(Line(Xaml, "x:Name=\"Caption\""), caption.Failure.Place?.Line);
 
         // Failing again, it is counted, not listed again.
-        Say(window, "rebind");
+        Ui.TypeToDebugged(window, "rebind");
         Ui.WaitFor(() => problems.BindingProblems.SingleOrDefault()?.Failure.Count == 2, "the caption's failure to be counted twice");
         Assert.Single(problems.BindingProblems);
 
@@ -232,10 +232,10 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         Box count = Choose(window, "Count").Layout.InWindow!;
         Choose(window, "Greeting");
 
-        ClickOn(window, tree.SelectElement);
+        Ui.Click(tree.SelectElement);
         Assert.True(tree.SelectElement.IsChecked, "Select Element did not stay on");
         // Just inside the Count button's edge, short of its text: the border its template draws.
-        Say(window, $"click {(count.X + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)},{(count.Y + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        Ui.TypeToDebugged(window, $"click {(count.X + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)},{(count.Y + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)}");
         try
         {
             Ui.WaitFor(() => tree.SelectElement.IsChecked == false && tree.Details is { } chosen && chosen.Name != "Greeting" && Under(tree, chosen.Id, "Count"),
@@ -282,14 +282,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
     private TextPosition Misspelt => new(Line(Xaml, "{Binding Nmae}") - 1, File.ReadAllLines(Xaml)[Line(Xaml, "{Binding Nmae}") - 1].IndexOf("Nmae", StringComparison.Ordinal));
 
     /// <summary>The folder opened in a window.</summary>
-    private MainWindow Opened()
-    {
-        MainWindow window = new() { Width = 1400, Height = 900 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900);
 
     /// <summary>The folder opened in a window and its app launched by Debug, its tree shown.</summary>
     private MainWindow Debugged()
@@ -331,35 +324,6 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         return tree.Details!;
     }
 
-    private static void Click(Button button)
-    {
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
-    }
-
-    /// <summary>A click on a control of the window, where it is drawn.</summary>
-    private static void ClickOn(MainWindow window, Control control)
-    {
-        Point centre = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(centre, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
-    }
-
-    /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
-    private static void Say(MainWindow window, string line)
-    {
-        window.ShowToolWindow(ToolWindowIds.Debug);
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        OutputView console = window.BottomPanel.Debug.Console;
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
-        window.KeyTextInput(line);
-        Ui.Press(window, "ENTER");
-    }
-
     /// <summary>The console's line saying the caption's binding failed, once it has it.</summary>
     private static string WaitForLine(OutputView console, string what)
     {
@@ -371,21 +335,6 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
             return line is not null;
         }, what, TimeSpan.FromMinutes(2));
         return line!;
-    }
-
-    /// <summary>A click on a console line's link, at its first character, as a person clicks it.</summary>
-    private static void ClickLink(MainWindow window, OutputView console, string line)
-    {
-        CodeEditor editor = console.Editor;
-        int offset = editor.Document.Snapshot.ToString().IndexOf(line, StringComparison.Ordinal);
-        Point top = editor.PointOf(offset);
-        Point at = editor.TranslatePoint(top + new Vector(2, editor.LineHeight / 2), window)!.Value;
-        window.MouseMove(at);
-        Ui.Settle();
-        Assert.True(editor.HoveredLink is { Target: FileLink }, $"The pointer rests on the line's place but nothing is underlined:\n{line}");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>Waits for the program to stop and the stop to be read, which it returns.</summary>

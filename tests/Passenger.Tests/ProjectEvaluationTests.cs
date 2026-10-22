@@ -37,7 +37,7 @@ public sealed class ProjectEvaluationTests : IDisposable
     public ProjectEvaluationTests()
     {
         Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n</Solution>\n");
-        Write("Directory.Build.props", "<Project>\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ShopLogs>true</ShopLogs>\n  </PropertyGroup>\n</Project>\n");
+        Write("Directory.Build.props", $"<Project>\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ShopLogs>true</ShopLogs>\n  </PropertyGroup>\n</Project>\n");
         Write("Directory.Packages.props", """
             <Project>
               <PropertyGroup>
@@ -65,11 +65,11 @@ public sealed class ProjectEvaluationTests : IDisposable
     public void A_project_shows_its_files_and_packages_as_MSBuild_evaluates_its_conditions_imports_wildcards_and_central_versions()
     {
         MainWindow window = Open();
-        Assert.Equal("net10.0", Row(window, NodeKind.Project, "App").Detail);
+        Assert.Equal(TestProjects.Framework, Row(window, NodeKind.Project, "App").Detail);
         Assert.Equal(["Dependencies", "Shared", "Program.cs"], Children(window, "App"));
         Assert.Equal(["Text", "Helper.cs"], Children(window, "Shared"));
         Assert.Equal(["Words.cs"], Children(window, "Text"));
-        Assert.Equal([("net10.0", null), ("Humanizer.Core", "2.14.1"), ("Serilog", "4.0.0")],
+        Assert.Equal([(TestProjects.Framework, null), ("Humanizer.Core", "2.14.1"), ("Serilog", "4.0.0")],
             Children(window, "Dependencies").Select(name => (name, Row(window, null, name).Detail)));
         // The linked files open from where they are.
         Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Shared", "Text", "Words.cs")), Row(window, NodeKind.File, "Words.cs").Path);

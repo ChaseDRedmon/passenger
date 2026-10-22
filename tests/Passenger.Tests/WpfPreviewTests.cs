@@ -59,7 +59,7 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         Point below = new(panel.Box.Center.X, panel.Box.Bottom - 20);
         Color orange = Color.Parse("#E2A33F");
         Assert.NotEqual(orange, At(below));
-        PlaceAfter(editor, "<StackPanel");
+        Ui.PlaceAfter(editor, "<StackPanel");
         window.KeyTextInput(" Background=\"#E2A33F\"");
         Ui.WaitFor(() => At(below) == orange, "the preview drawing the panel's new background once typing paused", TimeSpan.FromSeconds(30));
 
@@ -144,7 +144,7 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
-        PlaceAfter(editor, "<Button x:Name=\"G");
+        Ui.PlaceAfter(editor, "<Button x:Name=\"G");
         XamlPreview preview = Previewed(window, document);
         XamlPreviewPane pane = window.PreviewPaneOf(document)!;
         Point OnWindow(Point inFrame) => pane.Frame.TranslatePoint(inFrame, window) ?? throw new InvalidOperationException("The preview's frame is not on the window");
@@ -173,12 +173,12 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
 
         // The caret in another element's tag outlines that one; in the window's resources, which draw nothing of their
         // own, the window itself.
-        PlaceAfter(editor, "<ListBox ItemsSource");
+        Ui.PlaceAfter(editor, "<ListBox ItemsSource");
         Ui.Settle();
         PreviewElement list = ElementOf(preview, editor, "<ListBox ItemsSource");
         Assert.Equal(list.Box, pane.Outlined);
         OutlineAround(window, pane, list);
-        PlaceAfter(editor, "<Window.Resources>");
+        Ui.PlaceAfter(editor, "<Window.Resources>");
         Ui.Settle();
         Assert.Equal(ElementOf(preview, editor, "<Window x:Class").Box, pane.Outlined);
         window.Close();

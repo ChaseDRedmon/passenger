@@ -91,7 +91,7 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.Equal(["Web", Warned], problems.Rows.Select(r => r.Label));
         Button link = Links(problems).SingleOrDefault(b => (string?)b.Content == Advisory)
             ?? throw new Xunit.Sdk.XunitException("The warning's row in Problems shows no link to the advisory");
-        link.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(link, settle: false);
         Assert.True(window.Browsed.Contains(new Uri(Advisory)), $"Clicking the advisory's link opened [{string.Join(", ", window.Browsed)}]");
 
         // The NuGet window marks the package, says what Rider says of it, and offers the version that fixes it.
@@ -107,7 +107,7 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(said.Contains("Known security vulnerability in 1.0.0. It could be exploited in certain scenarios. See the advisories below for details.")
             && said.Contains("(Severity: Moderate)") && said.Contains("Fixed in 1.0.1"),
             $"The package's details do not say Rider's words on its vulnerability, its severity and its fix: [{string.Join(" | ", said)}]");
-        Links(nuget).Single(b => (string?)b.Content == Advisory).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(Links(nuget).Single(b => (string?)b.Content == Advisory), settle: false);
         Assert.True(window.Browsed.Count(u => u == new Uri(Advisory)) == 2, "The NuGet window's advisory link did not open the advisory");
         window.Close();
     }
@@ -128,7 +128,7 @@ public sealed class ProjectLoadTests : IDisposable
 
         List<string> said = Texts(nuget);
         Assert.True(said.Contains(Local) && !Labels(nuget).Contains(Local), $"The file: advisory is not shown as words beside the web one's link: [{string.Join(" | ", said)}]");
-        Links(nuget).Single(b => (string?)b.Content == Advisory).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(Links(nuget).Single(b => (string?)b.Content == Advisory), settle: false);
         Assert.True(window.Browsed.SequenceEqual([new Uri(Advisory)]), $"The NuGet window's advisories opened [{string.Join(", ", window.Browsed)}]");
         window.Close();
     }
@@ -147,7 +147,7 @@ public sealed class ProjectLoadTests : IDisposable
         Button update = Descendants<StackPanel>(nuget).Where(l => l.Children.FirstOrDefault() is TextBlock { Text: "Web" })
             .SelectMany(l => l.Children.OfType<Button>()).FirstOrDefault(b => (string?)b.Content == "Update")
             ?? throw new Xunit.Sdk.XunitException("The NuGet window offers no Update on Web's line");
-        update.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(update, settle: false);
         Ui.WaitFor(() => !nuget.IsBusy && Version(window) == "1.0.1", $"Web updated to 1.0.1:\n{nuget.Log}", TimeSpan.FromMinutes(3));
 
         // The server loads the project again, without the warning, as the update's restore left it.
@@ -232,10 +232,7 @@ public sealed class ProjectLoadTests : IDisposable
     private static void ClickStatus(MainWindow window)
     {
         Button said = StatusMessage(window);
-        Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(said);
     }
 
     private static IEnumerable<Button> Links(Control parent) => Descendants<Button>(parent).Where(b => b.Classes.Contains("link"));

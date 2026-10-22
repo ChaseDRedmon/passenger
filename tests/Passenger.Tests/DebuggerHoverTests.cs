@@ -69,7 +69,7 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
             // Rested on again, its row is closed, as its value is read again; the pointer on it, the program going on takes it.
             values = Hover(window, "person.Name");
             Assert.False(Assert.Single(values.Tree.Rows).IsExpanded);
-            window.MouseMove(Middle(window, values.ContainerFromIndex(0)!), RawInputModifiers.None);
+            window.MouseMove(Ui.Centre(values.ContainerFromIndex(0)!, window), RawInputModifiers.None);
             Ui.Settle();
             Assert.Same(values, window.Assist.HoverValues);
             Ui.Run(window, AppActions.Resume);
@@ -181,20 +181,12 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
         Click(window, (Control)chevron.Parent!);
     }
 
-    private static Point Middle(MainWindow window, Control control) =>
-        control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-        ?? throw new InvalidOperationException("The control is not in the window");
-
-    /// <summary>A click in the middle of a control, the pointer moved there first as a person's is.</summary>
-    private static void Click(MainWindow window, Control control) => Click(window, control, new Point(control.Bounds.Width / 2, control.Bounds.Height / 2));
-
-    private static void Click(MainWindow window, Control control, Point within)
+    /// <summary>A click in a control (its middle unless said), the pointer moved there first as a person's is, which the
+    /// card follows.</summary>
+    private static void Click(MainWindow window, Control control, Point? within = null)
     {
-        Point at = control.TranslatePoint(within, window) ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseMove(at, RawInputModifiers.None);
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        window.MouseMove(within is { } point ? control.TranslatePoint(point, window)!.Value : Ui.Centre(control, window), RawInputModifiers.None);
+        Ui.Click(control, within);
     }
 
     /// <summary>A program that makes an object holding another and a list, and writes them: the stop is on that line.</summary>
@@ -207,7 +199,7 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
             : base("hover-")
         {
             File.WriteAllText(PathOf("People.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
             File.WriteAllText(PathOf("Program.cs"),
                 "Person person = new(\"Ada\", new Address(\"London\", 12));\nList<int> numbers = [10, 20, 30];\n"
                 + "Console.WriteLine($\"{person.Name} {person.Home.City} {numbers.Count} {numbers[0]}\");\n\n"

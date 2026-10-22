@@ -307,9 +307,9 @@ public sealed class DiscordTests : IDisposable
             $"The Discord page does not say what each choice shows and who sees it:\n{string.Join('\n', words.Where(w => w.Length > 40))}");
 
         // Off is the opt-out: everything under it greyed.
-        Click(dialog, on);
+        Ui.Click(on);
         Assert.False(shows.IsEnabled || idle.IsEnabled || minutes.IsEnabled, "Discord's options can be changed while its activity is off");
-        Click(dialog, on);
+        Ui.Click(on);
         Assert.True(shows.IsEnabled && idle.IsEnabled && minutes.IsEnabled, "Turning the activity on left its options greyed");
         shows.SelectedIndex = 1;
         minutes.Value = 12;
@@ -377,7 +377,7 @@ public sealed class DiscordTests : IDisposable
         CheckBox box = Editor<CheckBox>(dialog, Show);
         if (box.IsChecked != on)
         {
-            Click(dialog, box);
+            Ui.Click(box);
         }
         dialog.Ok();
         Ui.Settle();
@@ -423,14 +423,6 @@ public sealed class DiscordTests : IDisposable
     /// <summary>What edits an option, beside its label in the page shown.</summary>
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>A frame Discord was sent, on the connection numbered from 1.</summary>
     private sealed record Frame(int Connection, int Op, JsonObject Json);

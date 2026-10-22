@@ -25,7 +25,7 @@ public sealed class ExplorerFilesTests : IDisposable
 
     public ExplorerFilesTests()
     {
-        File.WriteAllText(Path.Combine(folder, "Shop.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(folder, "Shop.csproj"), TestProjects.Library());
         Directory.CreateDirectory(Path.Combine(folder, "Models"));
         Trash.Folder = trash;
     }
@@ -102,7 +102,7 @@ public sealed class ExplorerFilesTests : IDisposable
         List<string> asked = Answer(window);
 
         // The project and the solution share the repository's top folder, which Delete must never offer to trash.
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project));
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project));
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => Finished(window, "Removed"), "the project's removal");
         Assert.Equal("Removed Shop from Shop", window.Status);
@@ -125,7 +125,7 @@ public sealed class ExplorerFilesTests : IDisposable
         MainWindow window = Open();
         List<string> asked = Answer(window);
 
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Lib"));
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Lib"));
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => Finished(window, "Moved"), "the project's folder to go");
         Assert.Equal("Moved Lib to the Trash", window.Status);
@@ -155,7 +155,7 @@ public sealed class ExplorerFilesTests : IDisposable
         File.WriteAllText(full, string.Empty);
         Trash.Folder = full;
 
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
         Ui.Press(window, "BACK_SPACE");
         Assert.StartsWith("Notes.txt could not be deleted", window.Status, StringComparison.Ordinal);
         Assert.True(File.Exists(notes), "The file left although the Trash refused it");
@@ -179,7 +179,7 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(window.EditorArea.Active!.IsModified);
         window.Confirm = (_, _, _) => Task.FromResult(true);
 
-        Choose(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => !File.Exists(notes) && window.EditorArea.Documents.Count == 0, "Notes.txt deleted and its tab closed");
         string trashed = File.ReadAllText(Path.Combine(trash, "Notes.txt"));
@@ -197,7 +197,7 @@ public sealed class ExplorerFilesTests : IDisposable
     {
         // Old.cs and Stale.cs no longer compile, so the project removes them: one by its name, the other by its folder's glob.
         string project = Path.Combine(folder, "Shop.csproj");
-        string written = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n"
+        string written = $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n"
             + "  <ItemGroup>\n    <Compile Remove=\"Legacy\\Old.cs\" />\n    <Compile Remove=\"Legacy\\Generated\\**\" />\n    <Folder Include=\"Legacy\\Generated\\\" />\n  </ItemGroup>\n</Project>\n";
         File.WriteAllText(project, written);
         string legacy = PathNames.Canonical(Path.Combine(folder, "Legacy"));
@@ -212,7 +212,7 @@ public sealed class ExplorerFilesTests : IDisposable
         // Rename's keys on the folder in the Solution view: the project removes the same files from where they went.
         window.ExplorerView.Reveal(legacy);
         Ui.Settle();
-        Choose(window, window.ExplorerView.Tree.Rows.First(r => r.Path == legacy));
+        Ui.ClickRow(window, window.ExplorerView.Tree.Rows.First(r => r.Path == legacy));
         Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
@@ -227,7 +227,7 @@ public sealed class ExplorerFilesTests : IDisposable
         string archive = PathNames.Canonical(Path.Combine(folder, "Archive"));
         window.ExplorerView.Reveal(archive);
         Ui.Settle();
-        Choose(window, window.ExplorerView.Tree.Rows.First(r => r.Path == archive));
+        Ui.ClickRow(window, window.ExplorerView.Tree.Rows.First(r => r.Path == archive));
         Ui.Run(window, EditorActions.Undo);
         Assert.Equal(["Undo"], asked);
         Assert.True(Directory.Exists(legacy), $"Undo did not rename Archive back: {window.Status}");
@@ -322,11 +322,11 @@ public sealed class ExplorerFilesTests : IDisposable
         try
         {
             // From the row's menu.
-            ChooseFromMenu(window, Row(window, "One.txt"), "Edit", "Rename…");
+            Ui.ChooseFromRowMenu(window, Row(window, "One.txt"), "Edit", "Rename…");
             Renamed(window, "Uno.txt");
-            ChooseFromMenu(window, Row(window, "Uno.txt"), "Edit", "Delete…");
+            Ui.ChooseFromRowMenu(window, Row(window, "Uno.txt"), "Edit", "Delete…");
             Gone(window, "Uno.txt", "the delete from the row's menu");
-            ChooseFromMenu(window, Row(window, "Four.txt"), "Open In", FileManager.Name);
+            Ui.ChooseFromRowMenu(window, Row(window, "Four.txt"), "Open In", FileManager.Name);
             Assert.Equal([Row(window, "Four.txt").Path!], window.ShownInFileManager);
 
             // By Visual Studio's keys.
@@ -396,34 +396,7 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(window.Actions.Context().ToolWindow?.Id == ToolWindowIds.Explorer, $"The Explorer did not take the keys on {row.Name}");
     }
 
-    /// <summary>Opens a row's menu as a right click does and clicks an item of one of its submenus.</summary>
-    private static void ChooseFromMenu(MainWindow window, ExplorerNode row, string submenu, string item)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        Control container = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        Point at = container.TranslatePoint(new Point(container.Bounds.Width / 2, container.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {row.Name}");
-        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
-            ?? throw new InvalidOperationException($"{row.Name}'s menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem chosen = parent.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"{submenu} has no {item}: [{string.Join(", ", parent.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        Assert.True(chosen.IsEnabled, $"{submenu} > {item} is disabled: {ToolTip.GetTip(chosen)}");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
-
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder);
 
     /// <summary>Agrees to every question the window asks, keeping their titles in order.</summary>
     private static List<string> Answer(MainWindow window)
@@ -451,16 +424,4 @@ public sealed class ExplorerFilesTests : IDisposable
 
     private static bool Finished(MainWindow window, string done) =>
         window.Status is { } status && (status.StartsWith(done, StringComparison.Ordinal) || status.Contains("could not", StringComparison.Ordinal));
-
-    /// <summary>Clicks a row of the Explorer, as a person chooses one before pressing a key.</summary>
-    private static void Choose(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-        Assert.Equal([row], window.ExplorerView.SelectedNodes);
-    }
 }

@@ -197,14 +197,14 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
             ChoiceDialog asked = Asked(window);
             Assert.Contains(MainWindow.RestartQuestion, Said(asked), StringComparison.Ordinal);
             Assert.Contains("Updating the type of field requires restarting the application", Said(asked), StringComparison.Ordinal);
-            Press(asked, "No");
+            Ui.ClickButton(asked, "No");
             Assert.Same(first, window.Debugger.Session);
             Assert.Equal(DebugState.Running, first.State);
             Assert.Null(window.LastHotReloadRestart);
 
             // Asked again at the next Apply, until Never, which leaves the program as it is for the rest of its session.
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
-            Press(Asked(window), "Never");
+            Ui.ClickButton(Asked(window), "Never");
             HotReloadOutcome told = window.Debugger.LastApplied!;
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
             Ui.WaitFor(() => window.Debugger.LastApplied != told, "the third Apply to say what it came to");
@@ -251,13 +251,6 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
     private static string Said(Avalonia.Controls.Window dialog) =>
         string.Join('\n', dialog.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text));
 
-    private static void Press(Avalonia.Controls.Window dialog, string button)
-    {
-        Avalonia.Controls.Button pressed = dialog.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button);
-        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.Settle();
-    }
-
     /// <summary>Waits for the program to stop and the stop to be shown, its file brought forward, before the test types.</summary>
     private static void Paused(MainWindow window, string what)
     {
@@ -278,14 +271,7 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
 
     /// <summary>A window on the project, on the server the last test's left, which never saves what its test typed: what is
     /// on disk stays what the build was made from, but for what a build or a save the test makes writes.</summary>
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = project.Server };
-        window.Show();
-        window.OpenFolder(project.Folder);
-        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
-        return window;
-    }
+    private MainWindow Open() => project.Open(null);
 
     private static void End(MainWindow window)
     {
@@ -304,7 +290,7 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
             : base("hotreload-")
         {
             File.WriteAllText(PathOf("Greetings.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>"));
             File.WriteAllText(PathOf("Program.cs"), Program);
             File.WriteAllText(PathOf("Greeter.cs"), Greeter);
             // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.

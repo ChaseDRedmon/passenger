@@ -96,13 +96,13 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
                 window.Debugger.Breakpoints.Toggle(Source(folder, app), InRequest);
             }
             ContainersView view = ContainerServicesTests.Shown(window);
-            string cacheStarted = ContainerServicesTests.Started(project, "cache");
+            string cacheStarted = ContainerRunsTests.Started(project, "cache");
             DebugSession webBefore = web.Session!;
             Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
             Assert.True(window.Perform(AppActions.ContainerRestart), $"Restart could not run on {project}: {window.Status}");
             Ui.WaitFor(() => window.Actions.Work.Of(AppActions.ContainerRestart) is null, $"{project}'s restart", TimeSpan.FromMinutes(3));
             Assert.Equal("Compose: compose.yaml: restarted its services", window.Status);
-            Assert.NotEqual(cacheStarted, ContainerServicesTests.Started(project, "cache"));
+            Assert.NotEqual(cacheStarted, ContainerRunsTests.Started(project, "cache"));
             web = Tab(window, "web");
             api = Tab(window, "api");
             Ui.WaitFor(() => web.Session is { State: DebugState.Running } && web.Session != webBefore && api.Session is { State: DebugState.Running },
@@ -120,15 +120,13 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             // The project's Stop is the run's: nothing of it left, its log no longer followed.
             Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
             Assert.True(window.Perform(AppActions.ContainerStop), $"Stop could not run on {project}: {window.Status}");
-            Ui.WaitFor(() => Docker.NoneLeft(project), "the project's Stop to take the run down", TimeSpan.FromMinutes(2));
+            Docker.TakenDown(project, "the project's Stop to take the run down");
             Ui.WaitFor(() => !window.IsRunning, "the run's log to stop being followed");
             Assert.Null(window.Builds.Containers);
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         // A debugger that lost its container under it would be an IDE error, which fails the test.
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "both sessions to end with the run");
@@ -207,9 +205,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         Ui.WaitFor(() => window.Debugger.Running.Count == 0, "the Hot Reload sessions to end with Stop");
         window.Close();
@@ -226,7 +222,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         (string folder, string project) = Shop("images");
         foreach ((string app, string configuration) in (ReadOnlySpan<(string, string)>)[("Web", "Debug"), ("Api", "Release")])
         {
-            ContainerRunsTests.Write(folder, $"{app}/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /src\nCOPY . .\nEXPOSE 8080\n"
+            TestFolders.Write(folder, $"{app}/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /src\nCOPY . .\nEXPOSE 8080\n"
                 + $"ENTRYPOINT [\"dotnet\", \"/src/{app}/out/{app}.dll\"]\n");
             ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", Path.Combine(folder, app, $"{app}.csproj"), "-c", configuration,
                 "-o", Path.Combine(folder, app, "out"), $"-p:PathMap={folder}{Path.DirectorySeparatorChar}=/src/", "-nologo", "-v:q"], folder), null,
@@ -260,9 +256,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "Stop to take the services down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take the services down");
             window.Close();
         }
     }
@@ -273,8 +267,8 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         (string folder, string project) = ContainerRunsTests.Shop($"dbg{name}");
         foreach (string app in (string[])["Web", "Api"])
         {
-            ContainerRunsTests.Write(folder, $"{app}/Program.cs", Program);
-            ContainerRunsTests.Write(folder, $"{app}/Message.cs",
+            TestFolders.Write(folder, $"{app}/Program.cs", Program);
+            TestFolders.Write(folder, $"{app}/Message.cs",
                 $"public static class Message\n{{\n    public static int Count;\n\n    public static string Text => \"{app.ToLowerInvariant()} 1\";\n}}\n");
         }
         return (folder, project);

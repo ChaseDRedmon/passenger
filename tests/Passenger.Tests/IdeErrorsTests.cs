@@ -386,7 +386,7 @@ public sealed class IdeErrorsTests : IDisposable
     public void The_hierarchy_window_shown_before_the_language_server_started_again_still_opens_a_row_after_it()
     {
         MainWindow window = OpenProgram(Calls);
-        Place(window, "static void Ot");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "static void Ot");
         Task<string?> shown = window.ShowCallHierarchyAsync();
         Ui.WaitFor(() => shown.IsCompleted, "the call hierarchy");
         Assert.Null(shown.Result);
@@ -411,7 +411,7 @@ public sealed class IdeErrorsTests : IDisposable
     public void Call_hierarchy_asked_while_the_language_server_starts_again_says_why_it_cannot_and_works_once_it_is_back()
     {
         MainWindow window = OpenProgram(Calls);
-        Place(window, "static void Ot");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "static void Ot");
         int first = window.CSharpService!.Session!.Server.ProcessId;
 
         // Asked of a server that stops before it answers, as one that crashes or is ended for hanging does.
@@ -452,7 +452,7 @@ public sealed class IdeErrorsTests : IDisposable
         Directory.CreateDirectory(library);
         File.WriteAllText(Path.Combine(library, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
         MainWindow window = OpenProgram("class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
-        Place(window, "Helper.Tw");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "Helper.Tw");
         using (Unwritable(Path.Combine(library, "Helper.cs")))
         {
             Ui.Run(window, AppActions.Rename);
@@ -468,14 +468,6 @@ public sealed class IdeErrorsTests : IDisposable
 
     /// <summary>Three methods, each calling the next.</summary>
     private const string Calls = "class Program\n{\n    static void Main()\n    {\n        Helper();\n    }\n\n    static void Helper()\n    {\n        Other();\n    }\n\n    static void Other()\n    {\n    }\n}\n";
-
-    /// <summary>Puts the caret just after some text of the file shown.</summary>
-    private static void Place(MainWindow window, string after)
-    {
-        int at = window.EditorArea.CodeEditor.Document.Snapshot.ToString().IndexOf(after, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{after}' is not in the file");
-        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single(at + after.Length);
-    }
 
     /// <summary>A file no save can replace while this is held: its folder made read-only on macOS and Linux, and on Windows
     /// the file held open for reading only, which refuses both the move over it and a write in place.</summary>
@@ -519,7 +511,7 @@ public sealed class IdeErrorsTests : IDisposable
     private static void WriteProgram(string at, string? program = null)
     {
         File.WriteAllText(Path.Combine(at, "Sample.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console());
         File.WriteAllText(Path.Combine(at, "Program.cs"), program ?? "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
         Restore.Run(at);
     }

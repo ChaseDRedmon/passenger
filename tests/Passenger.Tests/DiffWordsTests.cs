@@ -226,9 +226,7 @@ public sealed class DiffWordsTests : IDisposable
     /// <summary>Clicks a line's change bar and gives the popup it opens.</summary>
     private static ChangePopup ClickBar(MainWindow window, CodeEditor editor, int line)
     {
-        Avalonia.Point at = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, line), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
+        Ui.Click(editor, editor.GutterColumnPoint(GutterColumn.Changes, line), settle: false);
         Ui.Landed(() => window.Popup is ChangePopup, "the change's popup");
         return (ChangePopup)window.Popup!;
     }

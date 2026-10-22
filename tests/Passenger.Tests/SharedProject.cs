@@ -45,17 +45,27 @@ public abstract class SharedProject : IDisposable
         }, Folder);
     }
 
-    /// <summary>A window on the project, which never saves what its test typed, with a file open once C# is ready: on the
-    /// server the class's last window left, or one of its own when there is none to take up.</summary>
-    public MainWindow Open(string file, Action<MainWindow>? before = null)
+    /// <summary>A window on the project, which never saves what its test typed, with a file open (when one is named) once C#
+    /// is ready: on the server the class's last window left, or one of its own when there is none to take up; keeping its
+    /// settings in a state folder of the test's own when one is given.</summary>
+    public MainWindow Open(string? file, Action<MainWindow>? before = null, string? state = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server };
+        MainWindow window = state is null
+            ? new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server }
+            : new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = Server, StateFolder = state };
         window.Show();
+        if (state is not null)
+        {
+            window.KeepSettings();
+        }
         window.OpenFolder(Folder);
-        window.OpenFile(file);
+        if (file is not null)
+        {
+            window.OpenFile(file);
+        }
         before?.Invoke(window);
         Ui.Settle();
-        Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
+        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
         return window;
     }
 

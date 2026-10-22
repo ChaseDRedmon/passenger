@@ -28,9 +28,7 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "every container to be taken down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "every container to be taken down");
         }
         window.Close();
     }
@@ -71,9 +69,7 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "every container to be taken down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "every container to be taken down");
         }
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the sessions to end with Stop");
         window.Close();
@@ -99,8 +95,7 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
             Task opening = window.OpenFolder(other);
             Ui.WaitFor(() => opening.IsCompleted, "the next folder to open", TimeSpan.FromMinutes(1));
             Assert.Equal("The solution was closed", Ui.Await(debugging, "Debug's start to end with its folder", TimeSpan.FromMinutes(2)));
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "the left folder's containers to be taken down", TimeSpan.FromMinutes(2));
+            Docker.TakenDown(project, "the left folder's containers to be taken down");
             Ui.Hold(TimeSpan.FromSeconds(3), "a late session of the left folder's to show");
             Assert.Empty(window.Debugger.Tabs.Select(t => t.Name));
             Assert.False(window.Debugger.IsDebugging, "A session of the left folder's is debugging in the next one");
@@ -143,8 +138,7 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
         Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
         string? said = Ui.Await(debugging, $"Debug to end once stopped during {what}", TimeSpan.FromMinutes(2));
         Assert.Equal("Compose: compose.yaml was stopped as it started", said);
-        Ui.WaitFor(() => Docker.NoneLeft(project),
-            $"no container to be left after Stop during {what}", TimeSpan.FromMinutes(2));
+        Docker.TakenDown(project, $"no container to be left after Stop during {what}");
         Ui.WaitFor(() => !window.Debugger.Tabs.Any(t => t.IsLive), $"no Debug tab to be left live after Stop during {what}");
         Ui.WaitFor(() => !Adapters(containers).Any(), $"no debugger's docker exec to be left after Stop during {what}: {string.Join("; ", Adapters(containers))}");
         Assert.False(window.IsRunning, $"The run's log is still followed after Stop during {what}");

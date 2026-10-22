@@ -57,10 +57,7 @@ public sealed class EngineChecksTests
                 && t.Text?.Contains("reads each base image's metadata from its registry", StringComparison.Ordinal) == true
                 && t.Text.Contains("never one a # syntax= line names, which is neither pulled nor run", StringComparison.Ordinal));
             CheckBox on = ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == BuildKitSetting).Parent!).GetVisualDescendants().OfType<CheckBox>().First();
-            Point at = on.TranslatePoint(new Point(on.Bounds.Width / 2, on.Bounds.Height / 2), dialog)!.Value;
-            dialog.MouseDown(at, MouseButton.Left);
-            dialog.MouseUp(at, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(on);
             dialog.Ok();
             Ui.Settle();
             Assert.True(window.Settings.BuildKitChecks, "Ticking Check Dockerfiles with BuildKit left it off");

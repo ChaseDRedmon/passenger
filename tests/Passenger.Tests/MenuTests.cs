@@ -184,9 +184,9 @@ public sealed class MenuTests : IDisposable
             Assert.All(titles, t => Assert.True(t.Foreground is ISolidColorBrush ink && ink.Color == words, $"The bar's {t.Content} is not in the title bar's own words"));
 
             // A title clicked opens its menu under it, and a click on the next title opens that one in its place.
-            Click(window, titles[0]);
+            Ui.Click(titles[0]);
             Ui.WaitFor(() => OpenMenuTitles(window).Contains("Open…"), "the File menu");
-            Click(window, titles[1]);
+            Ui.Click(titles[1]);
             Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu in the File menu's place");
             Assert.False(OpenMenuTitles(window).Contains("Open…"), "The File menu stayed open under the Edit menu");
             // With one open, the pointer moving over another title opens that one, as a menu bar's do, no click needed.
@@ -197,11 +197,11 @@ public sealed class MenuTests : IDisposable
             Ui.Press(window, "ESCAPE");
             Assert.False(MenuOpen(window), "Escape left the bar's File menu open: it never took the keys");
             // A click on the open menu's title closes it, as a menu bar's does, rather than opening it again.
-            Click(window, titles[1]);
+            Ui.Click(titles[1]);
             Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu");
-            Click(window, titles[1]);
+            Ui.Click(titles[1]);
             Assert.False(MenuOpen(window), "A click on the open Edit menu's title left it open");
-            Click(window, titles[1]);
+            Ui.Click(titles[1]);
             Ui.WaitFor(() => OpenMenuTitles(window).Contains("Undo"), "the Edit menu, opened again by the next click");
             Ui.Press(window, "ESCAPE");
 
@@ -317,14 +317,6 @@ public sealed class MenuTests : IDisposable
         Ui.Settle();
     }
 
-    private static void Click(MainWindow window, Control target)
-    {
-        Point at = target.TranslatePoint(new Point(target.Bounds.Width / 2, target.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>The items of the menu open over the window, by their titles.</summary>
     private static string[] OpenMenuTitles(MainWindow window) =>
         [.. window.GetVisualDescendants().OfType<MenuFlyoutPresenter>().Where(p => p.IsEffectivelyVisible).SelectMany(p => p.Items.OfType<MenuItem>()).Select(i => i.Header as string ?? "")];
@@ -332,10 +324,7 @@ public sealed class MenuTests : IDisposable
     /// <summary>A toolbar widget clicked, as a person's pointer clicks it, and its menu waited for.</summary>
     private static void ClickOpen(MainWindow window, string widget)
     {
-        Button button = window.FindControl<Button>(widget)!;
-        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
+        Ui.Click(window.FindControl<Button>(widget)!, settle: false);
         Ui.WaitFor(() => MenuOpen(window), $"the menu of the toolbar's {widget}");
     }
 

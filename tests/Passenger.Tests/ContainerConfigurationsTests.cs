@@ -12,10 +12,10 @@ namespace Passenger.Tests;
 /// has them evaluated again rather than showing none. No engine is needed: the configurations are made as the folder opens.</summary>
 public sealed class ContainerConfigurationsTests
 {
-    private const string Props = """
+    private const string Props = $$"""
         <Project>
           <PropertyGroup>
-            <TargetFramework>net10.0</TargetFramework>
+            <TargetFramework>{{TestProjects.Framework}}</TargetFramework>
             <OutputType>Exe</OutputType>
           </PropertyGroup>
         {0}</Project>
@@ -31,7 +31,7 @@ public sealed class ContainerConfigurationsTests
               </PropertyGroup>
 
             """);
-        Write(folder, "Gated/Gated.csproj", """
+        TestFolders.Write(folder, "Gated/Gated.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup Condition="'$(PublishToRegistry)' == 'true'">
                 <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
@@ -40,7 +40,7 @@ public sealed class ContainerConfigurationsTests
             </Project>
 
             """);
-        Write(folder, "Quiet/Quiet.csproj", """
+        TestFolders.Write(folder, "Quiet/Quiet.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
               <!-- Not yet:
               <PropertyGroup>
@@ -73,9 +73,9 @@ public sealed class ContainerConfigurationsTests
               </PropertyGroup>
 
             """);
-        Write(folder, "docker/App.Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
-        Write(folder, "Side/Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
-        Write(folder, "Side/Side.csproj", """
+        TestFolders.Write(folder, "docker/App.Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
+        TestFolders.Write(folder, "Side/Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
+        TestFolders.Write(folder, "Side/Side.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
               <!-- <PropertyGroup><DockerfileFile>../docker/App.Dockerfile</DockerfileFile></PropertyGroup> -->
             </Project>
@@ -120,7 +120,7 @@ public sealed class ContainerConfigurationsTests
     public void A_Dockerfile_configuration_changed_in_place_is_kept_with_the_folder_over_what_its_Dockerfile_makes()
     {
         string folder = Solution("ctr-inplace-", ["App"], string.Empty);
-        Write(folder, "App/Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
+        TestFolders.Write(folder, "App/Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
         string settings = TestFolders.Create("settings-");
         MainWindow first = Open(folder, settings);
         RunConfigurationsDialog dialog = first.ShowRunConfigurations();
@@ -182,7 +182,7 @@ public sealed class ContainerConfigurationsTests
             }
 
             """;
-        Write(folder, "App/Properties/launchSettings.json", Settings);
+        TestFolders.Write(folder, "App/Properties/launchSettings.json", Settings);
         MainWindow window = Open(folder, settings: null);
         try
         {
@@ -191,18 +191,15 @@ public sealed class ContainerConfigurationsTests
             Assert.Equal("-p 5080:8080", dialog.RunArgumentsBox.Text);
             dialog.RunArgumentsBox.Text = "-p 5080:8080 --memory 512m";
             Ui.Settle();
-            dialog.AddVariableButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-            Ui.Settle();
+            Ui.Click(dialog.AddVariableButton);
             dialog.Variables[^1].Name.Text = "LOG";
             dialog.Variables[^1].Value.Text = "1";
             Ui.Settle();
             // OLD's row taken out by its own button, beside its value.
             Avalonia.Controls.Grid old = (Avalonia.Controls.Grid)dialog.Variables.Single(v => v.Name.Text == "OLD").Name.Parent!;
-            old.Children.OfType<Avalonia.Controls.Button>().Single().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-            Ui.Settle();
+            Ui.Click(old.Children.OfType<Avalonia.Controls.Button>().Single());
             Assert.Equal(["Run arguments", "Environment variables"], dialog.Marked);
-            dialog.WriteButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-            Ui.Settle();
+            Ui.Click(dialog.WriteButton);
             Assert.Equal(Written, File.ReadAllText(Path.Combine(folder, "App", "Properties", "launchSettings.json")));
             Assert.Equal("Written to its launch profile in launchSettings.json: Run arguments, Environment variables.", dialog.Changes);
             Assert.Empty(dialog.Marked);
@@ -224,8 +221,8 @@ public sealed class ContainerConfigurationsTests
     {
         (string folder, _) = ContainerRunsTests.Shop("dcproj");
         File.Move(Path.Combine(folder, "compose.yaml"), Path.Combine(folder, "docker-compose.yml"));
-        ContainerRunsTests.Write(folder, "docker-compose.override.yml", "services:\n  web:\n    environment: { GREETING: hi }\n");
-        ContainerRunsTests.Write(folder, "docker-compose.dcproj", """
+        TestFolders.Write(folder, "docker-compose.override.yml", "services:\n  web:\n    environment: { GREETING: hi }\n");
+        TestFolders.Write(folder, "docker-compose.dcproj", """
             <?xml version="1.0" encoding="utf-8"?>
             <Project ToolsVersion="15.0" Sdk="Microsoft.Docker.Sdk">
               <PropertyGroup Label="Globals">
@@ -241,7 +238,7 @@ public sealed class ContainerConfigurationsTests
               </ItemGroup>
             </Project>
             """);
-        ContainerRunsTests.Write(folder, "Properties/launchSettings.json", """
+        TestFolders.Write(folder, "Properties/launchSettings.json", """
             {
               "profiles": {
                 "Web only": {
@@ -252,7 +249,7 @@ public sealed class ContainerConfigurationsTests
               }
             }
             """);
-        ContainerRunsTests.Write(folder, "Shop.slnx", "<Solution>\n  <Project Path=\"Web/Web.csproj\" />\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"docker-compose.dcproj\" />\n</Solution>\n");
+        TestFolders.Write(folder, "Shop.slnx", "<Solution>\n  <Project Path=\"Web/Web.csproj\" />\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"docker-compose.dcproj\" />\n</Solution>\n");
         MainWindow window = ContainerRunsTests.Open(folder);
         // Never loaded as a project: Visual Studio's SDK is not .NET's, and building the solution would fail on it.
         Assert.DoesNotContain(window.Projects, p => p.Path.EndsWith(".dcproj", StringComparison.Ordinal));
@@ -276,12 +273,12 @@ public sealed class ContainerConfigurationsTests
     private static string Solution(string prefix, string[] projects, string more)
     {
         string folder = PathNames.Canonical(TestFolders.Create(prefix));
-        Write(folder, "Shop.slnx", $"<Solution>\n{string.Concat(projects.Select(p => $"  <Project Path=\"{p}/{p}.csproj\" />\n"))}</Solution>\n");
-        Write(folder, "Directory.Build.props", string.Format(System.Globalization.CultureInfo.InvariantCulture, Props, more));
+        TestFolders.Write(folder, "Shop.slnx", $"<Solution>\n{string.Concat(projects.Select(p => $"  <Project Path=\"{p}/{p}.csproj\" />\n"))}</Solution>\n");
+        TestFolders.Write(folder, "Directory.Build.props", string.Format(System.Globalization.CultureInfo.InvariantCulture, Props, more));
         foreach (string project in projects)
         {
-            Write(folder, $"{project}/{project}.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
-            Write(folder, $"{project}/Program.cs", $"System.Console.WriteLine(\"{project}\");\n");
+            TestFolders.Write(folder, $"{project}/{project}.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+            TestFolders.Write(folder, $"{project}/Program.cs", $"System.Console.WriteLine(\"{project}\");\n");
         }
         return folder;
     }
@@ -303,11 +300,4 @@ public sealed class ContainerConfigurationsTests
     private static string Dockerfile(MainWindow window, string name) =>
         window.Configurations.FirstOrDefault(c => c.Name == name)?.Dockerfile
         ?? throw new InvalidOperationException($"No configuration {name}: [{string.Join(", ", window.Configurations.Select(c => c.Name))}]");
-
-    private static void Write(string folder, string relative, string text)
-    {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
-    }
 }

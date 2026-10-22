@@ -7,15 +7,25 @@ using Avalonia.Input.Platform;
 namespace Passenger.App.ToolWindows;
 
 /// <summary>A tool window's list given a right-click menu as Rider gives each row one: made again for the row chosen as
-/// the choice moves, so a right-click or the menu key finds it ready, and none with nothing to offer.</summary>
+/// the choice moves, so a right-click or the menu key finds it ready, and none with nothing to offer. One open stays as it
+/// opened while the list is read again (its rows made anew, the same one chosen), and is made again as it closes.</summary>
 public static class ListMenus
 {
     public static void Attach(SelectingItemsControl list, Func<IReadOnlyList<Control>> items)
     {
         void Make()
         {
+            if (list.ContextMenu is { IsOpen: true })
+            {
+                return;
+            }
             IReadOnlyList<Control> made = items();
-            list.ContextMenu = made.Count == 0 ? null : new ContextMenu { ItemsSource = made };
+            ContextMenu? menu = made.Count == 0 ? null : new ContextMenu { ItemsSource = made };
+            if (menu is not null)
+            {
+                menu.Closed += (_, _) => Make();
+            }
+            list.ContextMenu = menu;
         }
         list.SelectionChanged += (_, _) => Make();
         Make();

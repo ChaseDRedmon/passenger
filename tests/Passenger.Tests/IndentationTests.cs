@@ -29,7 +29,7 @@ public sealed class IndentationTests : IDisposable
         Assert.Equal("2 spaces, detected", IndentShown(window));
 
         // Enter after a brace goes in a level of two; Tab adds two more and Shift+Tab takes them back.
-        PlaceAfter(editor, "if (a > 0)\n    {");
+        Ui.PlaceAfter(editor, "if (a > 0)\n    {");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("a--;");
         Assert.Contains("    {\n      a--;\n      a++;", Text(editor), StringComparison.Ordinal);
@@ -43,7 +43,7 @@ public sealed class IndentationTests : IDisposable
         Assert.Contains("\n    a--;  \n", Text(editor), StringComparison.Ordinal);
 
         // A block copied from a file of tabs goes in with the file's two spaces a level.
-        PlaceAfter(editor, "int a = 1;");
+        Ui.PlaceAfter(editor, "int a = 1;");
         Ui.Press(window, "ENTER");
         Copy(window, "if (a < 0)\n\t\t{\n\t\t\ta = 0;\n\t\t}");
         Ui.Press(window, Ui.Shortcut(EditorActions.Paste));
@@ -63,7 +63,7 @@ public sealed class IndentationTests : IDisposable
         Assert.Equal("Tab, from .editorconfig", IndentShown(window));
         Assert.Equal($"Indent: Tab, from {Path.Combine(folder, ".editorconfig")}", ToolTip.GetTip(window.FindControl<TextBlock>("IndentText")!));
 
-        PlaceAfter(editor, "void Run()\n    {");
+        Ui.PlaceAfter(editor, "void Run()\n    {");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("a();");
         Assert.Contains("    {\n    \ta();\n", Text(editor), StringComparison.Ordinal);
@@ -74,7 +74,7 @@ public sealed class IndentationTests : IDisposable
         Assert.Contains("\n\t\ta();\n", Text(editor), StringComparison.Ordinal);
 
         // Four spaces a level from elsewhere become a tab a level.
-        PlaceAfter(editor, "int a = 1;");
+        Ui.PlaceAfter(editor, "int a = 1;");
         Ui.Press(window, "ENTER");
         Copy(window, "if (a < 0)\n        {\n            a = 0;\n        }");
         Ui.Press(window, Ui.Shortcut(EditorActions.Paste));
@@ -138,7 +138,7 @@ public sealed class IndentationTests : IDisposable
         Assert.Equal("LF", window.FindControl<TextBlock>("LineEndingText")!.Text);
 
         // A space typed at the end of a line stays while the caret is on it, as Rider keeps the caret's line.
-        PlaceAfter(editor, "int b;\t");
+        Ui.PlaceAfter(editor, "int b;\t");
         window.KeyTextInput(" ");
         Ui.Press(window, Ui.Shortcut(AppActions.Save));
 
@@ -218,26 +218,26 @@ public sealed class IndentationTests : IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
 
         // Between a start tag and its end tag: a line a level in, the end tag on its own at the element's indentation.
-        PlaceAfter(editor, "<Border>");
+        Ui.PlaceAfter(editor, "<Border>");
         Ui.Press(window, "ENTER");
         Assert.True(Text(editor).Contains("        <Border>\n            \n        </Border>\n", StringComparison.Ordinal),
             $"Enter between <Border> and </Border> did not open a line a level in with the end tag below:\n{Text(editor)}");
         Assert.Equal(new TextPosition(6, 12), editor.CaretPosition);
 
         // After a self-closing tag whose attributes line up under its first, a sibling's indentation, not the attributes'.
-        PlaceAfter(editor, "Width=\"80\" />");
+        Ui.PlaceAfter(editor, "Width=\"80\" />");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<Separator />");
         Assert.True(Text(editor).Contains("                Width=\"80\" />\n        <Separator />\n", StringComparison.Ordinal),
             $"Enter after a self-closing tag lined the next element up under its attributes:\n{Text(editor)}");
 
         // Inside a tag, under its first attribute; and Shift+Enter on a start tag's line opens a line a level in.
-        PlaceAfter(editor, "<Button Content=\"One\"");
+        Ui.PlaceAfter(editor, "<Button Content=\"One\"");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("Height=\"20\"");
         Assert.True(Text(editor).Contains("        <Button Content=\"One\"\n                Height=\"20\"\n                Width=\"80\" />", StringComparison.Ordinal),
             $"Enter after a tag's attribute did not line the next up under the first:\n{Text(editor)}");
-        PlaceAfter(editor, "    <Stack");
+        Ui.PlaceAfter(editor, "    <Stack");
         Ui.Press(window, "shift ENTER");
         window.KeyTextInput("<TextBlock />");
         Assert.True(Text(editor).Contains("    <StackPanel>\n        <TextBlock />\n        <Button", StringComparison.Ordinal),
@@ -248,10 +248,10 @@ public sealed class IndentationTests : IDisposable
         Write("page.html", "<html>\n<head>\n    <meta charset=\"utf-8\">\n</head>\n</html>\n");
         window = Open("page.html");
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<head>");
+        Ui.PlaceAfter(editor, "<head>");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<base href=\"/\">");
-        PlaceAfter(editor, "<meta charset=\"utf-8\">");
+        Ui.PlaceAfter(editor, "<meta charset=\"utf-8\">");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<title>Page</title>");
         Assert.True(Text(editor).Contains("<head>\n    <base href=\"/\">\n    <meta charset=\"utf-8\">\n    <title>Page</title>\n</head>", StringComparison.Ordinal),
@@ -269,20 +269,20 @@ public sealed class IndentationTests : IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
 
         // One ended at Two, so after Two's end tag the next item goes beside it.
-        PlaceAfter(editor, "<li>Two</li>");
+        Ui.PlaceAfter(editor, "<li>Two</li>");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<li>Three</li>");
         Assert.True(Text(editor).Contains("    <li>Two</li>\n    <li>Three</li>\n", StringComparison.Ordinal),
             $"Enter after an li that follows one with its end tag left out went inside that one:\n{Text(editor)}");
 
         // The list's end tag after Four ends Four too, so it goes to the list's own indentation.
-        PlaceAfter(editor, "<li>Four");
+        Ui.PlaceAfter(editor, "<li>Four");
         Ui.Press(window, "ENTER");
         Assert.True(Text(editor).Contains("    <li>Four\n</ul>\n", StringComparison.Ordinal),
             $"Enter before </ul> after an li with its end tag left out put </ul> at the li's indentation:\n{Text(editor)}");
 
         // A div ends the p before it, so the next line is the section's, beside both.
-        PlaceAfter(editor, "<div>Block</div>");
+        Ui.PlaceAfter(editor, "<div>Block</div>");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<hr>");
         Assert.True(Text(editor).Contains("    <div>Block</div>\n    <hr>\n</section>", StringComparison.Ordinal),
@@ -304,7 +304,7 @@ public sealed class IndentationTests : IDisposable
         MainWindow window = Open("Large.axaml");
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.Settle();
-        PlaceAfter(editor, "        <Border />");
+        Ui.PlaceAfter(editor, "        <Border />");
         // The jump to the file's end drawn first, its lines laid out and coloured, so what is counted is the Enter's alone.
         Ui.Settle();
         long before = GC.GetAllocatedBytesForCurrentThread();
@@ -340,13 +340,6 @@ public sealed class IndentationTests : IDisposable
         Ui.Settle();
         window.EditorArea.CodeEditor.Focus();
         return window;
-    }
-
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = Text(editor).IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
     private static void PlaceBefore(CodeEditor editor, string text)

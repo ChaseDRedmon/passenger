@@ -213,7 +213,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Assert.False(started.IsCompleted, $"The profiler gave up on the program before it was killed: {(started.IsCompleted ? started.Result : null)}");
             Assert.True(kill.IsVisible, "The profiler window had no Kill while the program it started had not reached it");
 
-            kill.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Click(kill, settle: false);
             Ui.PumpUntil(() => started.IsCompleted, "Kill to end the profile's start", TimeSpan.FromSeconds(10));
             Assert.Equal("Profiling Unreached: Undiagnosed was stopped as it started", started.Result);
             Assert.True(Processes.Gone(program), $"Kill left the program running: {Processes.Describe(program)}");
@@ -316,7 +316,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             // Kill still ends the one program there is.
             Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProfilerView).OfType<Avalonia.Controls.Button>()
                 .Single(b => b.Content as string == "Kill");
-            kill.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Click(kill, settle: false);
             Ui.PumpUntil(() => started.IsCompleted, "Kill to end the profile's start", TimeSpan.FromSeconds(10));
             Assert.Equal("Profiling Starting: Undiagnosed was stopped as it started", started.Result);
             Assert.True(Processes.Gone(Programs()[0]), $"Kill left the program running: {Processes.Describe(Programs()[0])}");
@@ -348,7 +348,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         // Get Memory Snapshot while it waits: the heap by type on the Memory page, the program still there.
         Avalonia.Controls.Button take = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
             .Single(b => b.Content as string == "Get Memory Snapshot");
-        take.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(take, settle: false);
         // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails here, not the run.
         Ui.WaitFor(() => view.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
             "the memory snapshot", TimeSpan.FromMinutes(2));
@@ -387,7 +387,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Assert.Equal(before, Ports());
             Assert.Equal($"{window.Configuration!.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again",
                 window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
-            Type(window, run, "after the snapshot");
+            Ui.TypeToRun(window, "after the snapshot");
             Ui.WaitFor(() => Shows(run, "read after the snapshot"), "the program to read what was typed after its snapshot");
 
             Ui.Run(window, AppActions.Stop);
@@ -430,7 +430,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Assert.Equal(taken, window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
             Assert.Equal(taken, Ui.Await(window.ProfileAsync(), "Profile's refusal"));
             Assert.True(Shows(run, "waiting"), "Profile cleared the Run console of Run's program");
-            Type(window, run, "to the run");
+            Ui.TypeToRun(window, "to the run");
             Ui.WaitFor(() => Shows(run, "read to the run"), "Run's program to read what was typed once Profile was refused");
             Ui.Run(window, AppActions.Stop);
             Ui.WaitFor(() => !window.Runner.IsRunning, "Run's program to stop");
@@ -439,16 +439,17 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Ui.WaitFor(() => Shows(run, "waiting"), "the profiled program to wait on its input");
             Assert.Equal($"{name}, which Profile started, uses the Run console: Kill it first", Ui.Await(window.RunAsync(), "Run's refusal"));
             Assert.False(window.Runner.IsRunning, "Run started a program in the Run console the profiled one writes to");
-            Type(window, run, "to the profile");
+            Ui.TypeToRun(window, "to the profile");
             Ui.WaitFor(() => Shows(run, "read to the profile"), "the profiled program to read what was typed");
+            window.ShowToolWindow(ToolWindowIds.Profiler);
             Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProfilerView).OfType<Avalonia.Controls.Button>()
                 .Single(b => b.Content as string == "Kill");
-            kill.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Click(kill, settle: false);
             Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the killed program's snapshot", TimeSpan.FromMinutes(2));
 
             Ui.Launched(window, window.RunAsync(), "the run after the profile", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => Shows(run, "waiting"), "Run's program to wait on its input after the profile");
-            Type(window, run, "after the profile");
+            Ui.TypeToRun(window, "after the profile");
             Ui.WaitFor(() => Shows(run, "read after the profile"), "Run's program to read what was typed after a profile");
         }
         finally
@@ -712,7 +713,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             : base("profile-waits-")
         {
             File.WriteAllText(PathOf("Waits.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
             File.WriteAllText(PathOf("Program.cs"), "File.WriteAllText(Path.Combine(args[0], $\"{Environment.ProcessId}.pid\"), Environment.ProcessId.ToString());\n"
                 + "Console.WriteLine(\"waiting\");\nwhile (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
             // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
@@ -728,7 +729,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         string project = Path.Combine(folder, name);
         Directory.CreateDirectory(project);
         File.WriteAllText(Path.Combine(project, $"{name}.csproj"),
-            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  {more}\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>").With($"  {more}\n"));
         File.WriteAllText(Path.Combine(project, "Program.cs"), program);
         Restore.Run(project);
         return project;
@@ -739,18 +740,6 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
     {
         console.Flush();
         return console.Document.Snapshot.ToString().Contains(text, StringComparison.Ordinal);
-    }
-
-    /// <summary>A line typed into a console, which sends it to the program's input.</summary>
-    private static void Type(MainWindow window, Passenger.App.ToolWindows.OutputView console, string text)
-    {
-        window.ShowToolWindow(ToolWindowIds.Run);
-        Ui.Settle();
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
-        window.KeyTextInput(text);
-        Ui.Press(window, "ENTER");
     }
 
     /// <summary>The diagnostic ports this process's profiler is listening at: a socket in the run's socket folder each, or a

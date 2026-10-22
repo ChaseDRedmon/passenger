@@ -38,7 +38,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
-            PlaceAfter(editor, "console.log(items);");
+            Ui.PlaceAfter(editor, "console.log(items);");
             Ui.Press(window, "ENTER");
             window.KeyTextInput("let total = items.length;");
             Ui.Press(window, "ENTER");
@@ -55,10 +55,10 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             Problem listed = Assert.Single(window.BottomPanel.Problems.FileProblems, p => p.Message == PreferConst);
             Assert.Equal(ProblemSeverity.Error, listed.Severity);
             Button rule = window.BottomPanel.Problems.GetVisualDescendants().OfType<Button>().First(b => b.Classes.Contains("link") && (string?)b.Content == "prefer-const");
-            Click(window, rule);
+            Ui.Click(rule);
             Assert.Equal(["https://eslint.org/docs/latest/rules/prefer-const"], window.Browsed.Select(u => u.AbsoluteUri));
 
-            PlaceAfter(editor, "let tot");
+            Ui.PlaceAfter(editor, "let tot");
             Ui.Run(window, AppActions.QuickFix);
             Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes for the line");
             Assert.Equal("ESLint: Fix 'prefer-const'", window.Assist.Offered[0]);
@@ -110,10 +110,10 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
-            PlaceAfter(editor, "console.log(items);");
+            Ui.PlaceAfter(editor, "console.log(items);");
             editor.ApplyEdits([new TextEdit(editor.Selections.Primary.Caret, 0, "\nlet first = 1;\nlet second = 2;\nconsole.log(first + second);")]);
             Ui.WaitFor(() => document.Markers.Count(m => m.Message.EndsWith("(prefer-const)", StringComparison.Ordinal)) == 2, "a problem under each let");
-            ChooseFromEditorMenu(window, "Fix ESLint Problems");
+            Ui.ChooseFromEditorMenu(window, "Fix ESLint Problems");
             Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("const first = 1;\nconst second = 2;", StringComparison.Ordinal), "both lets fixed at once");
             Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("ESLint:", StringComparison.Ordinal)), "no ESLint problem left");
 
@@ -145,7 +145,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
         try
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "pri");
+            Ui.PlaceAfter(editor, "pri");
             Ui.Run(window, AppActions.Reformat);
             Ui.WaitFor(() => editor.Document.Snapshot.ToString() == "const label = { name: 'tea', price: 3 }\nconsole.log(label)\n",
                 "the file laid out by the project's Prettier, its .prettierrc's single quotes and no semicolons");
@@ -175,7 +175,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             Ui.Run(window, AppActions.Reformat);
             Ui.WaitFor(() => editor.Document.Snapshot.ToString() == "const kept = \"as written\";\nconsole.log(kept);\n",
                 "the file .prettierignore names laid out by its language server, its double quotes and semicolons kept");
-            ChooseFromEditorMenu(window, "Reformat with Prettier");
+            Ui.ChooseFromEditorMenu(window, "Reformat with Prettier");
             Assert.Equal("Prettier: file legacy.js was ignored with .prettierignore", window.Status);
             Assert.Equal("const kept = \"as written\";\nconsole.log(kept);\n", editor.Document.Snapshot.ToString());
             Assert.Contains($"Prettier {Project.VersionOf("prettier")} formatted", Ui.IdeLog(), StringComparison.Ordinal);
@@ -404,7 +404,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
                 window.EditorArea.ActiveGroup.BannerText);
             Assert.Equal("Run 'npm install'", window.EditorArea.ActiveGroup.BannerLink);
 
-            Click(window, window.EditorArea.ActiveGroup.BannerLinkControl);
+            Ui.Click(window.EditorArea.ActiveGroup.BannerLinkControl);
             Ui.WaitFor(() => window.Status?.StartsWith("npm install failed in ", StringComparison.Ordinal) == true,
                 "npm install to end, which the run's npm, offline with an empty cache, cannot finish");
             ChildStart npm;
@@ -460,7 +460,7 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
             Assert.False(Editor<CheckBox>(dialog, "Run on save").IsChecked);
             TextBox package = Editor<TextBox>(dialog, "Prettier package");
             Assert.False(package.IsEnabled, "Automatic configuration lets a package be named, which only Manual takes");
-            Click(dialog, Radio(dialog, "Manual Prettier configuration"));
+            Ui.Click(Radio(dialog, "Manual Prettier configuration"));
             Assert.True(package.IsEnabled, "Manual configuration did not let the package be named");
             dialog.Close();
         }
@@ -477,40 +477,11 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
 
-    /// <summary>Opens the editor's menu at the caret and chooses an item, as clicks on them would.</summary>
-    private static void ChooseFromEditorMenu(MainWindow window, string item)
-    {
-        window.EditorArea.CodeEditor.RequestContextMenu();
-        Ui.Settle();
-        ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("The editor's menu did not open");
-        MenuItem chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"The editor's menu has no {item}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        Assert.True(chosen.IsEnabled, $"The editor's menu has {item} disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
-
     /// <summary>Reformat with Prettier on the file shown, done.</summary>
     private static void ReformatWithPrettier(MainWindow window)
     {
         Assert.True(window.Perform(AppActions.ReformatWithPrettier), "Reformat with Prettier did not run");
         Ui.Settle();
-    }
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
     /// <summary>A JavaScript project with its own ESLint and Prettier installed (the tests' packages copied into its

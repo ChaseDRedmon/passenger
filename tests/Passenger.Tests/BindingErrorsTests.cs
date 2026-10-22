@@ -25,16 +25,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
 
     public BindingErrorsTests(RestoredFolders folders)
     {
-        folder = PathNames.Canonical(folders.Take("bindings-", made =>
-        {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("BindingErrorsApp")))
-            {
-                File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
-            }
-            string project = Path.Combine(made, "BindingErrorsApp.csproj");
-            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
-            return project;
-        }));
+        folder = PathNames.Canonical(folders.Take("bindings-", made => AvaloniaApp.Debuggee(made, "BindingErrorsApp")));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -56,7 +47,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.StartsWith($"MainWindow.axaml({Misspelt.Line + 1},{Misspelt.Column + 1}): ", line, StringComparison.Ordinal);
         Assert.Contains("TextBlock#Caption.Text to Nmae", line, StringComparison.Ordinal);
         Assert.Contains("Did you mean Name?", line, StringComparison.Ordinal);
-        ClickLink(window, run, line);
+        Ui.ClickLink(run, line);
         Assert.Equal(Xaml, window.EditorArea.Active?.Path);
         Assert.Equal(Misspelt, window.EditorArea.CodeEditor.CaretPosition);
 
@@ -74,9 +65,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
             problems.Rows.Single(r => r.Problem is not null).Detail);
 
         // Failing again, it is counted, not listed again, and the console says so.
-        window.ShowToolWindow(ToolWindowIds.Run);
-        Ui.Settle();
-        Type(window, run, "rebind");
+        Ui.TypeToRun(window, "rebind");
         Ui.WaitFor(() => problems.BindingProblems.SingleOrDefault()?.Failure.Count == 2, "the caption's failure to be counted twice");
         Assert.Single(problems.BindingProblems);
         Assert.Contains("×2", problems.Rows.Single(r => r.Problem is not null).Detail, StringComparison.Ordinal);
@@ -84,6 +73,8 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
             && run.Document.Snapshot.ToString().Contains("(×2)", StringComparison.Ordinal), "the Run window to say it failed again");
 
         // Its fix, from Problems: the editor goes to the misspelt member and offers the view model's nearest, which it takes.
+        window.ShowToolWindow(ToolWindowIds.Problems);
+        Ui.Settle();
         ListBox list = problems.GetVisualDescendants().OfType<ListBox>().First();
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Show Context Actions");
@@ -145,7 +136,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         OutputView run = window.BottomPanel.Run;
         string said = WaitForLine(run, "the Run window to say the caption's binding failed");
         Assert.StartsWith($"MainWindow.axaml({line + 1},{column + 1}): ", said, StringComparison.Ordinal);
-        ClickLink(window, run, said);
+        Ui.ClickLink(run, said);
         Assert.Equal((Xaml, misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
 
         // The app reports XamlIl's place of the caption's element: past both lone '\r's, at the column after the comment's.
@@ -157,7 +148,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.Equal((Xaml, misspelt), (caption.Problem.Path, caption.Problem.Position));
 
         // Its fix, from Problems, at the misspelt member.
-        window.Perform(AppActions.ShowProblems);
+        window.ShowToolWindow(ToolWindowIds.Problems);
         problems.Shown = ProblemsTab.Bindings;
         Ui.Settle();
         ListBox list = problems.GetVisualDescendants().OfType<ListBox>().First();
@@ -181,7 +172,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         OutputView console = window.BottomPanel.Debug.Console;
         string line = WaitForLine(console, "the Debug window's console to say the caption's binding failed");
         Assert.StartsWith($"MainWindow.axaml({Misspelt.Line + 1},{Misspelt.Column + 1}): ", line, StringComparison.Ordinal);
-        ClickLink(window, console, line);
+        Ui.ClickLink(console, line);
         Assert.Equal(Xaml, window.EditorArea.Active?.Path);
         Assert.Equal(Misspelt, window.EditorArea.CodeEditor.CaretPosition);
 
@@ -212,8 +203,8 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal([ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "XAML Binding Errors");
-        Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
+        Ui.Click(Button(breakpoints, "Done"));
         Assert.True(store.BindingErrors.Enabled, "Its box did not turn XAML Binding Errors on");
 
         // The caption's binding fails as the app gives its window a view model: the stop is there, in the app's own code.
@@ -226,7 +217,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
             + "Could not find a matching property accessor for 'Nmae' on 'BindingErrorsApp.MainViewModel'");
         // Which the status bar's words go to see in Problems' Bindings.
         window.ShowToolWindow(ToolWindowIds.Debug);
-        Click(window, window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
+        Ui.Click(window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
         Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && window.BottomPanel.Problems.Shown == ProblemsTab.Bindings,
             $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {window.BottomPanel.Problems.Shown} tab" : "nothing")}, not Problems' Bindings");
         window.ShowToolWindow(ToolWindowIds.Debug);
@@ -245,17 +236,17 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         OutputView console = window.BottomPanel.Debug.Console;
         string line = WaitForLine(console, "the Debug console to link the binding that stopped the app", "paused on a binding error");
         Assert.StartsWith($"MainWindow.axaml({Misspelt.Line + 1},{Misspelt.Column + 1}): paused on a binding error: TextBlock#Caption.Text to Nmae", line, StringComparison.Ordinal);
-        ClickLink(window, console, line);
+        Ui.ClickLink(console, line);
         Assert.Equal((Xaml, Misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
         Resume(window);
 
         // A condition reads the failure: one that holds for none lets the next failure go by, one that holds stops there.
         Condition(window, "$bindingError.Path == \"Name\"");
-        Say(window, "rebind");
+        Ui.TypeToDebugged(window, "rebind");
         Ui.WaitFor(() => Console(window).Contains("Bound again", StringComparison.Ordinal), "the app to bind its window again");
         Assert.True(window.Debugger.Session?.State == DebugState.Running, $"A condition that held for no failure stopped the app: {window.Status}");
         Condition(window, " || $bindingError.FailedPart == \"Nmae\"");
-        Say(window, "rebind");
+        Ui.TypeToDebugged(window, "rebind");
         stop = Stopped(window, "the stop where rebind makes the caption's binding fail again");
         AssertAt(stop, program, LineIn(program, "window.DataContext = new MainViewModel();"));
         Says(window, "paused on a binding error");
@@ -265,14 +256,14 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         // Not suspending, it logs its message, which reads the failure, and the app goes on.
         Ui.Run(window, AppActions.ViewBreakpoints);
         breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
-        Click(window, breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => (c.Content as string) == "Suspend execution"));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Logged on each hit", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => (c.Content as string) == "Suspend execution"));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Logged on each hit", StringComparison.Ordinal) == true));
         window.KeyTextInput("{$bindingError.FailedPart} could not be read");
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Button(breakpoints, "Done"));
         Assert.Equal((false, "{$bindingError.FailedPart} could not be read"), (store.BindingErrors.Suspend, store.BindingErrors.LogMessage));
         Ui.Settle();
-        Say(window, "rebind");
+        Ui.TypeToDebugged(window, "rebind");
         Ui.WaitFor(() => Console(window).Split("Bound again").Length == 4, "the app to bind its window a third time, not stopping");
         Ui.WaitFor(() => Console(window).Split('\n').Any(l => l.Contains("Nmae", StringComparison.Ordinal) && l.Contains("could not be read", StringComparison.Ordinal)),
             $"the log message to say what failed:\n{Console(window)}");
@@ -295,7 +286,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Caption"),
             $"the Live Visual Tree to show the app's window ({window.LiveApp?.State} {window.LiveApp?.Problem})", TimeSpan.FromMinutes(2));
-        Say(window, "rebind");
+        Ui.TypeToDebugged(window, "rebind");
         Ui.WaitFor(() => Console(window).Contains("Bound again", StringComparison.Ordinal), "the app's second failed binding, which the hit count lets go by");
         Assert.True(window.Debugger.Session?.State == DebugState.Running, $"XAML Binding Errors stopped before its third hit: {window.Status}");
 
@@ -311,7 +302,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
             ?? throw new Xunit.Sdk.XunitException("Break When Value Changes set no property breakpoint on the caption's FontSize");
         Ui.WaitFor(() => size.Status == BreakpointStatus.Bound, $"the debugger to take the property breakpoint, not to say {size.Message}");
 
-        Say(window, "rebind");
+        Ui.TypeToDebugged(window, "rebind");
         DebugStop stop;
         try
         {
@@ -413,11 +404,11 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     {
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
         Ui.Press(window, "End");
         window.KeyTextInput(typed);
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Button(breakpoints, "Done"));
         Ui.Settle();
     }
 
@@ -469,15 +460,6 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         return owner.Children!.First(c => c.Name == name).Value;
     }
 
-    /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
-    private static void Say(MainWindow window, string line)
-    {
-        window.ShowToolWindow(ToolWindowIds.Debug);
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        Type(window, window.BottomPanel.Debug.Console, line);
-    }
-
     private static string Console(MainWindow window)
     {
         window.BottomPanel.Debug.Console.Flush();
@@ -494,27 +476,11 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     private static Button Button(Control within, string content) =>
         within.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == content && b.IsEffectivelyVisible);
 
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>The line (from zero) of a file holding some text.</summary>
     private static int LineIn(string file, string text) => Array.FindIndex(File.ReadAllLines(file), l => l.Contains(text, StringComparison.Ordinal));
 
     /// <summary>The folder opened in a window.</summary>
-    private MainWindow Opened()
-    {
-        MainWindow window = new() { Width = 1400, Height = 900 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900);
 
     /// <summary>The console's line saying the caption's binding failed (or what else it says), once it has it.</summary>
     private static string WaitForLine(OutputView console, string what, string saying = "binding error")
@@ -527,31 +493,6 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
             return line is not null;
         }, what, TimeSpan.FromMinutes(2));
         return line!;
-    }
-
-    /// <summary>A click on a console line's link, at its first character, as a person clicks it.</summary>
-    private static void ClickLink(MainWindow window, OutputView console, string line)
-    {
-        CodeEditor editor = console.Editor;
-        int offset = editor.Document.Snapshot.ToString().IndexOf(line, StringComparison.Ordinal);
-        Point top = editor.PointOf(offset);
-        Point at = editor.TranslatePoint(top + new Vector(2, editor.LineHeight / 2), window)!.Value;
-        window.MouseMove(at);
-        Ui.Settle();
-        Assert.True(editor.HoveredLink is { Target: FileLink }, $"The pointer rests on the line's place but nothing is underlined:\n{line}");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
-    }
-
-    /// <summary>A line typed into a console, which sends it to the program's input.</summary>
-    private static void Type(MainWindow window, OutputView console, string text)
-    {
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(inside, Avalonia.Input.MouseButton.Left);
-        window.KeyTextInput(text);
-        Ui.Press(window, "ENTER");
     }
 
     private static void Stop(MainWindow window)
@@ -572,5 +513,4 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
 
     /// <summary>MainWindow.axaml's lines as the editor counts them, at each '\n' alone.</summary>
     private string[] Lines() => File.ReadAllText(Xaml).Split('\n');
-
 }

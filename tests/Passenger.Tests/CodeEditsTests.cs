@@ -131,7 +131,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         int After(string code) => Text().IndexOf(code, StringComparison.Ordinal) + code.Length;
 
         // An if's condition: its parenthesis closed, braces, and the caret in its body.
-        PlaceAfter(editor, "int total = 0;");
+        Ui.PlaceAfter(editor, "int total = 0;");
         editor.Focus();
         Ui.Press(window, "ENTER");
         window.KeyTextInput("if (total > 0");
@@ -152,7 +152,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Assert.Equal(After("int doubled = total * 2;\n            "), editor.Selections.Primary.Caret);
 
         // A method's signature: its parameters closed and a body to write in.
-        PlaceAfter(editor, "        return total;\n    }");
+        Ui.PlaceAfter(editor, "        return total;\n    }");
         Ui.Press(window, "ENTER");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("static void Report(int value");
@@ -186,7 +186,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         string Text() => editor.Document.Snapshot.ToString();
 
         // Nothing uses it: it goes, its doc comment and the blank line before it with it.
-        PlaceAfter(editor, "int Unu");
+        Ui.PlaceAfter(editor, "int Unu");
         editor.Focus();
         Ui.Run(window, AppActions.SafeDelete);
         Ui.WaitFor(() => !Text().Contains("Unused", StringComparison.Ordinal), "the unused method to be deleted");
@@ -195,7 +195,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Assert.Empty(window.OwnedWindows.OfType<ConfirmDialog>());
 
         // Four and Main call Twice: Safe Delete lists both calls and deletes nothing until told to.
-        PlaceAfter(editor, "int Twi");
+        Ui.PlaceAfter(editor, "int Twi");
         Ui.Run(window, AppActions.SafeDelete);
         ConfirmDialog asked = Asked(window);
         string[] shown = [.. asked.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
@@ -203,14 +203,14 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Assert.Contains("Calc.cs:5", shown);
         Assert.Contains("public static int Four() => Twice(2);", shown);
         Assert.Contains("Program.cs:5", shown);
-        Click(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.Contains("Twice(int value)", Text(), StringComparison.Ordinal);
         Assert.Equal("Safe Delete left the method 'Twice' where it is", window.Status);
 
         // From a usage, the method it calls; Delete Anyway deletes it, the call left to fix.
-        PlaceAfter(editor, "=> Twi");
+        Ui.PlaceAfter(editor, "=> Twi");
         Ui.Run(window, AppActions.SafeDelete);
-        Click(Asked(window), "Delete Anyway");
+        Ui.ClickButton(Asked(window), "Delete Anyway");
         Ui.WaitFor(() => !Text().Contains("Twice(int", StringComparison.Ordinal), "the used method to be deleted anyway");
         Assert.Equal("static class Calc\n{\n    public static int Four() => Twice(2);\n}\n", Text());
         Assert.Equal("Deleted the method 'Twice', leaving 2 usages to fix", window.Status);
@@ -225,10 +225,10 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         MainWindow window = project.Open("Program.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         List<string> asked = [];
-        PlaceAfter(editor, "Calc.Twi");
+        Ui.PlaceAfter(editor, "Calc.Twi");
         editor.Focus();
         Ui.Run(window, AppActions.SafeDelete);
-        Click(Asked(window), "Delete Anyway");
+        Ui.ClickButton(Asked(window), "Delete Anyway");
         Ui.WaitFor(() => !File.ReadAllText(calc).Contains("Twice(int", StringComparison.Ordinal), "Twice deleted from Calc.cs, which is not open");
         Assert.DoesNotContain(window.EditorArea.Documents, d => d.Name == "Calc.cs");
 
@@ -241,14 +241,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         window.ExplorerView.Reveal(Passenger.Core.PathNames.Canonical(calc));
         Ui.Settle();
         Passenger.App.Explorer.ExplorerNode row = Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Calc.cs");
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row)!;
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.ClickRow(window, row);
         Ui.Run(window, EditorActions.Undo);
         Assert.Equal(["Undo"], asked);
         string after = File.ReadAllText(calc);
@@ -266,7 +259,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
 
         // An agent, or a checkout, writes Calc.cs, its lines two further down, as the rename is asked for.
         string written = "// Checked out again\n// by another program\n" + File.ReadAllText(calc);
-        PlaceAfter(editor, "Calc.Twi");
+        Ui.PlaceAfter(editor, "Calc.Twi");
         Ui.Run(window, AppActions.Rename);
         Ui.Settle();
         window.KeyTextInput("Double");
@@ -317,10 +310,10 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         project.Write("Halves.cs", "static class Halves\n{\n    public static int Four() => Halve.Of(8);\n}\n");
         MainWindow window = project.Open("Halves.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "Halve.O");
+        Ui.PlaceAfter(editor, "Halve.O");
         editor.Focus();
         Ui.Run(window, AppActions.SafeDelete);
-        Click(Asked(window), "Delete Anyway");
+        Ui.ClickButton(Asked(window), "Delete Anyway");
         Ui.WaitFor(() => !File.ReadAllText(halve).Contains("Of(int", StringComparison.Ordinal), "Of deleted from Halve.cs, which is not open");
         string after = File.ReadAllText(halve);
         Assert.True(!after.Contains('\n', StringComparison.Ordinal) && after.StartsWith("static class Halve\r{\r", StringComparison.Ordinal) && after.EndsWith("    public static int Two() => 1;\r}\r", StringComparison.Ordinal),
@@ -381,7 +374,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         MainWindow window = project.Open("Counter.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         string Text() => editor.Document.Snapshot.ToString();
-        PlaceAfter(editor, "public int cou");
+        Ui.PlaceAfter(editor, "public int cou");
         editor.Focus();
         Ui.Run(window, AppActions.EncapsulateField);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Encapsulate Field's choices");
@@ -400,13 +393,6 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         int at = editor.Document.Snapshot.ToString().IndexOf(code, StringComparison.Ordinal);
         Assert.True(at >= 0, $"'{code}' is not in the file");
         editor.Selections = SelectionSet.Single(new Selection(at + skip, at + skip + (length ?? code.Length - skip)));
-    }
-
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
     private static string Selected(CodeEditor editor) =>
@@ -456,13 +442,6 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         return DialogButtonsTests.Check(window.OwnedWindows.OfType<ConfirmDialog>().Single());
     }
 
-    private static void Click(ConfirmDialog dialog, string button)
-    {
-        dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button)
-            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
-    }
-
     /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it; a
     /// window never saves what its test typed.</summary>
     public sealed class Project : SharedProject
@@ -471,7 +450,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
             : base("edits-")
         {
             File.WriteAllText(PathOf("Edits.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int four = Calc.Twice(2) + Calc.Four() + Sum.Of() + Scale.Two();\n    }\n}\n");
             File.WriteAllText(PathOf("Sum.cs"), "static class Sum\n{\n    public static int Of()\n    {\n        int total = 0;\n        total += 1;\n        total += 2;\n        return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Two.cs"), "class First\n{\n}\n\nclass Second\n{\n}\n");
