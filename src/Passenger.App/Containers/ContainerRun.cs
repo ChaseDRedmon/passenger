@@ -936,8 +936,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             string tools = await ContainerTools.InContainerAsync(engine, container, stop)
                 ?? await ContainerTools.CopyIntoAsync(engine, container, await ContainerTools.FolderAsync(source, rid, null, stop), stop);
             DotnetProcess program = await HeldProgramAsync(engine, container, tools, service, stop);
-            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{.State.StartedAt}}", container], cancel: stop);
-            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim(), emulated);
+            // As JSON, RFC 3339 either way: Podman's own docker writes the time itself in Go's words, which its logs --since refuses.
+            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{json .State.StartedAt}}", container], cancel: stop);
+            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim().Trim('"'), emulated);
         }, stop);
     }
 
