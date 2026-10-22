@@ -14,74 +14,16 @@ namespace Passenger.Tests;
 /// <summary>The NuGet window takes its feeds from the folder's nuget.config, as restore does: a folder of packages and a
 /// private v3 feed on a loopback port that asks for the credentials the file gives. Sources lists them, adds a feed leaving
 /// the rest of the file as it was, and disables one, which leaves the chooser and search; the chooser searches All Feeds or
-/// one; an install restores with the credentials, which nothing logs; a credential provider gives what the file does not.
-/// The run's NuGet home stands in for the person's, so their nuget.config is never read or written. Alone: NuGet and the
-/// IDE find a credential provider on this process's own PATH, which its test changes while it runs, so nothing may run
-/// beside it and inherit that PATH.</summary>
-[Collection(Alone.Name)]
-public sealed class PackageSourcesTests : IDisposable
+/// one; an install restores with the credentials, which nothing logs. The run's NuGet home stands in for the person's, so
+/// their nuget.config is never read or written.</summary>
+public sealed class PackageSourcesTests : NuGetFeedsFolder
 {
-    private const string User = "tester";
-
-    private readonly string folder = TestFolders.Create("sources-");
-    private readonly string config;
-    private readonly string project;
-    private readonly StandInFeed feed = new(User, "secret-" + Guid.NewGuid().ToString("N")[..8]);
-
-    public PackageSourcesTests()
-    {
-        string local = Path.Combine(folder, "feed");
-        Directory.CreateDirectory(local);
-        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.0.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.0.0"));
-        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.1.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.1.0"));
-        File.WriteAllBytes(Path.Combine(local, "Passenger.Other.2.0.0.nupkg"), StandInFeed.Package("Passenger.Other", "2.0.0"));
-        feed.Add("Passenger.Private", "3.0.0");
-        feed.Add("Passenger.Private", "3.1.0");
-        config = Path.Combine(folder, "nuget.config");
-        File.WriteAllText(config, Config(withCredentials: true));
-        Directory.CreateDirectory(Path.Combine(folder, "Lib"));
-        project = Path.Combine(folder, "Lib", "Lib.csproj");
-        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net11.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-    }
-
-    public void Dispose()
-    {
-        feed.Dispose();
-        TestFolders.Delete(folder);
-    }
-
-    /// <summary>The folder's nuget.config: only its own feeds, the private one over HTTP as NuGet allows it with
-    /// allowInsecureConnections, and restores kept out of the person's package cache.</summary>
-    private string Config(bool withCredentials)
-    {
-        string credentials = withCredentials ? $"""
-              <packageSourceCredentials>
-                <private>
-                  <add key="Username" value="{User}" />
-                  <add key="ClearTextPassword" value="{feed.Password}" />
-                </private>
-              </packageSourceCredentials>
-
-            """ : string.Empty;
-        return $"""
-            <?xml version="1.0" encoding="utf-8"?>
-            <!-- The tests' feeds: a folder of packages and a private feed that asks who is there. -->
-            <configuration>
-              <packageSources>
-                <clear />
-                <add key="local" value="feed" />
-                <add key="private" value="{feed.Index}" protocolVersion="3" allowInsecureConnections="true" />
-              </packageSources>
-            {credentials}  <config>
-                <add key="globalPackagesFolder" value="packages" />
-              </config>
-            </configuration>
-
-            """.ReplaceLineEndings("\n");
-    }
-
+    /// <summary>The Sources tab and the chooser list the folder's two feeds; a search of one feed finds only its packages and
+    /// All Feeds both feeds'; a feed disabled leaves search until enabled again; and a feed added is written into the
+    /// folder's nuget.config, the rest of the file kept, Local History keeping the file as it was before, as it keeps every
+    /// write of the IDE's. One window, the feed added last, since nothing answers at its address.</summary>
     [AvaloniaFact]
-    public void The_sources_tab_and_the_chooser_list_the_folder_feed_and_the_private_feed_of_the_folders_nuget_config()
+    public void The_folders_feeds_are_listed_searched_one_or_all_disabled_and_enabled_and_a_new_one_written_into_its_nuget_config()
     {
         MainWindow window = Open();
         NuGetView nuget = window.NuGet;
@@ -104,14 +46,8 @@ public sealed class PackageSourcesTests : IDisposable
             Assert.True(Core.PathNames.IsUnder(user.Path, Core.PathNames.Canonical(TestRun.Root)),
                 $"The NuGet window read the user's nuget.config at {user.Path}, which is the person's own, not the test run's");
         }
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void Searching_one_feed_finds_only_its_packages_and_all_feeds_finds_both_feeds()
-    {
-        MainWindow window = Open();
-        NuGetView nuget = window.NuGet;
+        // A search of one feed, then of All Feeds.
         nuget.ChosenFeed = "private";
         Search(nuget, "passenger");
         Assert.True(Ids(nuget).SequenceEqual(["Passenger.Private"]), $"Searching the private feed found [{string.Join(", ", Ids(nuget))}]");
@@ -127,6 +63,47 @@ public sealed class PackageSourcesTests : IDisposable
         Search(nuget, "passenger");
         Assert.True(Ids(nuget).Order().SequenceEqual(["Passenger.Other", "Passenger.Private", "Passenger.Sample"]), $"All Feeds found [{string.Join(", ", Ids(nuget))}]");
         Assert.True(nuget.Rows.Single(r => r.Id == "Passenger.Private").Feeds.SequenceEqual(["private"]), "The private package is not said to come from the private feed");
+
+        // A feed disabled in Sources, and enabled again.
+        ShowSources(nuget);
+        Toggle(nuget, "local").IsChecked = false;
+        Ui.Landed(() => !nuget.FeedChoices.Contains("local"), "the folder feed gone from the chooser");
+        Assert.Contains("<add key=\"local\" value=\"true\" />", File.ReadAllText(config), StringComparison.Ordinal);
+        Assert.True(Toggle(nuget, "local").IsChecked == false, "The disabled feed is shown enabled");
+
+        nuget.ShowPackages();
+        nuget.ChosenFeed = FeedSet.All;
+        Search(nuget, "passenger");
+        Assert.True(Ids(nuget).SequenceEqual(["Passenger.Private"]), $"With the folder feed disabled, All Feeds found [{string.Join(", ", Ids(nuget))}]");
+
+        ShowSources(nuget);
+        Toggle(nuget, "local").IsChecked = true;
+        Ui.Landed(() => nuget.FeedChoices.Contains("local"), "the folder feed back in the chooser");
+        Assert.DoesNotContain("<add key=\"local\" value=\"true\" />", File.ReadAllText(config), StringComparison.Ordinal);
+        nuget.ShowPackages();
+        Search(nuget, "passenger");
+        Assert.True(Ids(nuget).Order().SequenceEqual(["Passenger.Other", "Passenger.Private", "Passenger.Sample"]), $"With the folder feed enabled again, All Feeds found [{string.Join(", ", Ids(nuget))}]");
+
+        // A feed added in Sources.
+        byte[] bytes = File.ReadAllBytes(config);
+        string before = File.ReadAllText(config);
+        ShowSources(nuget);
+        Button add = Descendants<Button>(nuget.Sources).Single(b => b.Name == "AddFeed");
+        Ui.Click(add);
+        FeedDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<FeedDialog>()));
+        Assert.Equal("New feed", dialog.Title);
+        dialog.FeedName = "team";
+        dialog.Url = "https://nuget.example.com/v3/index.json";
+        Ui.ClickButton(dialog, "OK");
+        Ui.Landed(() => nuget.FeedChoices.Contains("team"), "the new feed in the chooser");
+
+        string line = $"    <add key=\"private\" value=\"{feed.Index}\" protocolVersion=\"3\" allowInsecureConnections=\"true\" />";
+        string expected = before.Replace(line + "\n", line + "\n    <add key=\"team\" value=\"https://nuget.example.com/v3/index.json\" />\n", StringComparison.Ordinal);
+        Assert.True(File.ReadAllText(config) == expected, $"Adding the feed made the file:\n{File.ReadAllText(config)}\nnot:\n{expected}");
+        Assert.True(FeedRows(nuget).SequenceEqual(["local", "private", "team"]), $"The Sources tab shows [{string.Join(", ", FeedRows(nuget))}] after the add");
+        string path = Passenger.Core.PathNames.Canonical(config);
+        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == path && e.Before is { } hash && window.LocalHistory.Content(hash) is { } kept && kept.AsSpan().SequenceEqual(bytes)),
+            "Local History to keep the nuget.config as it was before the feed went in");
         window.Close();
     }
 
@@ -175,62 +152,14 @@ public sealed class PackageSourcesTests : IDisposable
         Assert.DoesNotContain(feed.Password!, Ui.IdeLog(), StringComparison.Ordinal);
         window.Close();
     }
+}
 
-    /// <summary>The feed written in, the rest of the file as it was, and Local History keeping the file as it was before, as
-    /// it keeps every write of the IDE's.</summary>
-    [AvaloniaFact]
-    public void Adding_a_feed_in_sources_writes_it_into_the_solutions_nuget_config_keeping_the_rest_of_the_file_and_its_history()
-    {
-        byte[] bytes = File.ReadAllBytes(config);
-        string before = File.ReadAllText(config);
-        MainWindow window = Open();
-        NuGetView nuget = window.NuGet;
-        ShowSources(nuget);
-        Button add = Descendants<Button>(nuget.Sources).Single(b => b.Name == "AddFeed");
-        Ui.Click(add);
-        FeedDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<FeedDialog>()));
-        Assert.Equal("New feed", dialog.Title);
-        dialog.FeedName = "team";
-        dialog.Url = "https://nuget.example.com/v3/index.json";
-        Ui.ClickButton(dialog, "OK");
-        Ui.Landed(() => nuget.FeedChoices.Contains("team"), "the new feed in the chooser");
-
-        string line = $"    <add key=\"private\" value=\"{feed.Index}\" protocolVersion=\"3\" allowInsecureConnections=\"true\" />";
-        string expected = before.Replace(line + "\n", line + "\n    <add key=\"team\" value=\"https://nuget.example.com/v3/index.json\" />\n", StringComparison.Ordinal);
-        Assert.True(File.ReadAllText(config) == expected, $"Adding the feed made the file:\n{File.ReadAllText(config)}\nnot:\n{expected}");
-        Assert.True(FeedRows(nuget).SequenceEqual(["local", "private", "team"]), $"The Sources tab shows [{string.Join(", ", FeedRows(nuget))}] after the add");
-        string path = Passenger.Core.PathNames.Canonical(config);
-        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == path && e.Before is { } hash && window.LocalHistory.Content(hash) is { } kept && kept.AsSpan().SequenceEqual(bytes)),
-            "Local History to keep the nuget.config as it was before the feed went in");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Disabling_a_feed_takes_it_out_of_search_and_enabling_it_brings_it_back()
-    {
-        MainWindow window = Open();
-        NuGetView nuget = window.NuGet;
-        ShowSources(nuget);
-        Toggle(nuget, "local").IsChecked = false;
-        Ui.Landed(() => !nuget.FeedChoices.Contains("local"), "the folder feed gone from the chooser");
-        Assert.Contains("<add key=\"local\" value=\"true\" />", File.ReadAllText(config), StringComparison.Ordinal);
-        Assert.True(Toggle(nuget, "local").IsChecked == false, "The disabled feed is shown enabled");
-
-        nuget.ShowPackages();
-        nuget.ChosenFeed = FeedSet.All;
-        Search(nuget, "passenger");
-        Assert.True(Ids(nuget).SequenceEqual(["Passenger.Private"]), $"With the folder feed disabled, All Feeds found [{string.Join(", ", Ids(nuget))}]");
-
-        ShowSources(nuget);
-        Toggle(nuget, "local").IsChecked = true;
-        Ui.Landed(() => nuget.FeedChoices.Contains("local"), "the folder feed back in the chooser");
-        Assert.DoesNotContain("<add key=\"local\" value=\"true\" />", File.ReadAllText(config), StringComparison.Ordinal);
-        nuget.ShowPackages();
-        Search(nuget, "passenger");
-        Assert.True(Ids(nuget).Order().SequenceEqual(["Passenger.Other", "Passenger.Private", "Passenger.Sample"]), $"With the folder feed enabled again, All Feeds found [{string.Join(", ", Ids(nuget))}]");
-        window.Close();
-    }
-
+/// <summary>A credential provider gives the NuGet window and restore what the folder's nuget.config does not. Alone: NuGet
+/// and the IDE find a credential provider on this process's own PATH, which its test changes while it runs, so nothing may
+/// run beside it and inherit that PATH.</summary>
+[Collection(Alone.Name)]
+public sealed class CredentialProviderTests : NuGetFeedsFolder
+{
     [AvaloniaFact]
     public void A_feed_without_credentials_in_its_nuget_config_gets_them_from_a_credential_provider()
     {
@@ -292,9 +221,73 @@ public sealed class PackageSourcesTests : IDisposable
         done
 
         """;
+}
+
+/// <summary>A folder holding a project, a folder of packages and the nuget.config that names it and a private v3 feed on a
+/// loopback port, which asks for the credentials the file gives; and a window's NuGet window on it.</summary>
+public abstract class NuGetFeedsFolder : IDisposable
+{
+    protected const string User = "tester";
+
+    protected readonly string folder = TestFolders.Create("sources-");
+    protected readonly string config;
+    protected readonly string project;
+    protected readonly StandInFeed feed = new(User, "secret-" + Guid.NewGuid().ToString("N")[..8]);
+
+    protected NuGetFeedsFolder()
+    {
+        string local = Path.Combine(folder, "feed");
+        Directory.CreateDirectory(local);
+        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.0.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.0.0"));
+        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.1.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.1.0"));
+        File.WriteAllBytes(Path.Combine(local, "Passenger.Other.2.0.0.nupkg"), StandInFeed.Package("Passenger.Other", "2.0.0"));
+        feed.Add("Passenger.Private", "3.0.0");
+        feed.Add("Passenger.Private", "3.1.0");
+        config = Path.Combine(folder, "nuget.config");
+        File.WriteAllText(config, Config(withCredentials: true));
+        Directory.CreateDirectory(Path.Combine(folder, "Lib"));
+        project = Path.Combine(folder, "Lib", "Lib.csproj");
+        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net11.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+    }
+
+    public void Dispose()
+    {
+        feed.Dispose();
+        TestFolders.Delete(folder);
+    }
+
+    /// <summary>The folder's nuget.config: only its own feeds, the private one over HTTP as NuGet allows it with
+    /// allowInsecureConnections, and restores kept out of the person's package cache.</summary>
+    protected string Config(bool withCredentials)
+    {
+        string credentials = withCredentials ? $"""
+              <packageSourceCredentials>
+                <private>
+                  <add key="Username" value="{User}" />
+                  <add key="ClearTextPassword" value="{feed.Password}" />
+                </private>
+              </packageSourceCredentials>
+
+            """ : string.Empty;
+        return $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <!-- The tests' feeds: a folder of packages and a private feed that asks who is there. -->
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="local" value="feed" />
+                <add key="private" value="{feed.Index}" protocolVersion="3" allowInsecureConnections="true" />
+              </packageSources>
+            {credentials}  <config>
+                <add key="globalPackagesFolder" value="packages" />
+              </config>
+            </configuration>
+
+            """.ReplaceLineEndings("\n");
+    }
 
     /// <summary>A window on the folder with the NuGet window open, its sources read from the folder's nuget.config.</summary>
-    private MainWindow Open()
+    protected MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
@@ -305,35 +298,35 @@ public sealed class PackageSourcesTests : IDisposable
         return window;
     }
 
-    private static void ShowSources(NuGetView nuget)
+    protected static void ShowSources(NuGetView nuget)
     {
         ToggleButton tab = ((Panel)nuget.Tabs).Children.OfType<ToggleButton>().Single(t => (string?)t.Content == "Sources");
         Ui.Click(tab, settle: false);
         Ui.Landed(() => nuget.ShowsSources && nuget.Sources.Files.Count > 0, "the Sources tab with the folder's nuget.config files");
     }
 
-    private static void Search(NuGetView nuget, string query)
+    protected static void Search(NuGetView nuget, string query)
     {
         nuget.Query = query;
         Task searched = nuget.RefreshAsync();
         Ui.Landed(() => searched.IsCompleted && nuget.Selected is not null && nuget.Versions.Count > 0, $"what '{query}' finds on {nuget.ChosenFeed}, its first package's versions: {nuget.Status}");
     }
 
-    private static List<string> Ids(NuGetView nuget) => [.. nuget.Rows.Select(r => r.Id)];
+    protected static List<string> Ids(NuGetView nuget) => [.. nuget.Rows.Select(r => r.Id)];
 
-    private static IEnumerable<T> Descendants<T>(Visual parent) => parent.GetVisualDescendants().OfType<T>();
+    protected static IEnumerable<T> Descendants<T>(Visual parent) => parent.GetVisualDescendants().OfType<T>();
 
     /// <summary>The feeds the Sources tab shows for the file chosen, in order.</summary>
-    private static List<string> FeedRows(NuGetView nuget) => [.. Descendants<Grid>(nuget.Sources).Select(g => g.Tag).OfType<string>()];
+    protected static List<string> FeedRows(NuGetView nuget) => [.. Descendants<Grid>(nuget.Sources).Select(g => g.Tag).OfType<string>()];
 
-    private static Grid FeedRow(NuGetView nuget, string name) =>
+    protected static Grid FeedRow(NuGetView nuget, string name) =>
         Descendants<Grid>(nuget.Sources).SingleOrDefault(g => g.Tag as string == name) ?? throw new Xunit.Sdk.XunitException($"The Sources tab shows no feed {name}");
 
-    private static CheckBox Toggle(NuGetView nuget, string name) => FeedRow(nuget, name).Children.OfType<CheckBox>().Single();
+    protected static CheckBox Toggle(NuGetView nuget, string name) => FeedRow(nuget, name).Children.OfType<CheckBox>().Single();
 
-    private static int Locks(NuGetView nuget, string name) =>
+    protected static int Locks(NuGetView nuget, string name) =>
         FeedRow(nuget, name).Children.OfType<PathIcon>().Count(i => ToolTip.GetTip(i) is string tip && tip.StartsWith("Credentials", StringComparison.Ordinal));
 
-    private static string? Version(MainWindow window) =>
+    protected static string? Version(MainWindow window) =>
         window.Projects.SelectMany(p => p.Packages).Where(p => p.Name == "Passenger.Private").Select(p => p.Version).FirstOrDefault();
 }

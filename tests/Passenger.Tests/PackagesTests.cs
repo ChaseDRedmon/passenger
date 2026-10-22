@@ -51,10 +51,13 @@ public sealed class PackagesTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
+    /// <summary>In a window opened on the folder above the project, which no solution names: a package is installed at the
+    /// version chosen, updated and removed, then installed again from the Install on the project's line.</summary>
     [AvaloniaFact]
-    public void A_package_found_in_the_feed_is_installed_updated_and_removed_in_a_project()
+    public void A_package_found_in_the_feed_is_installed_updated_and_removed_in_a_project_below_a_folder_with_no_solution()
     {
-        MainWindow window = Open(new FolderFeed(feed));
+        // The folder above Lib: its project is a folder down, and no solution names it.
+        MainWindow window = Open(new FolderFeed(feed), folder);
         NuGetView nuget = window.NuGet;
         nuget.Query = "sample";
         Task searched = nuget.RefreshAsync();
@@ -76,19 +79,10 @@ public sealed class PackagesTests : IDisposable
         Run(nuget, nuget.RemoveAsync(Assert.Single(window.Projects)));
         Assert.Null(Version(window));
         Assert.DoesNotContain("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_project_below_a_folder_with_no_solution_is_in_the_nuget_window_and_takes_a_package()
-    {
-        // The folder above Lib: its project is a folder down, and no solution names it.
-        MainWindow window = Open(new FolderFeed(feed), folder);
-        NuGetView nuget = window.NuGet;
-        nuget.Query = "sample";
-        Task searched = nuget.RefreshAsync();
-        Ui.Landed(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
-
+        // The Install on the project's line, the latest version chosen.
+        Ui.Landed(() => !nuget.IsBusy && nuget.Versions.Count == 2, "the package's versions once it was removed");
+        nuget.ChosenVersion = "1.1.0";
         Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window lists no Lib project to install the package in");
         Ui.Click(install, settle: false);
         Ui.Landed(() => !nuget.IsBusy && Version(window) is not null, "the package installed in Lib");
