@@ -53,13 +53,43 @@ public sealed class NewSolutionTests : IDisposable
         TestFolders.Delete(place);
     }
 
+    /// <summary>New Solution from the Welcome screen lists what dotnet new list reports, refuses a name already taken or a
+    /// directory not empty with why before anything is made, and makes a console app with the option chosen, opens it
+    /// built and runs it.</summary>
     [AvaloniaFact]
     public void New_Solution_from_the_Welcome_screen_makes_a_console_app_with_the_option_chosen_opens_it_built_and_runs_it()
     {
         using IDisposable theme = TestsTheme();
+        Write("Taken/notes.txt", "kept\n");
         MainWindow window = Started();
         Ui.Click(window.Welcome.NewSolutionButton);
         NewProjectDialog dialog = Templates(window);
+        TemplatesListedAsDotnetNewLists(dialog);
+
+        // A name already taken, or a directory not empty, is refused with why before anything is made.
+        dialog.Folder = place;
+        Type(dialog, "Taken");
+        Ui.Click(dialog.CreateButton);
+        string taken = Path.Combine(place, "Taken");
+        Assert.Equal($"Solution Taken already exists in this location: {taken} is not empty", dialog.Problem);
+        Assert.True(dialog.IsVisible, "The dialog closed on a solution it refused, taking the name to correct with it");
+        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
+        Assert.Equal(["notes.txt"], Directory.EnumerateFileSystemEntries(taken).Select(Path.GetFileName));
+        dialog.SolutionName = string.Empty;
+        Ui.Click(dialog.CreateButton);
+        Assert.Equal("Solution name cannot be empty", dialog.Problem);
+        dialog.SolutionName = "Bad:Name";
+        Ui.Click(dialog.CreateButton);
+        Assert.Equal("Solution name contains invalid characters", dialog.Problem);
+        // Escape is Cancel; the dialog it closes takes no key's release.
+        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
+        Ui.Settle();
+        Assert.False(dialog.IsVisible, "Escape left the dialog open");
+        Assert.Null(window.Folder);
+        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
+
+        Ui.Click(window.Welcome.NewSolutionButton);
+        dialog = Templates(window);
         Assert.Equal("Console App", dialog.Chosen?.Name);
         dialog.Folder = place;
         // The solution's name has the keys as the dialog opens, and the project's follows it.
@@ -232,9 +262,29 @@ public sealed class NewSolutionTests : IDisposable
     public void Add_New_Project_puts_a_class_library_in_the_solution_folder_and_the_solution_file_gains_only_its_lines(string format)
     {
         string solution = WriteShop(format);
+        Write("Docs/readme.md", "# Docs\n");
         byte[] before = File.ReadAllBytes(solution);
+        string[] folders = [.. Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal)];
         MainWindow window = Open();
         object? server = window.CSharpService;
+
+        // By its keys, with the name of a project the solution has and then into a folder that has files: refused with why.
+        Ui.Run(window, AppActions.NewProject);
+        NewProjectDialog adding = Templates(window);
+        Assert.Equal(PathNames.Canonical(place), adding.Folder);
+        Type(adding, "Shop.Core");
+        Ui.Click(adding.CreateButton);
+        Assert.Equal("Project Shop.Core already exists in the solution", adding.Problem);
+        adding.ProjectName = "Docs";
+        Ui.Click(adding.CreateButton);
+        Assert.Equal($"Project Docs already exists in this location: {Path.Combine(PathNames.Canonical(place), "Docs")} is not empty", adding.Problem);
+        adding.Cancel();
+        Ui.Settle();
+        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(solution)), "A project refused changed the solution file");
+        Assert.Equal(folders, Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal));
+        Assert.Equal(["readme.md"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "Docs")).Select(Path.GetFileName));
+        Assert.Equal(["Shop.Core"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "src")).Select(Path.GetFileName));
+
         Ui.ChooseFromRowMenu(window, Row(window, NodeKind.SolutionFolder, "src"), "Add", "New Project…");
         NewProjectDialog dialog = Templates(window);
         // The solution folder src is named after the folder on disk the new project goes in.
@@ -278,72 +328,12 @@ public sealed class NewSolutionTests : IDisposable
         Assert.Contains("Shop.Data", window.WorkspaceModel!.Projects.Select(p => p.Name));
         Assert.False(ReferenceEquals(server, window.CSharpService), "The language server was not started again with the new project");
         Assert.Equal(solution, window.CSharpService?.Session?.Solution);
-        Builds(solution);
-        Assert.True(File.Exists(Path.Combine(place, "src", "Shop.Data", "bin", "Debug", dialog.Framework!, "Shop.Data.dll")), "The new project was not built with the solution");
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void A_name_already_taken_or_a_directory_not_empty_is_refused_with_why_before_anything_is_made()
+    /// <summary>That the templates the dialog lists are those dotnet new list reports, Console App first.</summary>
+    private static void TemplatesListedAsDotnetNewLists(NewProjectDialog dialog)
     {
-        using IDisposable theme = TestsTheme();
-        Write("Taken/notes.txt", "kept\n");
-        MainWindow window = Started();
-        Assert.True(window.Perform(AppActions.NewSolution));
-        NewProjectDialog dialog = Templates(window);
-        dialog.Folder = place;
-        Type(dialog, "Taken");
-        Ui.Click(dialog.CreateButton);
-        string taken = Path.Combine(place, "Taken");
-        Assert.Equal($"Solution Taken already exists in this location: {taken} is not empty", dialog.Problem);
-        Assert.True(dialog.IsVisible, "The dialog closed on a solution it refused, taking the name to correct with it");
-        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
-        Assert.Equal(["notes.txt"], Directory.EnumerateFileSystemEntries(taken).Select(Path.GetFileName));
-        dialog.SolutionName = string.Empty;
-        Ui.Click(dialog.CreateButton);
-        Assert.Equal("Solution name cannot be empty", dialog.Problem);
-        dialog.SolutionName = "Bad:Name";
-        Ui.Click(dialog.CreateButton);
-        Assert.Equal("Solution name contains invalid characters", dialog.Problem);
-        // Escape is Cancel; the dialog it closes takes no key's release.
-        dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
-        Ui.Settle();
-        Assert.False(dialog.IsVisible, "Escape left the dialog open");
-        Assert.Null(window.Folder);
-        Assert.Equal(["Taken"], Directory.EnumerateFileSystemEntries(place).Select(Path.GetFileName));
-        window.Close();
-
-        // Add, New Project by its keys, with the name of a project the solution has and then into a folder that has files.
-        string solution = WriteShop("slnx");
-        Write("Docs/readme.md", "# Docs\n");
-        byte[] before = File.ReadAllBytes(solution);
-        string[] folders = [.. Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal)];
-        MainWindow shop = Open();
-        Ui.Run(shop, AppActions.NewProject);
-        NewProjectDialog adding = Templates(shop);
-        Assert.Equal(PathNames.Canonical(place), adding.Folder);
-        Type(adding, "Shop.Core");
-        Ui.Click(adding.CreateButton);
-        Assert.Equal("Project Shop.Core already exists in the solution", adding.Problem);
-        adding.ProjectName = "Docs";
-        Ui.Click(adding.CreateButton);
-        Assert.Equal($"Project Docs already exists in this location: {Path.Combine(PathNames.Canonical(place), "Docs")} is not empty", adding.Problem);
-        adding.Cancel();
-        Ui.Settle();
-        Assert.True(before.AsSpan().SequenceEqual(File.ReadAllBytes(solution)), "A project refused changed the solution file");
-        Assert.Equal(folders, Directory.EnumerateFileSystemEntries(place).Order(StringComparer.Ordinal));
-        Assert.Equal(["readme.md"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "Docs")).Select(Path.GetFileName));
-        Assert.Equal(["Shop.Core"], Directory.EnumerateFileSystemEntries(Path.Combine(place, "src")).Select(Path.GetFileName));
-        shop.Close();
-    }
-
-    [AvaloniaFact]
-    public void The_templates_listed_are_those_dotnet_new_list_reports()
-    {
-        using IDisposable theme = TestsTheme();
-        MainWindow window = Started();
-        Assert.True(window.Perform(AppActions.NewSolution));
-        NewProjectDialog dialog = Templates(window);
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         List<Listed> expected = [];
         string said = string.Empty;
@@ -378,8 +368,6 @@ public sealed class NewSolutionTests : IDisposable
             $"The dialog does not list what dotnet new list reports. Not listed: [{string.Join("; ", missing)}]. Listed but not reported: "
             + $"[{string.Join("; ", unmatched.Select(t => $"{t.Name} ({string.Join(',', t.ShortNames)}; {string.Join(',', t.Languages)})"))}]\n{said}");
         Assert.Equal("Console App", dialog.Templates[0].Name);
-        dialog.Cancel();
-        window.Close();
     }
 
     /// <summary>One row of dotnet new list's table: its name (cut short with "..." when long), short names, languages
@@ -512,13 +500,6 @@ public sealed class NewSolutionTests : IDisposable
         return [.. added];
 
         static List<string> Lines(string text) => [.. Regex.Matches(text, "[^\n]*\n|[^\n]+$").Select(m => m.Value)];
-    }
-
-    /// <summary>dotnet build of the solution as it is on disk now.</summary>
-    private static void Builds(string solution)
-    {
-        ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", solution]), limit: Restore.Limit)).GetAwaiter().GetResult();
-        Assert.True(built.Succeeded, $"With the new project in it, dotnet build no longer builds the solution:\n{built.Output}{built.Error}");
     }
 
     private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();

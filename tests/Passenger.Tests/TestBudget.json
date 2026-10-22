@@ -61,7 +61,7 @@
     "RazorTests": 90,
     "WebLanguagesTests": 120,
     "EslintPrettierTests": 90,
-    "NewSolutionTests": 120,
+    "NewSolutionTests": 90,
     "TemplateFamiliesTests": 90,
     "XamlTests": 150,
     "WpfXamlTests": 90,
