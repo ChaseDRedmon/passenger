@@ -404,7 +404,7 @@ public sealed class ProjectWindowDebuggingTests : ProjectWindowsFolders
         Project(beta, "Beta");
         Restore.Run(alpha);
         Restore.Run(beta);
-        MainWindow window = Started(LaunchOptions.Empty with { Folder = alpha });
+        MainWindow window = Started(LaunchOptions.Empty with { Folder = alpha }, languageServer: false);
         int running = 0;
         int debugged = 0;
         try
@@ -461,10 +461,11 @@ public abstract class ProjectWindowsFolders : IDisposable
     }
 
     /// <summary>The window a person starts, as the app makes it: its layout and settings kept in the test's state folder,
-    /// then the command line taken.</summary>
-    protected MainWindow Started(LaunchOptions options)
+    /// then the command line taken; with no C# language server for a test that asks nothing of C#
+    /// (<paramref name="languageServer"/>), in whatever folder the window opens.</summary>
+    protected MainWindow Started(LaunchOptions options, bool languageServer = true)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = languageServer };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();

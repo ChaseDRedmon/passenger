@@ -414,43 +414,16 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         }
     }
 
-    /// <summary>An exception the runtime throws stops the program at the line that threw it, named there and in the status
-    /// bar, and is listed in Variables as $exception, which opens to its members and a watch reads.</summary>
-    [AvaloniaFact]
-    public void An_exception_stop_names_the_exception_at_the_line_that_threw_it_and_lists_it_as_exception_for_a_watch()
-    {
-        Write("Program.cs", "int[] values = [1, 2];\nint index = 5;\nConsole.WriteLine(values[index]);\n");
-        MainWindow window = Open();
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        StartDebugging(window);
-        WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the exception at its line");
-        LineAnnotation thrown = Assert.Single(editor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception);
-        Assert.Equal(2, thrown.Line);
-        Assert.StartsWith("IndexOutOfRangeException", thrown.Text, StringComparison.Ordinal);
-        Assert.Contains(new LineAnnotation(2, "index: 5", LineAnnotationKind.InlineValue), editor.LineAnnotations);
-        Assert.Contains("IndexOutOfRangeException", window.Status, StringComparison.Ordinal);
-
-        WaitDebugging(window, () => Row(window, "$exception") is not null, "the exception in Variables");
-        VariableNode exception = Row(window, "$exception")!;
-        Assert.True(exception.IsException);
-        Assert.Equal("System.IndexOutOfRangeException", exception.Type);
-        Assert.True(exception.HasChildren, "The exception does not open to its members");
-        Ui.Run(window, AppActions.Evaluate);
-        window.KeyTextInput("$exception.Message");
-        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
-        Watched(window.BottomPanel.Debug, "$exception.Message", "\"Index was outside the bounds of the array.\"", "the watch of the exception's message");
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
-        window.Close();
-    }
-
     /// <summary>One program of calls stepped through: a step over a call lists what it returned at the top of Variables, which
     /// a watch names and the next step's calls replace; then Smart Step Into marks the next line's calls in the order they
-    /// run, and Enter steps into the one chosen.</summary>
+    /// run, and Enter steps into the one chosen. Resumed, the program ends in an exception the runtime throws, which stops it
+    /// at the line that threw it, named there and in the status bar, and is listed in Variables as $exception, which opens
+    /// to its members and a watch reads.</summary>
     [AvaloniaFact]
-    public void A_step_over_a_call_lists_what_it_returned_and_smart_step_into_steps_into_the_call_chosen_on_the_next_line()
+    public void A_step_over_a_call_lists_what_it_returned_smart_step_into_steps_into_the_call_chosen_and_an_exception_stop_names_the_exception_at_its_line()
     {
-        Write("Program.cs", "int total = Add(2, 3);\nConsole.WriteLine(Describe(total));\nint nested = Outer(Inner());\nConsole.WriteLine(nested);\nConsole.WriteLine(\"done\");\n\n"
+        Write("Program.cs", "int total = Add(2, 3);\nConsole.WriteLine(Describe(total));\nint nested = Outer(Inner());\nConsole.WriteLine(nested);\nConsole.WriteLine(\"done\");\n"
+            + "int[] values = [1, 2];\nint index = 5;\nConsole.WriteLine(values[index]);\n\n"
             + "static int Add(int a, int b) => a + b;\nstatic string Describe(int value) => $\"total {value}\";\n"
             + "static int Inner() => 20;\nstatic int Outer(int value)\n{\n    return value + 1;\n}\n");
         MainWindow window = Open();
@@ -508,7 +481,26 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Press(window, "Enter");
         Ui.WaitFor(() => Value(window, "value") == "20", "the stop in Outer, given what Inner returned");
         Assert.False(editor.IsChoosing);
-        Assert.Contains(new LineMark(10, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineMark(13, LineMarkKind.ExecutionPoint), editor.LineMarks);
+
+        // Resumed, the program throws on line 8: the exception is named at that line and in the status bar.
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the exception at its line");
+        LineAnnotation thrown = Assert.Single(editor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception);
+        Assert.Equal(7, thrown.Line);
+        Assert.StartsWith("IndexOutOfRangeException", thrown.Text, StringComparison.Ordinal);
+        Assert.Contains(new LineAnnotation(7, "index: 5", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        Assert.Contains("IndexOutOfRangeException", window.Status, StringComparison.Ordinal);
+
+        WaitDebugging(window, () => Row(window, "$exception") is not null, "the exception in Variables");
+        VariableNode exception = Row(window, "$exception")!;
+        Assert.True(exception.IsException);
+        Assert.Equal("System.IndexOutOfRangeException", exception.Type);
+        Assert.True(exception.HasChildren, "The exception does not open to its members");
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("$exception.Message");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
+        Watched(view, "$exception.Message", "\"Index was outside the bounds of the array.\"", "the watch of the exception's message");
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
