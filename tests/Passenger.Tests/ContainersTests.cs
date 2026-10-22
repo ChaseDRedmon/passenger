@@ -397,6 +397,41 @@ public sealed class ContainersTests
         window.Close();
     }
 
+    /// <summary>A container's stats come though its CLI says much on its standard error first, more than a pipe holds unread,
+    /// and once the stream ends the pane says why, in the CLI's own words, where the numbers were.</summary>
+    [AvaloniaFact]
+    public void Stats_come_though_the_cli_says_much_on_its_errors_and_say_why_the_stream_ended()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        string folder = TestFolders.Create("ctr-stats-errors-");
+        string end = Path.Combine(folder, "end-stats");
+        const string Reading = "{\"Name\":\"shop-web-1\",\"CPUPerc\":\"1.50%\",\"MemPerc\":\"2.00%\",\"MemUsage\":\"10MiB / 1GiB\",\"NetIO\":\"1kB / 2kB\",\"BlockIO\":\"0B / 0B\",\"PIDs\":\"3\"}";
+        (string cli, _) = StandInEngine(folder, up: true, stats: "head -c 300000 /dev/zero | tr '\\0' w >&2; echo >&2; "
+            + $"while [ ! -f '{end}' ]; do echo '{Reading}'; sleep 0.2; done; echo 'Error response from daemon: the engine went away' >&2; exit 1");
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-stats-errors-window-"));
+        Ui.Settle();
+        try
+        {
+            ContainersView view = Shown(window);
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Service == "web"), "web's row");
+            view.ShowTab("Stats");
+            Ui.WaitFor(() => view.Stats.Latest.Count == 1, $"web's numbers, which come after what the CLI said on its errors (the pane says \"{view.Stats.Said}\")",
+                TimeSpan.FromSeconds(20));
+            Assert.Equal(1.5, view.Stats.Latest[0].Cpu);
+            Assert.Null(view.Stats.Said);
+            File.WriteAllText(end, string.Empty);
+            Ui.WaitFor(() => view.Stats.Said == "docker stats ended: Error response from daemon: the engine went away",
+                $"the pane to say why its stream ended, not \"{view.Stats.Said}\"");
+            Assert.Empty(view.Stats.Latest);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void A_containers_file_opens_read_only_from_its_files_tab()
     {
@@ -826,9 +861,10 @@ public sealed class ContainersTests
     /// <summary>A docker of the test's own whose engine is running or not as its <c>state</c> file says ("up" or "down"):
     /// a Linux server at <paramref name="host"/> with no Compose v2 and no buildx, holding a container of a Compose project
     /// "shop" (service web, port 8080) and a stopped one of its own whose id begins as web's, whose events go on while it is
-    /// up, and whose logs are what <paramref name="logs"/> (a shell command) writes. The CLI and the state file.</summary>
+    /// up, whose logs are what <paramref name="logs"/> (a shell command) writes, and whose stats what
+    /// <paramref name="stats"/> does. The CLI and the state file.</summary>
     internal static (string Cli, string State) StandInEngine(string folder, bool up, string host = "unix:///nowhere/docker.sock",
-        string logs = "echo 'hello from the stand-in web'")
+        string logs = "echo 'hello from the stand-in web'", string stats = "exit 1")
     {
         string state = Path.Combine(folder, "state");
         File.WriteAllText(state, up ? "up" : "down");
@@ -850,6 +886,7 @@ public sealed class ContainersTests
             "    echo '{\"ID\":\"5a5d0c0ffee2\",\"Names\":\"solo\",\"Image\":\"busybox:1.37\",\"State\":\"exited\",\"Status\":\"Exited (0) 2 minutes ago\",\"Ports\":\"\",\"Labels\":\"\"}' ;;",
             "  images|volume|network) ;;",
             $"  logs) {logs} ;;",
+            $"  stats) {stats} ;;",
             "  events) while [ \"$(cat \"$here/state\")\" = up ]; do sleep 0.2; done ;;",
             "  *) exit 1 ;;",
             "esac",

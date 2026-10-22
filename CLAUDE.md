@@ -545,7 +545,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
   again), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
-  streamed only while its tab shows), Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
+  streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
+  Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
   as it is chosen and as the window reads the engine again, in framed tables with one column of names: state, restarts and
   last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
   mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
@@ -1374,9 +1375,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   standing. MCP's nuget_install and nuget_remove have open project files take the disk's text before answering
   (`MainWindow.FollowWritten`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
-  net8.0, carried under `inspector/`, never put in the app's build): a startup hook `ProjectSession.Inspected` gives only
-  a Debug launch whose build has Avalonia.Base.dll beside it (`DOTNET_STARTUP_HOOKS`, which it takes back out of the
-  environment). It compiles against Avalonia 12's implementation assemblies (the reference ones leave out [PrivateApi]
+  net8.0, carried under `inspector/`, never put in the app's build): a startup hook `LiveApp.For` gives a launch whose
+  build has Avalonia.Base.dll beside it, Debug's, Run's and Profile's alike (a WPF app gets the WPF counterpart, below),
+  through `DOTNET_STARTUP_HOOKS`, which it takes back out of the environment. It compiles against Avalonia 12's
+  implementation assemblies (the reference ones leave out [PrivateApi]
   value-store diagnostics) and runs in a load context of its own that takes the app's Avalonia whatever its 12.x; it
   never touches `Dispatcher.UIThread` before the app makes it, and answers on the app's UI thread over a Unix socket in
   the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's

@@ -31,7 +31,8 @@ public sealed record ContainerStatsSample(string Name, double Cpu, double Memory
 
 /// <summary>A container's or a project's CPU, memory, network and disk over time, from <c>docker stats --format json</c>,
 /// streamed only while the tab is shown: a row a container with its latest numbers, the project's sum first, and the CPU
-/// and memory of the last minutes drawn under them.</summary>
+/// and memory of the last minutes drawn under them. A stream that ends while shown says why in their place, from what the
+/// CLI said on its standard error, which is read as it comes so a CLI that says much never stalls the numbers.</summary>
 public sealed class ContainerStatsPane : DockPanel
 {
     /// <summary>How many readings the lines keep: about two minutes of the engine's one a second or so.</summary>
@@ -59,6 +60,10 @@ public sealed class ContainerStatsPane : DockPanel
 
     /// <summary>The latest reading of each container shown.</summary>
     public IReadOnlyList<ContainerStatsSample> Latest => [.. latest.Values];
+
+    /// <summary>What the pane says in place of the numbers (waiting for the first reading, why the stream ended), or null
+    /// while it shows them.</summary>
+    public string? Said => waiting.IsVisible ? waiting.Text : null;
 
     /// <summary>How many readings the lines hold.</summary>
     public int Readings => cpu.Count;
@@ -100,6 +105,7 @@ public sealed class ContainerStatsPane : DockPanel
         {
             try
             {
+                Task<string?> errors = LastSaidAsync(process.StandardError);
                 while (await process.StandardOutput.ReadLineAsync() is { } line)
                 {
                     ContainerStatsSample[] read = [.. ContainerEngine.JsonLines(line).Select(ContainerStatsSample.Read).OfType<ContainerStatsSample>()];
@@ -108,12 +114,52 @@ public sealed class ContainerStatsPane : DockPanel
                         UiThread.Post(() => Take(process, read));
                     }
                 }
+                await process.WaitForExitAsync();
+                // What it said last, unless something it left holds its errors open.
+                string? said = await Task.WhenAny(errors, Task.Delay(TimeSpan.FromSeconds(2))) == errors ? await errors : null;
+                string why = said is null ? $"docker stats ended with exit code {process.ExitCode}" : $"docker stats ended: {said}";
+                UiThread.Post(() => Ended(process, why));
             }
             catch (Exception ended) when (ended is IOException or ObjectDisposedException or InvalidOperationException)
             {
                 // Stopped under its read.
             }
         });
+    }
+
+    /// <summary>A stream's last line that says something, read to its end.</summary>
+    private static async Task<string?> LastSaidAsync(StreamReader reader)
+    {
+        string? last = null;
+        try
+        {
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                if (line.Trim() is { Length: > 0 } said)
+                {
+                    last = said;
+                }
+            }
+        }
+        catch (Exception ended) when (ended is IOException or ObjectDisposedException)
+        {
+            // Stopped under its read.
+        }
+        return last;
+    }
+
+    /// <summary>The stream ended while still the pane's: its numbers, which no longer change, give way to why.</summary>
+    private void Ended(Process from, string why)
+    {
+        if (streaming != from)
+        {
+            return;
+        }
+        latest.Clear();
+        sinceLast.Clear();
+        table.Children.Clear();
+        waiting.Text = why;
+        waiting.IsVisible = true;
     }
 
     /// <summary>Stops the stream, the readings let go.</summary>

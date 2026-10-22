@@ -472,7 +472,7 @@ public sealed class TestingPlatformRunner : ITestRunner
             }
             catch
             {
-                End(process, id, ours: debugger is null);
+                End(process, id);
                 process?.Dispose();
                 throw;
             }
@@ -561,7 +561,7 @@ public sealed class TestingPlatformRunner : ITestRunner
             if (!await Exited(limit) && (process is not null || stopped))
             {
                 IdeLog.Write(IdeLog.Tests, $"{name} (process {processId}) had not exited {limit.TotalSeconds:0} s after it was told to, and is ended");
-                End(process, processId, ours: process is not null);
+                End(process, processId);
             }
             rpc.Dispose();
             client.Dispose();
@@ -663,15 +663,11 @@ public sealed class TestingPlatformRunner : ITestRunner
 
         /// <summary>Ends a test host: the runner's own with all it started, the debugger's alone, as VSTest ends a test host
         /// the IDE started under its debugger.</summary>
-        private static void End(Process? process, int id, bool ours)
+        private static void End(Process? process, int id)
         {
             if (process is not null)
             {
                 ChildProcesses.Kill(process);
-                return;
-            }
-            if (ours)
-            {
                 return;
             }
             try
