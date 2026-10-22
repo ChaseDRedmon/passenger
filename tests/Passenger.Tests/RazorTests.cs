@@ -29,8 +29,10 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         app.Reset();
     }
 
+    /// <summary>A component's markup and code in their colours, a name mistyped in its code block an error; and once put
+    /// right, Reformat Code lays out the code block's C# and leaves the markup as it was.</summary>
     [AvaloniaFact]
-    public void A_component_shows_its_markup_and_code_in_their_colours_and_a_name_mistyped_in_its_code_block_as_an_error()
+    public void A_component_shows_its_markup_and_code_in_their_colours_a_name_mistyped_in_its_code_block_as_an_error_and_reformat_lays_out_its_csharp()
     {
         MainWindow window = app.Open("Components/Pages/Counter.razor");
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -59,14 +61,41 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         Marker error = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Error);
         Assert.Equal("currentCont", editor.Document.Snapshot.GetText(error.Range.Start, error.Range.Length));
         Assert.StartsWith("CS0103:", error.Message, StringComparison.Ordinal);
+        editor.ApplyEdits([new TextEdit(typo, "currentCont".Length, "currentCount")]);
+        Ui.WaitFor(() => !document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle to go once the name is put right");
+
+        // Reformat Code lays the code block's C# out again as the template had it, the markup as it was.
+        string before = editor.Document.Snapshot.ToString();
+        string field = "    private int currentCount = 0;";
+        int at = before.IndexOf(field, StringComparison.Ordinal);
+        editor.ApplyEdits([new TextEdit(at, field.Length, "private   int currentCount=0;")]);
+        Ui.Settle();
+        Ui.Run(window, AppActions.Reformat);
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString() == before, "the code block laid out again as the template had it");
         window.Close();
     }
 
+    /// <summary>Resting on a component's tag describes it and Go to Declaration opens its razor file; completion offers the
+    /// elements and components after a tag's bracket, a component's parameters and the code block's members.</summary>
     [AvaloniaFact]
-    public void Completion_offers_the_elements_and_components_after_a_tags_bracket_a_components_parameters_and_the_code_blocks_members()
+    public void A_components_tag_is_described_and_goes_to_its_file_and_completion_offers_elements_components_parameters_and_the_code_blocks_members()
     {
         MainWindow window = app.Open("Components/Pages/Home.razor");
         CodeEditor editor = window.EditorArea.CodeEditor;
+        int tag = editor.Document.Snapshot.ToString().IndexOf("<Greeting", StringComparison.Ordinal) + 3;
+        Point point = editor.TranslatePoint(editor.PointOf(tag) + new Point(1, editor.LineHeight / 2), window)!.Value;
+        window.MouseMove(point, Avalonia.Input.RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the hover card on the component's tag");
+        Assert.Contains("Shop.Components.Greeting", window.Assist.HoverText, StringComparison.Ordinal);
+
+        Ui.PlaceAfter(editor, "<Gree");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.Settle();
+        Assert.Equal("Greeting.razor", window.EditorArea.Active?.Name);
+
+        window.OpenFile(app.PathOf("Components/Pages/Home.razor"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
         Ui.PlaceAfter(editor, "<PageTitle>Home</PageTitle>\n");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Greeting"), "the app's own component among what a '<' offers");
@@ -112,60 +141,6 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
     }
 
     [AvaloniaFact]
-    public void Resting_on_a_components_tag_describes_it_and_go_to_declaration_opens_its_razor_file()
-    {
-        MainWindow window = app.Open("Components/Pages/Home.razor");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        int at = editor.Document.Snapshot.ToString().IndexOf("<Greeting", StringComparison.Ordinal) + 3;
-        Point point = editor.TranslatePoint(editor.PointOf(at) + new Point(1, editor.LineHeight / 2), window)!.Value;
-        window.MouseMove(point, Avalonia.Input.RawInputModifiers.None);
-        Ui.WaitFor(() => window.Assist.HoverText is not null, "the hover card on the component's tag");
-        Assert.Contains("Shop.Components.Greeting", window.Assist.HoverText, StringComparison.Ordinal);
-
-        Ui.PlaceAfter(editor, "<Gree");
-        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
-        Ui.Settle();
-        Assert.Equal("Greeting.razor", window.EditorArea.Active?.Name);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Renaming_a_components_parameter_renames_it_where_the_markup_sets_it()
-    {
-        MainWindow window = app.Open("Components/Pages/Home.razor");
-        OpenDocument page = window.EditorArea.Active!;
-        window.OpenFile(app.PathOf("Components/Greeting.razor"));
-        Ui.Settle();
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.PlaceAfter(editor, "public string Na");
-        Ui.Run(window, AppActions.Rename);
-        Ui.WaitFor(() => window.Assist.Renaming == "Name", "the rename box on the parameter");
-        window.KeyTextInput("Person");
-        Ui.Press(window, "ENTER");
-        Ui.WaitFor(() => page.Text.Snapshot.ToString().Contains("<Greeting Person=\"Ada\"", StringComparison.Ordinal),
-            "the page that sets the parameter to set it by its new name");
-        string renamed = editor.Document.Snapshot.ToString();
-        Assert.Contains("public string Person { get; set; }", renamed, StringComparison.Ordinal);
-        Assert.Contains("Hello, @Person!", renamed, StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Reformat_code_lays_out_a_code_blocks_csharp_and_leaves_the_markup_as_it_was()
-    {
-        MainWindow window = app.Open("Components/Pages/Counter.razor");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        string before = editor.Document.Snapshot.ToString();
-        string field = "    private int currentCount = 0;";
-        int at = before.IndexOf(field, StringComparison.Ordinal);
-        editor.ApplyEdits([new TextEdit(at, field.Length, "private   int currentCount=0;")]);
-        Ui.Settle();
-        Ui.Run(window, AppActions.Reformat);
-        Ui.WaitFor(() => editor.Document.Snapshot.ToString() == before, "the code block laid out again as the template had it");
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void A_razor_page_shows_a_mistyped_member_of_its_model_as_an_error_and_completes_the_models_members()
     {
         MainWindow window = app.Open("Pages/Hello.cshtml");
@@ -183,11 +158,30 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.Close();
     }
 
+    /// <summary>Go to Declaration from a component's markup opens its code-behind at the member; the markup completes the
+    /// code-behind's members and parameters and shows one misspelt as an error.</summary>
     [AvaloniaFact]
-    public void A_components_markup_completes_its_code_behinds_members_and_parameters_and_shows_one_misspelt_as_an_error()
+    public void A_components_markup_goes_to_its_code_behinds_members_completes_them_and_its_parameters_and_shows_one_misspelt_as_an_error()
     {
         MainWindow window = app.Open("Components/Pages/Tally.razor");
         CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => KindOf(editor, "AddClick") == TokenKind.Method, "the server's colours on the markup");
+        Ui.PlaceAfter(editor, "@onclick=\"AddC");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the method");
+        Assert.Equal(new TextPosition(11, "    private void ".Length), window.EditorArea.CodeEditor.CaretPosition);
+
+        // And from the markup's C# expression to the field.
+        window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+        Ui.Settle();
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "@cli");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the field");
+        Assert.Equal(new TextPosition(9, "    private int ".Length), window.EditorArea.CodeEditor.CaretPosition);
+
+        window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         Ui.WaitFor(() => KindOf(editor, "clicks") == TokenKind.Field, "the code-behind's field in the markup coloured as a field");
         Assert.Equal(TokenKind.Method, KindOf(editor, "AddClick"));
@@ -228,37 +222,33 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.Close();
     }
 
+    /// <summary>Renaming a component's parameter renames it where the markup sets it; renaming a code-behind's member renames
+    /// it in the markup, and renaming one in the markup renames it in the code-behind.</summary>
     [AvaloniaFact]
-    public void Go_to_declaration_from_the_markup_opens_the_code_behind_at_the_member()
+    public void Renaming_a_parameter_or_a_code_behinds_member_renames_it_in_the_markup_and_renaming_it_in_the_markup_renames_it_in_the_code_behind()
     {
-        MainWindow window = app.Open("Components/Pages/Tally.razor");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => KindOf(editor, "AddClick") == TokenKind.Method, "the server's colours on the markup");
-        Ui.PlaceAfter(editor, "@onclick=\"AddC");
-        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
-        Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the method");
-        Assert.Equal(new TextPosition(11, "    private void ".Length), window.EditorArea.CodeEditor.CaretPosition);
-
-        // And from the markup's C# expression to the field.
-        window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+        MainWindow window = app.Open("Components/Pages/Home.razor");
+        OpenDocument page = window.EditorArea.Active!;
+        window.OpenFile(app.PathOf("Components/Greeting.razor"));
         Ui.Settle();
-        Ui.PlaceAfter(window.EditorArea.CodeEditor, "@cli");
-        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
-        Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the field");
-        Assert.Equal(new TextPosition(9, "    private int ".Length), window.EditorArea.CodeEditor.CaretPosition);
-        window.Close();
-    }
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.PlaceAfter(editor, "public string Na");
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "Name", "the rename box on the parameter");
+        window.KeyTextInput("Person");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => page.Text.Snapshot.ToString().Contains("<Greeting Person=\"Ada\"", StringComparison.Ordinal),
+            "the page that sets the parameter to set it by its new name");
+        string renamed = editor.Document.Snapshot.ToString();
+        Assert.Contains("public string Person { get; set; }", renamed, StringComparison.Ordinal);
+        Assert.Contains("Hello, @Person!", renamed, StringComparison.Ordinal);
 
-    [AvaloniaFact]
-    public void Renaming_a_code_behinds_member_renames_it_in_the_markup_and_renaming_it_in_the_markup_renames_it_in_the_code_behind()
-    {
-        MainWindow window = app.Open("Components/Pages/Tally.razor.cs");
         window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
         Ui.Settle();
         OpenDocument markup = window.EditorArea.Active!;
         window.OpenFile(app.PathOf("Components/Pages/Tally.razor.cs"));
         Ui.Settle();
-        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor = window.EditorArea.CodeEditor;
         Ui.PlaceAfter(editor, "private int cli");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.Renaming == "clicks", "the rename box on the field");
