@@ -12,9 +12,12 @@ export AVALONIA_TELEMETRY_OPTOUT := "1"
 build:
     dotnet build
 
-# Every test: the IDE driven whole, headless. A filter narrows them: just test Editing
-test filter="":
-    dotnet test tests/Passenger.Tests {{ if filter == "" { "" } else { "--filter " + quote(filter) } }}
+# Every test: the IDE driven whole, headless, the suite dealt to several test processes at once, then the classes that run
+# alone in one (tools/test-run.py; results in artifacts/test-results/local). A filter narrows them: just test Editing. How
+# many processes run at once comes after it (just test "" 1 is one dotnet test, xunit's own order), else
+# PASSENGER_TEST_PROCESSES, else a quarter of the processors, at most 4; --plan shows the deal and runs nothing.
+test filter="" processes="" *args:
+    python3 -I tools/test-run.py {{ quote(filter) }} {{ if processes == "" { "" } else { "--processes " + processes } }} {{args}}
 
 # Each test class's seconds on CI's runners, by which CI deals each system's tests to its shards (TestTimes.json),
 # rewritten from CI runs' results, which gh downloads, for committing: just test-times RUN [RUN...]

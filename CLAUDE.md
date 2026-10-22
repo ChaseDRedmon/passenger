@@ -44,7 +44,8 @@ just container-tools [RID] [--archive]  # artifacts/container-tools/<rid>/, the 
                            # dev build finds them; --archive also the release's Passenger-container-tools-<rid>.tar.gz
 just notices               # fail naming any package the solution, Roslyn's server, the container tools or a dotnet tool
                            # carries that the notices miss
-just test [filter]         # every test, or those whose name matches; dotnet test's results in artifacts/test-results
+just test [filter] [N]     # every test, or those whose name matches, in N test processes at once then the Alone classes
+                           # in one (tools/test-run.py; N 1 is one dotnet test); results in artifacts/test-results/local
 just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
                            # CI runs' results
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
@@ -1756,7 +1757,20 @@ up-to-date build (`HotReloadEditsTests`); its `Dispose` is virtual for a fixture
 stand-in feed). A rule held under both looks is checked in one window, the look switched in place through the window's
 settings (`UiRulesTests.UnderEachLook`), a failure naming the look. `RestoredFolders` saves nothing for classes whose
 tests change their folder throughout (`ExplorerFilesTests`, `PackagesTests`, `FileNestingTests`): share a
-`SharedProject` where the tests mostly read. CI splits each system's suite into shards, a runner each (#206), so a class
+`SharedProject` where the tests mostly read. `just test` runs the suite on one machine as CI's shards run it on several
+(`tools/test-run.py`), since a process's window tests use little of a machine while they wait on servers, MSBuild and
+programs: each test process keeps to a run folder, state, NuGet home, MSBuild node salt, agent sockets and container
+labels of its own (`TestRun`), so the classes outside `Alone` are dealt to N processes at once (by the most any system's
+runs took for each in TestTimes.json, else its budget; N a quarter of the processors, at most 4 and one per 8 GB, else
+`PASSENGER_TEST_PROCESSES` or the recipe's second argument), their limits scaled by 1.5 unless PASSENGER_TEST_TIME_SCALE
+says otherwise, the classes that use the container engine together in one (`LANES`), and once every one has ended the
+`Alone` classes run in one process with nothing beside it. A class is Alone by its declaration's `[Collection(Alone.Name)]`
+(or its base class's), which the runner reads from the sources; one it cannot find runs alone. So a class never counts
+on another having run in its process, and what of the machine a class uses beyond its run's folder (a fixed port or name,
+the engine's processors) runs alone or joins a lane. `just test "" 1` is one `dotnet test` in xunit's own order, and
+`--plan` shows the deal and runs nothing; each process's .trx and console log go to artifacts/test-results/local, the last
+run's removed as the next begins, and the failed tests are listed as each process ends and again at the run's end.
+CI splits each system's suite into shards, a runner each (#206), so a class
 never counts on another having run before it: each shard lists the suite (`tools/test-shards.py list`, listed again while a
 listing names no test or says discovery failed: xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo,
 xunit #3576) and `tools/test-shards.py` deals the classes
