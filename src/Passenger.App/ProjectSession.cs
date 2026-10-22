@@ -210,7 +210,7 @@ public sealed class ProjectSession : IAsyncDisposable
 
     public AspireController Aspire { get; }
 
-    /// <summary>The folder's single-file AppHosts.</summary>
+    /// <summary>The folder's AppHosts, and what each C# file is to them.</summary>
     public AspireFiles AspireFiles { get; }
 
     /// <summary>Done once the folder's single-file AppHosts have been read from its first walk.</summary>
@@ -723,6 +723,7 @@ public sealed class ProjectSession : IAsyncDisposable
                 Feed = DesignTimeBuilds.Feed,
                 // Razor's HTML is the HTML server's to answer.
                 HtmlServer = Web is { } web ? web.HtmlAsync : null,
+                AspireRoleOf = AspireFiles.RoleOf,
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);

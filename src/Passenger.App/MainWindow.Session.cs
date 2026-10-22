@@ -201,6 +201,7 @@ public partial class MainWindow
     private void Bind(ProjectSession next)
     {
         session = next;
+        ForgetRunMarks();
         buildRun = new BuildRunController(next, BuildRunParts());
         BindAspire(next);
         buildRun.RunningChanged += (_, _) =>
@@ -344,7 +345,8 @@ public partial class MainWindow
             if (session == next)
             {
                 ShowChosenConfiguration(next.Configurations);
-                runMarksLater?.Restart();
+                // An AppHost evaluated or found since: its open files' resources are read, the others' kept.
+                ReadOpenAspireMarks(again: false);
             }
         };
         if (next.Watcher is { } watcher)
@@ -411,16 +413,11 @@ public partial class MainWindow
             service.StateChanged += (_, _) => Structure.FollowServer();
             service.StateChanged += (_, _) =>
             {
-                if (service == session.CSharp && !session.IsEnded && service.IsReady)
+                // Ready, as it loaded the folder's projects: the open AppHosts' resources are read from it once.
+                if (service == session.CSharp && !session.IsEnded && service.IsReady && aspireMarksFrom != service)
                 {
-                    runMarksLater?.Restart();
-                }
-            };
-            service.AspireGraphInvalidated += (_, _) =>
-            {
-                if (service == session.CSharp && !session.IsEnded && Configurations.Any(session.Aspire.IsAspire))
-                {
-                    runMarksLater?.Restart();
+                    aspireMarksFrom = service;
+                    ReadOpenAspireMarks(again: true);
                 }
             };
             // Each stop is logged with why: the log is where to see more.

@@ -10,6 +10,10 @@ public sealed partial class CSharpDocument
 {
     private const string AspireDiagnosticSource = "Passenger.Aspire";
 
+    /// <summary>What the file is to Aspire now: only an AppHost's and a service's ask Passenger's extension for its help.</summary>
+    internal Aspire.AspireRole AspireRole => service.AspireRoleOf?.Invoke(document.Path) ?? Aspire.AspireRole.None;
+
+    /// <summary>The AppHost it is a service of changed: its Aspire warnings go at once and the file's diagnostics are pulled again.</summary>
     internal void AspireChanged()
     {
         ClearAspireDiagnostics();

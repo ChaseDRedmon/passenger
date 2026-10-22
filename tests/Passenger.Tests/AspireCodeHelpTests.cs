@@ -1,5 +1,6 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Headless;
+using Avalonia.Input.Platform;
 using Avalonia.Controls;
 using Avalonia.VisualTree;
 using Passenger.App;
@@ -165,6 +166,99 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             .ToArray();
     }
 
+    /// <summary>A file no AppHost involves pays nothing for the AppHost in the folder: a key typed in it and its pause allocate
+    /// on the UI thread under 8 bytes a line more with the open AppHost 5,000 lines longer, where each pause asked the server
+    /// for every AppHost's resources, hashed every open file's text and pulled every open file's diagnostics again; the
+    /// AppHost's run icons stand through it, read again only as its own text changes; and the file's completion, context
+    /// actions and declarations are the server's, Passenger's extension never asked.</summary>
+    [AvaloniaFact]
+    public void A_typing_pause_in_a_file_no_AppHost_involves_costs_nothing_of_Aspire()
+    {
+        const int Notes = 5000;
+        MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
+        try
+        {
+            Passenger.App.Workspace.OpenDocument host = window.EditorArea.Active!;
+            int[] declared = [.. host.Text.Snapshot.ToString().Split('\n').Select((text, line) => (text, line))
+                .Where(l => l.text.Contains("AddProject", StringComparison.Ordinal)).Select(l => l.line)];
+            Ui.WaitFor(() => host.RunMarks.Select(m => m.Line).SequenceEqual(declared), "the AppHost's run icons beside its AddProject lines");
+            window.OpenFile(project.PathOf("Plain/Notes.cs"));
+            Ui.Settle();
+            IReadOnlyList<RunMark> marks = host.RunMarks;
+            long few = UiBytesPerPause(window);
+            Assert.True(ReferenceEquals(marks, host.RunMarks), "Keys in a file no AppHost involves made the AppHost's run icons again");
+
+            // The AppHost made long, its icons read again for its own text.
+            window.OpenFile(project.PathOf("Host/Program.cs"));
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.Selections = SelectionSet.Single(editor.Document.Snapshot.Length);
+            Task copied = window.Clipboard!.SetTextAsync(string.Concat(Enumerable.Range(0, Notes).Select(i => $"\n// Note {i} of what the AppHost runs, which makes its text long.")));
+            Ui.WaitFor(() => copied.IsCompleted, "the clipboard to take the notes");
+            Ui.Press(window, Ui.Shortcut(EditorActions.Paste));
+            Ui.WaitFor(() => host.Text.Snapshot.LineCount > Notes && !ReferenceEquals(marks, host.RunMarks) && host.RunMarks.Select(m => m.Line).SequenceEqual(declared),
+                "the AppHost's run icons read again for its own text");
+            window.OpenFile(project.PathOf("Plain/Notes.cs"));
+            Ui.Settle();
+            marks = host.RunMarks;
+            long many = UiBytesPerPause(window);
+            Assert.True(ReferenceEquals(marks, host.RunMarks), "Keys in a file no AppHost involves made the long AppHost's run icons again");
+            long each = (many - few) / Notes;
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"A typing pause in a plain file allocated {many:N0} bytes on the UI thread with the open AppHost {Notes:N0} lines longer, {few:N0} without: {each} bytes a line.");
+            Assert.True(each < 8, $"A typing pause in a file no AppHost involves allocated {many / 1024:N0} KB on the UI thread with the open AppHost {Notes:N0} lines longer, {few / 1024:N0} KB without: {each} bytes for each of its lines, which the pause read");
+
+            // The server's own completion, fixes and declarations, with no word to Passenger's extension.
+            editor = window.EditorArea.CodeEditor;
+            Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+            Task asked = server.RefuseNext(ExtensionMessage, 1);
+            try
+            {
+                Ui.PlaceAfter(editor, "return ");
+                Ui.Run(window, AppActions.Complete);
+                Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("value"), "the server's completion in a file no AppHost involves");
+                Ui.Press(window, "ESCAPE");
+                Ui.PlaceAfter(editor, "Twi");
+                Ui.Run(window, AppActions.QuickFix);
+                Ui.WaitFor(() => window.Assist.Offered.Contains("Generate method 'Twice'"), "the server's fix in a file no AppHost involves");
+                Ui.Press(window, "ESCAPE");
+                Ui.PlaceAfter(editor, "Twice(val");
+                Ui.Run(window, AppActions.GoToDeclaration);
+                Ui.WaitFor(() => editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line).Contains("int value", StringComparison.Ordinal),
+                    "Go to Declaration to reach the local in a file no AppHost involves");
+                Assert.False(asked.IsCompleted, "Completion, Show Context Actions or Go to Declaration in a file no AppHost involves asked Passenger's extension for Aspire's help");
+            }
+            finally
+            {
+                _ = server.RefuseNext(ExtensionMessage, 0);
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>How Passenger's extension is asked about a document.</summary>
+    private const string ExtensionMessage = "textDocument/_vs_dipatchExtensionMessage";
+
+    /// <summary>What a key typed in the plain file's comment and its pause allocate on the UI thread, the least of a few.</summary>
+    private static long UiBytesPerPause(MainWindow window)
+    {
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.PlaceAfter(editor, "// Typed here:");
+        editor.Focus();
+        Ui.Settle();
+        long least = long.MaxValue;
+        for (int i = 0; i < 5; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("a");
+            Ui.Settle();
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+        return least;
+    }
+
     private static bool HasMissing(MainWindow window) => window.CSharpService!.For(window.EditorArea.Active!)!.Diagnostics
         .Any(d => d.Source == "Passenger.Aspire");
 
@@ -220,7 +314,10 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
 
         public Project() : base("aspire-help-")
         {
-            Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /></Solution>");
+            Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /><Project Path=\"Plain/Plain.csproj\" /></Solution>");
+            // A project no AppHost references, whose files Aspire's help leaves alone.
+            Put("Plain/Plain.csproj", TestProjects.Library());
+            Put("Plain/Notes.cs", "namespace Plain;\n\npublic static class Notes\n{\n    // Typed here:\n    public static int Count()\n    {\n        int value = 1;\n        return Twice(value);\n    }\n}\n");
             foreach (string name in new[] { "Api", "Worker" })
             {
                 Put($"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));

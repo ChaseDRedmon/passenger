@@ -801,11 +801,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
-  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete,
-  `AddProject` goes to its project (`AspireProjectDeclaration`), and Edit Configurations and the gutter's `AddProject`
-  icons read the same resources (`AspireRunResources`). An agent's `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a
-  resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each
-  resource's target, and `aspire_telemetry` reads their logs and traces.
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
+  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`), and Edit Configurations and the gutter's
+  `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
+  open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
+  key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
+  references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
+  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings, an AppHost's edit pulls its
+  open services' again, and any other file's typing pause, completion, actions and declarations cost Aspire nothing
+  (AspireCodeHelpTests holds a pause to it by what it allocates). An agent's `run`, `debug_start`, `debug_attach`,
+  `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace`
+  lists the AppHosts running with each resource's target, and `aspire_telemetry` reads their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test

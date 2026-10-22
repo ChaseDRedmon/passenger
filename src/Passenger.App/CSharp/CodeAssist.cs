@@ -599,14 +599,15 @@ public sealed partial class CodeAssist
         completing?.Cancel();
         CancellationTokenSource cancel = new();
         completing = cancel;
-        int caret = Editor.Selections.Primary.Caret;
-        TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
-            if (await StartAspireCompletion(lsp, caret, cancel.Token))
+            // An AppHost's or a service's resource names where one is typed; any other file's list is the server's alone.
+            if (await StartAspireCompletion(lsp, cancel.Token))
             {
                 return;
             }
+            int caret = Editor.Selections.Primary.Caret;
+            TextSnapshot asked = Editor.Document.Snapshot;
             Web.WebDocument? web = WebCurrent;
             // A compose file's own names where one is typed, merged with the server's by label, ahead of them.
             (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;

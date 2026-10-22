@@ -13,15 +13,28 @@ namespace Passenger.App;
 /// of a compose file the configuration reads, or a Dockerfile configuration's image on its Dockerfile's final FROM.</summary>
 public sealed record RunTarget(int Line, RunConfiguration Configuration, string? Service, AspireRunResource? Declaration = null);
 
-/// <summary>The gutter's run icons beside what the folder's container configurations run: each service of a compose
-/// file a Compose configuration reads, and the final FROM of a Dockerfile a Dockerfile configuration builds, only in files
-/// a configuration uses. A click opens the menu that runs or debugs it. They are
-/// read from the file's text as typed, once typing pauses, and again as the configurations change.</summary>
+/// <summary>The gutter's run icons beside what the folder's run configurations run: each service of a compose file a Compose
+/// configuration reads, the final FROM of a Dockerfile a Dockerfile configuration builds, only in files a configuration
+/// uses, and each project resource an open AppHost file declares. A click opens the menu that runs or debugs it. A compose
+/// file's and a Dockerfile's are read from the text as typed, once typing pauses, and again as the configurations change; an
+/// AppHost's are asked of the language server for that AppHost alone, as one of its open files opens or its text pauses,
+/// and stand while they were read from the text the file has (by its hash), so no other file's key costs them anything.</summary>
 public partial class MainWindow
 {
     private Debounce? runMarksLater;
     private CancellationTokenSource? readingAspireMarks;
-    private readonly Dictionary<string, (int Version, IReadOnlyList<AspireRunResource> Resources)> aspireRunMarks = new(Core.PathNames.Comparer);
+
+    /// <summary>The project resources each AppHost declares, as last read, by the AppHost a configuration runs.</summary>
+    private readonly Dictionary<string, IReadOnlyList<AspireRunResource>> aspireRunMarks = new(Core.PathNames.Comparer);
+
+    /// <summary>The AppHosts whose resources are read once typing pauses: one whose open file's text changed or opened.</summary>
+    private readonly HashSet<string> aspireMarksToRead = new(Core.PathNames.Comparer);
+
+    /// <summary>Each open AppHost file's text hash, worked out once a version, which its resources are matched by.</summary>
+    private readonly Dictionary<OpenDocument, (int Version, string Hash)> aspireHashes = [];
+
+    /// <summary>The language server the AppHosts' resources were read from: one started again reads them again.</summary>
+    private CSharp.CSharpService? aspireMarksFrom;
 
     private void AddRunMarks()
     {
@@ -39,72 +52,124 @@ public partial class MainWindow
         {
             document.Text.Changed += (_, _) =>
             {
-                if (document.RunMarks.Count > 0 || IsRunFile(document.Path))
+                if (AspireAppHostOf(document) is { } appHost)
+                {
+                    aspireMarksToRead.Add(appHost);
+                    runMarksLater.Restart();
+                }
+                else if (document.RunMarks.Count > 0 || IsRunFile(document.Path))
                 {
                     runMarksLater.Restart();
                 }
             };
             ShowRunMarks(document);
-            if (IsRunFile(document.Path))
+            if (AspireAppHostOf(document) is { } opened)
+            {
+                aspireMarksToRead.Add(opened);
+                runMarksLater.Restart();
+            }
+            else if (IsRunFile(document.Path))
             {
                 runMarksLater.Restart();
             }
         };
+        Editors.Closed += (_, document) => aspireHashes.Remove(document);
     }
 
-    /// <summary>Whether a file is one a run icon may stand in: a compose file or a Dockerfile.</summary>
-    private bool IsRunFile(string path) => Web.ComposeDeclarations.IsCompose(path) || Web.WebLanguages.IsDockerfile(Path.GetFileName(path))
-        || Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase) && Configurations.Any(session.Aspire.IsAspire);
+    /// <summary>Whether a file is a compose file or a Dockerfile, where a container configuration's run icon may stand.</summary>
+    private static bool IsRunFile(string path) => Web.ComposeDeclarations.IsCompose(path) || Web.WebLanguages.IsDockerfile(Path.GetFileName(path));
 
+    /// <summary>The AppHost an open C# file is a source of, as a configuration names it; null for any other file, whose keys
+    /// read no AppHost's resources.</summary>
+    private string? AspireAppHostOf(OpenDocument document) =>
+        document.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? session.AspireFiles.AppHostOf(document.Path) : null;
+
+    /// <summary>The run configurations or the language server changed: the AppHosts of the open files whose resources were
+    /// never read (or, with <paramref name="again"/>, every one, the server being another) are read once typing pauses.</summary>
+    private void ReadOpenAspireMarks(bool again)
+    {
+        if (again)
+        {
+            aspireRunMarks.Clear();
+        }
+        foreach (OpenDocument document in Editors.Documents)
+        {
+            if (AspireAppHostOf(document) is { } appHost && !aspireRunMarks.ContainsKey(appHost))
+            {
+                aspireMarksToRead.Add(appHost);
+            }
+        }
+        runMarksLater?.Restart();
+    }
+
+    /// <summary>The marks as the open files' texts stand, then each AppHost waiting to be read, one at a time, by one read
+    /// that takes up those added meanwhile.</summary>
     private async Task ReadRunMarksAsync()
     {
-        using IDisposable held = BackgroundWork.Scope();
-        readingAspireMarks?.Cancel();
-        readingAspireMarks?.Dispose();
-        using CancellationTokenSource cancel = new();
-        CancellationToken token = cancel.Token;
-        readingAspireMarks = cancel;
-        ProjectSession current = session;
-        int? version = current.CSharp?.AspireVersion;
-        aspireRunMarks.Clear();
         ShowRunMarks();
+        ProjectSession current = session;
+        if (readingAspireMarks is not null || aspireMarksToRead.Count == 0 || current.IsEnded || current.CSharp is not { IsReady: true })
+        {
+            return;
+        }
+        using IDisposable held = BackgroundWork.Scope();
+        using CancellationTokenSource cancel = new();
+        readingAspireMarks = cancel;
         try
         {
-            if (current.IsEnded || version is null || current.CSharp is not { IsReady: true })
+            while (aspireMarksToRead.FirstOrDefault() is { } appHost && session == current && !current.IsEnded && !cancel.IsCancellationRequested)
             {
-                return;
-            }
-            RunConfiguration[] configurations = [.. Configurations.Where(current.Aspire.IsAspire)
-                .DistinctBy(configuration => configuration.Project, Core.PathNames.Comparer)];
-            foreach (RunConfiguration configuration in configurations)
-            {
-                IReadOnlyList<AspireRunResource> resources = await ReadAspireConfigurationResourcesAsync(configuration, token).ConfigureAwait(false);
-                bool currentVersion = await UiThread.InvokeAsync(() =>
+                aspireMarksToRead.Remove(appHost);
+                RunConfiguration? configuration = Configurations.FirstOrDefault(c => Core.PathNames.Same(c.Project, appHost)
+                    && current.Aspire.IsAspire(c));
+                IReadOnlyList<AspireRunResource>? resources = null;
+                if (configuration is not null)
                 {
-                    if (token.IsCancellationRequested || session != current || current.IsEnded || current.CSharp?.AspireVersion != version)
+                    try
                     {
-                        return false;
+                        resources = await ReadAspireConfigurationResourcesAsync(configuration, cancel.Token);
                     }
-                    aspireRunMarks[configuration.Project] = (version.Value, resources);
-                    ShowRunMarks();
-                    return true;
-                }).WaitAsync(token).ConfigureAwait(false);
-                if (!currentVersion)
+                    catch (Exception error) when (error is IOException or InvalidOperationException or Lsp.LanguageServerFailed)
+                    {
+                    }
+                }
+                if (session != current || cancel.IsCancellationRequested)
                 {
                     return;
                 }
+                if (resources is null)
+                {
+                    aspireRunMarks.Remove(appHost);
+                }
+                else
+                {
+                    aspireRunMarks[appHost] = resources;
+                }
+                ShowRunMarks();
             }
         }
         catch (OperationCanceledException)
         {
         }
-        catch (Exception error) when (error is IOException or InvalidOperationException or Lsp.LanguageServerFailed)
-        {
-        }
         finally
         {
-            Interlocked.CompareExchange(ref readingAspireMarks, null, cancel);
+            readingAspireMarks = null;
+            // What another folder's files are waiting for, the read that held them out having stopped with its folder.
+            if (session != current && aspireMarksToRead.Count > 0)
+            {
+                runMarksLater?.Restart();
+            }
         }
+    }
+
+    /// <summary>A new session's marks: none read yet, nor any waiting.</summary>
+    private void ForgetRunMarks()
+    {
+        readingAspireMarks?.Cancel();
+        aspireRunMarks.Clear();
+        aspireMarksToRead.Clear();
+        aspireHashes.Clear();
+        aspireMarksFrom = null;
     }
 
     private void ShowRunMarks()
@@ -128,7 +193,8 @@ public partial class MainWindow
     public IReadOnlyList<RunTarget> RunTargets(OpenDocument document)
     {
         string path = document.Path;
-        if (!IsRunFile(path))
+        string? appHost = AspireAppHostOf(document);
+        if (appHost is null && !IsRunFile(path))
         {
             return [];
         }
@@ -136,12 +202,16 @@ public partial class MainWindow
         List<RunTarget> targets = [];
         foreach (RunConfiguration configuration in Configurations)
         {
-            if (session.Aspire.IsAspire(configuration) && aspireRunMarks.TryGetValue(configuration.Project, out (int Version, IReadOnlyList<AspireRunResource> Resources) known)
-                && session.CSharp?.AspireVersion == known.Version)
+            if (appHost is not null)
             {
-                string hash = TextHash.Of(text.ToString());
-                targets.AddRange(known.Resources.Where(resource => Core.PathNames.Same(resource.Source, path) && resource.SourceHash == hash)
-                    .Select(resource => new RunTarget(resource.At.Line, configuration, resource.Name, resource)));
+                if (Core.PathNames.Same(configuration.Project, appHost) && session.Aspire.IsAspire(configuration)
+                    && aspireRunMarks.TryGetValue(appHost, out IReadOnlyList<AspireRunResource>? resources)
+                    && resources.Any(resource => Core.PathNames.Same(resource.Source, path)))
+                {
+                    string hash = HashOf(document);
+                    targets.AddRange(resources.Where(resource => Core.PathNames.Same(resource.Source, path) && resource.SourceHash == hash)
+                        .Select(resource => new RunTarget(resource.At.Line, configuration, resource.Name, resource)));
+                }
             }
             else if (configuration.Kind == RunKind.Compose && configuration.ComposeFiles.Any(f => Core.PathNames.Same(f, path)))
             {
@@ -154,6 +224,19 @@ public partial class MainWindow
             }
         }
         return targets;
+    }
+
+    /// <summary>An open AppHost file's text hash, as the language server's reading of its resources names it.</summary>
+    private string HashOf(OpenDocument document)
+    {
+        int version = document.Text.Version;
+        if (aspireHashes.TryGetValue(document, out (int Version, string Hash) known) && known.Version == version)
+        {
+            return known.Hash;
+        }
+        string hash = TextHash.Of(document.Text.Snapshot.ToString());
+        aspireHashes[document] = (version, hash);
+        return hash;
     }
 
     /// <summary>The Dockerfile a Dockerfile configuration builds: its own, else its project's beside it.</summary>

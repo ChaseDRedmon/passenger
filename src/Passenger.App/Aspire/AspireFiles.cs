@@ -1,12 +1,24 @@
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.Aspire;
 
-/// <summary>The folder's single-file AppHosts, for one session (<see cref="ProjectSession.AspireFiles"/>), found among the
-/// files of the folder's one walk (<see cref="FileIndex.Walked"/>): a C# file's head is read as a walk first lists it, and
-/// again only as the folder watcher says it changed.</summary>
+/// <summary>What a C# file is to Aspire's code help and run marks: nothing, which they cost nothing; a service's, a file of
+/// a project an AppHost references; or an AppHost's, a file of an AppHost project or a single-file AppHost.</summary>
+public enum AspireRole
+{
+    None,
+    Service,
+    AppHost,
+}
+
+/// <summary>The folder's AppHosts and what each C# file is to them, for one session (<see cref="ProjectSession.AspireFiles"/>).
+/// Single-file AppHosts are found among the files of the folder's one walk (<see cref="FileIndex.Walked"/>): a C# file's
+/// head is read as a walk first lists it, and again only as the folder watcher says it changed. A file's role comes from the
+/// projects as MSBuild evaluated them, kept until the run configurations are made again (an evaluation landed, a project
+/// unloaded, a single-file AppHost found or gone), so asking it as a key is typed costs a lookup.</summary>
 public sealed class AspireFiles(ProjectSession session)
 {
     /// <summary>The most single-file AppHosts a folder offers, so a folder of generated ones cannot flood the configurations.</summary>
@@ -21,6 +33,12 @@ public sealed class AspireFiles(ProjectSession session)
 
     private readonly TaskCompletionSource firstWalk = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task reading = Task.CompletedTask;
+
+    private IReadOnlyList<RunConfiguration>? rolesOf;
+    private readonly Dictionary<string, (AspireRole Role, string? AppHost)> roles = new(PathNames.Comparer);
+    private HashSet<string> hosts = new(PathNames.Comparer);
+    private HashSet<string> services = new(PathNames.Comparer);
+    private HashSet<string> singles = new(PathNames.Comparer);
 
     /// <summary>Done once the folder's first walk has been read for its single-file AppHosts, and after it each later read:
     /// what an agent's open waits for before it says what the workspace runs.</summary>
@@ -80,6 +98,37 @@ public sealed class AspireFiles(ProjectSession session)
                 }
             }
         });
+    }
+
+    /// <summary>The C# file's role, as its project and the folder's AppHosts make it now.</summary>
+    public AspireRole RoleOf(string path) => Of(path).Role;
+
+    /// <summary>The AppHost a C# file is a source of, as a run configuration names it: its AppHost project's file, or the
+    /// single-file AppHost itself; null for any other file.</summary>
+    public string? AppHostOf(string path) => Of(path).AppHost;
+
+    private (AspireRole Role, string? AppHost) Of(string path)
+    {
+        if (!ReferenceEquals(rolesOf, session.Configurations.All))
+        {
+            rolesOf = session.Configurations.All;
+            roles.Clear();
+            ProjectModel[] appHosts = [.. session.Projects.Where(p => p.IsAspireHost)];
+            hosts = new(appHosts.Select(p => p.Path), PathNames.Comparer);
+            services = new(appHosts.SelectMany(p => p.ProjectReferences), PathNames.Comparer);
+            singles = new(session.Configurations.SingleFileAppHosts, PathNames.Comparer);
+        }
+        if (roles.TryGetValue(path, out (AspireRole, string?) known))
+        {
+            return known;
+        }
+        (AspireRole, string?) role = singles.Contains(path) ? (AspireRole.AppHost, path)
+            : session.ProjectOf(path) is not { } owner ? (AspireRole.None, (string?)null)
+            : hosts.Contains(owner.Path) ? (AspireRole.AppHost, owner.Path)
+            : services.Contains(owner.Path) ? (AspireRole.Service, (string?)null)
+            : (AspireRole.None, (string?)null);
+        roles[path] = role;
+        return role;
     }
 
     /// <summary>Reads after the reads before it, off the UI thread, then gives the configurations what changed.</summary>
