@@ -26,7 +26,7 @@ public sealed class McpSessionsTests : McpRig
         DebugSessionsTests.Pair.WriteTo(pair);
         Restore.Run(pair);
         string counter = Path.Combine(PathNames.Canonical(pair), "Shared", "Counter.cs");
-        MainWindow window = AgentsWindow(pair);
+        MainWindow window = AgentsWindow(pair, languageServer: false);
         window.Debugger.Breakpoints.Toggle(counter, DebugSessionsTests.Pair.Next);
         DebugSession first = DebugSessionsTests.Debug(window, "First");
         DebugSession second = DebugSessionsTests.Debug(window, "Second");

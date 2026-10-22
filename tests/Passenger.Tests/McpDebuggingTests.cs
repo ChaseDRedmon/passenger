@@ -172,7 +172,7 @@ public sealed class McpDebuggingTests : McpRig, IClassFixture<RestoredFolders>
                 "        Assert.Equal(4, sum);\n    }\n\n    [Fact]\n    public void Two_and_two_make_five() => Assert.Equal(5, 2 + 2);\n}\n");
             Restore.Run(tests);
         }, tests);
-        await using McpClient client = await Start(["--mcp", tests]);
+        await using McpClient client = await Start(["--mcp", tests], languageServer: false);
         await Call(client, "breakpoint_set", new() { ["path"] = "SumTests.cs", ["line"] = 10 });
         // Stopped at the breakpoint, and at the failing test's exception where the exception breakpoints say so, in either order.
         JsonElement ended = (await Call(client, "tests_run", new() { ["debug"] = true })).GetProperty("debugger");
@@ -203,7 +203,7 @@ public sealed class McpDebuggingTests : McpRig, IClassFixture<RestoredFolders>
         {
             ["profiles"] = new Dictionary<string, object> { ["Held"] = new Dictionary<string, object> { ["commandName"] = "Project", ["environmentVariables"] = hold.Environment } },
         }));
-        await using McpClient client = await Start(["--mcp", Folder]);
+        await using McpClient client = await Start(["--mcp", Folder], languageServer: false);
         Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
         Task<CallToolResult> debugging = Result(client, "debug_start", new() { ["configuration"] = "Sum: Held" });
         int program = 0;

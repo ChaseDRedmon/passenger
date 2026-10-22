@@ -16,7 +16,7 @@ public sealed class McpContainerProfileTests : McpRig
         ContainerProfilingTests.Spins spins = await Task.Run(() => ContainerProfilingTests.Spins.Shared);
         Assert.SkipWhen(spins.WhyNot is not null, spins.WhyNot ?? string.Empty);
         string container = await Task.Run(() => spins.Start("agent"));
-        await using McpClient client = await Start(["--mcp", spins.Folder]);
+        await using McpClient client = await Start(["--mcp", spins.Folder], languageServer: false);
 
         CallToolResult unattached = await Result(client, "profile", new() { ["container"] = container, ["seconds"] = 1 });
         Assert.True(unattached.IsError == true && Text(unattached).Contains("attach", StringComparison.Ordinal), $"A container's profile without attach answered: {Text(unattached)}");
@@ -43,7 +43,7 @@ public sealed class McpContainerProfileTests : McpRig
         // Whichever service it launches spins.
         TestFolders.Write(shop, "Api/Program.cs", ContainerRunProfilingTests.Spinning);
         DeleteAtEnd(shop);
-        await using McpClient client = await Start(["--mcp", shop]);
+        await using McpClient client = await Start(["--mcp", shop], languageServer: false);
         try
         {
             JsonElement profiled = await Call(client, "profile", new() { ["configuration"] = "Compose: compose.yaml", ["seconds"] = 2, ["memory"] = true, ["top"] = 200 });

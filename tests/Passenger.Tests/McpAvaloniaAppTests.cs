@@ -53,7 +53,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
     [Fact]
     public async Task An_agent_runs_an_avalonia_app_sees_it_clicks_its_button_types_into_it_scrolls_it_reads_its_failed_bindings_and_profiles_its_frames()
     {
-        await using McpClient client = await Start(["--mcp", appFolder]);
+        await using McpClient client = await Start(["--mcp", appFolder], languageServer: false);
         JsonElement built = await Call(client, "build");
         Assert.True(built.GetProperty("succeeded").GetBoolean(), $"The app did not build: {built}");
         // A build that succeeded is answered in a few words: MSBuild's lines are for one that did not.
@@ -166,7 +166,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
     [Fact]
     public async Task An_agent_debugging_an_avalonia_app_clicks_into_a_breakpoint_reads_a_controls_sources_and_styles_breaks_where_a_property_changes_and_on_a_failed_binding()
     {
-        await using McpClient client = await Start(["--mcp", appFolder]);
+        await using McpClient client = await Start(["--mcp", appFolder], languageServer: false);
         // An app never stops by itself: debug_start comes back once its UI is up, not after the whole of a long waitSeconds.
         Stopwatch launching = Stopwatch.StartNew();
         JsonElement started = await Call(client, "debug_start", new() { ["waitSeconds"] = 300 });
@@ -251,7 +251,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
     [AvaloniaFact]
     public void An_agent_on_the_persons_window_is_asked_before_it_first_clicks_or_presses_keys_in_their_avalonia_app_or_in_passenger()
     {
-        MainWindow window = AgentsWindow(appFolder);
+        MainWindow window = AgentsWindow(appFolder, languageServer: false);
         McpClient? client = null;
         SettingsDialog? shown = null;
         try
@@ -342,7 +342,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
         string apps = TestFolders.Create("apps-");
         DeleteAtEnd(apps);
         Restore.Run(DebuggedAppsTests.WriteTo(apps));
-        MainWindow window = AgentsWindow(apps);
+        MainWindow window = AgentsWindow(apps, languageServer: false);
         DebuggedAppsTests.Debug(window, "BindingErrorsApp", "Caption");
         DebuggedAppsTests.Debug(window, "LiveTreeApp", "Delete");
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");

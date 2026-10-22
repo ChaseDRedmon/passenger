@@ -22,7 +22,7 @@ public sealed class McpContainerDebuggingTests : McpRig
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
         DeleteAtEnd(shop);
-        await using McpClient client = await Start(["--mcp", shop]);
+        await using McpClient client = await Start(["--mcp", shop], languageServer: false);
         foreach (string app in (string[])["Web", "Api"])
         {
             await Call(client, "breakpoint_set", new() { ["path"] = $"{app}/Program.cs", ["line"] = 1 });
@@ -107,7 +107,7 @@ public sealed class McpContainerDebuggingTests : McpRig
         (string shop, string project) = ContainerRunsTests.Shop("agentgone");
         DeleteAtEnd(shop);
         bool Up() => Docker.Said("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}") is { Length: > 0 };
-        McpClient client = await Start(["--mcp", shop]);
+        McpClient client = await Start(["--mcp", shop], languageServer: false);
         try
         {
             // The person's own cache, from their own compose up: an agent's run refuses rather than replace it, asking no one.
