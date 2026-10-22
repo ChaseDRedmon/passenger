@@ -9,7 +9,13 @@ namespace Passenger.Lsp;
 
 public sealed record LspPosition(int Line, int Character);
 
-public sealed record LspRange(LspPosition Start, LspPosition End);
+public sealed record LspRange(LspPosition Start, LspPosition End)
+{
+    /// <summary>Whether a place is in the range, either end included.</summary>
+    public bool Holds(LspPosition at) =>
+        (Start.Line < at.Line || (Start.Line == at.Line && Start.Character <= at.Character))
+        && (at.Line < End.Line || (at.Line == End.Line && at.Character <= End.Character));
+}
 
 public sealed record LspLocation(string Uri, LspRange Range);
 
@@ -221,7 +227,22 @@ public sealed record SymbolInformation(string Name, int Kind, LspLocation Locati
 
 /// <summary>A symbol in a document's outline, its members as children. Range is the whole
 /// declaration; SelectionRange is its name.</summary>
-public sealed record DocumentSymbol(string Name, string? Detail, int Kind, LspRange Range, LspRange SelectionRange, IReadOnlyList<DocumentSymbol>? Children = null);
+public sealed record DocumentSymbol(string Name, string? Detail, int Kind, LspRange Range, LspRange SelectionRange, IReadOnlyList<DocumentSymbol>? Children = null)
+{
+    /// <summary>An outline's symbols from the top to the deepest holding a place, outermost first: of siblings that both
+    /// hold it (one ends where the next begins), the later.</summary>
+    public static List<DocumentSymbol> PathTo(IReadOnlyList<DocumentSymbol> outline, LspPosition at)
+    {
+        List<DocumentSymbol> path = [];
+        IReadOnlyList<DocumentSymbol>? level = outline;
+        while (level?.LastOrDefault(s => s.Range.Holds(at)) is { } inside)
+        {
+            path.Add(inside);
+            level = inside.Children;
+        }
+        return path;
+    }
+}
 
 /// <summary>LSP's symbol kinds: the numbers code decides by, and each kind's name as an agent reads it.</summary>
 public static class SymbolKinds

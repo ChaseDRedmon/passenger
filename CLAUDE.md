@@ -265,7 +265,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   so far, all prereleases, starts Visual Studio Telemetry's session even with telemetry off, loading the left-out
   RemoteControl (dotnet/roslyn#86122; moving past it is #234); after lowering it, delete `artifacts/bin/*/debug/roslyn*`, since the copy skips older
   files and leaves a mixed server that won't start. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
-  and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
+  and makes requests in the editor's offsets; whether a place is in a server's range is `LspRange.Holds`, and the symbols
+  of an outline that hold a place `DocumentSymbol.PathTo`. A server that stops, restarts or refuses a request is one exception,
   `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project. `RoslynExtension` is
   Passenger's own extension to the server (`src/Passenger.Roslyn.Extension`, compiled against the server package's own
   assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
@@ -343,7 +344,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   or dotnet publish names (the final stage's ENTRYPOINT, through the stage it is FROM, comments passed over), a service,
   volume, network, config or secret named to its declaration, `${VAR}` to `.env` (one only an env_file sets is said not
   set for Compose's interpolation; `$$VAR` is no variable), an env_file to its file, an image to its registry's page
-  through `CodeAssist.Browse`), tried before the
+  through `CodeAssist.Browse`; the file an extends names read through `ComposeText`, as `ComposeNames` reads it), tried
+  before the
   server's own (`CodeAssist.Compose.cs`) and shared with MCP's `definition`; a Dockerfile's FROM image that names no
   stage goes to its page too (`CodeAssist.FromImageAt`). `ComposeNames` is completion of the file's own names, from the
   same outline, where a service names one (the place read by indentation as typed, half a line too, `ComposeSpot`): its
