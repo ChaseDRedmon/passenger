@@ -57,6 +57,16 @@ public partial class MainWindow
     private Task<bool> ConfirmAsync(string title, string text, string yes, Control? detail) =>
         confirm is { } answer ? answer(title, text, yes) : new ConfirmDialog(title, text, yes, detail: detail).ShowDialog<bool>(this);
 
+    /// <summary>Asks the person for a value a fix sets (an AppHost parameter's), as <see cref="Confirm"/> asks, with a box for
+    /// it under the question, its characters masked for a secret; null when they cancel or give none.</summary>
+    private async Task<string?> AskValueAsync(string title, string text, bool secret)
+    {
+        TextBox box = new() { Name = "AskedValue", PasswordChar = secret ? '•' : default, RevealPassword = false };
+        ConfirmDialog dialog = new(title, text, "Set", detail: box);
+        dialog.Opened += (_, _) => box.Focus();
+        return await dialog.ShowDialog<bool>(this) && box.Text is { Length: > 0 } value ? value : null;
+    }
+
     private void AddVcs()
     {
         commitView = new ToolWindows.CommitView(session.Vcs);

@@ -242,7 +242,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   With's targets) and `CreateFromUsage` (a binding path's property or command, and a missing converter; the MVVM
   Toolkit known by its attributes' full names). `CSharp/CodeAssist.XamlEditing.cs` is the window's side (dialogs in
   `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
-  `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
+  `ApplyFileChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
   project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
@@ -855,22 +855,42 @@ window or takes the focus; it shows everything but the system's own window chrom
   Profile holds the chosen service at its start until recording begins (`ProfileAspireAsync`, `AspireServiceDialog`
   when several run). Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
   `AspireOrchestration`, `AspireOrchestrationDialog`) adds an AppHost and ServiceDefaults from Aspire's templates and
-  references them, prepared under the state's `aspire-staging/` before any file is written, as one command of global
-  undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
+  references them, each service a local of the AppHost, with the backing services Add > Docker Compose's detection finds
+  for it (`BackingService.Needs`: a server once by its service's name, a database of Postgres, SQL Server or Mongo by
+  each connection string's name, its database kept, Redis and RabbitMQ by the connection string's name, else the server
+  itself), each `WithReference`d and `WaitFor`ed by the services that read it and its hosting integration referenced at
+  the AppHost's own Aspire version (its SDK's, under central package management in Directory.Packages.props), prepared
+  under the state's `aspire-staging/` before any file is written, as one command of global undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
   reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
   actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
-  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`), and Edit Configurations and the gutter's
+  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
+  connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
+  service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one
+  declaration path with MCP's `definition` (`CodeAssist.AspireDeclarationAsync`), Rename on such a name, or on the name
+  where the AppHost declares it, renames the resource there and wherever its AppHost's services read it (`AspireRename`,
+  worked out again as it is made, one command of global undo, MCP's `rename` too; `CodeAssist.RenameResourceAsync`), an
+  AppHost's `AddParameter` with no value of its own and none in its configuration (`Parameters:NAME` in its folder's
+  appsettings*.json or its user secrets, `AspireParameters`, whose values are never read out) is marked on its name in
+  the AppHost's pull (`AspireUnsetParametersAsync`), its fix asking the value (`EditorFix.Asks`, the window's
+  `AskValueAsync` masking a secret as typed and holding no background work while it waits, an agent's
+  `apply_code_action` giving it as `name`) and setting it in the AppHost's user secrets (`Workspace/UserSecrets`, the
+  UserSecretsId's own, `PASSENGER_USER_SECRETS`' in a test run) for a secret, else in its appsettings.json, the file's
+  other characters kept (`JsonText`, launchSettings.json's editor too), one command of global undo, worked out again as
+  it is chosen, and Edit Configurations and the gutter's
   `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
   references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
-  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings, an AppHost's edit pulls its
-  open services' again, and any other file's typing pause, completion, actions and declarations cost Aspire nothing
-  (AspireCodeHelpTests holds a pause to it by what it allocates). An agent's `run`, `debug_start`, `debug_attach`,
-  `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace`
-  lists the AppHosts running with each resource's target, and `aspire_telemetry` reads their logs and traces.
+  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings and an AppHost's its
+  parameters' (`CSharpDocument.AspireFindingsAsync`, which an agent's `diagnostics` adds too, and whose pull its
+  `code_actions` and `apply_code_action` make first, `PullNowAsync`), an AppHost's edit pulls its open services' again,
+  and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
+  pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
+  `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
+  (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each resource's target, and
+  `aspire_telemetry` reads their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -1117,7 +1137,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   beside it and a .dockerignore at the context, the solution's folder; or EnableSdkContainerSupport and
   ContainerRepository) and Add > Docker Compose on the solution (compose.yaml, a Dockerfile for each project chosen
   without one, the backing services its packages call for with healthchecks and connection strings, listed in Solution
-  Items), the text from `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
+  Items; `Workspace/BackingServices`, the detection Add > Aspire Orchestration shares), the text from
+  `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
   written and an open project or solution file taking its new text inside it (`FollowWritten`), and refused, saying so,
   while a project is still being evaluated. A project's image is aspnet when it or a project it references has the
   ASP.NET Core framework reference as evaluated, or its restore's `project.assets.json` says a package or reference

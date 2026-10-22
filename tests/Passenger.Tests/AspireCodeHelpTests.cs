@@ -42,6 +42,171 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         window.Close();
     }
 
+    /// <summary>A connection string a service reads, by GetConnectionString or a ConnectionStrings: key, and a service it
+    /// discovers, by an https+http:// address or a services: key, go to the AppHost line that declares the resource, at its
+    /// name, as compose's names go to their declarations.</summary>
+    [AvaloniaFact]
+    public void A_service_s_connection_string_or_discovered_service_goes_to_the_AppHost_line_declaring_it()
+    {
+        project.Write("Api/Program.cs", Project.Service.Replace("builder.Build().Run();",
+            "var keyed = builder.Configuration[\"ConnectionStrings:connected\"];\nvar section = builder.Configuration.GetSection(\"services:worker:http:0\");\nbuilder.Build().Run();", StringComparison.Ordinal));
+        MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
+        try
+        {
+            GoesTo(window, "GetConnectionString(\"conn", "var connected = builder.AddConnectionString(\"", "connected");
+            GoesTo(window, "ConnectionStrings:conn", "var connected = builder.AddConnectionString(\"", "connected");
+            GoesTo(window, "services:wor", "var worker = builder.AddProject<Projects.Worker>(\"", "worker");
+            window.OpenFile(project.PathOf("Worker/Program.cs"));
+            Ui.Settle();
+            GoesTo(window, "https+http://ap", "var api = builder.AddProject<Projects.Api>(\"", "api");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        void GoesTo(MainWindow window, string after, string declaring, string name)
+        {
+            string from = window.EditorArea.Active!.Path;
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.GoToDeclaration);
+            Ui.WaitFor(() => PathNames.Same(window.EditorArea.Active!.Path, PathNames.Canonical(project.PathOf("Host/Program.cs"))),
+                $"Go to Declaration on {after}… to open the AppHost");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            string line = editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line);
+            Assert.True(line.StartsWith(declaring, StringComparison.Ordinal) && editor.CaretPosition.Column == declaring.Length
+                && line[declaring.Length..].StartsWith(name, StringComparison.Ordinal),
+                $"Go to Declaration on {after}… did not land at {name} where the AppHost declares it, but at column {editor.CaretPosition.Column + 1} of: {line}");
+            window.OpenFile(from);
+            Ui.Settle();
+        }
+    }
+
+    /// <summary>Rename on a resource's name, where a service reads it or where the AppHost declares it, renames it in the
+    /// AppHost and in every service that reads it (a connection string's name, a ConnectionStrings: key, a discovered
+    /// service's address), and global undo takes the whole rename back; another resource's names stay as they were.</summary>
+    [AvaloniaFact]
+    public void Renaming_a_resource_renames_it_in_the_AppHost_and_the_services_that_read_it_and_one_undo_takes_it_back()
+    {
+        project.Write("Worker/Program.cs", Project.Worker.Replace("builder.Build().Run();",
+            "var store = builder.Configuration[\"ConnectionStrings:connected\"];\nbuilder.Build().Run();", StringComparison.Ordinal));
+        string[] files = ["Host/Program.cs", "Api/Program.cs", "Worker/Program.cs"];
+        Dictionary<string, string> before = files.ToDictionary(f => f, f => File.ReadAllText(project.PathOf(f)));
+        MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        try
+        {
+            // Open, as a person works on them, so the server reads each edit as it is made rather than from the disk.
+            window.OpenFile(project.PathOf("Worker/Program.cs"));
+            window.OpenFile(project.PathOf("Api/Program.cs"));
+            Ui.Settle();
+            Rename(window, "GetConnectionString(\"conn", "connected", "store");
+            Ui.Run(window, AppActions.SaveAll);
+            Assert.Contains("builder.AddConnectionString(\"store\")", File.ReadAllText(project.PathOf("Host/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("GetConnectionString(\"store\")", File.ReadAllText(project.PathOf("Api/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("GetConnectionString(\"db\")", File.ReadAllText(project.PathOf("Api/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("[\"ConnectionStrings:store\"]", File.ReadAllText(project.PathOf("Worker/Program.cs")), StringComparison.Ordinal);
+
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.Run(window, AppActions.SaveAll);
+            foreach (string file in files)
+            {
+                Assert.True(File.ReadAllText(project.PathOf(file)) == before[file], $"Undo of the rename left {file} changed:\n{File.ReadAllText(project.PathOf(file))}");
+            }
+
+            // From where the AppHost declares it: the worker's address follows.
+            window.OpenFile(project.PathOf("Host/Program.cs"));
+            Ui.Settle();
+            Rename(window, "AddProject<Projects.Api>(\"a", "api", "backend");
+            Ui.Run(window, AppActions.SaveAll);
+            Assert.Contains("AddProject<Projects.Api>(\"backend\")", File.ReadAllText(project.PathOf("Host/Program.cs")), StringComparison.Ordinal);
+            Assert.Contains("\"https+http://backend\"", File.ReadAllText(project.PathOf("Worker/Program.cs")), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static void Rename(MainWindow window, string after, string old, string name)
+        {
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.Rename);
+            Ui.WaitFor(() => window.Assist.Renaming == old, $"Rename's box on the resource {old}");
+            window.KeyTextInput(name);
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Status?.Contains($"{old} to {name}", StringComparison.Ordinal) == true,
+                $"the rename of {old} to {name} to be made, or say why not");
+            Assert.True(window.Status!.StartsWith($"Renamed {old} to {name}", StringComparison.Ordinal), $"The rename of {old} to {name} was not made: {window.Status}");
+        }
+    }
+
+    /// <summary>A parameter the AppHost declares with no value of its own is marked on its name until its configuration has
+    /// one; its fix asks for the value (masked for a secret) and sets it in the AppHost's user secrets for a secret (the run's
+    /// own, never the person's) or in its appsettings.json, the file's other values kept, its mark going, the value never
+    /// said; global undo takes each back. A parameter appsettings.json gives a value, or one with a value of its own, is not marked.</summary>
+    [AvaloniaFact]
+    public void A_parameter_with_no_value_is_marked_and_its_fix_sets_it_in_user_secrets_or_appsettings_and_undo_takes_it_back()
+    {
+        string secrets = Path.Combine(TestRun.UserSecrets, Project.SecretsId, "secrets.json");
+        string settings = project.PathOf("Host/appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(secrets)!);
+        File.Delete(secrets);
+        project.Write("Host/Program.cs", Project.Host.Replace("builder.Build().Run();",
+            "var password = builder.AddParameter(\"password\", secret: true);\nvar mode = builder.AddParameter(\"mode\");\n"
+            + "var given = builder.AddParameter(\"given\");\nvar valued = builder.AddParameter(\"valued\", \"own\");\nbuilder.Build().Run();", StringComparison.Ordinal));
+        string written = "{\n  \"Logging\": { \"LogLevel\": { \"Default\": \"Information\" } },\n  \"Parameters\": {\n    \"given\": \"set\"\n  }\n}\n";
+        project.Write("Host/appsettings.json", written);
+        MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        try
+        {
+            Ui.WaitFor(() => Unset(window).SetEquals(["password", "mode"]), "the parameters with no value, and only those, to be marked");
+
+            Set(window, "AddParameter(\"pass", "Set password in the AppHost's user secrets…", secret: true, "s3cret-value");
+            Ui.WaitFor(() => File.Exists(secrets) && File.ReadAllText(secrets).Contains("\"Parameters:password\": \"s3cret-value\"", StringComparison.Ordinal),
+                "the secret to be set in the AppHost's user secrets");
+            Ui.WaitFor(() => Unset(window).SetEquals(["mode"]), "the secret's mark to go once it has a value");
+            Assert.True(window.Status == "Set password in the AppHost's user secrets", $"Setting the secret said: {window.Status}");
+
+            Set(window, "AddParameter(\"mo", "Set mode in the AppHost's appsettings.json…", secret: false, "fast");
+            Ui.WaitFor(() => File.ReadAllText(settings).Contains("\"mode\": \"fast\"", StringComparison.Ordinal), "the value to be set in appsettings.json");
+            Assert.Equal(written.Replace("\"given\": \"set\"\n", "\"given\": \"set\",\n    \"mode\": \"fast\"\n", StringComparison.Ordinal), File.ReadAllText(settings));
+            Ui.WaitFor(() => Unset(window).Count == 0, "every mark to go once each parameter has a value");
+
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.WaitFor(() => File.ReadAllText(settings) == written, "undo to take the value back out of appsettings.json");
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.Settle();
+            Assert.False(File.Exists(secrets), $"Undo did not take back the user secrets it made: {window.Status}");
+        }
+        finally
+        {
+            window.Close();
+            File.Delete(secrets);
+        }
+
+        static void Set(MainWindow window, string after, string fix, bool secret, string value)
+        {
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.QuickFix);
+            Choose(window, fix);
+            Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), $"{fix} to ask for the value");
+            ConfirmDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>()));
+            TextBox box = Assert.Single(dialog.GetVisualDescendants().OfType<TextBox>());
+            Assert.True(secret == (box.PasswordChar != default), $"{fix}'s box {(secret ? "shows a secret as it is typed" : "masks a value that is no secret")}");
+            dialog.KeyTextInput(value);
+            Ui.Press(dialog, "ENTER");
+            Ui.Settle();
+            Assert.DoesNotContain(value, window.Status ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        static HashSet<string> Unset(MainWindow window) => [.. window.EditorArea.Active!.Markers
+            .Where(m => m.Message.StartsWith("Parameter '", StringComparison.Ordinal)).Select(m => m.Message.Split('\'')[1])];
+    }
+
     [AvaloniaFact]
     public void Connection_completion_offers_only_connected_resources_and_a_connection_warning_offers_a_native_reference_fix_undo_takes_back()
     {
@@ -312,35 +477,49 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             builder.Build().Run();
             """;
 
+        /// <summary>The Host's UserSecretsId: its user secrets are kept under the run's own folder (TestRun.UserSecrets).</summary>
+        internal const string SecretsId = "passenger-aspire-help-host";
+
+        internal const string Worker = "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n";
+
+        internal const string Service = "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n";
+
         public Project() : base("aspire-help-")
         {
-            Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /><Project Path=\"Plain/Plain.csproj\" /></Solution>");
-            // A project no AppHost references, whose files Aspire's help leaves alone.
-            Put("Plain/Plain.csproj", TestProjects.Library());
-            Put("Plain/Notes.cs", "namespace Plain;\n\npublic static class Notes\n{\n    // Typed here:\n    public static int Count()\n    {\n        int value = 1;\n        return Twice(value);\n    }\n}\n");
-            foreach (string name in new[] { "Api", "Worker" })
-            {
-                Put($"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
-            }
-            Put("Api/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n");
-            Put("Worker/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n");
-            foreach (string name in new[] { "Host", "OtherHost" })
-            {
-                Put($"{name}/{name}.csproj", $"""
-                    <Project Sdk="Microsoft.NET.Sdk">
-                      <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
-                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle></PropertyGroup>
-                      <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
-                    </Project>
-                    """);
-            }
-            Put("Host/Program.cs", Host);
-            Put("OtherHost/Program.cs", "System.Console.WriteLine(\"No graph\");\n");
+            WriteTo(Folder, SecretsId);
             // The AppHosts' graph is the starter's, in the package cache the test project's restore filled: never nuget.org.
             AspireApp.UseFeed(Folder);
             Prepare(byRealPath: true);
         }
 
-        private void Put(string name, string text) => TestFolders.Write(Folder, name, text);
+        /// <summary>The solution's files written into a folder, the Host's user secrets kept under <paramref name="secretsId"/>:
+        /// this class's and an agent's test of the same code help (McpLanguagesTests).</summary>
+        internal static void WriteTo(string folder, string secretsId)
+        {
+            Put(folder, "Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /><Project Path=\"Plain/Plain.csproj\" /></Solution>");
+            // A project no AppHost references, whose files Aspire's help leaves alone.
+            Put(folder, "Plain/Plain.csproj", TestProjects.Library());
+            Put(folder, "Plain/Notes.cs", "namespace Plain;\n\npublic static class Notes\n{\n    // Typed here:\n    public static int Count()\n    {\n        int value = 1;\n        return Twice(value);\n    }\n}\n");
+            foreach (string name in new[] { "Api", "Worker" })
+            {
+                Put(folder, $"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
+            }
+            Put(folder, "Api/Program.cs", Service);
+            Put(folder, "Worker/Program.cs", Worker);
+            foreach (string name in new[] { "Host", "OtherHost" })
+            {
+                Put(folder, $"{name}/{name}.csproj", $"""
+                    <Project Sdk="Microsoft.NET.Sdk">
+                      <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
+                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle>{(name == "Host" ? $"<UserSecretsId>{secretsId}</UserSecretsId>" : "")}</PropertyGroup>
+                      <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
+                    </Project>
+                    """);
+            }
+            Put(folder, "Host/Program.cs", Host);
+            Put(folder, "OtherHost/Program.cs", "System.Console.WriteLine(\"No graph\");\n");
+        }
+
+        private static void Put(string folder, string name, string text) => TestFolders.Write(folder, name, text);
     }
 }

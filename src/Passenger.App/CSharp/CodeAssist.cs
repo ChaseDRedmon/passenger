@@ -33,9 +33,17 @@ public sealed record EditorFix(string Title, string Detail, TextRange Range, str
     /// call's patience, and saying what it came to.</summary>
     public Func<TextRange, Patience?, Task<RefactorOutcome>>? Elsewhere { get; init; }
 
+    /// <summary>A fix that asks for a value before it is made (an AppHost parameter's), in place of <see cref="Text"/>'s
+    /// edit: what is asked, whether the answer is a secret (masked as it is typed, never said back), and the fix made from it.</summary>
+    public ValueAsked? Asks { get; init; }
+
     /// <summary>The fix to make on a text now, worked out again where it can be; null when it no longer fits.</summary>
     public EditorFix? On(TextSnapshot text) => Again is null ? this : Again(text);
 }
+
+/// <summary>What a fix asks before it is made: the question, whether the answer is a secret, and the fix made from the
+/// answer, given an agent's call's patience, saying what it came to (never the answer).</summary>
+public sealed record ValueAsked(string Question, bool Secret, Func<string, Patience?, Task<RefactorOutcome>> Make);
 
 /// <summary>What the language server adds to the editor as you work: completion as you type, a card
 /// when the pointer rests (the diagnostics there and the symbol's description), signature help after
@@ -1327,6 +1335,10 @@ public sealed partial class CodeAssist
     /// language server; none by default.</summary>
     public Func<OpenDocument, int, IReadOnlyList<EditorFix>>? EditorFixes { get; set; }
 
+    /// <summary>Asks the person for a value a fix sets (a title, what is asked, whether it is a secret, masked as typed);
+    /// null when they gave none.</summary>
+    public Func<string, string, bool, Task<string?>>? AskValue { get; set; }
+
     internal IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
 
     /// <summary>One of Passenger's own fixes made in the file shown, as one undoable edit: worked out again on its text as it
@@ -1349,7 +1361,40 @@ public sealed partial class CodeAssist
             Message?.Invoke(this, outcome.Problem ?? outcome.Said);
             return;
         }
+        if (now.Asks is { } asks)
+        {
+            // Not awaited: the question holds no background work, so a settle waits on the IDE, never on the person.
+            _ = AskAndMakeAsync(now.Title.TrimEnd('…'), asks);
+            return;
+        }
         Editor.ApplyEdits([new TextEdit(now.Range.Start, now.Range.Length, now.Text)], SelectionSet.Single(now.Range.Start + (now.Caret ?? now.Text.Length)));
+    }
+
+    /// <summary>A fix's value asked of the person (<see cref="AskValue"/>), then the fix made from it as background work,
+    /// what it came to said; nothing when they give none.</summary>
+    private async Task AskAndMakeAsync(string title, ValueAsked asks)
+    {
+        try
+        {
+            if (AskValue is null || await AskValue(title, asks.Question, asks.Secret) is not { } value)
+            {
+                return;
+            }
+            BackgroundWork.Begin();
+            try
+            {
+                RefactorOutcome made = await asks.Make(value, null);
+                Message?.Invoke(this, made.Problem ?? made.Said);
+            }
+            finally
+            {
+                BackgroundWork.End();
+            }
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+        }
     }
 
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
@@ -1564,6 +1609,25 @@ public sealed partial class CodeAssist
             ShowWebRename(own, json);
             return;
         }
+        // An Aspire resource's name in a string: the AppHost's declaration and its services' reads, else the server's rename.
+        if (AspireRoleOfShown != Aspire.AspireRole.None && editors.Active is { } aspire && MayNameResource(Editor.Selections.Primary.Caret))
+        {
+            int caret = Editor.Selections.Primary.Caret;
+            _ = Carried("Rename", async () =>
+            {
+                if (!await ShowAspireRename(aspire, caret) && editors.Active == aspire)
+                {
+                    ShowServerRename();
+                }
+            }, closeModal: false);
+            return;
+        }
+        ShowServerRename();
+    }
+
+    /// <summary>Rename through the language server at the editor's caret, a type's files offered with it.</summary>
+    private void ShowServerRename()
+    {
         if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;
@@ -1688,7 +1752,7 @@ public sealed partial class CodeAssist
         }
         try
         {
-            if (await AspireGoToProject(lsp, offset))
+            if (await AspireGoTo(lsp, offset))
             {
                 return;
             }

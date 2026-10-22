@@ -241,9 +241,10 @@ public partial class MainWindow : Window
             : await session.Debug.HoverAt(offset, cancel);
         // A running app's failed binding is offered its source's nearest members, at the member its XAML names; a compose
         // file's name Compose finds undeclared, its declaration, removal or a near name; a service's Aspire warning, the
-        // reference its AppHost lacks.
+        // reference its AppHost lacks; an AppHost's parameter with no value, the value set in its configuration.
         assist.EditorFixes = (file, offset) => [.. Passenger.App.LiveTree.BindingErrors.Fixes(file, offset, session.FailedBindings.Select(b => b.Failure)),
             .. session.Web?.Checks.Fixes(file, offset) ?? [], .. assist.AspireFixes(file, offset)];
+        assist.AskValue = AskValueAsync;
         assist.AddActions(actions!);
         usages.AddActions(actions!);
         DebugController.AddActions(actions!, () => session.Debug);

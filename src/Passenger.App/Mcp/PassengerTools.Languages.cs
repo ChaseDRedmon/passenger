@@ -176,6 +176,23 @@ public sealed partial class PassengerTools
             : throw new InvalidOperationException(answer.Said);
     }
 
+    /// <summary>Aspire's Go to Declaration in an AppHost's or a service's C# file, as the window's goes: AddProject's project,
+    /// a connection string's or service's name to the AppHost line declaring it; null elsewhere, for the server's own.</summary>
+    private async Task<IReadOnlyList<Place>?> AspireDefinition(Served served, int offset, CancellationToken cancel) =>
+        served is ServerServed { Web: null, Language: "C#" } csharp && Session.AspireFiles.RoleOf(csharp.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
+            ? await PlacesOf([place], cancel) : null;
+
+    /// <summary>An AppHost's or a service's C# file's diagnostics pulled and marked now, so the fixes Passenger offers on
+    /// Aspire's warnings stand on the text as the agent wrote it, not on a pull still to come.</summary>
+    private async Task AspireMarked(Served served, CancellationToken cancel)
+    {
+        if (served is ServerServed { Web: null } && Session.CSharp?.For(served.Document) is { AspireRole: not Aspire.AspireRole.None } csharp)
+        {
+            await csharp.PullNowAsync(cancel);
+        }
+    }
+
     /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a
     /// script renamed with it, one undoable edit, saved.</summary>
     private async Task<string> JsonRename(ServerServed json, int offset, string newName)
@@ -358,11 +375,21 @@ public sealed partial class PassengerTools
     /// <summary>One of Passenger's own fixes made as choosing it makes it: worked out again on the file's text as it stands,
     /// one undoable edit, the file saved; refused when the text no longer has what it fixes. One made in another file (an
     /// AppHost's WithReference) is that file's command, told the call's <paramref name="patience"/>.</summary>
-    private async Task<string> ApplyOwnFix(OpenDocument document, EditorFix fix, Patience? patience = null)
+    private async Task<string> ApplyOwnFix(OpenDocument document, EditorFix fix, Patience? patience = null, string? value = null)
     {
         if (fix.On(document.Text.Snapshot) is not { } now)
         {
             throw new InvalidOperationException($"'{fix.Title}' was not applied: the file changed, so it no longer fits");
+        }
+        if (now.Asks is { } asks)
+        {
+            RefactorOutcome set = await asks.Make(value ?? throw new InvalidOperationException($"'{fix.Title}' sets a value: give it as name"), patience);
+            if (set.Problem is { } refused)
+            {
+                throw new InvalidOperationException(refused);
+            }
+            Editors.SaveAll();
+            return set.Said;
         }
         if (now.Elsewhere is { } elsewhere)
         {
@@ -428,7 +455,7 @@ public sealed partial class PassengerTools
                 return await ApplyOwnFix(xaml.Document, fix);
             case XamlFix fix:
                 IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
-                refused = window.Assist.ApplyXamlChanges(fix.Title, changes);
+                refused = window.Assist.ApplyFileChanges(fix.Title, changes);
                 if (refused is not null)
                 {
                     throw new InvalidOperationException($"{what} was not applied: {refused}");
@@ -445,7 +472,7 @@ public sealed partial class PassengerTools
             {
                 throw new InvalidOperationException($"{what} cannot name the resource '{key}': {problem}");
             }
-            refused = window.Assist.ApplyXamlChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
+            refused = window.Assist.ApplyFileChanges("Extract Resource", XamlRefactorings.ExtractResource(xaml.File, value, key, place, everywhere: true));
             if (refused is not null)
             {
                 throw new InvalidOperationException($"{what} was not applied: {refused}");
@@ -465,7 +492,7 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"{what} cannot name the style '{style}': {named}");
         }
-        refused = window.Assist.ApplyXamlChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
+        refused = window.Assist.ApplyFileChanges("Extract Style", XamlRefactorings.ExtractStyle(xaml.File, source, style, properties, into));
         if (refused is not null)
         {
             throw new InvalidOperationException($"{what} was not applied: {refused}");

@@ -218,26 +218,56 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    /// <summary>The file's diagnostics, with Aspire's for a service's file (<see cref="AspireDiagnosticsAsync"/>), then its
+    /// <summary>The file's diagnostics, with Aspire's for a service's file (<see cref="AspireDiagnosticsAsync"/>) and an
+    /// AppHost's (<see cref="AspireUnsetParametersAsync"/>), then its
     /// inlay hints, each for the text as it stands. A later pull (an AppHost's edit, the server's refresh) cancels this one.</summary>
     private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
-        if (await diagnostics.PulledAsync(lsp, cancel) is not { } found)
+        if (!await ShowPulledAsync(lsp, cancel))
         {
             return;
         }
-        int version = document.Text.Version;
-        IReadOnlyList<Diagnostic> aspire = AspireRole == Aspire.AspireRole.Service ? await AspireDiagnosticsAsync(lsp, cancel) : [];
-        if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
-        {
-            return;
-        }
-        document.Markers = diagnostics.Take([.. found, .. aspire], DiagnosticMarks.Marker);
-        service.FileProblemsChanged(document);
         (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
         if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
         {
             document.InlayHints = Shown(lsp, hints);
+        }
+    }
+
+    /// <summary>The server's diagnostics and Aspire's shown for the text as it stands; false when they no longer answer it.</summary>
+    private async Task<bool> ShowPulledAsync(LspDocument lsp, CancellationToken cancel)
+    {
+        if (await diagnostics.PulledAsync(lsp, cancel) is not { } found)
+        {
+            return false;
+        }
+        int version = document.Text.Version;
+        IReadOnlyList<Diagnostic> aspire = await AspireFindingsAsync(lsp, cancel);
+        if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
+        {
+            return false;
+        }
+        document.Markers = diagnostics.Take([.. found, .. aspire], DiagnosticMarks.Marker);
+        service.FileProblemsChanged(document);
+        return true;
+    }
+
+    /// <summary>Aspire's own diagnostics of the file for the text as it stands: a service's references its AppHost lacks, an
+    /// AppHost's parameters with no value; none for any other file, which asks nothing for them.</summary>
+    internal async Task<IReadOnlyList<Diagnostic>> AspireFindingsAsync(LspDocument lsp, CancellationToken cancel) => AspireRole switch
+    {
+        Aspire.AspireRole.Service => await AspireDiagnosticsAsync(lsp, cancel),
+        Aspire.AspireRole.AppHost => await AspireUnsetParametersAsync(lsp, cancel),
+        _ => [],
+    };
+
+    /// <summary>The file's diagnostics pulled and shown now, Aspire's with them, as a typing pause's pull shows them: for an
+    /// agent's call that reads Passenger's own fixes, which stand on them.</summary>
+    internal async Task PullNowAsync(CancellationToken cancel)
+    {
+        if (Lsp is { } lsp)
+        {
+            await ShowPulledAsync(lsp, cancel);
         }
     }
 

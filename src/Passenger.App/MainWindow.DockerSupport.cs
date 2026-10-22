@@ -190,12 +190,11 @@ public partial class MainWindow
         {
             return DockerSaid(unread);
         }
-        List<(DockerProject Project, string? Existing, IReadOnlyList<BackingService> Backing, IReadOnlyList<(string Name, string Value)> Connections)> composed = [];
+        List<(DockerProject Project, string? Existing, BackingNeeds Needs)> composed = [];
         foreach (ProjectModel model in chosen)
         {
-            IReadOnlyList<BackingService> backing = [.. BackingService.For(model.Packages.Select(p => p.Name)).Where(b => services.Contains(b.Service))];
             DockerProject described = DockerFiles.Describe(model, all);
-            composed.Add((described, described.ExistingDockerfile, backing, DockerFiles.ConnectionStrings(model.Folder)));
+            composed.Add((described, described.ExistingDockerfile, BackingService.Needs(model, [.. services])));
         }
         if (composed.Count == 0)
         {
@@ -212,7 +211,7 @@ public partial class MainWindow
         try
         {
             using CommandHistory.Recording made = Editors.Commands.Record("Add Docker Compose");
-            foreach ((DockerProject project, _, _, _) in composed.Where(c => c.Existing is null))
+            foreach ((DockerProject project, _, _) in composed.Where(c => c.Existing is null))
             {
                 WriteNew(made, project.Dockerfile, DockerFiles.Dockerfile(project, context));
                 dockerfiles.Add(project.Name);
