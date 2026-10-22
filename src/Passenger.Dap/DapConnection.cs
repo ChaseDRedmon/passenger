@@ -260,8 +260,10 @@ public sealed class DapConnection : IAsyncDisposable
         catch (OperationCanceledException) when (stopping.IsCancellationRequested)
         {
         }
-        catch (Exception error) when (error is IOException or ObjectDisposedException)
+        catch (Exception error) when (error is IOException or ObjectDisposedException or JsonException or InvalidOperationException or KeyNotFoundException
+            or FormatException)
         {
+            // A message that does not read (its JSON, or a field of the wrong kind) ends the conversation as a closed stream does.
             log?.Invoke($"DAP read ended: {error.Message}");
         }
         finally
@@ -290,11 +292,13 @@ public sealed class DapConnection : IAsyncDisposable
         if (Text(message, "type") == "response")
         {
             int seq = message.GetProperty("request_seq").GetInt32();
+            // Read before the request is taken from those waiting, so an answer that does not read fails it with the rest.
+            bool succeeded = message.TryGetProperty("success", out JsonElement success) && success.GetBoolean();
             if (!pending.TryRemove(seq, out (string Command, TaskCompletionSource<JsonElement> Answer) request))
             {
                 return;
             }
-            if (message.TryGetProperty("success", out JsonElement success) && success.GetBoolean())
+            if (succeeded)
             {
                 request.Answer.TrySetResult(message.TryGetProperty("body", out JsonElement body) ? body.Clone() : default);
             }
