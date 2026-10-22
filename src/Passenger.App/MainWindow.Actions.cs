@@ -266,7 +266,7 @@ public partial class MainWindow
         }, _ => session.Debug.Session is { } debugged && debugged == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
         Add(A.Stop, "Stop", "Run", _ => buildRun.Stop(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
         // Every program debugged, where Stop ends the one chosen in the Debug window.
-        Add(A.StopAll, "Stop All", "Run", _ => buildRun.StopAll(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
+        Add(A.StopAll, "Stop All", "Run", context => _ = buildRun.StopAllAsync(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;

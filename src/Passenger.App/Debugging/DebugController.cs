@@ -278,21 +278,26 @@ public sealed class DebugController : IDisposable
         DebugTab? applied = chosen;
         if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome)
         {
-            await RestartAsked(outcome, applied);
+            await RestartAsked(outcome, applied, SettingsRestart);
         }
     }
 
-    /// <summary>The window's restart for edits Hot Reload cannot apply to the program of <paramref name="applied"/>'s tab,
-    /// chosen again first should another program's stop have taken the window meanwhile (the restart acts on the chosen);
-    /// declined, those edits are not asked about again until the next edit, as dotnet watch's No.</summary>
-    private async Task<bool> RestartAsked(HotReloadOutcome outcome, DebugTab? applied)
+    /// <summary>The window's restart for edits Hot Reload cannot apply: as Settings say, or asked as dotnet watch asks it
+    /// (<see cref="RestartFor"/>, <see cref="RestartRunningFor"/>).</summary>
+    public HotReloadRestart SettingsRestart => (outcome, running) => running ? RestartRunningFor(outcome) : RestartFor(outcome);
+
+    /// <summary>A restart for edits Hot Reload cannot apply to the program of <paramref name="applied"/>'s tab, made as
+    /// <paramref name="restart"/> says, the tab chosen again first should another program's stop have taken the window
+    /// meanwhile (the restart acts on the chosen); declined, those edits are not asked about again until the next edit, as
+    /// dotnet watch's No.</summary>
+    private async Task<bool> RestartAsked(HotReloadOutcome outcome, DebugTab? applied, HotReloadRestart restart)
     {
         if (applied is null || !applied.IsLive || disposed)
         {
             return false;
         }
         await ChooseAsync(applied);
-        if (applied == chosen && await RestartFor(outcome))
+        if (applied == chosen && await restart(outcome, false))
         {
             return true;
         }
@@ -663,13 +668,25 @@ public sealed class DebugController : IDisposable
     /// Settings says (<see cref="RestartRunningFor"/>).</summary>
     public async Task ApplyRunningAndRestartAsync()
     {
-        if (await ApplyRunningAsync() is { Result: HotReloadResult.RestartNeeded } outcome && !await RestartRunningFor(outcome))
+        if (await ApplyRunningAsync() is { Result: HotReloadResult.RestartNeeded } outcome)
         {
-            foreach (RunningReload reload in running.Where(r => outcome.Restart.Contains(r.Name)))
-            {
-                reload.Reload.Changed = false;
-            }
+            await RestartRunningAsked(outcome, SettingsRestart);
         }
+    }
+
+    /// <summary>A restart of the programs run with Hot Reload whose edits it could not apply, made as <paramref name="restart"/>
+    /// says; declined, those edits are not asked about again until the next edit.</summary>
+    private async Task<bool> RestartRunningAsked(HotReloadOutcome outcome, HotReloadRestart restart)
+    {
+        if (await restart(outcome, true))
+        {
+            return true;
+        }
+        foreach (RunningReload reload in running.Where(r => outcome.Restart.Contains(r.Name)))
+        {
+            reload.Reload.Changed = false;
+        }
+        return false;
     }
 
     /// <summary>Restarts the programs run with Hot Reload whose edits it could not apply (a container run's services, built
@@ -1013,7 +1030,7 @@ public sealed class DebugController : IDisposable
         if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
         {
             DebugTab? applied = chosen;
-            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome, applied))
+            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome, applied, SettingsRestart))
             {
                 return false;
             }
@@ -1244,21 +1261,33 @@ public sealed class DebugController : IDisposable
         }
     }
 
-    /// <summary>Apply Hot Reload Changes as the action runs it: the programs run with Hot Reload through the debugger take the
-    /// edits whenever they have any (or nothing else would take them), whatever else is debugged, and the chosen session
-    /// debugged with Hot Reload takes them too; each that needs it restarts as Settings says.</summary>
-    public async Task ApplyAllAndRestartAsync()
+    /// <summary>Apply Hot Reload Changes, the window's action and an agent's hot_reload alike: the programs run with Hot Reload
+    /// through the debugger take the edits whenever they have any (or nothing else would take them), whatever else is
+    /// debugged, and the chosen session debugged with Hot Reload takes them too; each that needs it restarts as
+    /// <paramref name="restart"/> says (the window's: <see cref="SettingsRestart"/>). Answers what each came to.</summary>
+    public async Task<HotReloadApplied> ApplyAllAsync(HotReloadRestart restart)
     {
         UiThread.Check();
         bool debugged = HotReload is not null && WhyNotApply() is null;
+        HotReloadOutcome? services = null;
+        HotReloadOutcome? program = null;
+        bool restarted = false;
         if (running.Count > 0 && (!debugged || running.Any(r => r.Reload.Changed)))
         {
-            await ApplyRunningAndRestartAsync();
+            services = await ApplyRunningAsync();
+            restarted = services.Result == HotReloadResult.RestartNeeded && await RestartRunningAsked(services, restart);
         }
+        DebugTab? applied = null;
         if (debugged || running.Count == 0)
         {
-            await ApplyAndRestartAsync();
+            applied = chosen;
+            program = await ApplyChangesAsync();
+            restarted |= program.Result == HotReloadResult.RestartNeeded && await RestartAsked(program, applied, restart);
         }
+        HotReloadOutcome outcome = services is { } both && program is { } and
+            ? Together([("the run's services", both), (applied?.Name ?? "the program debugged", and)])
+            : services ?? program!;
+        return new HotReloadApplied(outcome, restarted);
     }
 
     /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word hovered), evaluated in the

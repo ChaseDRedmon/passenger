@@ -864,24 +864,29 @@ public sealed partial class BuildRunController
     {
         parts.Work.Stop();
         _ = session.Debug.StopAsync();
-        StopRest();
+        _ = StopRest();
     }
 
-    /// <summary>Stop All: as Stop, every program debugged ended rather than the chosen one.</summary>
-    public void StopAll()
+    /// <summary>Stop All, the window's and an agent's stop: as Stop, every program debugged ended rather than the chosen one;
+    /// done once each has ended and a container run's containers are taken down (not left running as its log's end would
+    /// leave them).</summary>
+    public Task StopAllAsync()
     {
         parts.Work.Stop();
-        _ = session.Debug.StopAllAsync();
-        StopRest();
+        Task debugged = session.Debug.StopAllAsync();
+        return Task.WhenAll(debugged, StopRest());
     }
 
-    private void StopRest()
+    /// <summary>What every Stop ends besides the debugger's: a container run (done once its containers are down), Run's
+    /// program in the Run window or the terminal, Profile's, and the build.</summary>
+    private Task StopRest()
     {
-        _ = session.StopContainersAsync();
+        Task containers = session.StopContainersAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Profiled?.Run.Kill();
         session.Builder.Stop();
+        return containers;
     }
 
     /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal), never

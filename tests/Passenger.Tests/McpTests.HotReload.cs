@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Avalonia.Headless.XUnit;
 using ModelContextProtocol.Client;
+using Passenger.App;
 
 namespace Passenger.Tests;
 
@@ -45,6 +47,63 @@ public sealed partial class McpTests
             $"The restart for the rude edit did not stop at the breakpoint again: {restarted}");
         Assert.Equal("3", Local(await Call(client, "debug_continue"), "total"));
         await Call(client, "stop");
+    }
+
+    /// <summary>An agent's hot_reload on the person's window is the window's own Apply Hot Reload Changes: it shows as that
+    /// action's work while it applies, and its outcome is the window's last apply, where the tool decided again for itself
+    /// what to apply and restarted in its own order, unseen.</summary>
+    [AvaloniaFact]
+    public void An_agents_hot_reload_on_the_persons_window_is_its_apply_hot_reload_changes_shown_as_its_work()
+    {
+        File.WriteAllText(Path.Combine(folder, "Helper.cs"),
+            "static class Helper\n{\n    public static int Twice(int value)\n    {\n        return value * 2;\n    }\n}\n");
+        MainWindow window = AgentsWindow(folder);
+        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
+        List<string> worked = [];
+        window.Actions.Work.Changed += (_, change) =>
+        {
+            if (change.Work.Id == AppActions.ApplyHotReloadChanges && !change.Ended)
+            {
+                worked.Add(change.Work.Stage);
+            }
+        };
+        McpClient? client = null;
+        try
+        {
+            window.OpenFile(Path.Combine(folder, "Program.cs"));
+            window.EditorArea.CodeEditor.GoTo(new global::Passenger.Text.TextPosition(3, 4));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => window.Debugger.Session?.State == global::Passenger.App.Debugging.DebugState.Paused && window.Debugger.Stop is not null,
+                $"the program to stop at its breakpoint{Ui.BuildErrors(window)}");
+            window.OpenFile(Path.Combine(folder, "Helper.cs"));
+            Typing.Replace(window, "value * 2", "value * 2 + 1");
+
+            client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+            Task<JsonElement> applying = Task.Run(() => Call(client, "hot_reload"));
+            Press(Question(window, "the question for the agent's hot_reload"), "Allow");
+            JsonElement applied = Await(applying, "the agent's hot_reload");
+            Assert.True(applied.GetProperty("result").GetString() == "applied" && applied.GetProperty("methods").GetInt32() == 1, $"The agent's edit was not applied: {applied}");
+            Assert.True(worked.Contains("Applying Hot Reload changes…"), $"The agent's apply did not show as Apply Hot Reload Changes' work; it showed: {string.Join(" | ", worked)}");
+            Assert.Equal(global::Passenger.App.Debugging.HotReloadResult.Applied, window.Debugger.LastApplied?.Result);
+        }
+        finally
+        {
+            if (window.Debugger.IsDebugging)
+            {
+                window.Perform(AppActions.StopAll);
+                Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+            }
+            if (client is not null)
+            {
+                Await(Task.Run(async () =>
+                {
+                    await client.DisposeAsync();
+                    return true;
+                }), "the agent going");
+            }
+            window.Close();
+        }
     }
 
     /// <summary>Run with Hot Reload (Settings' Hot Reload, or run's hotReload, since the headless IDE keeps the default settings)

@@ -51,6 +51,15 @@ public sealed record HotReloadOutcome(HotReloadResult Result, string Said)
     public IReadOnlyList<string> Restart { get; init; } = [];
 }
 
+/// <summary>How a restart for edits Hot Reload could not apply is made, given what the apply came to and whether it is for
+/// the services of a container run with Hot Reload (else the program debugged): true once restarted. The window's asks as
+/// Settings say; an agent's never asks.</summary>
+public delegate Task<bool> HotReloadRestart(HotReloadOutcome outcome, bool running);
+
+/// <summary>What Apply Hot Reload Changes came to, every program that took the edits said as one, and whether a restart was
+/// made for edits one could not take running.</summary>
+public sealed record HotReloadApplied(HotReloadOutcome Outcome, bool Restarted);
+
 /// <summary>Hot Reload of one debugging session (Edit and Continue): Roslyn's own Edit and Continue service, in the language
 /// server through Passenger's extension, compares the solution as the editors have it with what was built (and applied
 /// since) and emits the deltas; Passenger's debugger applies them to the program, paused or running. The capabilities

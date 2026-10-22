@@ -685,7 +685,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   its console the container's `docker logs --follow --since` its start (`AdapterPlace.Output`); Run with Hot Reload attaches
   quietly (`DebugController.AttachForHotReloadAsync`, `DebugSession.Quiet`: no breakpoint sent, no exception stops it, the
   store never told), Apply Hot Reload Changes and a save applying the edits through it (`ApplyRunningAsync`) whatever else
-  is debugged, a session debugged with Hot Reload taking them too (`ApplyAllAndRestartAsync`). An edit Hot
+  is debugged, a session debugged with Hot Reload taking them too (`ApplyAllAsync`). An edit Hot
   Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartContainerServicesAsync`: only
   the services whose project holds a rude edit, since Roslyn names one in another project rude to each session; images mode
   `up --build --no-deps --force-recreate`), its session ended first and attached again, as Rerun's restart of a held service
@@ -1111,10 +1111,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
   `LiveTreeController.Watching`; `debug_state` carries `bindingValues`, and with several programs debugged lists them
   (`sessions`): the debug tools and `stop` take `session`, a Debug tab's name, else act on the one paused, else the only
-  one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All);
-  `hot_reload` is Apply Hot Reload Changes
-  (`RestartForAgentAsync` never asks; under dotnet watch, `SaveForWatchAsync`'s last word; a container run with Hot Reload,
-  `MainWindow.HotReloadRunning`, through `ApplyRunningAsync`); the headless `--mcp` IDE
+  one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All,
+  `BuildRunController.StopAllAsync`, the window's own); `hot_reload` is the window's Apply Hot Reload Changes
+  (`MainWindow.ApplyHotReloadAsync`: `DebugController.ApplyAllAsync` under the action's work, given a `HotReloadRestart`, the
+  window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
+  last word); the headless `--mcp` IDE
   starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
   container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests.Actions`
   holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change

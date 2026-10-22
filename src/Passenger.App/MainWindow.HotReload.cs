@@ -32,7 +32,7 @@ public partial class MainWindow
             // A container run's services take the edits through the debugger attached to each, whatever else is debugged.
             if (session.Debug.HotReload is not null || session.Debug.Running.Count > 0)
             {
-                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAllAndRestartAsync);
+                _ = ApplyHotReloadAsync(session.Debug.SettingsRestart);
             }
             else
             {
@@ -112,11 +112,20 @@ public partial class MainWindow
     /// <summary>Whether Apply Hot Reload Changes goes to dotnet watch: what Run runs with Hot Reload, nothing being debugged.</summary>
     internal bool HotReloadWatched => session.Debug.HotReload is null && !session.Debug.IsDebugging && session.Debug.Running.Count == 0 && buildRun.WatchesHotReload;
 
-    /// <summary>Whether Apply Hot Reload Changes goes to the services of a container run with Hot Reload, through the
-    /// debugger attached quietly to each: whenever they have edits to take, or nothing debugged would take them, whatever
-    /// else is debugged (<see cref="DebugController.ApplyAllAndRestartAsync"/>).</summary>
-    internal bool HotReloadRunning => session.Debug.Running.Count > 0
-        && (session.Debug.HotReload is null || session.Debug.WhyNotApply() is not null || session.Debug.Running.Any(r => r.Reload.Changed));
+    /// <summary>Apply Hot Reload Changes to what is debugged or run with Hot Reload through the debugger, under the action's
+    /// work, as the window's action and an agent's hot_reload run it (<see cref="DebugController.ApplyAllAsync"/>), each
+    /// restart made as <paramref name="restart"/> says; null when one is under way already.</summary>
+    internal async Task<HotReloadApplied?> ApplyHotReloadAsync(HotReloadRestart restart)
+    {
+        if (work.Begin(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", stoppable: false) is not { } working)
+        {
+            return null;
+        }
+        using (working)
+        {
+            return await session.Debug.ApplyAllAsync(restart);
+        }
+    }
 
     /// <summary>Why Apply Hot Reload Changes cannot run, as the action says it, or null.</summary>
     internal string? WhyNoHotReload() => actions!.WhyNot(AppActions.ApplyHotReloadChanges, actions.Context());

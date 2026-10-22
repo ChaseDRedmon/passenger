@@ -646,16 +646,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await Session.Debug.StopAsync(tab.Name);
             return $"Stopped {tab.Name}";
         }
-        // Any start under way ends as Stop All ends it (a container run's up among them, which would go on making containers),
-        // and a container run's containers are taken down, not left running as its log's end would leave them.
-        window.Actions.Work.Stop();
-        Task takingDown = Session.StopContainersAsync();
-        Session.Runner.Stop();
-        Session.InTerminal?.Stop();
-        Session.Profiled?.Run.Kill();
-        Session.Builder.Stop();
-        await Session.Debug.StopAllAsync();
-        await takingDown.WaitAsync(cancel);
+        await Builds.StopAllAsync().WaitAsync(cancel);
         return "Stopped";
     });
 
