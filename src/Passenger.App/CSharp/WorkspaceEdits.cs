@@ -254,6 +254,8 @@ public static class WorkspaceEdits
             bool taken = resource.To is { } to && Exists(to) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase);
             switch (resource.Kind)
             {
+                case "create" when overwrite && FileText.IsReadOnly(resource.Path):
+                    return $"{Path.GetFileName(resource.Path)} is read-only";
                 case "create" when Exists(resource.Path) && !overwrite && !ignored:
                 case "rename" when taken && !ignored && (!overwrite || Directory.Exists(resource.To)):
                     return $"{Path.GetFileName(resource.To ?? resource.Path)} is already there";
@@ -288,10 +290,14 @@ public static class WorkspaceEdits
         switch (resource.Kind)
         {
             case "create" when !exists || resource.Option("overwrite"):
-                Directory.CreateDirectory(Path.GetDirectoryName(resource.Path)!);
-                File.WriteAllText(resource.Path, string.Empty);
+            {
+                // Written as a save writes, in the charset its .editorconfig names: what an overwrite replaced is given
+                // to Local History, and a read-only file is refused.
+                FileEncoding charset = EditorConfig.For(resource.Path).Charset ?? FileEncoding.Utf8;
+                FileText.Save(resource.Path, string.Empty, charset.Encoding, charset.Bom);
                 editors.Documents.FirstOrDefault(d => d.Path == resource.Path)?.Reload(overUnsaved: true);
                 break;
+            }
             case "rename" when resource.To is { } to:
                 if ((File.Exists(to) || Directory.Exists(to)) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase))
                 {
