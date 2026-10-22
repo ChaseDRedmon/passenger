@@ -593,6 +593,11 @@ public partial class MainWindow : Window
     /// this way. None in the IDE, whose windows end their server with them.</summary>
     public WarmServer? WarmServer { get; init; }
 
+    /// <summary>Whether the window starts the C# language server on a folder with a solution or project: always in the IDE.
+    /// A test of what asks nothing of C# (the Explorer's files, the Solution view, Git) turns it off, and pays no server's
+    /// start, load or restore of a project never restored.</summary>
+    public bool StartsLanguageServer { get; init; } = true;
+
     /// <summary>The store of the window a person uses, the process's for its state folder, taken the first time it keeps
     /// something; null in a headless one.</summary>
     private State.StateStore? state;

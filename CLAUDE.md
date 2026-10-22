@@ -44,7 +44,8 @@ just container-tools [RID] [--archive]  # artifacts/container-tools/<rid>/, the 
                            # dev build finds them; --archive also the release's Passenger-container-tools-<rid>.tar.gz
 just notices               # fail naming any package the solution, Roslyn's server, the container tools or a dotnet tool
                            # carries that the notices miss
-just test [filter]         # every test, or those whose name matches; dotnet test's results in artifacts/test-results
+just test [filter] [N]     # every test, or those whose name matches, in N test processes at once then the Alone classes
+                           # in one (tools/test-run.py; N 1 is one dotnet test); results in artifacts/test-results/local
 just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
                            # CI runs' results
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
@@ -1745,8 +1746,13 @@ window answers, a profile's samples, the debugger's evaluation limit), or that d
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
 written before each test, and a file a test adds goes through `project.Write`, which ends the shared server: a file
-every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A class whose tests each restore
-a fresh folder takes it from `RestoredFolders`; one whose tests mostly leave the project as written shares it and takes a
+every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A file a test only rewrote is put
+back and the server kept once it holds it as written again, which it reads through its own watcher
+(`WarmServer.HoldsAsync`, 10 s at most, else it is ended); a file that came or went, or one the server holds no document of
+(a project file), ends it. A window test that asks nothing of C# opens its window without the language server
+(`Ui.OpenFolder(folder, languageServer: false)`, `MainWindow.StartsLanguageServer`), so it waits for no server's start,
+load or restore. A class whose tests each restore a fresh folder takes it from `RestoredFolders`, which makes and restores
+as many at once as the class has tests yet to take one, four at most; one whose tests mostly leave the project as written shares it and takes a
 fresh folder only for a test that changes it (`DebuggerTests.Sum` and `Fresh`), since `RestoredFolders.Take` may come in
 the test itself, its batch being no test's own (`TestFolders.Unowned`). A shared project that its first test builds
 makes its bin first (`DebuggerTests.Sum`): bin's making changes the folder's own time, which the next reset takes for a
@@ -1756,12 +1762,26 @@ up-to-date build (`HotReloadEditsTests`); its `Dispose` is virtual for a fixture
 stand-in feed). A rule held under both looks is checked in one window, the look switched in place through the window's
 settings (`UiRulesTests.UnderEachLook`), a failure naming the look. `RestoredFolders` saves nothing for classes whose
 tests change their folder throughout (`ExplorerFilesTests`, `PackagesTests`, `FileNestingTests`): share a
-`SharedProject` where the tests mostly read. CI splits each system's suite into shards, a runner each (#206), so a class
+`SharedProject` where the tests mostly read. `just test` runs the suite on one machine as CI's shards run it on several
+(`tools/test-run.py`), since a process's window tests use little of a machine while they wait on servers, MSBuild and
+programs: each test process keeps to a run folder, state, NuGet home, MSBuild node salt, agent sockets and container
+labels of its own (`TestRun`), so the classes outside `Alone` are dealt to N processes at once (by the most any system's
+runs took for each in TestTimes.json, else its budget; N a quarter of the processors, at most 4 and one per 8 GB, else
+`PASSENGER_TEST_PROCESSES` or the recipe's second argument), their limits scaled by 1.5 unless PASSENGER_TEST_TIME_SCALE
+says otherwise, the classes that use the container engine together in one (`LANES`), and once every one has ended the
+`Alone` classes run in one process with nothing beside it. A class is Alone by its declaration's `[Collection(Alone.Name)]`
+(or its base class's), which the runner reads from the sources; one it cannot find runs alone. So a class never counts
+on another having run in its process, and what of the machine a class uses beyond its run's folder (a fixed port or name,
+the engine's processors) runs alone or joins a lane. `just test "" 1` is one `dotnet test` in xunit's own order, and
+`--plan` shows the deal and runs nothing; each process's .trx and console log go to artifacts/test-results/local, the last
+run's removed as the next begins, and the failed tests are listed as each process ends and again at the run's end.
+CI splits each system's suite into shards, a runner each (#206), so a class
 never counts on another having run before it: each shard lists the suite (`tools/test-shards.py list`, listed again while a
 listing names no test or says discovery failed: xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo,
 xunit #3576) and `tools/test-shards.py` deals the classes
 by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one it lacks by its budget), the same deal in
-every shard, checked before any test runs to put every test in exactly one; inside a shard the collections keep their
+every shard, checked by the first shard before any test runs to put every test in exactly one (a listing of each
+hand, a VSTest discovery each, which the others need not repeat); inside a shard the collections keep their
 order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
 `tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 22 minutes fails (the
 whole run was an hour in one job a system; 20 until the MVP's last week grew macOS's classes to 72 minutes, which four
@@ -1892,6 +1912,11 @@ so they skip, saying why (`AspireApp.CliSkipped`), until the tests give it a hom
 Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`: the test project's restore puts the
 AppHost's graph in the package cache), while `AspireOrchestrationTests` skip until their solution's net8.0 graph does;
+Aspire's dashboard and orchestrator (`Aspire.Dashboard.Sdk.<rid>`, `Aspire.Hosting.Orchestration.<rid>`, about 900 MB in
+the package cache), which only running an AppHost needs, are downloaded only where `PassengerAspireRuntime` is true (a
+property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a
+Directory.Build.targets that takes them out of its AppHosts' references after the AppHost SDK adds them, and a test that
+runs an AppHost skips saying so (`AspireApp.Unavailable`);
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests`, `AspireTelemetryTests` and `AspireClientTests` speak to the
 execution server, a stand-in dashboard and a stand-in CLI (a shell script, so skipped on Windows) on loopback, and

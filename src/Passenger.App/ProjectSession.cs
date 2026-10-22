@@ -41,6 +41,9 @@ public sealed record SessionSetup(
 {
     /// <summary>Where the Dockerfile server asks for image tags in Docker Hub's place: the window's stand-in, a test's.</summary>
     public Uri? DockerHub { get; init; }
+
+    /// <summary>Whether the session starts the C# language server: the window's <see cref="MainWindow.StartsLanguageServer"/>.</summary>
+    public bool StartsLanguageServer { get; init; } = true;
 }
 
 /// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
@@ -755,12 +758,12 @@ public sealed class ProjectSession : IAsyncDisposable
     }
 
     /// <summary>The language server on the workspace, in place of the one before, the files open its too; none for a
-    /// folder with neither a solution nor a project.</summary>
+    /// folder with neither a solution nor a project, nor in a window a test made without one.</summary>
     private void StartCSharp()
     {
         _ = CSharp?.DisposeAsync();
         CSharp = null;
-        if (!IsEnded && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
+        if (!IsEnded && setup.StartsLanguageServer && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
         {
             CSharp = new CSharpService(setup.WarmServer)
             {

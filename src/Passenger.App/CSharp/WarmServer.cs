@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Lsp;
 
 namespace Passenger.App.CSharp;
@@ -49,6 +50,49 @@ public sealed class WarmServer : IAsyncDisposable
             kept = null;
         }
         return ending is null ? Task.CompletedTask : Task.Run(() => ending.DisposeAsync().AsTask());
+    }
+
+    /// <summary>Whether the server kept holds these files as the texts given, waited for until the limit: a test that put
+    /// back files it had changed keeps the server once the server has read them again through its own watcher. False when
+    /// none is kept, or one of them is no document of its solution, or it still held another text at the limit.</summary>
+    public async Task<bool> HoldsAsync(IReadOnlyDictionary<string, string> texts, TimeSpan limit)
+    {
+        RoslynSession? session;
+        lock (gate)
+        {
+            session = kept;
+        }
+        if (session is null || session.Server.HasExited)
+        {
+            return false;
+        }
+        // By the canonical paths the server's documents have.
+        Dictionary<string, string> wanted = texts.ToDictionary(text => PathNames.Canonical(text.Key), text => Roslyn.Extension.TextHash.Of(text.Value), PathNames.Comparer);
+        DateTime until = DateTime.UtcNow + limit;
+        while (true)
+        {
+            try
+            {
+                IReadOnlyList<Roslyn.Extension.TextHeld> held = await session.HeldTextsAsync([.. wanted.Keys]).WaitAsync(limit).ConfigureAwait(false);
+                if (held.All(text => text.Hash is { } hash && wanted.TryGetValue(text.Path, out string? want) && hash == want))
+                {
+                    return true;
+                }
+                if (held.Any(text => text.Hash is null))
+                {
+                    return false;
+                }
+            }
+            catch (Exception failed) when (failed is LanguageServerFailed or TimeoutException)
+            {
+                return false;
+            }
+            if (DateTime.UtcNow >= until)
+            {
+                return false;
+            }
+            await Task.Delay(100).ConfigureAwait(false);
+        }
     }
 
     public ValueTask DisposeAsync() => new(Drop());
