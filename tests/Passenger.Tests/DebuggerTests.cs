@@ -1741,9 +1741,10 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     /// <summary>A configuration that uses the terminal is debugged there: the program starts in a tab of the Terminal window
     /// held until the debugger has hold of it, so a breakpoint on Main's first line stops it before any of it runs (LaunchTests
     /// launches it five times over, for the race); let go, it reads the key and the line typed into its tab, and its end is
-    /// told there and in the status bar with its exit code.</summary>
+    /// told there and in the status bar with its exit code. Debugged again, starting a child, Stop ends it with what it
+    /// started, and its tab says it was ended.</summary>
     [AvaloniaFact]
-    public void Debugged_in_the_terminal_a_program_stops_at_a_breakpoint_on_Mains_first_line_and_reads_what_is_typed_there()
+    public void Debugged_in_the_terminal_a_program_stops_on_Mains_first_line_reads_what_is_typed_there_and_stop_ends_it_and_what_it_started()
     {
         Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
         MainWindow window = InTerminal(string.Empty);
@@ -1777,17 +1778,22 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"The program's tab shows:\n{shown}");
         Assert.Equal(3, going.ExitCode);
         Ui.WaitFor(() => window.Status == "Debugging Sum in the terminal ended with exit code 3", $"the status bar to say how it ended, not \"{window.Status}\"");
-        window.Close();
-    }
 
-    /// <summary>Stop ends a program debugged in the terminal with what it started, and its tab says it was ended.</summary>
-    [AvaloniaFact]
-    public void Stop_ends_a_program_debugged_in_the_terminal_and_what_it_started()
-    {
-        Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
-        MainWindow window = InTerminal("child");
+        // Debugged again, starting a child: Stop ends it with what it started.
+        editor.GoTo(new TextPosition(0, 0));
+        editor.Focus();
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Assert.Empty(window.Debugger.Breakpoints.In(Program));
+        window.SetConfigurations([new Passenger.App.Run.RunConfiguration
+        {
+            Name = "Sum in the terminal",
+            Project = Path.Combine(PathNames.Canonical(Folder), "Sum.csproj"),
+            Arguments = "child",
+            Console = Passenger.App.Run.ConsoleKind.Terminal,
+        }], "Sum in the terminal");
         StartDebugging(window);
-        WaitDebugging(window, () => window.Debugger.Session?.Terminal is { } started && TerminalText(started).Contains("key?", StringComparison.Ordinal), "the program to start its child and ask for a key");
+        WaitDebugging(window, () => window.Debugger.Session is { } next && next != going && next.Terminal is { } started && TerminalText(started).Contains("key?", StringComparison.Ordinal),
+            "the program to start its child and ask for a key");
         Passenger.App.Run.TerminalRun run = window.Debugger.Session!.Terminal!;
         string said = TerminalText(run).Split('\n').First(l => l.StartsWith("child ", StringComparison.Ordinal));
         int child = int.Parse(said["child ".Length..], System.Globalization.CultureInfo.InvariantCulture);
