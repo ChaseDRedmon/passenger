@@ -59,6 +59,10 @@ public sealed class FindInFilesPopup : UserControl
     private SearchScopeKind kind;
     private CancellationTokenSource? asking;
     private IReadOnlyList<SearchMatch> matches = [];
+
+    /// <summary>The query and scope the matches shown were found for.</summary>
+    private (SearchQuery Query, SearchScope Scope)? shownFor;
+
     private Task? searching;
 
     /// <param name="ligatures">Settings' Enable ligatures, which the matched lines and the preview follow as the editor does.</param>
@@ -330,9 +334,18 @@ public sealed class FindInFilesPopup : UserControl
     /// <summary>The search under way, if any (for a test to wait on).</summary>
     public Task Searching => searching ?? Task.CompletedTask;
 
-    public void RequestReplace()
+    /// <summary>Replace All, on the matches of the query and scope as they stand. Those shown may be the last search's for a
+    /// moment (a key or the scope changed within the pause before the next), so they are searched again first: Replace All
+    /// pressed as the scope changed to the current file replaced in every file the solution's search had found.</summary>
+    public void RequestReplace() => _ = ReplaceAsync();
+
+    private async Task ReplaceAsync()
     {
-        if (matches.Count > 0)
+        if (shownFor != (Query, Scope))
+        {
+            await SearchAsync();
+        }
+        if (matches.Count > 0 && shownFor == (Query, Scope))
         {
             ReplaceRequested?.Invoke(this, (Query, Replacement, matches));
         }
@@ -400,12 +413,12 @@ public sealed class FindInFilesPopup : UserControl
         SearchScope where = Scope;
         if (asked.Text.Length == 0)
         {
-            Show([], string.Empty);
+            Show([], string.Empty, (asked, where));
             return;
         }
         if ((FileSearch.Problem(asked) ?? where.Problem()) is { } problem)
         {
-            Show([], problem);
+            Show([], problem, (asked, where));
             return;
         }
         status.Text = "Searching...";
@@ -417,16 +430,17 @@ public sealed class FindInFilesPopup : UserControl
                 return;
             }
             int files = found.Select(m => m.Path).Distinct().Count();
-            Show(found, found.Count == 0 ? "Nothing found" : $"{Count(found.Count)} in {files} file{(files == 1 ? "" : "s")}");
+            Show(found, found.Count == 0 ? "Nothing found" : $"{Count(found.Count)} in {files} file{(files == 1 ? "" : "s")}", (asked, where));
         }
         catch (OperationCanceledException)
         {
         }
     }
 
-    private void Show(IReadOnlyList<SearchMatch> found, string said)
+    private void Show(IReadOnlyList<SearchMatch> found, string said, (SearchQuery Query, SearchScope Scope) of)
     {
         matches = found;
+        shownFor = of;
         results.ItemsSource = found;
         results.SelectedIndex = found.Count > 0 ? 0 : -1;
         status.Text = said;

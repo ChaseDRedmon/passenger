@@ -167,6 +167,43 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
         window.Close();
     }
 
+    /// <summary>Replace All acts on the query and scope as they stand, though the matches shown for a moment after the
+    /// scope changes are still the last search's: pressed then, it replaced in every file the solution's search had found.</summary>
+    [AvaloniaFact]
+    public void Replace_all_pressed_as_the_scope_changes_replaces_in_the_new_scope_alone()
+    {
+        string[] others = ["App/Models/Order.cs", "App/Plugins/Plugin.cs", "Lib/Money.cs", "Lib/Money.g.cs", "docs/total.md"];
+        Dictionary<string, string> before = others.ToDictionary(f => f, f => File.ReadAllText(Full(f)));
+        MainWindow window = Keeping(folder);
+        window.OpenFile(Full("App/Main.cs"));
+        Ui.Settle();
+        List<string> asked = [];
+        window.Confirm = (_, question, _) =>
+        {
+            asked.Add(question);
+            return Task.FromResult(true);
+        };
+        Ui.Press(window, Ui.Shortcut(AppActions.ReplaceInFiles));
+        FindInFilesPopup popup = Assert.IsType<FindInFilesPopup>(window.Popup);
+        Assert.Equal(SearchScopeKind.Solution, popup.ScopeKind);
+        Search(popup, "total");
+        Assert.Equal(8, Found(popup).Length);
+
+        popup.Replacement = "sum";
+        popup.ScopeKind = SearchScopeKind.Scope;
+        popup.NamedScope = "Current File";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the replacement");
+        Assert.Equal("Replaced 2 matches in 1 file", window.Status);
+        Assert.StartsWith("Replace 2 matches in 1 file with 'sum'?", Assert.Single(asked), StringComparison.Ordinal);
+        Assert.Equal("// the sum of the app\nclass Main { int sum; }\n", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        foreach (string file in others)
+        {
+            Assert.True(File.ReadAllText(Full(file)) == before[file], $"Replace All in the current file changed {file}, which the solution's search had found");
+        }
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void The_scope_and_the_mask_come_back_when_find_opens_again_and_after_a_restart()
     {
