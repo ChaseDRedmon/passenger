@@ -469,6 +469,65 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         };
     }
 
+    /// <summary>Discover asks the window's aspire CLI (a stand-in's, <see cref="MainWindow.AspireCliFrom"/>) its version first:
+    /// within 13.x from 13.6.0, any patch, it lists the AppHosts the CLI finds; below it, or another major, it says why and
+    /// lists none.</summary>
+    [AvaloniaFact]
+    public void Discover_takes_a_CLI_of_13_6_or_later_within_13_and_says_why_it_will_not_take_another()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in aspire CLI is a shell script, and Windows runs no shell script as a program");
+        project.Reset();
+        string cli = StandInCli();
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(cli)!, "ps.json"), JsonSerializer.Serialize(new[]
+        {
+            new { appHostPath = PathNames.Canonical(project.ProjectFile), appHostPid = Environment.ProcessId, status = "Running" },
+        }));
+        MainWindow window = OpenWithCli(cli);
+        try
+        {
+            foreach ((string version, string? refusal) in ((string, string?)[])[("13.6.0", null), ("13.6.3", null), ("13.7.0", null),
+                ("13.5.4", "below the minimum supported version 13.6.0"), ("14.0.0", "uses an unverified protocol major")])
+            {
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(cli)!, "version"), version + "\n");
+                FindAction(window, "Discover Aspire AppHosts");
+                Ui.WaitFor(() => refusal is null
+                    ? window.Aspire.AppSelector.Items.OfType<Passenger.App.Aspire.AspireApp>().Any(app => PathNames.Same(app.AppHostPath, PathNames.Canonical(project.ProjectFile)))
+                    : window.Aspire.Status.Contains(refusal, StringComparison.Ordinal) && window.Aspire.AppSelector.Items.Count == 0,
+                    $"Discover with aspire {version} ({window.Aspire.Status})");
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A stand-in aspire CLI in a folder of the test's: its version and ps answers files beside it.</summary>
+    private static string StandInCli()
+    {
+        string folder = TestFolders.Create("aspire-cli-");
+        string cli = Path.Combine(folder, "aspire");
+        File.WriteAllText(cli, "#!/bin/sh\nhere=$(dirname \"$0\")\nif [ \"$1\" = --version ]; then cat \"$here/version\"; exit 0; fi\n"
+            + "if [ \"$1\" = ps ]; then cat \"$here/ps.json\"; exit 0; fi\n"
+            + "if [ -f \"$here/failure\" ]; then cat \"$here/failure\" >&2; exit 9; fi\ncat \"$here/resources.json\"\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        return cli;
+    }
+
+    /// <summary>A window on the stand-in AppHost's folder that runs the given aspire CLI for AppHosts it did not start; no C#
+    /// language server.</summary>
+    private MainWindow OpenWithCli(string cli)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = project.Server, StartsLanguageServer = false, AspireCliFrom = cli };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        return window;
+    }
+
     /// <summary>A folder's projects kept by a Passenger from before evaluations said which are AppHosts (the cache's version 5,
     /// whose entries say nothing of it) are evaluated again as the folder opens, so its AppHost has its Aspire configuration,
     /// rather than shown as a plain program from the cache until its project changes.</summary>

@@ -21,10 +21,10 @@ public sealed class ToolViews
     public AspireView Aspire => AspirePane.View;
     public ContentControl AspireHost { get; } = new();
 
-    internal void ResetAspire()
+    internal void ResetAspire(Passenger.App.Aspire.AspireClient client)
     {
         AspirePane.Dispose();
-        AspirePane = new AspirePane();
+        AspirePane = new AspirePane(client);
         AspireHost.Content = AspirePane;
     }
 

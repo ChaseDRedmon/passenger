@@ -12,6 +12,11 @@ namespace Passenger.App;
 
 public partial class MainWindow
 {
+    /// <summary>The aspire CLI this window runs for AppHosts it did not start: by default the PATH's; a test's own stand-in.</summary>
+    public string? AspireCliFrom { get; init; }
+
+    private AspireClient AspireCli() => new(AspireCliFrom);
+
     public AspireView Aspire => Bottom.Aspire;
     public AspireController AspireRuntime => session.Aspire;
     private bool choosingAspireProfile;
@@ -58,7 +63,7 @@ public partial class MainWindow
 
     private void BindAspire(ProjectSession next)
     {
-        Bottom.ResetAspire();
+        Bottom.ResetAspire(AspireCli());
         AspirePane pane = Bottom.AspirePane;
         AspireView view = pane.View;
         ConditionalWeakTable<AspireInteractions, object> boundConnections = new();
@@ -311,7 +316,7 @@ public partial class MainWindow
         session.Aspire.FindApp(appHost) is { IsTest: false } app
             ? app.Interactions?.GetResourcesAsync(cancel)
                 ?? Task.FromException<IReadOnlyList<AspireResource>>(new InvalidOperationException("The AppHost resource connection is still starting"))
-            : new AspireClient().GetResourcesAsync(appHost, cancel);
+            : AspireCli().GetResourcesAsync(appHost, cancel);
 
     private async Task<AspireSelection> ReadAspireSelectionAsync(string appHost, string resource, CancellationToken cancel)
     {
@@ -347,10 +352,10 @@ public partial class MainWindow
             {
                 throw new InvalidOperationException("Run this AppHost through Passenger to use native command input dialogs");
             }
-            await new AspireClient().ExecuteCommandAsync(selection.AppHostPath, selection.Resource, command, cancel);
+            await AspireCli().ExecuteCommandAsync(selection.AppHostPath, selection.Resource, command, cancel);
             return "Resource command completed";
         }
-        ResourceCommandResponse? result = await connection.ExecuteCommandAsync(new AspireClient(), selection, command,
+        ResourceCommandResponse? result = await connection.ExecuteCommandAsync(AspireCli(), selection, command,
             () => session == current && !current.IsEnded && isCurrent(), cancel);
         if (result is null)
         {

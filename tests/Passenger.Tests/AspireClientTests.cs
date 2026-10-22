@@ -3,33 +3,12 @@ using Passenger.App.Aspire;
 
 namespace Passenger.Tests;
 
+/// <summary>An AppHost the IDE did not start, read through the aspire CLI on the PATH (a stand-in's, a shell script): a type
+/// on its own until the Aspire window's Resources tree shows such an AppHost's resources, which it now does not (#400); in
+/// Alone, since it changes the process's PATH. Discover's version check is AspireStandInTests'.</summary>
 [Collection(Alone.Name)]
 public sealed class AspireClientTests
 {
-    [Theory]
-    [InlineData("13.6.0", true)]
-    [InlineData("13.6.3", true)]
-    [InlineData("13.7.0", true)]
-    [InlineData("13.5.4", false)]
-    [InlineData("14.0.0", false)]
-    public async Task The_CLI_probe_accepts_compatible_versions_without_requiring_one_patch(string version, bool supported)
-    {
-        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in Aspire CLI is a shell script");
-        string folder = StandIn(version);
-        string? before = Environment.GetEnvironmentVariable("PATH");
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", folder + Path.PathSeparator + before);
-            AspireAvailability availability = await new AspireClient().ProbeAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(supported, availability.Available);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", before);
-            TestFolders.Delete(folder);
-        }
-    }
-
     [Fact]
     public async Task CLI_resource_snapshots_remove_URL_credentials_and_report_the_masked_actual_failure()
     {

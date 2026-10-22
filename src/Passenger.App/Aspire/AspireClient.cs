@@ -9,8 +9,9 @@ using Passenger.Core;
 
 namespace Passenger.App.Aspire;
 
-/// <summary>Bounded snapshots from Aspire 13.6.2's documented CLI JSON. Credentials stay internal; public resource snapshots mask values.</summary>
-public sealed class AspireClient
+/// <summary>Bounded snapshots from Aspire 13.6.2's documented CLI JSON. Credentials stay internal; public resource snapshots mask values.
+/// The CLI is the one on the PATH, or the program a window names (<see cref="MainWindow.AspireCliFrom"/>).</summary>
+public sealed class AspireClient(string? program = null)
 {
     internal const string SupportedVersion = "13.6.2";
     public const int ResourceLimit = 256;
@@ -313,7 +314,7 @@ public sealed class AspireClient
         return PathNames.Canonical(path);
     }
 
-    private static string? Executable() => Programs.OnPath(OperatingSystem.IsWindows() ? "aspire.exe" : "aspire");
+    private string? Executable() => program ?? Programs.OnPath(OperatingSystem.IsWindows() ? "aspire.exe" : "aspire");
 
     private static void AddResource(List<string> arguments, string? resource)
     {
@@ -343,7 +344,7 @@ public sealed class AspireClient
         }
     }
 
-    private static async Task<JsonElement> SnapshotAsync(IEnumerable<string> arguments, string? appHost, CancellationToken cancel)
+    private async Task<JsonElement> SnapshotAsync(IEnumerable<string> arguments, string? appHost, CancellationToken cancel)
     {
         string output = await RunAsync(arguments, appHost is null ? null : CanonicalAppHost(appHost), cancel);
         try
@@ -357,7 +358,7 @@ public sealed class AspireClient
         }
     }
 
-    private static async Task<string> RunAsync(IEnumerable<string> arguments, string? appHost, CancellationToken cancel, TimeSpan? timeout = null)
+    private async Task<string> RunAsync(IEnumerable<string> arguments, string? appHost, CancellationToken cancel, TimeSpan? timeout = null)
     {
         cancel.ThrowIfCancellationRequested();
         string executable = Executable() ?? throw new FileNotFoundException("Aspire CLI was not found on PATH.");
