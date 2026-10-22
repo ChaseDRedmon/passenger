@@ -68,6 +68,7 @@
     "WindowsOnlyProjectsTests": 90,
     "WpfPreviewTests": 90,
     "XamlEditingTests": 90,
-    "ProjectFileHelpTests": 90
+    "ProjectFileHelpTests": 90,
+    "AspireOrchestrationTests": 120
   }
 }

@@ -11,12 +11,10 @@ using Passenger.Editor;
 
 namespace Passenger.Tests;
 
+/// <summary>Add Aspire Orchestration on a solution of the tests' own target, restored from the run's local feed and the package
+/// cache the test project's restore filled (<see cref="AspireApp.UseFeed"/>), so nothing reaches nuget.org.</summary>
 public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestrationTests.Project>
 {
-    /// <summary>Why they skip: their solution's net8.0 projects and ServiceDefaults restore targeting packs and packages the
-    /// test project's restore never puts in the package cache, so it would reach nuget.org, which no test may.</summary>
-    private const string RestoresFromNuGet = "Its solution's net8.0 graph restores from nuget.org, which no test may reach: skipped until it restores from the run's local feed";
-
     private readonly Project project;
 
     public AspireOrchestrationTests(Project project)
@@ -25,7 +23,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         project.Reset();
     }
 
-    [AvaloniaFact(Skip = RestoresFromNuGet)]
+    [AvaloniaFact]
     public void Adding_orchestration_creates_the_missing_projects_and_one_global_undo_and_redo_restores_every_file()
     {
         MainWindow window = Open();
@@ -67,7 +65,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         window.Close();
     }
 
-    [AvaloniaFact(Skip = RestoresFromNuGet)]
+    [AvaloniaFact]
     public void Reordered_named_AddProject_arguments_do_not_add_the_same_resource_twice()
     {
         MainWindow window = Open();
@@ -83,7 +81,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         window.Close();
     }
 
-    [AvaloniaTheory(Skip = RestoresFromNuGet)]
+    [AvaloniaTheory]
     [InlineData(false)]
     [InlineData(true)]
     public void A_conflicting_folder_or_resource_is_refused_before_any_solution_file_is_written(bool resource)
@@ -106,11 +104,11 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         window.Close();
     }
 
-    [AvaloniaFact(Skip = RestoresFromNuGet)]
-    public void Windows_ServiceDefaults_cannot_be_referenced_by_a_plain_net8_service_and_refusal_writes_nothing()
+    [AvaloniaFact]
+    public void Windows_ServiceDefaults_cannot_be_referenced_by_a_plain_service_and_refusal_writes_nothing()
     {
         MainWindow window = Open();
-        Ui.WaitFor(() => window.WorkspaceModel!.Projects.Any(p => p.Name == "Plain" && p.TargetFrameworks.Contains("net8.0")),
+        Ui.WaitFor(() => window.WorkspaceModel!.Projects.Any(p => p.Name == "Plain" && p.TargetFrameworks.Contains(TestProjects.Framework)),
             "the plain service target framework to be evaluated");
         Dictionary<string, byte[]> before = Snapshot();
         AspireOrchestrationDialog dialog = Show(window, "Plain");
@@ -203,37 +201,37 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
             InstallTemplates();
             Put("Directory.Build.props", "<Project><PropertyGroup><AspireUseCliBundle>false</AspireUseCliBundle></PropertyGroup></Project>");
             Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Plain/Plain.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"Defaults/Defaults.csproj\" /><Project Path=\"WindowsDefaults/WindowsDefaults.csproj\" /></Solution>");
-            foreach ((string name, string framework) in new[] { ("Api", TestProjects.Framework), ("Plain", "net8.0") })
+            foreach (string name in (string[])["Api", "Plain"])
             {
-                Put($"{name}/{name}.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>{framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>");
+                Put($"{name}/{name}.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>");
                 Put($"{name}/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar app = builder.Build();\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
             }
             Put("Host/Host.csproj", $"""
                 <Project Sdk="Microsoft.NET.Sdk">
-                  <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
+                  <Sdk Name="Aspire.AppHost.Sdk" Version="{AspireApp.TemplatesVersion}" />
                   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost></PropertyGroup>
-                  <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /></ItemGroup>
+                  <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="{AspireApp.TemplatesVersion}" /><ProjectReference Include="../Api/Api.csproj" /></ItemGroup>
                 </Project>
                 """);
             Put("Host/Program.cs", "using Aspire.Hosting;\nvar builder = DistributedApplication.CreateBuilder(args);\nvar api = builder.AddProject(projectPath: \"../Api/Api.csproj\", name: \"api\");\nbuilder.Build().Run();\n");
-            foreach ((string name, string framework) in new[] { ("Defaults", "net8.0"), ("WindowsDefaults", "net8.0-windows") })
+            foreach ((string name, string framework) in new[] { ("Defaults", TestProjects.Framework), ("WindowsDefaults", TestProjects.Framework + "-windows") })
             {
                 ChildResult made = Task.Run(() => ChildProcesses.RunAsync(ProjectTemplates.NewCommand(
-                    ["aspire-servicedefaults", "--name", name, "--output", PathOf(name), "--framework", "net8.0", "--no-restore", "--no-update-check"], Folder),
+                    ["aspire-servicedefaults", "--name", name, "--output", PathOf(name), "--framework", TestProjects.Framework, "--no-restore", "--no-update-check"], Folder),
                     limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
                 Assert.True(made.Succeeded, $"Could not create real ServiceDefaults fixture: {made.Output}{made.Error}");
                 string path = PathOf($"{name}/{name}.csproj");
                 string text = File.ReadAllText(path);
-                File.WriteAllText(path, text.Replace("net8.0", framework, StringComparison.Ordinal));
+                File.WriteAllText(path, text.Replace($">{TestProjects.Framework}<", $">{framework}<", StringComparison.Ordinal));
             }
-            Prepare();
+            AspireApp.UseFeed(Folder);
+            Prepare(byRealPath: true);
         }
 
         private void InstallTemplates()
         {
             string version = AvaloniaApp.Metadata("AspireTemplatesVersion").ToLowerInvariant();
             string package = Path.Combine(AvaloniaApp.Metadata("NuGetPackageRoot"), "aspire.projecttemplates", version, $"aspire.projecttemplates.{version}.nupkg");
-            Assert.Equal("13.6.2", version);
             Assert.True(File.Exists(package), $"Restore the test project first: pinned Aspire templates are missing at {package}");
             ChildResult installed = Task.Run(() => ChildProcesses.RunAsync(ProjectTemplates.NewCommand(
                 ["install", package, "--force"], Folder), limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
