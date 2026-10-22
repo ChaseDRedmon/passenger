@@ -241,9 +241,11 @@ public sealed class ContainersTests
         ContainerPort port = Assert.Single(web.Container.Ports);
         Assert.Equal("8080", port.Inside);
         Assert.Equal(Docker.Image, Service(view, project, "worker").Container!.Image);
-        // The port is a link the browser opens.
+        // The port is a link the browser opens, on web's row scrolled into view: an engine holding many projects lists it
+        // below the rows the list makes.
         Button? link = null;
-        Ui.WaitFor(() => (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort" && Equals(b.Content, port.ToString()))) is not null,
+        Ui.WaitFor(() => view.Choose(r => r.Key == web.Key)
+            && (link = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => b.Name == "containerPort" && Equals(b.Content, port.ToString()))) is not null,
             "web's port link");
         Point at = link!.TranslatePoint(new Point(link!.Bounds.Width / 2, link!.Bounds.Height / 2), window)!.Value;
         window.MouseDown(at, MouseButton.Left);

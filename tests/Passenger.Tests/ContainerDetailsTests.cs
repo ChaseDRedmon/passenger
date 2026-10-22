@@ -52,6 +52,19 @@ public sealed class ContainerDetailsTests
             """);
         // Not --wait: the app's health check fails on purpose.
         Docker.Run("compose", "-f", compose, "up", "-d");
+        try
+        {
+            Read(project, compose);
+        }
+        finally
+        {
+            // Gone at once rather than at the run's end, so the windows of the tests after it list no more than they did.
+            Docker.Run("compose", "-f", compose, "down", "--volumes");
+        }
+    }
+
+    private static void Read(string project, string compose)
+    {
         MainWindow window = new() { Width = 1200, Height = 900 };
         window.Show();
         window.OpenFolder(TestFolders.Create("ctr-details-window-"));
