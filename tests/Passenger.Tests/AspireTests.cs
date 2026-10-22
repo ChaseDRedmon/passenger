@@ -166,7 +166,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         try
         {
             Choose(window);
-            FindAction(window, "Edit Configurations...");
+            FindAction(window, "Edit Configurations…");
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Ui.WaitFor(() => ServiceChoice(dialog, "apiservice") is not null && ServiceChoice(dialog, "webfrontend") is not null,
                 "both official project resources on the initially selected AppHost");
@@ -202,7 +202,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             RunConfiguration restored = Assert.Single(window.Configurations, configuration => configuration.Name == saved.Name);
             Assert.Equal(saved.ServiceActions, restored.ServiceActions);
             Assert.Equal(saved.ServiceProjects, restored.ServiceProjects);
-            FindAction(window, "Edit Configurations...");
+            FindAction(window, "Edit Configurations…");
             dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Ui.WaitFor(() => ServiceChoice(dialog, "apiservice")?.SelectedIndex == 1
                 && ServiceChoice(dialog, "webfrontend")?.SelectedIndex == 0, "the persisted per-resource choices");
