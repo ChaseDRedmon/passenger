@@ -439,7 +439,41 @@ public sealed class EndpointsTests : IDisposable
         Assert.StartsWith("localhost:", api.Received[^1].Header("Host"), StringComparison.Ordinal);
         Assert.Null(api.Received[^1].Header("X-Trace"));
         Assert.Equal(200, window.Endpoints.Response.Response!.Status);
-        Assert.Equal(["Redirected to localhost, another host, without the request's headers"], window.Endpoints.Response.Response.Notes);
+        Assert.Equal([$"Redirected to http://localhost:{api.Port}, another origin, without the request's headers"], window.Endpoints.Response.Response.Notes);
+        window.Close();
+    }
+
+    /// <summary>Another port of the same host is another server, which what a request reads was never allowed to: a redirect
+    /// there goes without the request's headers, the person's environment in them, and one that would carry the body there
+    /// is not followed.</summary>
+    [AvaloniaFact]
+    public void A_redirect_to_another_port_of_the_same_host_takes_neither_the_requests_headers_nor_its_body_there()
+    {
+        using StandInApi other = new();
+        api.RedirectRoot = other.Root;
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nGET {{base}}/other-port\nX-Secret: {{$env.PASSENGER_SETTINGS}}\n"
+            + "\n### Posted to another port\nPOST {{base}}/other-port\nContent-Type: application/json\n\n{\"secret\":\"posted\"}\n");
+        MainWindow window = Open(folder);
+        window.ShowToolWindow("endpoints");
+        Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the requests");
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
+        EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked");
+        Click(question, question.AllowButton);
+        Assert.Equal(System.Environment.GetEnvironmentVariable("PASSENGER_SETTINGS"), Assert.Single(api.Received).Header("X-Secret"));
+        StandInApi.Request redirected = Assert.Single(other.Received);
+        Assert.Equal("GET /items", redirected.Line);
+        Assert.True(redirected.Header("X-Secret") is null, "What the request read was allowed to one port of the host and sent to another");
+        Assert.Equal(200, window.Endpoints.Response.Response!.Status);
+        Assert.Equal([$"Redirected to {other.Root}, another origin, without the request's headers"], window.Endpoints.Response.Response.Notes);
+
+        Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Posted to another port"), "endpointTest"));
+        Assert.Equal("POST /other-port", api.Received[^1].Line);
+        Assert.Contains("posted", api.Received[^1].Body, StringComparison.Ordinal);
+        Assert.True(other.Received.Count == 1, "A 307 carried the request's body to another port of the host");
+        Assert.Equal(307, window.Endpoints.Response.Response!.Status);
+        Assert.Equal([$"Not followed to {other.Root}: a 307 would send the request's body there"], window.Endpoints.Response.Response.Notes);
         window.Close();
     }
 
@@ -550,7 +584,8 @@ public sealed class EndpointsTests : IDisposable
     }
 
     /// <summary>A small JSON API on a loopback port: GET /items lists one item, POST and PUT /items answer 201 with the
-    /// body sent, GET /moved redirects to /items and GET /elsewhere to it under the name localhost, GET /slow answers
+    /// body sent, GET /moved redirects to /items and GET /elsewhere to it under the name localhost, GET and POST /other-port
+    /// to <see cref="RedirectRoot"/>'s /items (a 302 and a 307), GET /slow answers
     /// only as the test ends, anything else 404. It keeps every request with the connection it came on, and counts
     /// connections made and still open, so a test sees whether a client was kept.</summary>
     private sealed class StandInApi : IDisposable
@@ -578,6 +613,9 @@ public sealed class EndpointsTests : IDisposable
         public int Port { get; }
 
         public string Root { get; }
+
+        /// <summary>Where GET and POST /other-port send the client: another stand-in's root, at another port of this host.</summary>
+        public string? RedirectRoot { get; set; }
 
         public int Connections => Volatile.Read(ref connections);
 
@@ -644,6 +682,7 @@ public sealed class EndpointsTests : IDisposable
                         {
                             "GET /moved" => "/items",
                             "GET /elsewhere" => $"http://localhost:{Port}/items",
+                            "GET /other-port" or "POST /other-port" => $"{RedirectRoot}/items",
                             _ => null,
                         };
                         string head = $"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {content.Length}\r\n"
@@ -665,7 +704,8 @@ public sealed class EndpointsTests : IDisposable
         private static (int, string, string) Answer(Request request) => request.Line switch
         {
             "GET /items" => (200, "OK", """{"items":[{"id":1,"name":"Ada"}]}"""),
-            "GET /moved" or "GET /elsewhere" => (302, "Found", string.Empty),
+            "GET /moved" or "GET /elsewhere" or "GET /other-port" => (302, "Found", string.Empty),
+            "POST /other-port" => (307, "Temporary Redirect", string.Empty),
             "GET /slow" => (200, "OK", "{}"),
             "GET /huge" => (200, "OK", string.Concat(Enumerable.Repeat(new string('a', 99) + "\n", (EndpointClient.MostRead / 100) + 10_000))),
             "POST /items" or "PUT /items" => (201, "Created", request.Body),

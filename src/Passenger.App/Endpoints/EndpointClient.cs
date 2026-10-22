@@ -163,8 +163,8 @@ public static class EndpointClient
     }
 
     /// <summary>Sends the call, its body's file read first. A redirect is followed (when the options say so) with the
-    /// request's headers only to the same host: to another, it goes without them, and not at all when it would carry
-    /// the body there; each such turn is one of the answer's <see cref="EndpointResponse.Notes"/>.</summary>
+    /// request's headers only to the same origin (scheme, host and port): to another, it goes without them, and not at all
+    /// when it would carry the body there; each such turn is one of the answer's <see cref="EndpointResponse.Notes"/>.</summary>
     public static async Task<EndpointResponse> SendAsync(EndpointCall call, SendOptions options, CancellationToken cancel)
     {
         Stopwatch clock = Stopwatch.StartNew();
@@ -223,19 +223,20 @@ public static class EndpointClient
                 int status = (int)response.StatusCode;
                 // As .NET's own: a 303, and a 301 or 302 after a POST, goes on as a GET with no body; the rest keep both.
                 bool asGet = status == 303 ? method != "HEAD" : status is 301 or 302 && method == "POST";
-                bool sameHost = string.Equals(next.Host, first.Host, StringComparison.OrdinalIgnoreCase);
+                // By origin, as what a request reads is allowed to one server: another port of the same host is another server.
+                bool sameOrigin = next.Scheme == first.Scheme && next.Port == first.Port && string.Equals(next.Host, first.Host, StringComparison.OrdinalIgnoreCase);
                 string? stop = redirects == MostRedirects ? $"Not followed to {next}: {MostRedirects} redirects were followed already"
                     : at.Scheme == Uri.UriSchemeHttps && next.Scheme != Uri.UriSchemeHttps ? $"Not followed to {next}: it leaves HTTPS"
-                    : !sameHost && !asGet && body.Length > 0 ? $"Not followed to {next.Host}: a {status} would send the request's body there"
+                    : !sameOrigin && !asGet && body.Length > 0 ? $"Not followed to {Origin(next)}: a {status} would send the request's body there"
                     : null;
                 if (stop is not null)
                 {
                     notes.Add(stop);
                     break;
                 }
-                if (!sameHost && withHeaders && call.Headers.Count > 0)
+                if (!sameOrigin && withHeaders && call.Headers.Count > 0)
                 {
-                    notes.Add($"Redirected to {next.Host}, another host, without the request's headers");
+                    notes.Add($"Redirected to {Origin(next)}, another origin, without the request's headers");
                     withHeaders = false;
                 }
                 if (asGet)
@@ -276,6 +277,9 @@ public static class EndpointClient
             return new EndpointResponse { Error = error.Message, Elapsed = clock.Elapsed };
         }
     }
+
+    /// <summary>A URL's scheme, host and port, as a note names where a redirect went; never its user name or password.</summary>
+    private static string Origin(Uri url) => $"{url.Scheme}://{url.Authority}";
 
     /// <summary>One request of the exchange, or why its headers cannot be sent.</summary>
     private static (HttpRequestMessage? Message, string? Refused) Message(string method, Uri url, IReadOnlyList<KeyValuePair<string, string>> headers, string body)

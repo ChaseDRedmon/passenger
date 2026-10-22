@@ -483,10 +483,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`< file`, links resolved) to a host the folder has not allowed asks first (`EndpointQuestionDialog`: the host and each
   read, an unset variable said); an Allow lasts while the folder is open, Always for this folder is the folder's
   `endpoints.json` (`EndpointGrants`, `ProjectSession.EndpointGrants`), and the body's file is read only once allowed. A
-  redirect is followed by hand: to another host without the request's headers, and not when it would carry the body
-  there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
+  redirect is followed by hand: to another origin (scheme, host or port) without the request's headers, and not when it
+  would carry the body there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
   variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
-  only to `EndpointsTests`' stand-in on loopback (its `localhost` name the other host).
+  only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port).
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
