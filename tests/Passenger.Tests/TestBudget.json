@@ -3,6 +3,7 @@
   "classSeconds": 60,
   "classes": {
     "CodeAssistTests": 480,
+    "CodeAssistResponsivenessTests": 90,
     "LongFileAssistTests": 150,
     "DebuggerTests": 420,
     "HotReloadTests": 180,
