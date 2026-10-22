@@ -19,7 +19,7 @@ public sealed partial class McpTests
         const string helper = "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n";
         Write("Bad.cs", "class Bad\n{\n    public int Count = \"none\";\n}\n");
         Write("Notes.txt", "one two\ntwo three\n");
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
 
         // Find in Files: the folder's files by text, then as its mask, a regex and its scopes narrow them.
         JsonElement found = await Call(client, "find_in_files", new() { ["text"] = "Twice" });
@@ -56,7 +56,7 @@ public sealed partial class McpTests
         JsonElement labelled = (await Call(client, "local_history")).GetProperty("rows")[0];
         Assert.Equal(("agent was here", true), (labelled.GetProperty("title").GetString(), labelled.GetProperty("label").GetBoolean()));
         await Call(client, "local_history_revert", new() { ["path"] = "Helper.cs", ["set"] = rows[1].GetProperty("set").GetInt64() });
-        Assert.Equal(helper, File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+        Assert.Equal(helper, File.ReadAllText(Path.Combine(Folder, "Helper.cs")));
         Assert.EndsWith("\tstatic class Helper", (await Call(client, "editor_text", new() { ["path"] = "Helper.cs", ["to"] = 1 })).GetString(), StringComparison.Ordinal);
         string reverted = (await Call(client, "local_history", new() { ["path"] = "Helper.cs" })).GetProperty("rows")[0].GetProperty("title").GetString()!;
         Assert.StartsWith("Revert to ", reverted, StringComparison.Ordinal);
@@ -89,16 +89,16 @@ public sealed partial class McpTests
         // Replace in Files: a closed file written, the open one changed in the editor and saved.
         Assert.Equal("Replaced 2 matches in 1 file: Notes.txt",
             (await Call(client, "replace_in_files", new() { ["text"] = "two", ["replacement"] = "2", ["mask"] = "*.txt" })).GetString());
-        Assert.Equal("one 2\n2 three\n", File.ReadAllText(Path.Combine(folder, "Notes.txt")));
+        Assert.Equal("one 2\n2 three\n", File.ReadAllText(Path.Combine(Folder, "Notes.txt")));
         Assert.Equal("Replaced 1 match in 1 file: Helper.cs",
             (await Call(client, "replace_in_files", new() { ["text"] = "unused", ["replacement"] = "spare", ["scope"] = "currentFile" })).GetString());
-        Assert.Equal(helper.Replace("unused", "spare", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+        Assert.Equal(helper.Replace("unused", "spare", StringComparison.Ordinal), File.ReadAllText(Path.Combine(Folder, "Helper.cs")));
 
         // An edit as the editor makes one: found once as written, saved, and the lines it changed said back as they are now.
         string edited = Text(await Call(client, "edit", new() { ["path"] = "Helper.cs", ["oldText"] = "return value * 2;", ["newText"] = "int twice = value * 2;\n        return twice;" }));
         Assert.Equal("Changed Helper.cs at line 6, saved:\n     6\t        int twice = value * 2;\n     7\t        return twice;", edited);
         string spare = helper.Replace("unused", "spare", StringComparison.Ordinal);
-        Assert.Equal(spare.Replace("return value * 2;", "int twice = value * 2;\n        return twice;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+        Assert.Equal(spare.Replace("return value * 2;", "int twice = value * 2;\n        return twice;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(Folder, "Helper.cs")));
         foreach ((Dictionary<string, object?> arguments, string said) in new (Dictionary<string, object?>, string)[]
         {
             (new() { ["path"] = "Helper.cs", ["oldText"] = "value * 3", ["newText"] = "x" }, "Helper.cs has no \"value * 3\" as written"),
@@ -110,10 +110,10 @@ public sealed partial class McpTests
         }
         Assert.Equal("Changed Helper.cs in 2 places, saved:\n     6\t        int doubled = value * 2;\n     7\t        return doubled;",
             Text(await Call(client, "edit", new() { ["path"] = "Helper.cs", ["oldText"] = "twice", ["newText"] = "doubled", ["all"] = true })));
-        Assert.Equal(spare.Replace("return value * 2;", "int doubled = value * 2;\n        return doubled;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(folder, "Helper.cs")));
+        Assert.Equal(spare.Replace("return value * 2;", "int doubled = value * 2;\n        return doubled;", StringComparison.Ordinal), File.ReadAllText(Path.Combine(Folder, "Helper.cs")));
 
         // An agent's own file tools write to disk and ask at once: the open file answers with the disk's text, not the text before.
-        File.WriteAllText(Path.Combine(folder, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 3;\n}\n");
+        File.WriteAllText(Path.Combine(Folder, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 3;\n}\n");
         Assert.EndsWith("\t    public static int Twice(int value) => value * 3;",
             (await Call(client, "editor_text", new() { ["path"] = "Helper.cs", ["from"] = 3, ["to"] = 3 })).GetString(), StringComparison.Ordinal);
     }
@@ -127,8 +127,8 @@ public sealed partial class McpTests
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
         window.KeepSettings();
-        window.OpenFolder(folder);
-        window.OpenFile(Path.Combine(folder, "Program.cs"));
+        window.OpenFolder(Folder);
+        window.OpenFile(Path.Combine(Folder, "Program.cs"));
         Ui.Settle();
         window.ApplySettings(window.Settings with { McpServer = true });
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
@@ -165,7 +165,7 @@ public sealed partial class McpTests
                 (new() { ["showBuildResults"] = "Sometimes" }, "showBuildResults is one of Always, ForWarningsOrErrors, ForErrors, Never, not \"Sometimes\""),
                 (new() { ["editorFontSize"] = "large" }, "editorFontSize takes a number, not \"large\""),
                 (new() { ["mcpServer"] = false }, "Enable MCP Server is the person's to change"),
-                (new() { ["agentFolders"] = new[] { folder } }, "The folders agents join unasked are the person's to change"),
+                (new() { ["agentFolders"] = new[] { Folder } }, "The folders agents join unasked are the person's to change"),
             })
             {
                 CallToolResult refused = Await(Task.Run(() => Result(client, "settings_set", new() { ["changes"] = changes })), "the refused settings change");
@@ -193,10 +193,10 @@ public sealed partial class McpTests
     [Fact]
     public async Task An_agent_profiles_a_program_already_running_and_leaves_it_running()
     {
-        Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{folder}\", \"spin.pid\"), Environment.ProcessId.ToString());\n"
+        Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{Folder}\", \"spin.pid\"), Environment.ProcessId.ToString());\n"
             + "long turns = 0;\nwhile (true)\n{\n    turns = Spin.Turn(turns);\n}\n\n"
             + $"/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\nstatic class Spin\n{{\n    public static long Turn(long turns) => turns + 1;\n}}\n");
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
         CallToolResult unattached = await Result(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
         Assert.True(unattached.IsError == true, $"Attach Profiler with nothing running answered: {Text(unattached)}");
 

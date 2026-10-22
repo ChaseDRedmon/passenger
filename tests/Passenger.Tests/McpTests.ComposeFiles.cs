@@ -14,12 +14,12 @@ public sealed partial class McpTests
     {
         DockerFilesTests.Shop.SkipWithoutNode(yaml: true);
         const string Compose = "services:\n  web:\n    image:   nginx:1.27\n    ports: [ \"8080:80\" ]\n    depends_on:   [api]\n  api:\n    build: .\n";
-        string folder = Made("mcpcompose-", made =>
+        string compose = Made("mcpcompose-", made =>
         {
             File.WriteAllText(Path.Combine(made, "compose.yaml"), Compose);
             File.WriteAllText(Path.Combine(made, "Dockerfile"), "FROM alpine:3.20\nFROMM nothing\nENTRYPOINT [\"sh\"]\n");
         });
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", compose]);
 
         // Passenger's declarations: the service depends_on names, and the build's Dockerfile.
         JsonElement service = Assert.Single((await Call(client, "definition", At(Compose, "compose.yaml", "[ap"))).EnumerateArray());
@@ -37,6 +37,6 @@ public sealed partial class McpTests
 
         // The YAML server's layout, saved.
         Assert.StartsWith("Reformatted", (await Call(client, "format", new() { ["path"] = "compose.yaml" })).GetString(), StringComparison.Ordinal);
-        Assert.Equal("services:\n  web:\n    image: nginx:1.27\n    ports: [\"8080:80\"]\n    depends_on: [api]\n  api:\n    build: .\n", File.ReadAllText(Path.Combine(folder, "compose.yaml")));
+        Assert.Equal("services:\n  web:\n    image: nginx:1.27\n    ports: [\"8080:80\"]\n    depends_on: [api]\n  api:\n    build: .\n", File.ReadAllText(Path.Combine(compose, "compose.yaml")));
     }
 }

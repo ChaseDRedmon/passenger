@@ -27,27 +27,30 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         ? installed
         : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
 
-    private readonly string folder;
+    private readonly RestoredFolders folders;
+    private string? sum;
     private readonly string settings = TestFolders.Create("agents-");
     private readonly List<string> errors = [];
     private readonly List<Process> passengers = [];
 
     public McpTests(RestoredFolders folders, AgentAppFolder app)
     {
+        this.folders = folders;
         appFolder = app.Folder;
-        string made = string.Empty;
-        TestFolders.Prepare(() => made = folders.Take("mcp-", project =>
-        {
-            File.WriteAllText(Path.Combine(project, "Sum.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-            File.WriteAllText(Path.Combine(project, "Program.cs"),
-                "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
-            File.WriteAllText(Path.Combine(project, "Helper.cs"),
-                "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n");
-            return project;
-        }), settings);
-        folder = made;
     }
+
+    /// <summary>The test's own Sum project, restored, taken as a test first names it: most of the tests work in folders of
+    /// their own and take none.</summary>
+    private string Folder => sum ??= folders.Take("mcp-", project =>
+    {
+        File.WriteAllText(Path.Combine(project, "Sum.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(project, "Program.cs"),
+            "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
+        File.WriteAllText(Path.Combine(project, "Helper.cs"),
+            "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n");
+        return project;
+    });
 
     public void Dispose()
     {
@@ -64,7 +67,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
                 passenger.Dispose();
             }
         }
-        TestFolders.Delete(folder);
+        if (sum is not null)
+        {
+            TestFolders.Delete(sum);
+        }
         TestFolders.Delete(settings);
         foreach (string made in madeFolders)
         {
@@ -77,7 +83,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     {
         // A name that has the one asked for in it, in a file the server reads before Helper.cs.
         Write("Aaa.cs", "static class Aaa\n{\n    public static int TwiceMore(int value) => value;\n}\n");
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
         IList<McpClientTool> tools = await Exchange("Listing the tools", TimeSpan.FromMinutes(1), cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
         Assert.Contains(tools, t => t.Name == "debug_start");
         // An agent reads how its tests will run from the tool: an xUnit v3 project's through the Testing Platform, not VSTest.
@@ -163,6 +169,34 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.True(refused.IsError);
         Assert.Contains("debug_start starts it", Assert.IsType<TextContentBlock>(Assert.Single(refused.Content)).Text, StringComparison.Ordinal);
 
+        // A program already running, started by the test as a terminal would start it, in its loop when it says so: listed,
+        // attached to and stopped at a breakpoint, then let go to run on in its loop, which the debugger no longer stops.
+        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost("LoopingConsoleApp"), ["sleep"]);
+        start.RedirectStandardOutput = true;
+        using (Process looping = ChildProcesses.Start(start))
+        {
+            try
+            {
+                Assert.Equal("looping", looping.StandardOutput.ReadLine());
+                JsonElement program = Assert.Single((await Call(client, "debug_processes")).EnumerateArray(), p => p.GetProperty("processId").GetInt32() == looping.Id);
+                Assert.Equal("LoopingConsoleApp", program.GetProperty("program").GetString());
+                string source = Debugging.Helpers.Debuggees.Source("LoopingConsoleApp", "Program.cs");
+                int line = Debugging.Helpers.Debuggees.Line("LoopingConsoleApp", "turns++;");
+                await Call(client, "breakpoint_set", new() { ["path"] = source, ["line"] = line });
+                JsonElement attached = await Call(client, "debug_attach", new() { ["processId"] = looping.Id });
+                Assert.Equal(("paused", "breakpoint"), (attached.GetProperty("state").GetString(), attached.GetProperty("reason").GetString()));
+                Assert.EndsWith($"Program.cs:{line}:5", attached.GetProperty("location").GetString(), StringComparison.Ordinal);
+                Assert.True(long.TryParse(Local(attached, "turns"), out long turns) && turns >= 0, $"The stop's locals had no count of turns: {attached}");
+                Assert.Equal("Detached from LoopingConsoleApp, which runs on", (await Call(client, "debug_detach")).GetString());
+                Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
+                Assert.False(looping.WaitForExit(TimeSpan.FromSeconds(2)), "The program the agent detached from ended");
+            }
+            finally
+            {
+                Processes.Kill(looping.Id);
+            }
+        }
+
         // A project file's problems are what the editor marks, at once: the C# server never takes the file, so a wait for
         // it to would have run out its two minutes.
         await Call(client, "open_file", new() { ["path"] = "Sum.csproj", ["line"] = 7, ["column"] = 1 });
@@ -214,9 +248,9 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     public async Task An_agents_run_refused_for_anything_but_its_own_failed_build_names_no_build_errors()
     {
         Write("Program.cs", "int count = \"three\";\nConsole.WriteLine(count);\n");
-        Directory.CreateDirectory(Path.Combine(folder, "Properties"));
-        File.WriteAllText(Path.Combine(folder, "Properties", "launchSettings.json"), "{\n  \"profiles\": {\n    \"Jobs\": { \"commandName\": \"RetryFailed\" }\n  }\n}\n");
-        await using McpClient client = await Start(["--mcp", folder]);
+        Directory.CreateDirectory(Path.Combine(Folder, "Properties"));
+        File.WriteAllText(Path.Combine(Folder, "Properties", "launchSettings.json"), "{\n  \"profiles\": {\n    \"Jobs\": { \"commandName\": \"RetryFailed\" }\n  }\n}\n");
+        await using McpClient client = await Start(["--mcp", Folder]);
         JsonElement built = await Call(client, "build");
         JsonElement error = built.GetProperty("problems").EnumerateArray().FirstOrDefault(p => p.GetProperty("severity").GetString() == "error");
         Assert.True(!built.GetProperty("succeeded").GetBoolean() && error.ValueKind == JsonValueKind.Object, $"The build of a string given to an int did not fail with an error: {built}");
@@ -276,12 +310,12 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     public async Task An_agents_stop_ends_a_debug_session_whose_program_is_still_starting()
     {
         using Debugging.Helpers.StartHold hold = new();
-        Directory.CreateDirectory(Path.Combine(folder, "Properties"));
-        File.WriteAllText(Path.Combine(folder, "Properties", "launchSettings.json"), JsonSerializer.Serialize(new Dictionary<string, object>
+        Directory.CreateDirectory(Path.Combine(Folder, "Properties"));
+        File.WriteAllText(Path.Combine(Folder, "Properties", "launchSettings.json"), JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["profiles"] = new Dictionary<string, object> { ["Held"] = new Dictionary<string, object> { ["commandName"] = "Project", ["environmentVariables"] = hold.Environment } },
         }));
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
         Task<int> held = hold.Held(TimeSpan.FromMinutes(3));
         Task<CallToolResult> debugging = Result(client, "debug_start", new() { ["configuration"] = "Sum: Held" });
         int program = 0;
@@ -438,89 +472,11 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>Git's tools on a repository, a merge stopped for a conflict among them: the agent finds it in vcs_status as
+    /// the Conflicts dialog lists it (what is under way, each side's branch, what each did to the file; ConflictsTests resolve
+    /// it in the window), resolves it with theirs, and its commit finishes the merge; and a command in the IDE's terminal.</summary>
     [Fact]
-    public async Task An_agent_attaches_to_a_program_already_running_stops_it_at_a_breakpoint_and_detaches_leaving_it_running()
-    {
-        // Started by the test as a terminal would start it, in its loop when it says so.
-        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost("LoopingConsoleApp"), ["sleep"]);
-        start.RedirectStandardOutput = true;
-        using Process looping = ChildProcesses.Start(start);
-        try
-        {
-            Assert.Equal("looping", looping.StandardOutput.ReadLine());
-            await using McpClient client = await Start(["--mcp", folder]);
-            JsonElement listed = Assert.Single((await Call(client, "debug_processes")).EnumerateArray(), p => p.GetProperty("processId").GetInt32() == looping.Id);
-            Assert.Equal("LoopingConsoleApp", listed.GetProperty("program").GetString());
-
-            string source = Debugging.Helpers.Debuggees.Source("LoopingConsoleApp", "Program.cs");
-            int line = Debugging.Helpers.Debuggees.Line("LoopingConsoleApp", "turns++;");
-            await Call(client, "breakpoint_set", new() { ["path"] = source, ["line"] = line });
-            JsonElement stop = await Call(client, "debug_attach", new() { ["processId"] = looping.Id });
-            Assert.Equal("paused", stop.GetProperty("state").GetString());
-            Assert.Equal("breakpoint", stop.GetProperty("reason").GetString());
-            Assert.EndsWith($"Program.cs:{line}:5", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
-            Assert.True(long.TryParse(Local(stop, "turns"), out long turns) && turns >= 0, $"The stop's locals had no count of turns: {stop}");
-
-            // Let go, the program runs on in its loop, which the debugger no longer stops.
-            Assert.Equal("Detached from LoopingConsoleApp, which runs on", (await Call(client, "debug_detach")).GetString());
-            Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
-            Assert.False(looping.WaitForExit(TimeSpan.FromSeconds(2)), "The program the agent detached from ended");
-        }
-        finally
-        {
-            Processes.Kill(looping.Id);
-        }
-    }
-
-    [Fact]
-    public async Task An_agent_sets_an_exception_breakpoint_on_a_type_and_the_program_stops_where_that_type_is_thrown()
-    {
-        Write("Program.cs", "for (int turn = 1; turn <= 2; turn++)\n{\n    try { throw new ArgumentException(\"argument\"); } catch (ArgumentException) { }\n"
-            + "    try { throw new InvalidOperationException($\"operation {turn}\"); } catch (InvalidOperationException) { }\n}\nConsole.WriteLine(\"done\");\n");
-        await using McpClient client = await Start(["--mcp", folder]);
-        await Call(client, "breakpoint_set", new() { ["exception"] = "System.InvalidOperationException" });
-        // Listed with Rider's "Any exception", the new one in every scenario as Rider sets one on a type.
-        JsonElement[] exceptions = [.. (await Call(client, "breakpoints")).EnumerateArray()
-            .Where(b => b.TryGetProperty("exception", out JsonElement type) && type.ValueKind == JsonValueKind.String)];
-        Assert.Equal(["Any exception", "System.InvalidOperationException"], exceptions.Select(b => b.GetProperty("exception").GetString()));
-        Assert.Equal(["thrownInUserCode", "thrownInExternalCode", "handledInUserCode", "handledInExternalCode", "unhandled"],
-            exceptions[1].GetProperty("scenarios").EnumerateArray().Select(s => s.GetString()));
-
-        // The argument exception passes; the stop is the first turn's, at the line that throws the type named.
-        JsonElement stop = await Call(client, "debug_start");
-        Assert.Equal("exception", stop.GetProperty("reason").GetString());
-        Assert.StartsWith("System.InvalidOperationException: operation 1", stop.GetProperty("exception").GetString(), StringComparison.Ordinal);
-        Assert.StartsWith("Program.cs:4:", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
-
-        // Removed while paused, it lets the second turn's pass: the program runs to its end.
-        await Call(client, "breakpoint_remove", new() { ["exception"] = "System.InvalidOperationException" });
-        stop = await Call(client, "debug_continue");
-        Assert.Equal("not debugging", stop.GetProperty("state").GetString());
-        Assert.Contains("done", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
-    }
-
-    /// <summary>Run to Cursor and Set Next Statement for an agent: the program run on to a line, then moved back to do a line again.</summary>
-    [Fact]
-    public async Task An_agent_runs_the_program_on_to_a_line_and_moves_it_back_to_do_a_line_again()
-    {
-        Write("Program.cs", "int total = 0;\ntotal += 1;\ntotal += 10;\ntotal += 100;\nConsole.WriteLine($\"total {total}\");\n");
-        await using McpClient client = await Start(["--mcp", folder]);
-        await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 2 });
-        Assert.StartsWith("Program.cs:2:", (await Call(client, "debug_start")).GetProperty("location").GetString(), StringComparison.Ordinal);
-
-        JsonElement ranTo = await Call(client, "debug_run_to", new() { ["path"] = "Program.cs", ["line"] = 4 });
-        Assert.StartsWith("Program.cs:4:", ranTo.GetProperty("location").GetString(), StringComparison.Ordinal);
-        Assert.Equal("11", Local(ranTo, "total"));
-        JsonElement moved = await Call(client, "debug_set_next_statement", new() { ["path"] = "Program.cs", ["line"] = 3 });
-        Assert.StartsWith("Program.cs:3:", moved.GetProperty("location").GetString(), StringComparison.Ordinal);
-        Assert.Equal("11", Local(moved, "total"));
-
-        Assert.Equal("not debugging", (await Call(client, "debug_continue")).GetProperty("state").GetString());
-        Assert.Contains("total 121", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task An_agent_reads_and_commits_changes_and_runs_a_command_in_the_ides_terminal()
+    public async Task An_agent_reads_and_commits_changes_resolves_a_merges_conflict_and_runs_a_command_in_the_ides_terminal()
     {
         string repository = TestFolders.Create("mcp-git-");
         try
@@ -557,6 +513,31 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             Assert.True(File.Exists(Path.Combine(repository, "Notes.txt")), "Checking out the branch --orphan=x emptied the working tree");
             Assert.Equal("main", (await Call(client, "vcs_status")).GetProperty("branch").GetString());
 
+            // A merge stopped for its conflict: listed, a commit refused while it stands, resolved with theirs, then committed.
+            string notes = Path.Combine(repository, "Notes.txt");
+            TestGit.Run(repository, "switch", "-q", "-c", "feature");
+            File.WriteAllText(notes, "one\nTWO\nthree\n");
+            TestGit.Run(repository, "commit", "-q", "-am", "Two in capitals");
+            TestGit.Run(repository, "switch", "-q", "main");
+            File.WriteAllText(notes, "one\nII\nthree\n");
+            TestGit.Run(repository, "commit", "-q", "-am", "Two in Roman");
+            ChildResult merging = await ChildProcesses.RunAsync(ChildProcesses.Command("git", ["merge", "feature"], repository), limit: TimeSpan.FromMinutes(1), cancel: Cancel);
+            Assert.False(merging.Succeeded, $"The merge was to stop for its conflict: {merging.Output}");
+            JsonElement conflicts = (await Call(client, "vcs_status")).GetProperty("conflicts");
+            Assert.Equal("Merging branch feature into branch main", conflicts.GetProperty("operation").GetString());
+            Assert.Equal(("main", "feature"), (conflicts.GetProperty("yours").GetString(), conflicts.GetProperty("theirs").GetString()));
+            JsonElement conflicted = Assert.Single(conflicts.GetProperty("files").EnumerateArray());
+            Assert.Equal(("Notes.txt", "modified", "modified"), (conflicted.GetProperty("path").GetString(), conflicted.GetProperty("yours").GetString(), conflicted.GetProperty("theirs").GetString()));
+            CallToolResult early = await Result(client, "vcs_commit", new() { ["message"] = "Half a merge" });
+            Assert.True(early.IsError == true, "A commit was made with a file still in conflict");
+            Assert.Equal("Notes.txt resolved; no conflicts are left", (await Call(client, "vcs_resolve", new() { ["path"] = "Notes.txt", ["take"] = "theirs" })).GetString());
+            Assert.Equal("one\nTWO\nthree\n", File.ReadAllText(notes));
+            JsonElement resolved = await Call(client, "vcs_status");
+            Assert.True(!resolved.TryGetProperty("conflicts", out JsonElement left) || left.ValueKind == JsonValueKind.Null, $"vcs_status still lists conflicts: {left}");
+            await Call(client, "vcs_commit", new() { ["message"] = "Merge feature" });
+            Assert.Equal(3, TestGit.Run(repository, "rev-list", "--parents", "-n", "1", "HEAD").Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
+            Assert.Equal("one\nTWO\nthree\n", TestGit.Run(repository, "show", "HEAD:Notes.txt"));
+
             // The IDE's own terminal runs it in the folder, and its answer comes back.
             // Windows' own PowerShell (5.1, where pwsh is not installed) has no &&, and sh has no PowerShell subexpressions.
             string command = OperatingSystem.IsWindows() ? "echo (6*7); ls" : "echo $((6*7)) && ls";
@@ -580,50 +561,6 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
                 string past = (await Call(client, "terminal_run", new() { ["command"] = "echo one; echo two" })).GetString()!;
                 Assert.True(past.Contains("one\ntwo", StringComparison.Ordinal), $"past the scrollback's limit, terminal_run answered a command that printed one and two with:\n{past}");
             }
-        }
-        finally
-        {
-            TestFolders.Delete(repository);
-        }
-    }
-
-    /// <summary>A merge stopped for a conflict: the agent finds it in vcs_status as the Conflicts dialog lists it (what is
-    /// under way, each side's branch, what each did to the file), resolves it with theirs, and its commit finishes the merge.</summary>
-    [Fact]
-    public async Task An_agent_sees_a_merges_conflict_in_vcs_status_resolves_it_with_theirs_and_commits_the_merge()
-    {
-        string repository = TestFolders.Create("mcp-conflicts-");
-        try
-        {
-            string notes = Path.Combine(repository, "Notes.txt");
-            File.WriteAllText(notes, "one\ntwo\nthree\n");
-            TestGit.Init(repository);
-            TestGit.Run(repository, "switch", "-q", "-c", "feature");
-            File.WriteAllText(notes, "one\n2\nthree\n");
-            TestGit.Run(repository, "commit", "-q", "-am", "Two as a number");
-            TestGit.Run(repository, "switch", "-q", "main");
-            File.WriteAllText(notes, "one\nII\nthree\n");
-            TestGit.Run(repository, "commit", "-q", "-am", "Two in Roman");
-            ChildResult merging = await ChildProcesses.RunAsync(ChildProcesses.Command("git", ["merge", "feature"], repository), limit: TimeSpan.FromMinutes(1), cancel: Cancel);
-            Assert.False(merging.Succeeded, $"The merge was to stop for its conflict: {merging.Output}");
-
-            await using McpClient client = await Start(["--mcp", repository]);
-            JsonElement conflicts = (await Call(client, "vcs_status")).GetProperty("conflicts");
-            Assert.Equal("Merging branch feature into branch main", conflicts.GetProperty("operation").GetString());
-            Assert.Equal(("main", "feature"), (conflicts.GetProperty("yours").GetString(), conflicts.GetProperty("theirs").GetString()));
-            JsonElement file = Assert.Single(conflicts.GetProperty("files").EnumerateArray());
-            Assert.Equal(("Notes.txt", "modified", "modified"), (file.GetProperty("path").GetString(), file.GetProperty("yours").GetString(), file.GetProperty("theirs").GetString()));
-            CallToolResult early = await Result(client, "vcs_commit", new() { ["message"] = "Half a merge" });
-            Assert.True(early.IsError == true, "A commit was made with a file still in conflict");
-
-            Assert.Equal("Notes.txt resolved; no conflicts are left", (await Call(client, "vcs_resolve", new() { ["path"] = "Notes.txt", ["take"] = "theirs" })).GetString());
-            Assert.Equal("one\n2\nthree\n", File.ReadAllText(notes));
-            JsonElement status = await Call(client, "vcs_status");
-            Assert.True(!status.TryGetProperty("conflicts", out JsonElement left) || left.ValueKind == JsonValueKind.Null, $"vcs_status still lists conflicts: {left}");
-
-            await Call(client, "vcs_commit", new() { ["message"] = "Merge feature" });
-            Assert.Equal(3, TestGit.Run(repository, "rev-list", "--parents", "-n", "1", "HEAD").Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
-            Assert.Equal("one\n2\nthree\n", TestGit.Run(repository, "show", "HEAD:Notes.txt"));
         }
         finally
         {
@@ -705,7 +642,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [AvaloniaFact]
     public void What_an_agents_own_passenger_keeps_in_local_history_outlasts_the_persons_window_pruning_the_history()
     {
-        string notes = Path.Combine(folder, "Notes.txt");
+        string notes = Path.Combine(Folder, "Notes.txt");
         File.WriteAllText(notes, "first draft\n");
         long[] clock = [new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero).UtcTicks];
         DateTimeOffset Now() => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero);
@@ -713,8 +650,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = Now };
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, HistoryKeeping = day };
         window.Show();
-        window.OpenFolder(folder);
-        window.OpenFile(Path.Combine(folder, "Helper.cs"));
+        window.OpenFolder(Folder);
+        window.OpenFile(Path.Combine(Folder, "Helper.cs"));
         Ui.Settle();
         void SaveEdit(string comment)
         {
@@ -731,7 +668,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
 
         // The agent's Passenger, on the same folder and state, changes a file the person never opened.
-        McpClient client = Await(Task.Run(() => Start(["--mcp", folder])), "the agent's Passenger starting");
+        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder])), "the agent's Passenger starting");
         try
         {
             Await(Task.Run(() => Call(client, "open_file", new() { ["path"] = "Notes.txt" })), "the agent opening Notes.txt");
@@ -762,7 +699,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
 
         MainWindow again = new() { Width = 1200, Height = 800, StateFolder = settings, HistoryKeeping = day };
         again.Show();
-        again.OpenFolder(folder);
+        again.OpenFolder(Folder);
         Ui.Settle();
         try
         {
@@ -787,19 +724,19 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     public void Labels_an_agents_passenger_puts_as_the_persons_window_prunes_the_shared_history_are_all_kept()
     {
         // Hours of earlier labels, which both keep, so each prune reads and writes the log at length.
-        string log = Path.Combine(global::Passenger.App.State.ProjectState.FolderOf(settings, PathNames.Canonical(folder)), "localHistory", "changes.log");
+        string log = Path.Combine(global::Passenger.App.State.ProjectState.FolderOf(settings, PathNames.Canonical(Folder)), "localHistory", "changes.log");
         Directory.CreateDirectory(Path.GetDirectoryName(log)!);
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         const int Earlier = 40_000;
         File.WriteAllText(log, string.Concat(Enumerable.Range(0, Earlier).Select(i =>
             $"{{\"s\":{(now - 100_000_000) * 1000 + i},\"t\":{now - ((Earlier - i) * 200L)},\"k\":\"label\",\"n\":\"earlier {i}\"}}\n")));
-        McpClient client = Await(Task.Run(() => Start(["--mcp", folder])), "the agent's Passenger starting");
+        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder])), "the agent's Passenger starting");
         long[] clock = [new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero).UtcTicks];
         global::Passenger.App.History.HistoryKeeping day = new(Days: 1) { Clock = () => new(Interlocked.Read(ref clock[0]), TimeSpan.Zero) };
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, HistoryKeeping = day };
         window.Show();
-        window.OpenFolder(folder);
-        window.OpenFile(Path.Combine(folder, "Helper.cs"));
+        window.OpenFolder(Folder);
+        window.OpenFile(Path.Combine(Folder, "Helper.cs"));
         Ui.Settle();
         try
         {
@@ -848,7 +785,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [AvaloniaFact]
     public void An_agents_action_no_action_has_or_one_that_cannot_run_here_is_an_error_saying_why()
     {
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
         {
@@ -883,7 +820,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [AvaloniaFact]
     public void An_agents_diagnostics_for_a_project_file_come_from_its_own_checks_while_a_build_runs()
     {
-        File.WriteAllText(Path.Combine(folder, "Directory.Build.targets"), """
+        File.WriteAllText(Path.Combine(Folder, "Directory.Build.targets"), """
             <Project>
               <Target Name="Slow" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('slow')">
                 <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; slow.pid; exec sleep 120" />
@@ -891,17 +828,17 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
               </Target>
             </Project>
             """);
-        File.WriteAllText(Path.Combine(folder, "slow"), string.Empty);
-        MainWindow window = AgentsWindow(folder);
+        File.WriteAllText(Path.Combine(Folder, "slow"), string.Empty);
+        MainWindow window = AgentsWindow(Folder);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         int step = 0;
         try
         {
             Assert.True(window.Perform(AppActions.Build));
-            step = Processes.WrittenId(Path.Combine(folder, "slow.pid"), "the build's slow step to start");
+            step = Processes.WrittenId(Path.Combine(Folder, "slow.pid"), "the build's slow step to start");
 
             // The person types an import that is not there into the project file, unsaved, as the build runs on.
-            window.OpenFile(Path.Combine(folder, "Sum.csproj"));
+            window.OpenFile(Path.Combine(Folder, "Sum.csproj"));
             window.EditorArea.CodeEditor.GoTo(new Passenger.Text.TextPosition(6, 0));
             window.KeyTextInput("<Import Project=\"Missing.props\" />");
             Stopwatch asked = Stopwatch.StartNew();
@@ -931,7 +868,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [AvaloniaFact]
     public void An_agents_call_that_meets_a_fault_of_the_IDEs_is_answered_with_it_and_logged()
     {
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         window.Actions.Add(new IdeAction("tests.fault", "Fault", "Tests", _ => throw new NullReferenceException("The fault's own words")));
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
@@ -966,7 +903,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [Fact]
     public async Task A_Passenger_killed_while_it_loads_runs_profiles_debugs_and_builds_a_project_leaves_none_of_it_running()
     {
-        Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{folder}\", args[0] + \".pid\"), Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{Folder}\", args[0] + \".pid\"), Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
         Write("Sum.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
@@ -985,14 +922,14 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             </Project>
             """);
         // No compiler server left for others' builds to use, which the kill would end under them (the IDE's nodes are its own).
-        Process passenger = StartPassenger(["--mcp", folder], environment: new() { ["UseSharedCompilation"] = "false" });
+        Process passenger = StartPassenger(["--mcp", Folder], environment: new() { ["UseSharedCompilation"] = "false" });
         List<int> started = [];
         Task<CallToolResult>? building = null;
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
         McpClient? client = null;
         try
         {
-            client = await Connect(passenger, ["--mcp", folder]);
+            client = await Connect(passenger, ["--mcp", Folder]);
             int load = await WrittenId("load.pid", "the language server's load of the project");
             await Call(client, "run", new() { ["arguments"] = "run", ["waitSeconds"] = 1 });
             int run = await WrittenId("run.pid", "the program Run started");
@@ -1000,7 +937,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             await Call(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
             await Call(client, "debug_start", new() { ["arguments"] = "debug", ["waitSeconds"] = 1 });
             int debugged = await WrittenId("debug.pid", "the program debugged");
-            File.WriteAllText(Path.Combine(folder, "linger"), string.Empty);
+            File.WriteAllText(Path.Combine(Folder, "linger"), string.Empty);
             // The build never ends: the test gives its call up once it has seen the step start.
             building = Result(client, "build", giveUp: giveUp);
             int build = await WrittenId("build.pid", "the build's step");
@@ -1054,7 +991,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     public async Task The_msbuild_nodes_a_build_leaves_for_the_next_end_with_passenger(bool killed)
     {
         Nice.SkipUnlessMSBuildKeepsNodes();
-        string two = Path.Combine(folder, "two");
+        string two = Path.Combine(Folder, "two");
         Directory.CreateDirectory(Path.Combine(two, "A"));
         Directory.CreateDirectory(Path.Combine(two, "B"));
         Write("two/Two.slnx", "<Solution>\n  <Project Path=\"A/A.csproj\" />\n  <Project Path=\"B/B.csproj\" />\n</Solution>\n");
@@ -1169,7 +1106,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     [AvaloniaFact]
     public void An_agent_attached_to_the_window_sets_a_breakpoint_the_person_sees()
     {
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         string program = Path.Combine(window.Folder!, "Program.cs");
         window.OpenFile(program);
         Ui.Settle();
@@ -1209,13 +1146,13 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
         window.KeepSettings();
-        window.OpenFolder(folder);
+        window.OpenFolder(Folder);
         Ui.Settle();
 
         // Off as the window opens: it listens all the same, and an agent's first call waits for the person to let it in.
         string socket = window.AgentSocket ?? throw new InvalidOperationException($"The window does not listen for agents: {window.Status}");
         Assert.Equal([socket], Sockets());
-        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", folder])), "the agent attaching");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", Folder])), "the agent attaching");
         McpClient? second = null;
         try
         {
@@ -1236,7 +1173,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             dialog.Change(s => s with { McpServer = true });
             dialog.Ok();
             Ui.Settle();
-            second = Await(Task.Run(() => Start(["--mcp-attach", folder])), "a second agent attaching");
+            second = Await(Task.Run(() => Start(["--mcp-attach", Folder])), "a second agent attaching");
             Assert.Equal(window.Folder, Await(Task.Run(() => Call(second, "workspace")), "the second agent's call").GetProperty("folder").GetString());
             Assert.Empty(window.OwnedWindows.OfType<AgentAdmissionDialog>());
             WaitFor(() => window.AgentStatus == "2 agents connected", "the status bar to count both agents");
@@ -1266,7 +1203,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     public void An_agent_asks_before_its_first_run_and_the_window_stops_waiting_when_it_gives_up_or_goes()
     {
         Write("Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         Dictionary<string, object?> run = new() { ["waitSeconds"] = 600 };
         try
@@ -1327,7 +1264,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     public async Task A_call_that_takes_a_while_tells_its_agent_what_it_is_doing_and_nothing_reaches_standard_error()
     {
         Write("Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
         Heard heard = new();
         CallToolResult ran = await Result(client, "run", new() { ["waitSeconds"] = 4 }, heard: heard);
         Assert.False(ran.IsError == true, $"run failed: {Text(ran)}{Said()}");
@@ -1343,14 +1280,17 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.True(Errors().Length == 0, $"The agent's Passenger wrote to its standard error, which an agent may never read:\n{string.Join('\n', Errors())}");
     }
 
-    /// <summary>An agent runs and debugs a configuration that uses the terminal: run answers with what the program's tab of
-    /// the Terminal window shows, stop ends it, debug_start stops at a breakpoint on Main's first line before any of it
-    /// runs, debug_input types into its tab, and debug_output reads the tab, the program's end in it.</summary>
+    /// <summary>On the person's window an agent is asked once, the first time, before it runs a configuration, sets a
+    /// breakpoint (whose condition runs in their later sessions too), debugs, evaluates code in the paused program, sets a
+    /// value there or types into its input; saving and stopping are never asked about. The configuration uses the terminal
+    /// (DebuggerTests and TerminalTests run and debug one there through the window): run answers with what the program's tab
+    /// shows, debug_start stops at a breakpoint on Main's first line, debug_input types into its tab, and debug_output reads
+    /// the tab, the program's end in it.</summary>
     [AvaloniaFact]
-    public void An_agent_runs_and_debugs_a_configuration_that_uses_the_terminal_and_types_into_its_tab()
+    public void An_agent_is_asked_once_before_it_first_runs_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_a_program_in_the_terminal()
     {
         Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         window.SetConfigurations([new global::Passenger.App.Run.RunConfiguration
         {
             Name = "In the terminal",
@@ -1360,26 +1300,33 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
         {
-            Task<JsonElement> running = Task.Run(() => Call(client, "run", new() { ["waitSeconds"] = 5 }));
-            Press(Question(window, "the question for the agent's run"), "Allow");
-            JsonElement ran = Await(running, "the agent's run");
+            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
+            JsonElement ran = Asked(window, client, "run", "run a configuration", new() { ["waitSeconds"] = 5 });
             string output = ran.GetProperty("output").GetString()!;
             Assert.True(ran.GetProperty("stillRunning").GetBoolean() && output.Contains("red at the third row's fifth column", StringComparison.Ordinal),
                 $"The run in the terminal was answered without the program waiting for its key in its tab: {ran}");
-            Assert.Equal("Stopped", Await(Task.Run(() => Call(client, "stop")), "the agent's stop").GetString());
+            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
             WaitFor(() => window.RunInTerminal is { IsRunning: false }, "the program in the terminal to end");
 
             Asked(window, client, "breakpoint_set", "set a breakpoint", new() { ["path"] = "Program.cs", ["line"] = 1 });
-            Task<JsonElement> debugging = Task.Run(() => Call(client, "debug_start"));
-            Press(Question(window, "the question for the agent's debug"), "Allow");
-            JsonElement stop = Await(debugging, "the stop");
+            Unasked(window, client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 24 });
+            JsonElement stop = Asked(window, client, "debug_start", "debug a configuration");
             Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.StartsWith("Program.cs:1:", StringComparison.Ordinal),
                 $"Debugged in the terminal, the program did not stop on Main's first line: {stop}");
+            Assert.Equal("42", Asked(window, client, "debug_evaluate", "evaluate an expression", new() { ["expression"] = "6 * 7" }).GetProperty("value").GetString());
+            Assert.Equal("0", Unasked(window, client, "debug_evaluate", new() { ["expression"] = "args.Length" }).GetProperty("value").GetString());
+            string set = Asked(window, client, "debug_set_value", "set a value", new() { ["expression"] = "line", ["value"] = "\"forty\"" }).GetProperty("value").GetString()!;
+            Assert.Contains("forty", set, StringComparison.Ordinal);
+            set = Unasked(window, client, "debug_set_value", new() { ["expression"] = "line", ["value"] = "\"again\"" }).GetProperty("value").GetString()!;
+            Assert.Contains("again", set, StringComparison.Ordinal);
+
+            // Let go, it asks for a key in its tab, which the agent types there, then a line.
             Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint's removal");
+            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 24 })), "the other breakpoint's removal");
             Await(Task.Run(() => Call(client, "debug_continue", new() { ["waitSeconds"] = 1 })), "the program let go");
             WaitFor(() => window.Debugger.Session?.Terminal?.Session.Screen.Lines.Any(l => l.Text() == "key?") == true, "the program to ask for a key in its tab");
             Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "q", ["newline"] = false });
-            Await(Task.Run(() => Call(client, "debug_input", new() { ["text"] = "hello" })), "the line typed");
+            Unasked(window, client, "debug_input", new() { ["text"] = "hello" });
             WaitFor(() => !window.Debugger.IsDebugging && window.Debugger.Session?.Terminal?.Ended.IsCompleted == true, "the program's end");
             string shown = Await(Task.Run(() => Call(client, "debug_output")), "the program's output").GetString()!;
             Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
@@ -1396,87 +1343,33 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
-    /// <summary>On the person's window an agent is asked once, the first time, before it sets a breakpoint (whose condition
-    /// runs in their later sessions too), evaluates code in the paused program, sets a value there or types into its input;
-    /// saving and stopping are never asked about.</summary>
+    /// <summary>Each solution window of one Passenger listens for agents on a socket of its own, the second opened by File,
+    /// Open in a window of its own as Settings says and letting agents in as the first does; an agent started in either's
+    /// folder reaches that window, and a window closing takes its own socket alone.</summary>
     [AvaloniaFact]
-    public void An_agent_is_asked_once_before_it_first_sets_a_breakpoint_evaluates_sets_a_value_or_types_into_the_debugged_program()
+    public void Each_solution_window_has_its_own_socket_and_an_agent_attaches_to_the_one_over_its_folder()
     {
-        MainWindow window = AgentsWindow(folder);
-        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
-        try
-        {
-            Assert.Equal("Nothing to save", Unasked(window, client, "save_all").GetString());
-            Asked(window, client, "breakpoint_set", "set a breakpoint", new() { ["path"] = "Program.cs", ["line"] = 4 });
-            Unasked(window, client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 6 });
-            JsonElement stop = Asked(window, client, "debug_start", "debug a configuration");
-            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.StartsWith("Program.cs:4:", StringComparison.Ordinal),
-                $"The agent's debug_start did not stop at its breakpoint: {stop}");
-
-            Assert.Equal("42", Asked(window, client, "debug_evaluate", "evaluate an expression", new() { ["expression"] = "Helper.Twice(i) + 40" }).GetProperty("value").GetString());
-            Assert.Equal("1", Unasked(window, client, "debug_evaluate", new() { ["expression"] = "i" }).GetProperty("value").GetString());
-            Assert.Equal("40", Asked(window, client, "debug_set_value", "set a value", new() { ["expression"] = "total", ["value"] = "40" }).GetProperty("value").GetString());
-            Assert.Equal("41", Unasked(window, client, "debug_set_value", new() { ["expression"] = "total", ["value"] = "41" }).GetProperty("value").GetString());
-            Asked(window, client, "debug_input", "type into the program's console", new() { ["text"] = "hello" });
-            Unasked(window, client, "debug_input", new() { ["text"] = "again" });
-
-            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
-            WaitFor(() => !window.Debugger.IsDebugging, "the debugging the agent stopped to end");
-        }
-        finally
-        {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
-            window.Close();
-        }
-    }
-
-    [AvaloniaFact]
-    public void An_agent_attaches_to_the_second_solution_window_of_one_Passenger_by_its_folder()
-    {
-        string other = TestFolders.Create("mcp-second-");
-        File.WriteAllText(Path.Combine(other, "Notes.txt"), "notes\n");
+        string own = Plain("mcp-first-");
+        Directory.CreateDirectory(Path.Combine(own, "Inner"));
+        string other = Plain("mcp-second-");
         MainWindow first = new() { Width = 1200, Height = 800, StateFolder = settings };
         first.Show();
         first.KeepLayout();
         first.KeepSettings();
-        first.Start(LaunchOptions.Empty with { Folder = folder });
+        first.Start(LaunchOptions.Empty with { Folder = own });
         Ui.Settle();
         first.ApplySettings(first.Settings with { McpServer = true, OpenProjectIn = OpenProjectIn.NewWindow });
-
-        // File, Open of another folder, in a window of its own as Settings says: it lets agents in as the first does.
         Assert.Null(first.Open(other));
         Ui.Settle();
         MainWindow second = Assert.Single(PassengerApp.Windows, w => w != first);
         Assert.Equal(PathNames.Canonical(other), second.Folder);
-        Assert.True(first.AgentSocket is not null && second.AgentSocket is not null && first.AgentSocket != second.AgentSocket,
-            $"Each solution window of the one Passenger was to listen for agents on a socket of its own: {first.AgentSocket}, {second.AgentSocket}");
-
-        // An agent started in either's folder reaches that window.
-        Assert.Equal(second.Folder, AttachedFolder(other));
-        Assert.Equal(first.Folder, AttachedFolder(folder));
-        second.Close();
-        first.Close();
-    }
-
-    [AvaloniaFact]
-    public void Each_window_has_its_own_socket_and_an_agent_attaches_to_the_one_over_its_folder()
-    {
-        string other = TestFolders.Create("mcp-other-");
-        File.WriteAllText(Path.Combine(other, "Notes.txt"), "notes\n");
-        Directory.CreateDirectory(Path.Combine(folder, "Inner"));
-        MainWindow first = AgentsWindow(folder);
-        MainWindow second = AgentsWindow(other);
-        string firstSocket = first.AgentSocket!;
-        string secondSocket = second.AgentSocket!;
+        string firstSocket = first.AgentSocket ?? throw new InvalidOperationException($"The first window does not listen for agents: {first.Status}");
+        string secondSocket = second.AgentSocket ?? throw new InvalidOperationException($"The window File, Open opened does not listen for agents: {second.Status}");
         Assert.NotEqual(firstSocket, secondSocket);
         Assert.Equal(new[] { firstSocket, secondSocket }.Order(StringComparer.Ordinal), Sockets().Order(StringComparer.Ordinal));
 
         // Started in the first window's folder (deep in it), the agent reaches that window though the second is newer.
-        Assert.Equal(first.Folder, AttachedFolder(Path.Combine(folder, "Inner")));
+        Assert.Equal(first.Folder, AttachedFolder(Path.Combine(own, "Inner")));
         Assert.Equal(second.Folder, AttachedFolder(other));
 
         // One window closing takes its own socket, not the other's.
@@ -1558,7 +1451,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             Write($"Uses{file}.cs", text.Append("        return total;\n    }\n}\n").ToString());
         }
         Write("Notes.txt", string.Empty);
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         window.OpenFile(Path.Combine(window.Folder!, "Helper.cs"));
         window.OpenFile(Path.Combine(window.Folder!, "Notes.txt"));
         window.EditorArea.CodeEditor.Focus();
@@ -1614,8 +1507,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
     }
 
+    /// <summary>Started as the Finder or the Dock start it, Passenger runs the git its login shell's PATH finds, though the
+    /// profile leaves a job running, and no git it starts waits on that job.</summary>
     [Fact]
-    public async Task Started_as_the_Finder_starts_it_Passenger_runs_the_git_the_login_shell_finds()
+    public async Task A_login_profile_that_leaves_a_job_running_holds_up_no_git_Passenger_starts()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -1623,34 +1518,13 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             return;
         }
         string home = TestFolders.Create("home-");
-        try
-        {
-            string used = ProfileGit(home);
-            TestGit.Run(folder, "init", "-q");
-            await using McpClient client = await Start(["--mcp", folder], environment: Launchd(home));
-            await Call(client, "vcs_status");
-            Assert.True(File.Exists(used), "Passenger ran a git other than the one its login shell's PATH finds");
-        }
-        finally
-        {
-            TestFolders.Delete(home);
-        }
-    }
-
-    [Fact]
-    public async Task A_login_profile_that_leaves_a_job_running_holds_up_no_git_Passenger_starts()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-        string home = TestFolders.Create("home-");
+        string repository = TestFolders.Create("mcp-shell-");
         try
         {
             // As `some-daemon &` in a profile: the job keeps the shell's output open long after the shell has ended.
             string used = ProfileGit(home, "sleep 300 &\n");
-            TestGit.Run(folder, "init", "-q");
-            await using McpClient client = await Start(["--mcp", folder], environment: Launchd(home));
+            TestGit.Run(repository, "init", "-q");
+            await using McpClient client = await Start(["--mcp", repository], environment: Launchd(home));
             await Call(client, "vcs_status");
             Assert.True(File.Exists(used), "With a job its profile left running, Passenger never took the login shell's PATH, and ran a git other than the one it finds");
 
@@ -1664,6 +1538,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         finally
         {
             TestFolders.Delete(home);
+            TestFolders.Delete(repository);
         }
     }
 
@@ -1830,7 +1705,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     {
         try
         {
-            return await Processes.WrittenIdAsync(Path.Combine(folder, file), what);
+            return await Processes.WrittenIdAsync(Path.Combine(Folder, file), what);
         }
         catch (TimeoutException waited)
         {
@@ -2054,7 +1929,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             ? local.GetProperty("value").GetString()
             : null;
 
-    private void Write(string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
+    private void Write(string relative, string text) => File.WriteAllText(Path.Combine(Folder, relative), text);
 
     /// <summary>A working tree under a folder (work), one commit in and Notes.txt changed since, whose origin is a bare
     /// repository beside it (remote.git) that refuses every push when <paramref name="refusing"/>, its pre-receive hook

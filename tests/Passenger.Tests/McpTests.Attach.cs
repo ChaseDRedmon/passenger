@@ -149,7 +149,7 @@ public sealed partial class McpTests
     [InlineData(true)]
     public void An_attached_diagnostic_stops_waiting_on_a_suspended_server_when_cancelled_or_shut_out(bool revokeConnection)
     {
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         McpClient? client = null;
         int suspended = 0;
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
@@ -157,7 +157,7 @@ public sealed partial class McpTests
         {
             window.OpenFile(Path.Combine(window.Folder!, "Helper.cs"));
             Ui.Settle();
-            client = Await(Task.Run(() => Start(["--mcp-attach", folder])), "the agent attaching");
+            client = Await(Task.Run(() => Start(["--mcp-attach", Folder])), "the agent attaching");
             Await(Task.Run(() => Call(client, "diagnostics", new() { ["path"] = "Helper.cs" })), "the language server loading the sample");
             Ui.Settle();
             Assert.DoesNotContain(InFlight.Now(), piece => piece.What.Contains("textDocument/diagnostic", StringComparison.Ordinal));
@@ -429,10 +429,10 @@ public sealed partial class McpTests
     [AvaloniaFact]
     public void An_agent_on_an_older_protocol_is_answered_in_its_own_version_through_attach()
     {
-        string folder = Plain("mcp-older-");
+        string older = Plain("mcp-older-");
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
-        window.OpenFolder(folder);
+        window.OpenFolder(older);
         Ui.Settle();
         window.ApplySettings(window.Settings with { McpServer = true });
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId], protocol: "2025-11-25")), "the agent attaching");

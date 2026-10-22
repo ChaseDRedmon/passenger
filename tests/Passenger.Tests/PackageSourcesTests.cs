@@ -176,9 +176,12 @@ public sealed class PackageSourcesTests : IDisposable
         window.Close();
     }
 
+    /// <summary>The feed written in, the rest of the file as it was, and Local History keeping the file as it was before, as
+    /// it keeps every write of the IDE's.</summary>
     [AvaloniaFact]
-    public void Adding_a_feed_in_sources_writes_it_into_the_solutions_nuget_config_keeping_the_rest_of_the_file()
+    public void Adding_a_feed_in_sources_writes_it_into_the_solutions_nuget_config_keeping_the_rest_of_the_file_and_its_history()
     {
+        byte[] bytes = File.ReadAllBytes(config);
         string before = File.ReadAllText(config);
         MainWindow window = Open();
         NuGetView nuget = window.NuGet;
@@ -197,27 +200,8 @@ public sealed class PackageSourcesTests : IDisposable
         string expected = before.Replace(line + "\n", line + "\n    <add key=\"team\" value=\"https://nuget.example.com/v3/index.json\" />\n", StringComparison.Ordinal);
         Assert.True(File.ReadAllText(config) == expected, $"Adding the feed made the file:\n{File.ReadAllText(config)}\nnot:\n{expected}");
         Assert.True(FeedRows(nuget).SequenceEqual(["local", "private", "team"]), $"The Sources tab shows [{string.Join(", ", FeedRows(nuget))}] after the add");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_feed_added_in_sources_leaves_the_nuget_config_as_it_was_in_Local_History_as_every_write_of_the_IDE_does()
-    {
-        byte[] before = File.ReadAllBytes(config);
-        MainWindow window = Open();
-        NuGetView nuget = window.NuGet;
-        ShowSources(nuget);
-        Descendants<Button>(nuget.Sources).Single(b => b.Name == "AddFeed").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
-        FeedDialog dialog = Assert.Single(window.OwnedWindows.OfType<FeedDialog>());
-        dialog.FeedName = "team";
-        dialog.Url = "https://nuget.example.com/v3/index.json";
-        Descendants<Button>(dialog).Single(b => (string?)b.Content == "OK").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Landed(() => nuget.FeedChoices.Contains("team"), "the new feed in the chooser");
-
-        Assert.Contains("<add key=\"team\" value=\"https://nuget.example.com/v3/index.json\" />", File.ReadAllText(config), StringComparison.Ordinal);
         string path = Passenger.Core.PathNames.Canonical(config);
-        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == path && e.Before is { } hash && window.LocalHistory.Content(hash) is { } kept && kept.AsSpan().SequenceEqual(before)),
+        Ui.WaitFor(() => window.LocalHistory!.Snapshot().Events.Any(e => e.Path == path && e.Before is { } hash && window.LocalHistory.Content(hash) is { } kept && kept.AsSpan().SequenceEqual(bytes)),
             "Local History to keep the nuget.config as it was before the feed went in");
         window.Close();
     }

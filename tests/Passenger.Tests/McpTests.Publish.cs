@@ -10,7 +10,7 @@ public sealed partial class McpTests
     [Fact]
     public async Task An_agent_publishes_a_project_and_is_told_the_folder_it_landed_in_or_why_not()
     {
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
         JsonElement published = await Call(client, "build", new() { ["publish"] = "Sum" });
         Assert.True(published.GetProperty("succeeded").GetBoolean(), $"The publish ended: {published}");
         string landed = published.GetProperty("folder").GetString() ?? string.Empty;

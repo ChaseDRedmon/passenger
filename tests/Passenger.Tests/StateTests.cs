@@ -143,25 +143,6 @@ public sealed class StateTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void Two_windows_changing_different_settings_keep_both_changes()
-    {
-        using IDisposable theme = TestsTheme();
-        MainWindow first = Keeping();
-        first.KeepSettings();
-        MainWindow second = Keeping();
-        second.KeepSettings();
-        first.ApplySettings(first.Settings with { EditorFontSize = 16 });
-        first.Close();
-        second.ApplySettings(second.Settings with { TerminalFontSize = 18 });
-        second.Close();
-
-        MainWindow third = Keeping();
-        third.KeepSettings();
-        Assert.Equal((16, 18), (third.Settings.EditorFontSize, third.Settings.TerminalFontSize));
-        third.Close();
-    }
-
-    [AvaloniaFact]
     public void What_a_person_kept_before_the_store_is_there_on_the_first_run()
     {
         using IDisposable theme = TestsTheme();

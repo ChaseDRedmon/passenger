@@ -17,9 +17,13 @@ namespace Passenger.Tests;
 [Collection(Alone.Name)]
 public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder;
+    private readonly RestoredFolders folders;
+    private string? taken;
 
-    public WorkingActionsTests(RestoredFolders folders) => folder = folders.Take("working-", made =>
+    public WorkingActionsTests(RestoredFolders folders) => this.folders = folders;
+
+    /// <summary>The test's own solution's folder, restored, taken as its window opens: Fetch's test opens a repository instead.</summary>
+    private string Folder => taken ??= folders.Take("working-", made =>
     {
         Write(made, "Sample.slnx", "<Solution>\n  <Project Path=\"Hello/Hello.csproj\" />\n</Solution>\n");
         Write(made, "Hello/Hello.csproj",
@@ -28,7 +32,13 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         return Path.Combine(made, "Sample.slnx");
     });
 
-    public void Dispose() => TestFolders.Delete(folder);
+    public void Dispose()
+    {
+        if (taken is not null)
+        {
+            TestFolders.Delete(taken);
+        }
+    }
 
     [AvaloniaFact]
     public void Every_toolbar_button_runs_an_action_so_it_shows_that_actions_work()
@@ -143,7 +153,7 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
-        window.OpenFolder(folder);
+        window.OpenFolder(Folder);
         Ui.Settle();
         return window;
     }

@@ -18,7 +18,7 @@ public sealed partial class McpTests
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("agent", "echo agent-hello; trap 'exit 0' TERM; while true; do sleep 1; done");
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
 
         JsonElement listed = await Call(client, "containers");
         Assert.Equal("Ready", listed.GetProperty("status").GetString());
@@ -190,7 +190,7 @@ public sealed partial class McpTests
         string left = Docker.Container("left", "sleep 600", state, machine, gone);
         string living = Docker.Container("living", "sleep 600", labels);
         string elsewhere = Docker.Container("elsewhere", "sleep 600", state, $"{ContainerLabels.Machine}=0123456789abcdef", gone);
-        McpClient client = Await(Task.Run(() => Start(["--mcp", folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings })), "Passenger starting");
+        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings })), "Passenger starting");
         try
         {
             Ui.WaitFor(() => Docker.State(left) is null, $"{left}, labelled with this state and a process that is gone, removed as Passenger started",

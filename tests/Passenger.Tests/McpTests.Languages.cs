@@ -12,8 +12,10 @@ namespace Passenger.Tests;
 /// language lacks.</summary>
 public sealed partial class McpTests
 {
+    /// <summary>Avalonia's XAML, and a library type it names decompiled once across sessions, another version's decompiled
+    /// files unused for months pruned.</summary>
     [Fact]
-    public async Task An_agent_reads_navigates_renames_and_refactors_avalonia_xaml_through_passengers_own_xaml()
+    public async Task An_agent_reads_navigates_renames_and_refactors_avalonia_xaml_through_passengers_own_xaml_and_a_library_type_decompiled_once()
     {
         string gallery = Made("mcpaxaml-", made =>
         {
@@ -32,8 +34,19 @@ public sealed partial class McpTests
             File.WriteAllText(Path.Combine(made, "MainWindow.axaml.cs"), XamlTests.Gallery.CodeBehind);
             Restore.Run(made);
         });
-        await using McpClient client = await Start(["--mcp", gallery]);
+        // Another version's decompiled files, which no session has used for two months.
+        string stale = Path.Combine(settings, "MetadataAsSource", "Decompiled", "Avalonia.Controls", "0123456789abcdef");
+        Directory.CreateDirectory(stale);
+        File.WriteAllText(Path.Combine(stale, "Avalonia.Controls.StackPanel.cs"), "// Decompiled from a version long gone\n");
+        Directory.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromDays(60));
+        McpClient client = await Start(["--mcp", gallery]);
         string window = File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml"));
+
+        // A library type the window names, decompiled.
+        string decompiled = Assert.Single((await Call(client, "definition", At(window, "MainWindow.axaml", "<StackPan"))).EnumerateArray()).GetProperty("path").GetString()!;
+        Assert.EndsWith("Avalonia.Controls.StackPanel.cs", decompiled, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(stale), $"The decompiled files of a version unused for two months were kept: {stale}");
+        DateTime written = File.GetLastWriteTimeUtc(decompiled);
 
         // The element tree, each element with what names it.
         string outline = (await Call(client, "outline", new() { ["path"] = "MainWindow.axaml" })).GetString()!;
@@ -83,6 +96,17 @@ public sealed partial class McpTests
         Assert.Equal("Renamed Go to Start in 2 files: MainWindow.axaml, MainWindow.axaml.cs", renamed);
         Assert.Contains("Start.Content = \"Start\";", File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml.cs")), StringComparison.Ordinal);
         Assert.Contains("{Binding #Start.Content}", File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml")), StringComparison.Ordinal);
+        await client.DisposeAsync();
+
+        // A second session, as after a restart: the same version's file, not decompiled again.
+        window = File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml"));
+        await using (McpClient again = await Start(["--mcp", gallery]))
+        {
+            string second = Assert.Single((await Call(again, "definition", At(window, "MainWindow.axaml", "<StackPan"))).EnumerateArray()).GetProperty("path").GetString()!;
+            Assert.True(decompiled == second, $"The second session decompiled the type again into another folder: {second}, the first's {decompiled}");
+        }
+        Assert.True(File.GetLastWriteTimeUtc(decompiled) == written, "The second session wrote the decompiled file again");
+        Assert.Single(Directory.GetDirectories(Path.Combine(settings, "MetadataAsSource", "Decompiled", "Avalonia.Controls")));
     }
 
     [Fact]
@@ -271,43 +295,6 @@ public sealed partial class McpTests
     }
 
     /// <summary>A folder of the test's own, written (and restored) by <paramref name="write"/>, removed with the class.</summary>
-    [Fact]
-    public async Task A_library_type_is_decompiled_once_across_sessions_and_a_version_unused_for_months_is_pruned()
-    {
-        string gallery = Made("mcplib-", made =>
-        {
-            File.WriteAllText(Path.Combine(made, "Library.csproj"), AvaloniaApp.HeadlessProject());
-            File.WriteAllText(Path.Combine(made, "Program.cs"), "namespace Library;\n\npublic static class Program\n{\n    public static void Main()\n    {\n    }\n}\n");
-            File.WriteAllText(Path.Combine(made, "MainWindow.axaml"),
-                "<Window xmlns=\"https://github.com/avaloniaui\"\n        xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"\n        Title=\"Library\">\n    <StackPanel />\n</Window>\n");
-            Restore.Run(made);
-        });
-        string window = File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml"));
-        // Another version's decompiled files, which no session has used for two months.
-        string stale = Path.Combine(settings, "MetadataAsSource", "Decompiled", "Avalonia.Controls", "0123456789abcdef");
-        Directory.CreateDirectory(stale);
-        File.WriteAllText(Path.Combine(stale, "Avalonia.Controls.StackPanel.cs"), "// Decompiled from a version long gone\n");
-        Directory.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromDays(60));
-
-        string first;
-        await using (McpClient client = await Start(["--mcp", gallery]))
-        {
-            first = Assert.Single((await Call(client, "definition", At(window, "MainWindow.axaml", "<StackPan"))).EnumerateArray()).GetProperty("path").GetString()!;
-        }
-        Assert.EndsWith("Avalonia.Controls.StackPanel.cs", first, StringComparison.Ordinal);
-        Assert.False(Directory.Exists(stale), $"The decompiled files of a version unused for two months were kept: {stale}");
-        DateTime written = File.GetLastWriteTimeUtc(first);
-
-        // A second session, as after a restart: the same version's file, not decompiled again.
-        await using (McpClient again = await Start(["--mcp", gallery]))
-        {
-            string second = Assert.Single((await Call(again, "definition", At(window, "MainWindow.axaml", "<StackPan"))).EnumerateArray()).GetProperty("path").GetString()!;
-            Assert.True(first == second, $"The second session decompiled the type again into another folder: {second}, the first's {first}");
-        }
-        Assert.True(File.GetLastWriteTimeUtc(first) == written, "The second session wrote the decompiled file again");
-        Assert.Single(Directory.GetDirectories(Path.Combine(settings, "MetadataAsSource", "Decompiled", "Avalonia.Controls")));
-    }
-
     private string Made(string name, Action<string> write)
     {
         string made = PathNames.Canonical(TestFolders.Create(name));

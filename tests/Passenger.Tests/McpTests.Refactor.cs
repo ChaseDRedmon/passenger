@@ -12,8 +12,9 @@ namespace Passenger.Tests;
 
 /// <summary>Agents making the window's refactorings through refactor, attached to a person's window, which asks before the
 /// first: each kind's dialog described first and then applied with its options, on a small shop of files that call each
-/// other, every caller following; what the agent reads back and what is on disk after, the project still building, and
-/// the person's Undo taking each change back whole.</summary>
+/// other, every caller following; what the agent reads back and what is on disk after, the project still building after
+/// the member moves and the server's refactorings (RefactoringDialogsTests build after each of the dialogs' own), and the
+/// person's Undo taking each change back whole.</summary>
 public sealed partial class McpTests
 {
     private const string Calc = "namespace Shop;\n\npublic static class Calc\n{\n    public static int Scale(int value, int factor, int unused) => value * factor;\n\n"
@@ -47,7 +48,7 @@ public sealed partial class McpTests
     public void An_agent_changes_a_signature_for_every_caller_moves_types_and_extracts_an_interface_each_undone_whole_by_the_person()
     {
         Shop(("Calc.cs", Calc), ("Till.cs", Till), ("Report.cs", Report), ("Order.cs", Order), ("OrderBook.cs", OrderBook), ("Shapes.cs", Shapes));
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         List<string> asked = AnswerUndo(window);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
@@ -75,7 +76,6 @@ public sealed partial class McpTests
             Assert.Equal(Till.Replace("Calc.Scale(2, 3, 9) + Calc.Scale(4, factor: 5, unused: 1)", "Calc.Scale(3, 2, 0) + Calc.Scale(factor: 5, 4, 0)", StringComparison.Ordinal),
                 File.ReadAllText(PathOf("Till.cs")));
             Assert.Equal(Report.Replace("Calc.Scale(1, 1, 1)", "Calc.Scale(1, 1, 0)", StringComparison.Ordinal), File.ReadAllText(PathOf("Report.cs")));
-            Builds("Change Signature");
 
             // The person's Undo, in the file the agent changed, takes the declaration and every call back at once.
             UndoInEditor(window, "Calc.cs");
@@ -111,7 +111,6 @@ public sealed partial class McpTests
             // Both at once is refused, saying how to do it; the files stay as they are.
             CallToolResult both = Await(Task.Run(() => Result(client, "refactor", Place("move", "Shapes.cs", File.ReadAllText(PathOf("Shapes.cs")), "class Squ", new { file = "Square.cs", @namespace = "Shop.Shapes" }))), "a move to a file and a namespace at once");
             Assert.True(both.IsError == true && Text(both).Contains("one at a time", StringComparison.Ordinal), $"A move to a file and a namespace at once answered: {Text(both)}");
-            Builds("Extract Interface and Move");
 
             // Undo in the Solution view takes the last one back, its new file gone.
             UndoInSolutionView(window, "Shapes.cs");
@@ -130,7 +129,7 @@ public sealed partial class McpTests
     {
         Shop(("Calc.cs", Calc), ("Till.cs", Till), ("Animal.cs", Animal), ("Dog.cs", Dog), ("Cat.cs", Cat), ("Kilo.cs", ScaleText),
             ("Mega.cs", ScaleText.Replace("Kilo", "Mega", StringComparison.Ordinal)), ("Counter.cs", Counter));
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         List<string> asked = AnswerUndo(window);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
@@ -211,7 +210,7 @@ public sealed partial class McpTests
     public async Task An_agent_that_writes_a_file_and_at_once_changes_a_signature_or_renames_what_it_calls_has_the_change_made_in_what_it_wrote()
     {
         Shop(("Calc.cs", Calc), ("Till.cs", Till), ("Report.cs", Report));
-        await using McpClient client = await Start(["--mcp", folder]);
+        await using McpClient client = await Start(["--mcp", Folder]);
         // Described first, so the server has read the files as the agent found them.
         await Call(client, "refactor", Place("change_signature", "Calc.cs", Calc, "int Sca"));
 
@@ -244,7 +243,7 @@ public sealed partial class McpTests
             + "        List<string> names = [];\n        return   names.Count;\n    }\n}\n";
         const string tidy = "using System.Text;\nusing System;\n\nnamespace Shop;\n\npublic static class Tidy\n{\n    public static int Length() => Console.Title.Length;\n}\n";
         Shop(("Messy.cs", messy), ("Tidy.cs", tidy), ("Notes.txt", "notes\n"));
-        MainWindow window = AgentsWindow(folder);
+        MainWindow window = AgentsWindow(Folder);
         List<string> asked = AnswerUndo(window);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         try
@@ -305,7 +304,7 @@ public sealed partial class McpTests
         }
     }
 
-    private string PathOf(string name) => Path.Combine(folder, name);
+    private string PathOf(string name) => Path.Combine(Folder, name);
 
     /// <summary>refactor's arguments at the end of some text in a file, with its options when given.</summary>
     private static Dictionary<string, object?> Place(string kind, string path, string text, string after, object? options = null)
@@ -396,7 +395,7 @@ public sealed partial class McpTests
     /// <summary>Saves the files and builds the project with the .NET command line, as a person would check it.</summary>
     private void Builds(string after)
     {
-        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", folder, "--no-restore", "-nologo", "-v:q"]), limit: TimeSpan.FromMinutes(3)),
+        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", Folder, "--no-restore", "-nologo", "-v:q"]), limit: TimeSpan.FromMinutes(3)),
             "the project to build", TimeSpan.FromMinutes(4));
         Assert.True(built.Succeeded, $"The project does not build after {after}:\n{built.Output}{built.Error}");
     }

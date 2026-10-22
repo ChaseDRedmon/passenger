@@ -48,8 +48,11 @@ public sealed partial class McpTests
 {
     private readonly string appFolder;
 
+    /// <summary>Run, driven and looked at, then profiled until it ends by itself once its window has been drawn
+    /// ("--quit-once-drawn"), not for a time that a loaded machine's app may not have drawn in; and an app that draws nothing
+    /// says so, its frames' count 0 and why.</summary>
     [Fact]
-    public async Task An_agent_runs_an_avalonia_app_sees_it_clicks_its_button_types_into_it_scrolls_it_and_reads_its_failed_bindings()
+    public async Task An_agent_runs_an_avalonia_app_sees_it_clicks_its_button_types_into_it_scrolls_it_reads_its_failed_bindings_and_profiles_its_frames()
     {
         await using McpClient client = await Start(["--mcp", appFolder]);
         JsonElement built = await Call(client, "build");
@@ -126,109 +129,11 @@ public sealed partial class McpTests
         await Waiting.UntilAsync(async () => (gone = await Result(client, "app_tree")).IsError == true, TimeSpan.FromSeconds(10), Cancel, TimeSpan.FromMilliseconds(200));
         Assert.True(gone.IsError, "The tree of an app that has ended was answered");
         Assert.Contains("AgentApp has ended", Text(gone), StringComparison.Ordinal);
-    }
 
-    [Fact]
-    public async Task An_agent_debugging_an_avalonia_app_that_clicks_into_a_breakpoint_is_told_at_once_where_it_stopped()
-    {
-        await using McpClient client = await Start(["--mcp", appFolder]);
-        // An app never stops by itself: debug_start comes back once its UI is up, not after the whole of a long waitSeconds.
-        Stopwatch launching = Stopwatch.StartNew();
-        JsonElement started = await Call(client, "debug_start", new() { ["waitSeconds"] = 300 });
-        Assert.True(started.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && launching.Elapsed < TimeSpan.FromSeconds(50).Scaled(),
-            $"debug_start waited {launching.Elapsed.TotalSeconds:0} s for an app that never stops, and said: {started}");
-        Assert.Single((await Call(client, "app_windows")).GetProperty("windows").EnumerateArray());
-
-        // Set while the app runs, the breakpoint in the button's handler is there for the click straight after it, and the
-        // click says where it stopped the app, whose paused UI could not say what the click did.
-        await Call(client, "breakpoint_set", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
-        Stopwatch asked = Stopwatch.StartNew();
-        string clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
-        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(8).Scaled(), $"The click that stopped at a breakpoint took {asked.Elapsed} to say so: {clicked}");
-        Assert.Contains("and that paused the program (breakpoint) at MainWindow.axaml.cs:23:", clicked, StringComparison.Ordinal);
-        JsonElement stopped = await Call(client, "debug_state");
-        Assert.Equal("paused", stopped.GetProperty("state").GetString());
-        // Avalonia's and the inspector's frames under the handler are one line of their modules, not a line each.
-        string[] frames = [.. stopped.GetProperty("frames").EnumerateArray().Select(f => f.GetString()!)];
-        Assert.True(frames[0].Contains("MainWindow.axaml.cs:23", StringComparison.Ordinal) && frames.Length < 8
-            && frames.Any(f => f.Contains(" frames outside the folder's code (", StringComparison.Ordinal) && f.Contains("Avalonia.", StringComparison.Ordinal)),
-            $"The stop's frames, for an agent:\n{string.Join('\n', frames)}");
-
-        // Let go, the click finishes.
-        await Call(client, "breakpoint_remove", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
-        await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
-        Assert.Contains("\"Clicked once\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
-        await Call(client, "stop");
-    }
-
-    /// <summary>What the Live Visual Tree and the editor give a person debugging the app, given an agent: a failed binding
-    /// stopping it with XAML Binding Errors on, and running on with it off; a button's properties with where each value came
-    /// from and its styles with why each applies or not; Break When Value Changes on the counter's text, which a click stops
-    /// where the code-behind sets it; and the binding values the window's XAML shows at that stop.</summary>
-    [Fact]
-    public async Task An_agent_debugging_an_avalonia_app_reads_a_controls_sources_and_styles_breaks_where_a_property_changes_and_reads_the_xamls_binding_values()
-    {
-        await using McpClient client = await Start(["--mcp", appFolder]);
-        JsonElement on = Assert.Single((await Call(client, "breakpoint_set", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
-        Assert.True(on.GetProperty("enabled").GetBoolean(), $"XAML Binding Errors is not on: {on}");
-        JsonElement failed = await Call(client, "debug_start");
-        Assert.True(failed.GetProperty("state").GetString() == "paused"
-            && failed.GetProperty("locals").EnumerateArray().Any(l => l.GetProperty("name").GetString() == "$bindingError" && l.GetProperty("value").GetString()!.Contains("Nmae", StringComparison.Ordinal)),
-            $"The misspelt binding did not stop the app with XAML Binding Errors on: {failed}");
-        // Its control's element at the editor's line, which XamlIl's runs one past below the window's lone '\r'.
-        int reference = failed.GetProperty("locals").EnumerateArray().First(l => l.GetProperty("name").GetString() == "$bindingError").GetProperty("reference").GetInt32();
-        JsonElement xaml = Assert.Single((await Call(client, "debug_variables", new() { ["reference"] = reference })).EnumerateArray(), m => m.GetProperty("name").GetString() == "Xaml");
-        Assert.Equal($"\"{AppXamlPlace("TextBlock x:Name=\"Caption\"")}\"", xaml.GetProperty("value").GetString());
-        JsonElement off =Assert.Single((await Call(client, "breakpoint_remove", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
-        Assert.False(off.GetProperty("enabled").GetBoolean(), $"XAML Binding Errors is still on: {off}");
-        Assert.Equal("running", (await Call(client, "debug_continue", new() { ["waitSeconds"] = 2 })).GetProperty("state").GetString());
-
-        // The button as the Live Visual Tree's details show it: its XAML, its content set there, and the styles of its theme.
-        JsonElement button = await Call(client, "app_details", new() { ["control"] = "#Count" });
-        Assert.Equal("Button", button.GetProperty("type").GetString());
-        Assert.Equal(AppXamlPlace("Button x:Name=\"Count\""), button.GetProperty("xaml").GetString());
-        JsonElement content = Assert.Single(button.GetProperty("properties").EnumerateArray(), p => p.GetProperty("name").GetString() == "Content");
-        Assert.Equal(("\"Count\"", "Local"), (content.GetProperty("value").GetString(), content.GetProperty("source").GetString()));
-        JsonElement[] styles = [.. button.GetProperty("styles").EnumerateArray()];
-        Assert.True(styles.Any(s => s.GetProperty("applies").GetBoolean()) && styles.Any(s => !s.GetProperty("applies").GetBoolean()
-            && s.GetProperty("whyNot").GetString() == "`:pressed` is not active on it"), $"The button's styles do not say which apply and why not: {button.GetProperty("styles")}");
-        Assert.DoesNotContain(button.GetProperty("properties").EnumerateArray(), p => p.GetProperty("source").GetString() == "Default");
-
-        // Break When Value Changes on the counter's text: the click stops where the code-behind sets it.
-        JsonElement watched = Assert.Single((await Call(client, "breakpoint_set", new() { ["control"] = "#Counter", ["property"] = "Text" })).EnumerateArray());
-        Assert.Equal("Text on TextBlock#Counter", watched.GetProperty("property").GetString());
-        Assert.True((await Call(client, "app_details", new() { ["control"] = "#Counter", ["properties"] = "Text" })).GetProperty("properties").EnumerateArray()
-            .Any(p => p.GetProperty("name").GetString() == "Text" && p.TryGetProperty("breakpoint", out JsonElement marked) && marked.GetBoolean()),
-            "The counter's details do not mark its watched text");
-        string clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
-        Assert.True(clicked.Contains("and that paused the program", StringComparison.Ordinal) && clicked.Contains("at MainWindow.axaml.cs:24:", StringComparison.Ordinal),
-            $"The click did not stop where the code-behind sets the watched text: {clicked}");
-
-        // At the stop, the window's XAML open in the editor shows each binding's value after it, and the misspelt one as failed.
-        await Call(client, "open_file", new() { ["path"] = "MainWindow.axaml" });
-        JsonElement stop = await Call(client, "debug_state");
-        string[] values = stop.TryGetProperty("bindingValues", out JsonElement shown) ? [.. shown.EnumerateArray().Select(v => v.GetString()!)] : [];
-        Assert.True(values.Contains("MainWindow.axaml:12: Text: \"Ada\"") && values.Any(v => v.StartsWith("MainWindow.axaml:11: Text: binding failed at Nmae: ", StringComparison.Ordinal)),
-            $"The binding values at the stop are not those the editor shows: {stop}");
-
-        // Removed by the id the breakpoint names its element by (the paused app answers no query), the click finishes.
-        await Call(client, "breakpoint_remove", new() { ["control"] = watched.GetProperty("control").GetString(), ["property"] = "Text" });
-        Assert.DoesNotContain((await Call(client, "breakpoints")).EnumerateArray(), b => b.TryGetProperty("property", out _));
-        await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
-        Assert.Contains("\"Clicked once\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
-        await Call(client, "stop");
-    }
-
-    /// <summary>Profiled until it ends by itself once its window has been drawn ("--quit-once-drawn"), not for a time that
-    /// a loaded machine's app may not have drawn in; and an app that draws nothing says so, its frames' count 0 and why.</summary>
-    [Fact]
-    public async Task An_agent_profiling_an_avalonia_app_reads_its_frames_heaviest_controls_by_their_lines_in_the_folders_xaml()
-    {
-        await using McpClient client = await Start(["--mcp", appFolder]);
+        // Profiled: an app that draws nothing has no frames and says why; one drawn has them, its controls at their lines.
         JsonElement undrawn = (await Call(client, "profile", new() { ["arguments"] = "--quit-at-once" })).GetProperty("frames");
         Assert.True(undrawn.GetProperty("count").GetInt32() == 0 && undrawn.GetProperty("why").GetString() is { Length: > 0 },
             $"The profile of an Avalonia app that drew nothing did not say why it has no frames: {undrawn}");
-
         JsonElement profiled = await Call(client, "profile", new() { ["arguments"] = "--quit-once-drawn" });
         JsonElement frames = profiled.GetProperty("frames");
         Assert.True(frames.GetProperty("count").GetInt32() > 0, $"The profile of an Avalonia app has no frames: {frames}");
@@ -252,6 +157,93 @@ public sealed partial class McpTests
         JsonElement longest = frames.GetProperty("longest");
         Assert.True(longest.GetProperty("durationMs").GetDouble() == frames.GetProperty("longestMs").GetDouble(),
             $"The longest frame is not the one the frames say: {frames}");
+    }
+
+    /// <summary>What the Live Visual Tree and the editor give a person debugging the app, given an agent: debug_start back
+    /// once the app's UI is up; a click into a breakpoint told at once where it stopped; a button's properties with where each
+    /// value came from and its styles with why each applies or not; Break When Value Changes on the counter's text, which a
+    /// click stops where the code-behind sets it; the binding values the window's XAML shows at that stop; and, debugged again,
+    /// a failed binding stopping it with XAML Binding Errors on, and running on with it off.</summary>
+    [Fact]
+    public async Task An_agent_debugging_an_avalonia_app_clicks_into_a_breakpoint_reads_a_controls_sources_and_styles_breaks_where_a_property_changes_and_on_a_failed_binding()
+    {
+        await using McpClient client = await Start(["--mcp", appFolder]);
+        // An app never stops by itself: debug_start comes back once its UI is up, not after the whole of a long waitSeconds.
+        Stopwatch launching = Stopwatch.StartNew();
+        JsonElement started = await Call(client, "debug_start", new() { ["waitSeconds"] = 300 });
+        Assert.True(started.GetProperty("status").GetString()!.Contains("its UI up", StringComparison.Ordinal) && launching.Elapsed < TimeSpan.FromSeconds(50).Scaled(),
+            $"debug_start waited {launching.Elapsed.TotalSeconds:0} s for an app that never stops, and said: {started}");
+        Assert.Single((await Call(client, "app_windows")).GetProperty("windows").EnumerateArray());
+
+        // Set while the app runs, the breakpoint in the button's handler is there for the click straight after it, and the
+        // click says where it stopped the app, whose paused UI could not say what the click did.
+        await Call(client, "breakpoint_set", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
+        Stopwatch asked = Stopwatch.StartNew();
+        string clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
+        Assert.True(asked.Elapsed < TimeSpan.FromSeconds(8).Scaled(), $"The click that stopped at a breakpoint took {asked.Elapsed} to say so: {clicked}");
+        Assert.Contains("and that paused the program (breakpoint) at MainWindow.axaml.cs:23:", clicked, StringComparison.Ordinal);
+        JsonElement stopped = await Call(client, "debug_state");
+        Assert.Equal("paused", stopped.GetProperty("state").GetString());
+        // Avalonia's and the inspector's frames under the handler are one line of their modules, not a line each.
+        string[] frames = [.. stopped.GetProperty("frames").EnumerateArray().Select(f => f.GetString()!)];
+        Assert.True(frames[0].Contains("MainWindow.axaml.cs:23", StringComparison.Ordinal) && frames.Length < 8
+            && frames.Any(f => f.Contains(" frames outside the folder's code (", StringComparison.Ordinal) && f.Contains("Avalonia.", StringComparison.Ordinal)),
+            $"The stop's frames, for an agent:\n{string.Join('\n', frames)}");
+        // Let go, the click finishes.
+        await Call(client, "breakpoint_remove", new() { ["path"] = "MainWindow.axaml.cs", ["line"] = 23 });
+        await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
+        Assert.Contains("\"Clicked once\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
+
+        // The button as the Live Visual Tree's details show it: its XAML, its content set there, and the styles of its theme.
+        JsonElement button = await Call(client, "app_details", new() { ["control"] = "#Count" });
+        Assert.Equal("Button", button.GetProperty("type").GetString());
+        Assert.Equal(AppXamlPlace("Button x:Name=\"Count\""), button.GetProperty("xaml").GetString());
+        JsonElement content = Assert.Single(button.GetProperty("properties").EnumerateArray(), p => p.GetProperty("name").GetString() == "Content");
+        Assert.Equal(("\"Count\"", "Local"), (content.GetProperty("value").GetString(), content.GetProperty("source").GetString()));
+        JsonElement[] styles = [.. button.GetProperty("styles").EnumerateArray()];
+        Assert.True(styles.Any(s => s.GetProperty("applies").GetBoolean()) && styles.Any(s => !s.GetProperty("applies").GetBoolean()
+            && s.GetProperty("whyNot").GetString() == "`:pressed` is not active on it"), $"The button's styles do not say which apply and why not: {button.GetProperty("styles")}");
+        Assert.DoesNotContain(button.GetProperty("properties").EnumerateArray(), p => p.GetProperty("source").GetString() == "Default");
+
+        // Break When Value Changes on the counter's text: the click stops where the code-behind sets it.
+        JsonElement watched = Assert.Single((await Call(client, "breakpoint_set", new() { ["control"] = "#Counter", ["property"] = "Text" })).EnumerateArray());
+        Assert.Equal("Text on TextBlock#Counter", watched.GetProperty("property").GetString());
+        Assert.True((await Call(client, "app_details", new() { ["control"] = "#Counter", ["properties"] = "Text" })).GetProperty("properties").EnumerateArray()
+            .Any(p => p.GetProperty("name").GetString() == "Text" && p.TryGetProperty("breakpoint", out JsonElement marked) && marked.GetBoolean()),
+            "The counter's details do not mark its watched text");
+        clicked = Text(await Call(client, "app_click", new() { ["control"] = "#Count" }));
+        Assert.True(clicked.Contains("and that paused the program", StringComparison.Ordinal) && clicked.Contains("at MainWindow.axaml.cs:24:", StringComparison.Ordinal),
+            $"The click did not stop where the code-behind sets the watched text: {clicked}");
+
+        // At the stop, the window's XAML open in the editor shows each binding's value after it, and the misspelt one as failed.
+        await Call(client, "open_file", new() { ["path"] = "MainWindow.axaml" });
+        JsonElement stop = await Call(client, "debug_state");
+        string[] values = stop.TryGetProperty("bindingValues", out JsonElement shown) ? [.. shown.EnumerateArray().Select(v => v.GetString()!)] : [];
+        Assert.True(values.Contains("MainWindow.axaml:12: Text: \"Ada\"") && values.Any(v => v.StartsWith("MainWindow.axaml:11: Text: binding failed at Nmae: ", StringComparison.Ordinal)),
+            $"The binding values at the stop are not those the editor shows: {stop}");
+
+        // Removed by the id the breakpoint names its element by (the paused app answers no query), the click finishes.
+        await Call(client, "breakpoint_remove", new() { ["control"] = watched.GetProperty("control").GetString(), ["property"] = "Text" });
+        Assert.DoesNotContain((await Call(client, "breakpoints")).EnumerateArray(), b => b.TryGetProperty("property", out _));
+        await Call(client, "debug_continue", new() { ["waitSeconds"] = 1 });
+        Assert.Contains("\"Clicked 2 times\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Counter" })), StringComparison.Ordinal);
+        await Call(client, "stop");
+
+        // Debugged again with XAML Binding Errors on, the misspelt binding stops the app as it starts, and with it off runs on.
+        JsonElement on = Assert.Single((await Call(client, "breakpoint_set", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
+        Assert.True(on.GetProperty("enabled").GetBoolean(), $"XAML Binding Errors is not on: {on}");
+        JsonElement failed = await Call(client, "debug_start");
+        Assert.True(failed.GetProperty("state").GetString() == "paused"
+            && failed.GetProperty("locals").EnumerateArray().Any(l => l.GetProperty("name").GetString() == "$bindingError" && l.GetProperty("value").GetString()!.Contains("Nmae", StringComparison.Ordinal)),
+            $"The misspelt binding did not stop the app with XAML Binding Errors on: {failed}");
+        // Its control's element at the editor's line, which XamlIl's runs one past below the window's lone '\r'.
+        int reference = failed.GetProperty("locals").EnumerateArray().First(l => l.GetProperty("name").GetString() == "$bindingError").GetProperty("reference").GetInt32();
+        JsonElement xaml = Assert.Single((await Call(client, "debug_variables", new() { ["reference"] = reference })).EnumerateArray(), m => m.GetProperty("name").GetString() == "Xaml");
+        Assert.Equal($"\"{AppXamlPlace("TextBlock x:Name=\"Caption\"")}\"", xaml.GetProperty("value").GetString());
+        JsonElement off = Assert.Single((await Call(client, "breakpoint_remove", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
+        Assert.False(off.GetProperty("enabled").GetBoolean(), $"XAML Binding Errors is still on: {off}");
+        Assert.Equal("running", (await Call(client, "debug_continue", new() { ["waitSeconds"] = 2 })).GetProperty("state").GetString());
+        await Call(client, "stop");
     }
 
     /// <summary>On the person's window an agent asks before its first click or key in their app or in Passenger itself, and
