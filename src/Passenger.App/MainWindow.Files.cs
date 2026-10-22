@@ -216,12 +216,19 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        // Made as its .editorconfig asks: its line breaks and its charset.
-        EditorConfig conventions = EditorConfig.For(path);
-        FileEncoding charset = conventions.Charset ?? FileEncoding.Utf8;
-        LineSeparator separator = conventions.EndOfLine ?? LineSeparator.LF;
-        FileText.Save(path, LineEndings.In(text, separator.Held()), charset.Encoding, charset.Bom, separator == LineSeparator.CR);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            // Made as its .editorconfig asks: its line breaks and its charset.
+            EditorConfig conventions = EditorConfig.For(path);
+            FileEncoding charset = conventions.Charset ?? FileEncoding.Utf8;
+            LineSeparator separator = conventions.EndOfLine ?? LineSeparator.LF;
+            FileText.Save(path, LineEndings.In(text, separator.Held()), charset.Encoding, charset.Bom, separator == LineSeparator.CR);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return NotMade(name, error);
+        }
         FilesChanged();
         OpenFile(path);
         Explorer.Reveal(PathNames.Canonical(path));
@@ -239,11 +246,23 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        Directory.CreateDirectory(path);
+        try
+        {
+            Directory.CreateDirectory(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return NotMade(name, error);
+        }
         FilesChanged();
         Explorer.Reveal(PathNames.Canonical(path));
         return null;
     }
+
+    /// <summary>Why a file or folder could not be made (its folder read-only or denied to this user, a path too long, a
+    /// full disk), as the popup that asked for its name says it.</summary>
+    private static string NotMade(string name, Exception error) =>
+        $"{name} could not be made: {(error is UnauthorizedAccessException ? "access denied" : error.Message)}";
 
     /// <summary>Rider's New Class: a file of its name holding a class in the namespace its folder gives (the project's
     /// name, then the folders under it).</summary>
