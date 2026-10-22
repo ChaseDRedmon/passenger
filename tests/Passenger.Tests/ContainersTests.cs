@@ -607,6 +607,12 @@ public sealed class ContainersTests
             Docker.Run("cp", Path.Combine(StandInTools("[{\"name\":\"Spins\",\"commandLine\":\"dotnet /app/Spins.dll\"},{\"id\":\"seven\"},3]"), "."), $"{listing}:{ContainerTools.Copied}");
             string? none = Ui.Await(window.AttachAsync(new DotnetProcess(0, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = listing }), "the attach's answer");
             Assert.True(none?.Contains($"no longer runs in {listing}", StringComparison.Ordinal) == true, $"Attaching to a program the tools named by no id answered: {none}");
+
+            // Tools whose list runs on past what any list takes: refused, never read into the IDE whole.
+            string flooding = Docker.Container("flooding", "sleep 600");
+            Docker.Run("cp", Path.Combine(StandInTools("[]", "head -c 6000000 /dev/zero | tr '\\0' ' '; echo '[]'"), "."), $"{flooding}:{ContainerTools.Copied}");
+            string? flood = Ui.Await(window.AttachAsync(new DotnetProcess(0, "Spins", "dotnet /app/Spins.dll", "root", true) { Container = flooding }), "the attach's answer");
+            Assert.True(flood?.Contains("more than the 4 MB a list of programs takes", StringComparison.Ordinal) == true, $"Attaching where the tools' list ran on answered: {flood}");
         }
         finally
         {
@@ -614,9 +620,10 @@ public sealed class ContainersTests
         }
     }
 
-    /// <summary>Stand-in container tools of this version: a script that says the version, lists the programs given, begins a
-    /// recording at once, and in its heap mode sends <c>/tmp/frames/N</c> to the Nth start; the folder holding it.</summary>
-    private static string StandInTools(string processes)
+    /// <summary>Stand-in container tools of this version: a script that says the version, lists the programs given (or runs
+    /// the command given for its list), begins a recording at once, and in its heap mode sends <c>/tmp/frames/N</c> to the
+    /// Nth start, nothing when there is none; the folder holding it.</summary>
+    private static string StandInTools(string processes, string? listing = null)
     {
         string tools = TestFolders.Create("ctr-standin-tools-");
         string script = Path.Combine(tools, ContainerTools.Executable);
@@ -624,7 +631,7 @@ public sealed class ContainersTests
             "#!/bin/sh",
             "case \"$1\" in",
             $"  version) echo {Passenger.App.Product.Version} ;;",
-            $"  processes) echo '{processes}' ;;",
+            $"  processes) {listing ?? $"echo '{processes}'"} ;;",
             "  trace) echo recording >&2; cat > /dev/null ;;",
             "  heap) n=$(cat /tmp/heaps 2>/dev/null || echo 0); n=$((n+1)); echo $n > /tmp/heaps; read line; cat /tmp/frames/$n; cat > /dev/null ;;",
             "esac",

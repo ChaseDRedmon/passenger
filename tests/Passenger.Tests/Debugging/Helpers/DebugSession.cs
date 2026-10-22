@@ -180,6 +180,33 @@ public sealed class DebugSession : IDisposable
         return answer;
     }
 
+    /// <summary>Bytes written to the adapter's input as they are, not as a message of the protocol's: what a client that does
+    /// not speak it sends.</summary>
+    public void SendRaw(byte[] bytes)
+    {
+        Stream input = adapter.StandardInput.BaseStream;
+        input.Write(bytes);
+        input.Flush();
+    }
+
+    /// <summary>Whether the adapter has ended within the time given (scaled), its input still open.</summary>
+    public bool Ended(TimeSpan within) => adapter.WaitForExit(within.Scaled());
+
+    /// <summary>The engine's own log as written so far.</summary>
+    public string EngineLog()
+    {
+        try
+        {
+            using FileStream file = new(engineLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using StreamReader reader = new(file);
+            return reader.ReadToEnd();
+        }
+        catch (IOException error)
+        {
+            return $"(not readable: {error.Message})";
+        }
+    }
+
     /// <summary>A disconnect, answered or not within <paramref name="limit"/>: true when it was, the adapter then on its way out.</summary>
     public bool Disconnect(TimeSpan limit)
     {

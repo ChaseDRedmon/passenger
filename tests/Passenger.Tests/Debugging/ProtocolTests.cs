@@ -1,3 +1,4 @@
+using System.Text;
 using Passenger.Dap;
 using Passenger.Tests.Debugging.Helpers;
 
@@ -19,5 +20,25 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
 
         DapCapabilities capabilities = host.Request<DapCapabilities>("initialize", DebugSession.InitializeArguments);
         Assert.True(capabilities.SupportsConfigurationDoneRequest);
+    }
+
+    /// <summary>A client that sends what no message of the protocol is (a header that never ends, or a Content-Length past
+    /// the 256 MB a message may be, or past any number) ends the conversation, the adapter saying why in its log, as at a
+    /// message that does not read: it never waits to take its memory for it.</summary>
+    [Theory]
+    [InlineData("header")]
+    [InlineData("268435457")]
+    [InlineData("99999999999999999999")]
+    public void A_message_too_large_to_read_ends_the_conversation_saying_so(string sent)
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        host.SendRaw(Encoding.ASCII.GetBytes(sent == "header"
+            ? string.Concat(Enumerable.Repeat($"X-Filler: {new string('x', 1000)}\r\n", 80))
+            : $"Content-Length: {sent}\r\n\r\n"));
+        Assert.True(host.Ended(TimeSpan.FromSeconds(20)), $"The adapter was still reading what it was sent ({sent}) 20 s later: {host.EngineLog()}");
+        string logged = host.EngineLog();
+        Assert.True(logged.Contains("DAP read ended", StringComparison.Ordinal)
+            && logged.Contains(sent == "header" ? $"ran past {DapConnection.MostHeader} bytes" : $"over the {DapConnection.MostBody} bytes", StringComparison.Ordinal),
+            $"The adapter's log does not say why the conversation ended: {logged}");
     }
 }

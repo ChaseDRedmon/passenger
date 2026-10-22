@@ -168,16 +168,17 @@ public static class ChildProcesses
     /// canceled or fails with a <see cref="TimeoutException"/>. Once it has exited it is done, whatever the limit: a job it
     /// left holding its output open (a hook's <c>daemon &amp;</c>) is given <see cref="OutputGrace"/>, then ended with its group.</summary>
     public static async Task<ChildResult> RunAsync(ProcessStartInfo start, string? input = null, TimeSpan? limit = null, CancellationToken cancel = default,
-        IReadOnlyCollection<int>? answers = null)
+        IReadOnlyCollection<int>? answers = null, int? mostOutput = null)
     {
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         using Process process = Start(start, answers);
-        Reading output = new(process.StandardOutput);
-        Reading errors = new(process.StandardError);
-        Task read = Task.WhenAll(output.Done, errors.Done);
         using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        // Output past what the caller reads of it ends the child as an overrun limit does, said by the size it went past.
+        Reading output = new(process.StandardOutput, mostOutput, ending);
+        Reading errors = new(process.StandardError, mostOutput, ending);
+        Task read = Task.WhenAll(output.Done, errors.Done);
         if (limit is { } most)
         {
             ending.CancelAfter(most);
@@ -213,10 +214,18 @@ public static class ChildProcesses
             // Disposing the process ends the reads; their ends are nobody's to report.
             Forget(read);
             cancel.ThrowIfCancellationRequested();
+            if (output.Overran || errors.Overran)
+            {
+                throw new ChildOutputException($"{Display(start)} wrote more than the {mostOutput} characters read of it, and was ended");
+            }
             throw new TimeoutException($"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
         }
         // What a job out of the kill's reach still holds (on Windows, which ends a tree, one whose parent has gone) is let go.
         Forget(read);
+        if (output.Overran || errors.Overran)
+        {
+            throw new ChildOutputException($"{Display(start)} wrote more than the {mostOutput} characters read of it");
+        }
         return new ChildResult(process.ExitCode, output.Text, errors.Text);
     }
 
@@ -248,14 +257,25 @@ public static class ChildProcesses
         }
     }
 
-    /// <summary>A child's output or errors read to their end, and what was read so far once the reading is let go.</summary>
+    /// <summary>A child's output or errors read to their end, and what was read so far once the reading is let go; with a
+    /// most, the reading stops past it, <see cref="Overran"/>, and the run is ended through <paramref name="ending"/>.</summary>
     private sealed class Reading
     {
         private readonly StringBuilder text = new();
+        private readonly int? most;
+        private readonly CancellationTokenSource? ending;
 
-        public Reading(StreamReader reader) => Done = ReadAsync(reader);
+        public Reading(StreamReader reader, int? most = null, CancellationTokenSource? ending = null)
+        {
+            this.most = most;
+            this.ending = ending;
+            Done = ReadAsync(reader);
+        }
 
         public Task Done { get; }
+
+        /// <summary>The child wrote more than the most read of it.</summary>
+        public bool Overran { get; private set; }
 
         public string Text
         {
@@ -276,7 +296,26 @@ public static class ChildProcesses
             {
                 lock (text)
                 {
-                    text.Append(buffer, 0, read);
+                    if (text.Length + read > most)
+                    {
+                        Overran = true;
+                    }
+                    else
+                    {
+                        text.Append(buffer, 0, read);
+                    }
+                }
+                if (Overran)
+                {
+                    try
+                    {
+                        ending?.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The run was over already.
+                    }
+                    return;
                 }
             }
         }
@@ -399,6 +438,9 @@ public static class ChildProcesses
     private static void Forget(Task task) =>
         _ = task.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 }
+
+/// <summary>A child that wrote more than its caller reads of it (a container's tools' answer), ended for it.</summary>
+public sealed class ChildOutputException(string message) : IOException(message);
 
 /// <summary>How a child run to its end went: its exit code, and what it wrote to its output and errors.</summary>
 public sealed record ChildResult(int ExitCode, string Output, string Error)

@@ -84,7 +84,9 @@ public sealed class MethodSources : IDisposable
         ChildResult answered;
         try
         {
-            answered = await ChildProcesses.RunAsync(place.Tools(["sources"]), input, TimeSpan.FromSeconds(30), cancel).ConfigureAwait(false);
+            // A line a method, its document's path and line: what a container sends beyond that is no answer, and is not read.
+            answered = await ChildProcesses.RunAsync(place.Tools(["sources"]), input, TimeSpan.FromSeconds(30), cancel,
+                mostOutput: MostSources(asked.Length)).ConfigureAwait(false);
         }
         catch (Exception failed) when (failed is TimeoutException or System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
@@ -105,6 +107,10 @@ public sealed class MethodSources : IDisposable
         }
         return found;
     }
+
+    /// <summary>The most read of the tools' <c>sources</c> answer, and of their errors, for so many methods: a path of a few
+    /// thousand characters and its line each; past it the run is ended and nothing is found.</summary>
+    private static int MostSources(int methods) => 64 * 1024 + methods * 4096;
 
     public void Dispose()
     {

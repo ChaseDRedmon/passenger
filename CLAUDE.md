@@ -114,7 +114,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
   only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the
   limit, its output is read for a 2 s grace (`OutputGrace`), then a job it left holding the output open (a git hook's
-  `daemon &`) is ended with its group and the output let go. `DotnetCommand` builds without
+  `daemon &`) is ended with its group and the output let go; its `mostOutput` ends a child that writes more than its
+  caller reads of it (`ChildOutputException`: a container tools' `processes` past 4 MB, `sources` past a few KB a
+  method). `DotnetCommand` builds without
   MSBuild's server (which Stop could not reach) and in nodes salted to this IDE, which end with it. `Dotnet`,
   `Programs` and `ShellEnvironment` find the tools as the login shell would (the shell writes its environment to a file,
   its output to /dev/null, so a job its profile leaves running holds nothing up, and `Ready` waits out a slow profile
@@ -679,7 +681,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   starts the container (`MountFor`, the `-v` value or Compose volume a run configuration adds) or copied to
   `/tmp/passenger-tools` (`CopyIntoAsync`, refused, saying both versions, unless the copy's `version` there is the IDE's),
   used only when its `version` is the IDE's; what the tools' `processes` answers is read as it comes (an entry with no
-  numeric id passed over). `ContainerProcesses` is what Attach to Process lists of the running containers, each inspected
+  numeric id passed over, an answer past 4 MB refused). `ContainerProcesses` is what Attach to Process lists of the running containers, each inspected
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
@@ -1177,7 +1179,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   it is gone, and writes each stop's time to its frames and locals to passenger.log (`DebugController.LastStopTimes`).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
-  `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
+  `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends; `DapConnection` reads a
+  header to 64 KB and a body to 256 MB, `MostHeader` and `MostBody`, past which the conversation ends as at a message that
+  does not read, its requests failed) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`; its flags
   and loop are `AdapterProgram`). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
   container: `dap` (`AdapterProgram` and `DebugAdapter.cs` compiled in, the one engine), `processes` (the container's

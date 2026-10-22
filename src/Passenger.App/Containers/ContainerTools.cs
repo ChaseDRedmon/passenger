@@ -379,11 +379,25 @@ public static class ContainerTools
             + $"(just container-tools {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))} makes this version's)";
     }
 
+    /// <summary>The most read of the tools' <c>processes</c> answer: a few hundred characters a program, so 4 MB is
+    /// thousands of them, and a container that sends more is refused rather than read into the IDE's memory.</summary>
+    private const int MostProcesses = 4 * 1024 * 1024;
+
     /// <summary>The tools' <c>processes</c> in a container: its .NET programs, by their ids there. What the container
-    /// answers is read as it is: an entry with no id is passed over, an answer that is no list refused.</summary>
+    /// answers is read as it is: an entry with no id is passed over, an answer that is no list, or longer than
+    /// <see cref="MostProcesses"/>, refused.</summary>
     public static async Task<IReadOnlyList<DotnetProcess>> ProcessesAsync(ContainerEngine engine, string container, string executable, CancellationToken cancel)
     {
-        ChildResult listed = await engine.RunAsync(["exec", .. Unheld, container, executable, "processes"], cancel: cancel).ConfigureAwait(false);
+        ChildResult listed;
+        try
+        {
+            listed = await engine.RunAsync(["exec", .. Unheld, container, executable, "processes"], cancel: cancel, mostOutput: MostProcesses).ConfigureAwait(false);
+        }
+        catch (ChildOutputException overran)
+        {
+            throw new ContainerToolsException($"Passenger's tools in {container} answered more than the {MostProcesses / (1024 * 1024)} MB a list of programs takes, "
+                + $"which was not read: {overran.Message}");
+        }
         if (!listed.Succeeded)
         {
             throw new ContainerToolsException($"Passenger's tools could not list the programs in {container}: {ContainerEngine.Said(listed)}");
