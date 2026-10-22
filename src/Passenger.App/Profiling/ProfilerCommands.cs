@@ -592,7 +592,7 @@ public sealed class ProfilerCommands
         if (current.Debug.Session is { State: not Debugging.DebugState.Ended, IsLocal: true, ProcessStarted.IsCompletedSuccessfully: true } debugging)
         {
             int process = debugging.ProcessStarted.Result;
-            LiveApp? app = current.LiveApp is { ProcessId: int inspected } live && inspected == process ? live : null;
+            LiveApp? app = current.Debug.TabOf(debugging)?.App is { ProcessId: int inspected } live && inspected == process ? live : null;
             string program = app?.Plan?.Built ?? debugging.Program;
             return new(process, app?.Name ?? Path.GetFileNameWithoutExtension(program), FileName(Path.GetFileNameWithoutExtension(program)));
         }

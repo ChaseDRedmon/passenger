@@ -17,7 +17,7 @@ namespace Passenger.App.Mcp;
 public sealed partial class PassengerTools
 {
     // Said once a parameter for each app_ tool; the element query's syntax once, in app_tree's description.
-    private const string AppChoice = "run, debug or ide (Passenger's own windows); by default the one running";
+    private const string AppChoice = "run, debug, a debugged program's name or ide; by default the one running";
 
     private const string ControlQuery = "@N or a query, as app_tree describes";
 
@@ -135,7 +135,7 @@ public sealed partial class PassengerTools
         ElementDetails details = AppPlaces.InEditor(await live.DetailsAsync(element.Element.Id), Editors);
         string typed = properties?.Trim() ?? string.Empty;
         BreakpointStore breakpoints = Session.Debug.Breakpoints;
-        bool watchable = live == Session.LiveApp;
+        DebugSession? debugged = Session.Debug.SessionOf(live);
         LayoutInfo layout = details.Layout;
         return new AppElementDetails(
             AppQuery.Short(element.Element),
@@ -154,7 +154,7 @@ public sealed partial class PassengerTools
             [.. details.Properties
                 .Where(p => (defaults || p.Source != ValueSources.Default) && (typed.Length == 0 || p.Name.Contains(typed, StringComparison.OrdinalIgnoreCase)))
                 .Select(p => new AppProperty(p.Name, p.Value, p.Type, p.Source, p.Detail, p.Place is { } at ? Placed(at) : null,
-                    watchable && breakpoints.FindProperty(details.Id, p.Name) is not null ? true : null))],
+                    debugged is not null && breakpoints.FindProperty(debugged, details.Id, p.Name) is not null ? true : null))],
             [.. details.Styles.Select(s => new AppStyle(s.Selector, s.Kind, s.Origin, s.Place is { } at ? Placed(at) : null, s.Applies, s.WhyNot,
                 [.. s.Setters.Select(setter => new AppSetter(setter.Property, setter.Value, setter.State, AppPlaces.OverriddenBy(setter), setter.Place is { } placed ? Placed(placed) : null))]))]);
 
@@ -315,11 +315,11 @@ public sealed partial class PassengerTools
     {
         IEnumerable<LiveApp> apps = app switch
         {
-            null => new[] { Session.RunApp, Session.LiveApp }.OfType<LiveApp>(),
+            null => new[] { Session.RunApp }.Concat(Session.Debug.Apps.Select(a => a.App)).OfType<LiveApp>(),
             "run" => [Session.RunApp ?? throw new InvalidOperationException("Run has started no Avalonia or WPF app in this folder")],
-            "debug" => [Session.LiveApp ?? throw new InvalidOperationException("Debug has started no Avalonia or WPF app in this folder")],
+            "debug" => [DebugApp() ?? throw new InvalidOperationException("Debug has started no Avalonia or WPF app in this folder")],
             "ide" => [LiveApp.Own()],
-            _ => throw new ArgumentException($"No app '{app}': name run, debug or ide"),
+            _ => [NamedApp(app)],
         };
         List<LiveApp> chosen = [.. apps];
         if (chosen.Count == 0)
@@ -328,7 +328,7 @@ public sealed partial class PassengerTools
         }
         return Task.FromResult<IReadOnlyList<AppBindingError>>([.. chosen.SelectMany(live =>
         {
-            string which = live == Session.LiveApp ? "debug" : live == Session.RunApp ? "run" : "ide";
+            string which = live == Session.RunApp ? "run" : Session.Debug.Apps.FirstOrDefault(a => a.App == live).Tab is { } tab ? AppName(tab) : "ide";
             IEnumerable<AppBindingError> listed = live.Bindings.Select(failure =>
             {
                 BindingProblem placed = Builds.Placed(live, failure);
@@ -351,13 +351,13 @@ public sealed partial class PassengerTools
             "run" => Session.RunApp ?? throw new InvalidOperationException(Builds.IsRunning
                 ? $"What Run started is not {Inspectable}, or Hot Reload runs it"
                 : "Run has started no Avalonia or WPF app; run starts one"),
-            "debug" => Session.LiveApp ?? throw new InvalidOperationException(Session.Debug.IsDebugging
+            "debug" => DebugApp() ?? throw new InvalidOperationException(Session.Debug.IsDebugging
                 ? $"What is being debugged is not {Inspectable}"
                 : "Debug has started no Avalonia or WPF app; debug_start starts one"),
             "ide" => LiveApp.Own(),
-            _ => throw new ArgumentException($"No app '{app}': name run, debug or ide"),
+            _ => NamedApp(app),
         };
-        if (chosen == Session.LiveApp && Session.Debug.Session is { State: DebugState.Paused })
+        if (Session.Debug.SessionOf(chosen) is { State: DebugState.Paused })
         {
             throw new InvalidOperationException($"{chosen.Name} is paused in the debugger, and its UI answers nothing until it runs: debug_continue");
         }
@@ -371,10 +371,34 @@ public sealed partial class PassengerTools
         };
     }
 
+    /// <summary>The app Debug started that a tool means by debug: the chosen Debug tab's while it is debugged (a stop chooses
+    /// its tab), else the only one debugged, else the chosen tab's, ended; null when no tab has one.</summary>
+    private LiveApp? DebugApp()
+    {
+        List<(ToolWindows.DebugTab Tab, LiveApp App)> apps = [.. Session.Debug.Apps];
+        return apps.FirstOrDefault(a => a.Tab == Session.Debug.Chosen && a.Tab.IsLive).App
+            ?? (apps.Where(a => a.Tab.IsLive).ToList() is [var only] ? only.App : null)
+            ?? Session.LiveApp;
+    }
+
+    /// <summary>The app of the Debug tab a name gives (debug_state's sessions), refusing a name no tab has or a program that is
+    /// not an inspected app.</summary>
+    private LiveApp NamedApp(string name)
+    {
+        ToolWindows.DebugTab? tab = Session.Debug.Tabs.FirstOrDefault(t => t.Name == name)
+            ?? Session.Debug.Tabs.FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return tab is null
+            ? throw new ArgumentException($"No app '{name}': name run, debug, ide or a debugged program{(Session.Debug.Tabs.Count == 0 ? string.Empty : $" ({string.Join(", ", Session.Debug.Tabs.Select(t => t.Name))})")}")
+            : tab.App ?? throw new InvalidOperationException($"{tab.Name} is debugged, and is not {Inspectable}");
+    }
+
+    /// <summary>How an answer names a Debug tab's app: debug, or with several debugged its tab's name.</summary>
+    private string AppName(ToolWindows.DebugTab tab) => Session.Debug.Apps.Skip(1).Any() ? tab.Name : "debug";
+
     /// <summary>The app running, Run's or Debug's, when it is one.</summary>
     private LiveApp Running()
     {
-        List<LiveApp> live = [.. new[] { Session.RunApp, Session.LiveApp }.OfType<LiveApp>().Where(a => a.State is LiveAppState.Waiting or LiveAppState.Connected)];
+        List<LiveApp> live = [.. new[] { Session.RunApp, DebugApp() }.OfType<LiveApp>().Where(a => a.State is LiveAppState.Waiting or LiveAppState.Connected)];
         return live switch
         {
             [LiveApp only] => only,
@@ -387,12 +411,12 @@ public sealed partial class PassengerTools
     /// has gone, though its runner has not yet heard the process end (on Windows the socket closes first).</summary>
     private string WhyNoneRuns()
     {
-        LiveApp[] apps = [.. new[] { Session.LiveApp, Session.RunApp }.OfType<LiveApp>()];
+        LiveApp[] apps = [.. new[] { DebugApp(), Session.RunApp }.OfType<LiveApp>()];
         if (apps.FirstOrDefault(a => a.State == LiveAppState.Refused) is { } refused)
         {
             return refused.Problem ?? $"{refused.Name} cannot be inspected";
         }
-        LiveApp? launched = (Session.Debug.IsDebugging ? Session.LiveApp : null) ?? (Builds.IsRunning ? Session.RunApp : null);
+        LiveApp? launched = (Session.Debug.IsDebugging ? DebugApp() : null) ?? (Builds.IsRunning ? Session.RunApp : null);
         if (launched is { State: LiveAppState.Ended })
         {
             return Ended(launched);
@@ -525,14 +549,14 @@ public sealed partial class PassengerTools
     /// said at once rather than the answer waited out, which the app's paused UI gives only once it runs again.</summary>
     private async Task<(InputDone? Done, string? Paused)> SendAsync(LiveApp live, InputAction input, CancellationToken cancel)
     {
-        if (live != Session.LiveApp)
+        if (Session.Debug.SessionOf(live) is not { } debugged)
         {
             return (await live.InputAsync(input), null);
         }
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         Task<InputDone> sent = live.InputAsync(input, giveUp.Token);
-        await Until(() => sent.IsCompleted || Session.Debug.Session is { State: DebugState.Paused }, LiveApp.AnswerLimit, cancel);
-        if (sent.IsCompleted || Session.Debug.Session is not { State: DebugState.Paused })
+        await Until(() => sent.IsCompleted || debugged.State == DebugState.Paused, LiveApp.AnswerLimit, cancel);
+        if (sent.IsCompleted || debugged.State != DebugState.Paused)
         {
             return (await sent, null);
         }
@@ -545,8 +569,9 @@ public sealed partial class PassengerTools
         {
             // Given up on: its answer comes once the program runs again, to no one.
         }
-        await Until(() => Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
-        DebugSnapshot stop = await DebugSnapshotAsync();
+        // Its stop chooses its tab, whose stop the debugger reads.
+        await Until(() => Session.Debug.Session == debugged && Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
+        DebugSnapshot stop = await DebugSnapshotAsync(debugged);
         return (null, $"that paused the program{(stop.Reason is { } why ? $" ({why})" : string.Empty)}{(stop.Location is { } at ? $" at {at}" : string.Empty)} before it was done: "
             + "debug_state shows where, debug_continue lets it go on");
     }
@@ -574,8 +599,9 @@ public sealed record AppWindows(string App, string Framework, string? Avalonia, 
 
 public sealed record AppWindowInfo(string Id, string Type, string? Name, string? Title, double Width, double Height, double Scaling, bool Active, bool Visible, string? Owner);
 
-/// <summary>A failed binding as an agent reads it: the app (run, debug or ide), Avalonia's level, the control, its property and
-/// the binding's path, the message, its place in the XAML (path:line:column), how many times, and the nearest members.</summary>
+/// <summary>A failed binding as an agent reads it: the app (run, debug or, with several debugged, its Debug tab's name, or
+/// ide), Avalonia's level, the control, its property and the binding's path, the message, its place in the XAML
+/// (path:line:column), how many times, and the nearest members.</summary>
 public sealed record AppBindingError(string App, string Level, string Control, string Property, string Path, string Message, string? Place, int Count,
     IReadOnlyList<string> Nearest);
 

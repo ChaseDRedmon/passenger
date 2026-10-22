@@ -38,6 +38,11 @@ public sealed class DebugTab(string name, OutputView console) : Observable
     /// <summary>The session's Hot Reload, when it has one.</summary>
     internal Debugging.HotReload? HotReload { get; set; }
 
+    /// <summary>Its program as an Avalonia or WPF app with Passenger's inspector in it, from its launch until the tab goes
+    /// (ended with its session, its failed bindings kept while the tab is); null for any other program. The Live Visual
+    /// Tree, binding values and agents' app tools follow the chosen tab's.</summary>
+    public LiveTree.LiveApp? App { get; internal set; }
+
     /// <summary>Whether its program was launched with its output in this console, rather than attached to or in the terminal.</summary>
     internal bool OwnsConsole { get; init; }
 

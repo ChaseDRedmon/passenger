@@ -285,7 +285,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         Ui.Settle();
         tree.PropertyList.SelectedItem = tree.PropertyRows.First(p => p.Name == property);
         Ui.ChooseFromMenu(tree.PropertyList, LiveTreeView.BreakWhenValueChanges);
-        return window.Debugger.Breakpoints.FindProperty(tree.Details!.Id, property)!;
+        return window.Debugger.Breakpoints.FindProperty(window.Debugger.Session!, tree.Details!.Id, property)!;
     }
 
     /// <summary>Waits for the program to stop and the stop to be read, which it returns.</summary>

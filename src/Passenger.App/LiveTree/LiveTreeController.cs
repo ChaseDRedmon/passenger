@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
 using Passenger.App.Editors;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Inspector;
@@ -13,8 +14,8 @@ namespace Passenger.App.LiveTree;
 /// a place in a file, and the editors, whose text the app's XAML places are read in.</summary>
 public sealed record LiveTreeParts(DockHost Dock, ActionRegistry Actions, Action<string> Say, Action<string, TextPosition> Navigate, EditorArea Editors);
 
-/// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia or WPF app the session's debugger
-/// launched (<see cref="ProjectSession.LiveApp"/>), shows its window as the app's UI comes up, and asks the app for its tree
+/// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia or WPF app of the Debug tab chosen
+/// (<see cref="ProjectSession.LiveApp"/>), shows its window as the app's UI comes up, and asks the app for its tree
 /// (again whenever its controls come and go), for the chosen control's details, for Select Element and for the outline over
 /// the control chosen. While the app is paused nothing is asked, since its UI thread answers nothing: the window keeps what
 /// it last had and says so, and asks again once the app runs. A UI-thread object of the window.</summary>
@@ -33,10 +34,7 @@ public sealed class LiveTreeController
     /// <summary>The app's tree changed while the window could not ask (paused, hidden).</summary>
     private bool stale;
 
-    /// <summary>The property breakpoints the inspector in the app watches, each with the hit count it was given.</summary>
-    private readonly Dictionary<PropertyBreakpoint, string> watched = [];
-
-    /// <summary>The property breakpoints changed while the app was paused, which its inspector hears of once it runs.</summary>
+    /// <summary>The property breakpoints changed while an app was paused, which its inspector hears of once it runs.</summary>
     private bool watchesStale;
     private bool syncing;
     private bool syncAgain;
@@ -60,8 +58,8 @@ public sealed class LiveTreeController
         View.RefreshRequested += (_, _) => _ = RefreshAsync();
         View.GoToRequested += (_, place) => GoTo(place);
         View.BreakRequested += (_, value) => ToggleBreak(value);
-        View.Watched = value => View.Details is { } details && session?.Debug.Breakpoints.FindProperty(details.Id, value.Name) is not null;
-        View.WhyNotBreak = () => session?.Debug.IsDebugging == true ? null : "Break When Value Changes needs the app debugged";
+        View.Watched = value => View.Details is { } details && Debugged() is { } debugged && session!.Debug.Breakpoints.FindProperty(debugged, details.Id, value.Name) is not null;
+        View.WhyNotBreak = () => Debugged() is { State: not DebugState.Ended } ? null : "Break When Value Changes needs the app debugged";
     }
 
     public LiveTreeView View { get; }
@@ -85,7 +83,10 @@ public sealed class LiveTreeController
         }
     }
 
-    /// <summary>The window follows a session from now: the app its debugger launches, and whether that app is paused.</summary>
+    /// <summary>The session debugging the app the window follows, which its property breakpoints are the elements of.</summary>
+    private DebugSession? Debugged() => app is not null ? session?.Debug.SessionOf(app) : null;
+
+    /// <summary>The window follows a session from now: the app of its chosen Debug tab, and whether that app is paused.</summary>
     public void Bind(ProjectSession next)
     {
         UiThread.Check();
@@ -119,17 +120,17 @@ public sealed class LiveTreeController
     /// taken away.</summary>
     private void ToggleBreak(PropertyValue value)
     {
-        if (session is not { } current || View.Details is not { } details)
+        if (session is not { } current || View.Details is not { } details || Debugged() is not { } debugged)
         {
             return;
         }
         BreakpointStore store = current.Debug.Breakpoints;
-        if (store.FindProperty(details.Id, value.Name) is { } existing)
+        if (store.FindProperty(debugged, details.Id, value.Name) is { } existing)
         {
             store.Remove(existing);
             return;
         }
-        PropertyBreakpoint added = store.AddProperty(details.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, value.Name);
+        PropertyBreakpoint added = store.AddProperty(debugged, details.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, value.Name);
         parts.Say($"Break When Value Changes: the app stops where {added.Location} is changed");
     }
 
@@ -144,16 +145,17 @@ public sealed class LiveTreeController
         }
     }
 
-    private string WatchedNow() => View.Details is { } details && session is { } current
-        ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Element == details.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
+    private string WatchedNow() => View.Details is { } details && session is { } current && Debugged() is { } debugged
+        ? string.Join(';', current.Debug.Breakpoints.Properties.Where(p => p.Session == debugged && p.Element == details.Id).Select(p => p.Property).Order(StringComparer.Ordinal))
         : string.Empty;
 
-    /// <summary>The inspector in the app told of the property breakpoints as they are now (while the app runs), which an
+    /// <summary>The inspectors in the apps told of the property breakpoints as they are now (while each runs), which an
     /// agent's breakpoint_set waits for, so its next click finds the property watched.</summary>
     public Task Watching { get; private set; } = Task.CompletedTask;
 
-    /// <summary>Tells the inspector in the app which properties to watch, as the property breakpoints that are on (none
-    /// while muted) and their hit counts say; while the app is paused, once it runs. One at a time, the last word winning.</summary>
+    /// <summary>Tells the inspector in each debugged app which of its properties to watch, as the property breakpoints of its
+    /// session that are on (none while muted) and their hit counts say; while an app is paused, once it runs. One at a time,
+    /// the last word winning.</summary>
     private Task SyncWatchesAsync()
     {
         if (syncing)
@@ -185,20 +187,35 @@ public sealed class LiveTreeController
 
     private async Task SyncWatchesOnceAsync()
     {
-        if (session is not { } current || app is not { State: LiveAppState.Connected } live)
+        if (session is not { } current)
         {
-            return;
-        }
-        if (Paused)
-        {
-            watchesStale = true;
             return;
         }
         watchesStale = false;
         BreakpointStore store = current.Debug.Breakpoints;
-        Dictionary<PropertyBreakpoint, string> wanted = store.Muted ? [] : store.Properties.Where(p => p.Enabled).ToDictionary(p => p, p => p.HitCondition ?? string.Empty);
         // Held, so what is done next in the app (a test's, an agent's) finds the property watched.
         using IDisposable held = BackgroundWork.Scope();
+        foreach ((DebugTab tab, LiveApp live) in current.Debug.Apps.ToList())
+        {
+            if (live.State != LiveAppState.Connected || tab.Session is not { State: not DebugState.Ended } debugged)
+            {
+                continue;
+            }
+            if (debugged.State == DebugState.Paused)
+            {
+                watchesStale = true;
+                continue;
+            }
+            await SyncWatchesAsync(store, debugged, live);
+        }
+    }
+
+    /// <summary>One app's inspector told of its session's property breakpoints, as <see cref="LiveApp.Watched"/> last said them.</summary>
+    private async Task SyncWatchesAsync(BreakpointStore store, DebugSession debugged, LiveApp live)
+    {
+        Dictionary<PropertyBreakpoint, string> wanted = store.Muted ? []
+            : store.Properties.Where(p => p.Enabled && p.Session == debugged).ToDictionary(p => p, p => p.HitCondition ?? string.Empty);
+        Dictionary<PropertyBreakpoint, string> watched = live.Watched;
         foreach (PropertyBreakpoint gone in watched.Keys.Where(p => !wanted.ContainsKey(p)).ToList())
         {
             watched.Remove(gone);
@@ -247,9 +264,6 @@ public sealed class LiveTreeController
         Choose(null);
         treeAsks++;
         detailAsks++;
-        // A new app's inspector watches nothing yet.
-        watched.Clear();
-        watchesStale = false;
         View.SelectElement.IsChecked = false;
         View.ShowBanner(null);
         View.ShowTree(null);
@@ -261,6 +275,12 @@ public sealed class LiveTreeController
             next.Picked += OnPicked;
         }
         ShowState();
+        if (next is { State: LiveAppState.Connected })
+        {
+            // An app up already (another Debug tab's, chosen again): its tree as it is now, or that it is paused.
+            stale = true;
+            OnDebugState();
+        }
     }
 
     /// <summary>What the window says of the app: nothing to inspect, waiting for it, why not, gone, or what it runs.</summary>
@@ -351,7 +371,8 @@ public sealed class LiveTreeController
         {
             _ = RefreshAsync();
         }
-        if (!Paused && watchesStale)
+        // Any app's session may have run on since its watches changed, the one followed or another.
+        if (watchesStale)
         {
             _ = SyncWatchesAsync();
         }

@@ -307,7 +307,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Ui.Settle();
         tree.PropertyList.SelectedItem = tree.PropertyRows.First(p => p.Name == "FontSize");
         Ui.ChooseFromMenu(tree.PropertyList, LiveTreeView.BreakWhenValueChanges);
-        PropertyBreakpoint size = store.FindProperty(tree.Details!.Id, "FontSize")
+        PropertyBreakpoint size = store.FindProperty(window.Debugger.Session!, tree.Details!.Id, "FontSize")
             ?? throw new Xunit.Sdk.XunitException("Break When Value Changes set no property breakpoint on the caption's FontSize");
         Ui.WaitFor(() => size.Status == BreakpointStatus.Bound, $"the debugger to take the property breakpoint, not to say {size.Message}");
 

@@ -967,8 +967,8 @@ public sealed class DebugSession
 
     private string DataSignature() => string.Join(';', DataSending().Select(d => $"{d.DataId}|{d.Condition}|{d.HitCondition}|{d.LogMessage}|{d.Suspend}"));
 
-    /// <summary>The property breakpoints that are on; none while muted.</summary>
-    private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled)];
+    /// <summary>The property breakpoints on this session's app that are on; none while muted.</summary>
+    private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled && p.Session == this)];
 
     /// <summary>XAML Binding Errors when it is on; never while muted.</summary>
     private BindingErrorBreakpoint? BindingErrorsSending() => !breakpoints.Muted && breakpoints.BindingErrors.Enabled ? breakpoints.BindingErrors : null;

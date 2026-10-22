@@ -189,6 +189,12 @@ public sealed class DebugController : IDisposable
     /// <summary>The tab a session is in, while it has one.</summary>
     public DebugTab? TabOf(DebugSession session) => view.Sessions.FirstOrDefault(t => t.Session == session);
 
+    /// <summary>The session debugging an inspected app, while its tab is there; null for an app Run or Profile started.</summary>
+    public DebugSession? SessionOf(LiveApp app) => view.Sessions.FirstOrDefault(t => t.App == app)?.Session;
+
+    /// <summary>The apps of the tabs there are, each with its tab, in their order.</summary>
+    public IEnumerable<(DebugTab Tab, LiveApp App)> Apps => view.Sessions.Where(t => t.App is not null).Select(t => (t, t.App!));
+
     /// <summary>The stop the program is paused at as the controller has read it (the stopped thread's frames, the exception
     /// it stopped on described), which the Debug window shows; null while it runs, before the stop is read, and after.</summary>
     public DebugStop? Stop { get; private set; }
@@ -212,6 +218,9 @@ public sealed class DebugController : IDisposable
 
     /// <summary>The session started, stopped, ran on or ended.</summary>
     public event EventHandler? StateChanged;
+
+    /// <summary>Another tab is chosen, or none is, or a tab came or went: what follows the chosen tab's app looks again.</summary>
+    public event EventHandler? TabsChanged;
 
     /// <summary>Starts a program the debugger asks for in a tab of the Terminal window named for the session (the window's
     /// own), for a configuration that uses the terminal; without it such a program runs in the Console.</summary>
@@ -383,14 +392,14 @@ public sealed class DebugController : IDisposable
     /// debugged; the plan's last session, still debugged, is stopped first. With <paramref name="elsewhere"/> the program
     /// runs on another machine (<see cref="DebugSession.Elsewhere"/>). Null once the session is open (the program may have
     /// ended already), else why it could not.</summary>
-    public Task<string?> StartAsync(Run.LaunchPlan plan, bool elsewhere = false, AdapterPlace? place = null)
+    public Task<string?> StartAsync(Run.LaunchPlan plan, bool elsewhere = false, AdapterPlace? place = null, LiveApp? app = null)
     {
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = !elsewhere && place is null && plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
             ? arguments => run(plan.Name, arguments)
             : null;
         bool hotReloadOn = HotReloadOn();
         return OpenAsync((built, log, output, starting) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn, starting, elsewhere, place),
-            plan.Name, launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn);
+            plan.Name, launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn, app: app);
     }
 
     /// <summary>The column a breakpoint asks the debugger for: in Avalonia XAML, its attribute's or its line's first name's
@@ -423,9 +432,10 @@ public sealed class DebugController : IDisposable
     /// terminal's; one whose place follows its output from outside, a container run's service, has that). The tab is chosen,
     /// and its session <see cref="Session"/> from its first moment, as Rider's Stop is there as soon as a session begins:
     /// its start waits for the program's runtime as long as that takes. A start that failed leaves its tab ended, with no
-    /// session. Tabs of one <paramref name="group"/> (a container run's services) take Hot Reload's changes together.</summary>
+    /// session. Tabs of one <paramref name="group"/> (a container run's services) take Hot Reload's changes together; an
+    /// inspected <paramref name="app"/> is held by its tab.</summary>
     private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Action<DebugSession>, Task<DebugSession>> open, string name, bool launched,
-        bool inTerminal = false, bool hotReloadOn = false, AdapterPlace? place = null, string? group = null)
+        bool inTerminal = false, bool hotReloadOn = false, AdapterPlace? place = null, string? group = null, LiveApp? app = null)
     {
         UiThread.Check();
         // A start that comes after its folder was left would open in the next folder's Debug window, which is not its own.
@@ -444,6 +454,7 @@ public sealed class DebugController : IDisposable
         }
         DebugTab tab = Place(name);
         tab.Group = group;
+        tab.App = app;
         BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
         tab.Lines = built;
         await ChooseAsync(tab);
@@ -716,6 +727,7 @@ public sealed class DebugController : IDisposable
         console.Clear();
         DebugTab tab = new(name, console);
         view.Sessions.Insert(Math.Min(at, view.Sessions.Count), tab);
+        TabsChanged?.Invoke(this, EventArgs.Empty);
         return tab;
     }
 
@@ -736,6 +748,7 @@ public sealed class DebugController : IDisposable
         {
             each.IsChosen = each == tab;
         }
+        TabsChanged?.Invoke(this, EventArgs.Empty);
         view.ShowConsole(tab.Console);
         NextShown();
         frame = null;
@@ -785,9 +798,11 @@ public sealed class DebugController : IDisposable
         view.ForgetConsole(tab.Console);
         if (tab != chosen)
         {
+            TabsChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
         chosen = null;
+        TabsChanged?.Invoke(this, EventArgs.Empty);
         if ((Next() ?? (view.Sessions.Count > 0 ? view.Sessions[Math.Min(at, view.Sessions.Count - 1)] : null)) is { } next)
         {
             await ChooseAsync(next);

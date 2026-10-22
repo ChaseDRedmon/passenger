@@ -109,11 +109,15 @@ public sealed class DataBreakpoint(string dataId, string location, object sessio
 }
 
 /// <summary>A property breakpoint, the Live Visual Tree's Break When Value Changes: an Avalonia property of one element of
-/// the app being debugged, which stops the app in the code that changes it (a style's, a binding's, code-behind's, an
+/// an app being debugged, which stops the app in the code that changes it (a style's, a binding's, code-behind's, an
 /// animation's), as a data breakpoint does for a field. It lasts as long as its session, as data breakpoints do, the
-/// element being that run's alone. Its condition is C# over the change: <c>newValue</c>, <c>oldValue</c>, <c>control</c>.</summary>
-public sealed class PropertyBreakpoint(int id, long element, string described, string property) : Breakpoint
+/// element being that run's alone, and no other session is sent it. Its condition is C# over the change: <c>newValue</c>,
+/// <c>oldValue</c>, <c>control</c>.</summary>
+public sealed class PropertyBreakpoint(int id, object session, long element, string described, string property) : Breakpoint
 {
+    /// <summary>The session debugging the app whose element it watches.</summary>
+    public object Session { get; } = session;
+
     /// <summary>Its number in the session, which the inspector in the app and the debugger's condition name it by.</summary>
     public int Id { get; } = id;
 
@@ -417,8 +421,8 @@ public sealed class BreakpointStore
     /// <summary>A session starts: it is sent the breakpoints, and tells what its debugger made of each.</summary>
     public void Join(object session) => sessions.Add(session);
 
-    /// <summary>A session ends: what its debugger said is forgotten, its data breakpoints go with its objects, and the
-    /// property breakpoints, on elements of a debugged app, once no session is left.</summary>
+    /// <summary>A session ends: what its debugger said is forgotten, and its data and property breakpoints go with its
+    /// objects and its app's elements.</summary>
     public void Leave(object session)
     {
         sessions.Remove(session);
@@ -442,9 +446,8 @@ public sealed class BreakpointStore
             DataChanged?.Invoke(this, EventArgs.Empty);
         }
         bool forgotten = properties.Aggregate(false, (any, p) => p.Forget(session) | any);
-        if (sessions.Count == 0 && properties.Count > 0)
+        if (properties.RemoveAll(p => p.Session == session) > 0)
         {
-            properties.Clear();
             forgotten = true;
         }
         if (forgotten)
@@ -468,29 +471,29 @@ public sealed class BreakpointStore
         }
     }
 
-    /// <summary>The property breakpoint on a property of an element of the app (by its Live Visual Tree id), set to stop at
-    /// every change; the one there is already when there is.</summary>
-    public PropertyBreakpoint AddProperty(long element, string described, string property)
+    /// <summary>The property breakpoint on a property of an element of the app a session debugs (by its Live Visual Tree id),
+    /// set to stop at every change; the one there is already when there is.</summary>
+    public PropertyBreakpoint AddProperty(object session, long element, string described, string property)
     {
-        if (FindProperty(element, property) is { } existing)
+        if (FindProperty(session, element, property) is { } existing)
         {
             return existing;
         }
-        PropertyBreakpoint added = new(++lastProperty, element, described, property);
+        PropertyBreakpoint added = new(++lastProperty, session, element, described, property);
         properties.Add(added);
         PropertiesChanged?.Invoke(this, EventArgs.Empty);
         return added;
     }
 
-    /// <summary>The property breakpoint on a property of an element, if one is set.</summary>
-    public PropertyBreakpoint? FindProperty(long element, string property) =>
-        properties.FirstOrDefault(p => p.Element == element && p.Property == property);
+    /// <summary>The property breakpoint on a property of an element of a session's app, if one is set.</summary>
+    public PropertyBreakpoint? FindProperty(object session, long element, string property) =>
+        properties.FirstOrDefault(p => p.Session == session && p.Element == element && p.Property == property);
 
-    /// <summary>Records what a session's debugger said of the property breakpoints; those it was not asked of (off, or
+    /// <summary>Records what a session's debugger said of its property breakpoints; those it was not asked of (off, or
     /// muted) go back to unknown.</summary>
     public void ReportProperties(object session, IReadOnlyList<(PropertyBreakpoint Breakpoint, BreakpointStatus Status, string? Message)> reports)
     {
-        foreach (PropertyBreakpoint breakpoint in properties)
+        foreach (PropertyBreakpoint breakpoint in properties.Where(p => p.Session == session))
         {
             (BreakpointStatus status, string? message) = reports.FirstOrDefault(r => ReferenceEquals(r.Breakpoint, breakpoint)) is { Breakpoint: not null } said
                 ? (said.Status, said.Message)

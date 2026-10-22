@@ -103,6 +103,8 @@ public sealed partial class BuildRunController
     {
         this.session = session;
         this.parts = parts;
+        // A Debug tab that comes or goes brings its app's failed bindings to Problems, or takes them away.
+        session.InspectedChanged += (_, _) => ShowBindings();
         session.Builder.Line += (_, line) =>
         {
             if (reading is not null && BuildOutput.Continuing(reading, line) is { } longer)
@@ -739,11 +741,10 @@ public sealed partial class BuildRunController
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);
         DebugController debug = session.Debug;
-        // An Avalonia or WPF app is launched with the Live Visual Tree's inspector in it, which ends with this debugging.
-        LaunchPlan launched = session.Inspected(plan);
-        LiveApp? inspected = session.LiveApp;
-        ShowBindings();
-        Task<string?> starting = debug.StartAsync(launched);
+        // An Avalonia or WPF app is launched with the Live Visual Tree's inspector in it, which its tab holds and which ends
+        // with this debugging.
+        (LaunchPlan launched, LiveApp? inspected) = session.Inspected(plan);
+        Task<string?> starting = debug.StartAsync(launched, app: inspected);
         // Its tab, chosen as the start began, has the console its failed bindings are written to.
         WatchBindings(inspected, debug.Chosen?.Console);
         string? refused = await starting;

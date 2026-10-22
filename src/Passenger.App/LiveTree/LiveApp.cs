@@ -318,6 +318,10 @@ public sealed class LiveApp : IDisposable
     public async Task<Picture> CaptureAsync(long element, double? scale, Box? area) =>
         (await AskAsync(new Request(0, Wire.Capture, element) { Scale = scale, Area = area })).Picture ?? throw new LiveAppException($"{Name} drew nothing");
 
+    /// <summary>The property breakpoints its inspector was told to watch, each with the hit count it was given: the Live
+    /// Visual Tree's word to it, kept with the app so each app debugged at once keeps its own.</summary>
+    internal Dictionary<Debugging.PropertyBreakpoint, string> Watched { get; } = [];
+
     /// <summary>A property breakpoint's watch on an element's property, its hit count counted in the app, in place of what
     /// that breakpoint watched before.</summary>
     public Task WatchAsync(int breakpoint, long element, string property, string? hitCondition) =>

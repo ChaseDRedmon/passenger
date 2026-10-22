@@ -777,8 +777,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         if (control is { Length: > 0 } || property is { Length: > 0 })
         {
-            (long element, string described, string name) = await WatchedProperty(control, property, cancel);
-            PropertyBreakpoint watched = store.AddProperty(element, described, name);
+            (DebugSession debugged, long element, string described, string name) = await WatchedProperty(control, property, cancel);
+            PropertyBreakpoint watched = store.AddProperty(debugged, element, described, name);
             store.Update(watched, enabled: true, suspend, condition, hitCondition, logMessage);
             await InTheApp(cancel);
             return DataBreakpoints();
@@ -821,12 +821,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
                 throw new ArgumentException("A property breakpoint is named by its control and its property, both");
             }
             string wanted = property.Trim();
-            // By the id breakpoints shows, else the element the query finds now (the app paused answers no query).
-            PropertyBreakpoint? watched = store.Properties.FirstOrDefault(p => Id(p.Element) == control.Trim() && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase));
+            // By the id breakpoints shows (of the debugged app's elements), else the element the query finds now (the app
+            // paused answers no query).
+            DebugSession? app = DebugApp() is { } live ? Session.Debug.SessionOf(live) : null;
+            PropertyBreakpoint? watched = store.Properties.FirstOrDefault(p => (app is null || p.Session == app) && Id(p.Element) == control.Trim()
+                && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase));
             if (watched is null)
             {
-                (long element, _, _) = await WatchedElement(control, cancel);
-                watched = store.Properties.FirstOrDefault(p => p.Element == element && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase))
+                (DebugSession debugged, long element, _, _) = await WatchedElement(control, cancel);
+                watched = store.Properties.FirstOrDefault(p => p.Session == debugged && p.Element == element && p.Property.Equals(wanted, StringComparison.OrdinalIgnoreCase))
                     ?? throw new ArgumentException($"No property breakpoint is on {wanted} of {control}; breakpoints lists those there are");
             }
             store.Remove(watched);
@@ -860,35 +863,37 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     /// <summary>The element of the debugged app a query names, as a property breakpoint describes it (Type#Name), with its
-    /// details' properties.</summary>
-    private async Task<(long Element, string Described, IReadOnlyList<Passenger.Inspector.PropertyValue> Properties)> WatchedElement(string control, CancellationToken cancel)
+    /// details' properties and the session debugging the app.</summary>
+    private async Task<(DebugSession Session, long Element, string Described, IReadOnlyList<Passenger.Inspector.PropertyValue> Properties)> WatchedElement(string control,
+        CancellationToken cancel)
     {
-        if (Session.LiveApp is null)
+        if (DebugApp() is null)
         {
             throw new InvalidOperationException(Session.Debug.IsDebugging
                 ? $"A property breakpoint watches an element of the app being debugged, and what is being debugged is not {Inspectable}"
                 : "A property breakpoint watches an element of the app being debugged: debug_start one first");
         }
         LiveTree.LiveApp live = await InspectedAsync("debug", cancel);
+        DebugSession debugged = Session.Debug.SessionOf(live) ?? throw new InvalidOperationException("A property breakpoint watches an element of the app being debugged: debug_start one first");
         (List<LiveTree.AppNode> nodes, _) = await TreeOf(live, null, cancel);
         Passenger.Inspector.Element element = LiveTree.AppQuery.One(nodes, control).Element;
         Passenger.Inspector.ElementDetails details = await live.DetailsAsync(element.Id);
-        return (element.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, details.Properties);
+        return (debugged, element.Id, details.Name is { Length: > 0 } name ? $"{details.Type}#{name}" : details.Type, details.Properties);
     }
 
     /// <summary>A property breakpoint's element and property, the property by the name the element's details list it under.</summary>
-    private async Task<(long Element, string Described, string Property)> WatchedProperty(string? control, string? property, CancellationToken cancel)
+    private async Task<(DebugSession Session, long Element, string Described, string Property)> WatchedProperty(string? control, string? property, CancellationToken cancel)
     {
         if (control is not { Length: > 0 } || property is not { Length: > 0 })
         {
             throw new ArgumentException("A property breakpoint needs both control, the element, and property, the property of it to watch");
         }
-        (long element, string described, IReadOnlyList<Passenger.Inspector.PropertyValue> properties) = await WatchedElement(control, cancel);
+        (DebugSession debugged, long element, string described, IReadOnlyList<Passenger.Inspector.PropertyValue> properties) = await WatchedElement(control, cancel);
         string wanted = property.Trim();
         Passenger.Inspector.PropertyValue found = properties.FirstOrDefault(p => p.Name == wanted)
             ?? properties.FirstOrDefault(p => p.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"{described} has no property {wanted}; app_details lists the properties it has");
-        return (element, described, found.Name);
+        return (debugged, element, described, found.Name);
     }
 
     /// <summary>Waits for the debugger and the inspector in the app to take a property breakpoint's change, so the agent's next

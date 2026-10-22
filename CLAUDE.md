@@ -1231,7 +1231,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. Several programs are debugged at once (#341): the controller
   holds a `DebugTab` per session (the Debug window's header tabs, `DebugView.Sessions`, each with its own console, built
-  lines and Hot Reload), and `DebugController.Session` is the chosen tab's, which the window shows and every action and
+  lines, Hot Reload and inspected app, `DebugTab.App`, #352), and `DebugController.Session` is the chosen tab's, which the window shows and every action and
   `Stop` act on; a stop in any program chooses its tab, and the chosen one's end chooses another still debugged (one
   paused first). Debug or Attach of a program already debugged (a tab's name: its configuration's, or the program's)
   stops it, or lets an attached one go, and takes its tab; with no other program debugged the new tab takes every
@@ -1287,7 +1287,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   at the breakpoint's place. `LineBreakpoint.Attribute` is an attribute's breakpoint (F9 on it, `XamlBreakpoints`),
   kept with the folder, sent with its name's column, line and column both as XamlIl counted them (an XML reader's,
   `BuiltLines`). `PropertyBreakpoint` is the Live Visual Tree's Break When Value
-  Changes, for one session: the inspector watches that element's property (protocol v3 `watch`, `PropertyBreaks.cs`)
+  Changes, for one session, the one debugging its element's app (`PropertyBreakpoint.Session`, sent to that session alone,
+  its app's inspector told by `LiveTreeController` as `LiveApp.Watched` keeps): the inspector watches that element's
+  property (protocol v3 `watch`, `PropertyBreaks.cs`)
   and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
   `breakpoint == Id && (…)`, the hit count kept in the app); the stop says its `change` and, from `setAt`, where the
   style that set it is written at the editor's line. The inspector is never optimized (the debugger reads that
@@ -1404,8 +1406,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   before any event; an event waits merged with its kind's (a failure's newer count by its id, one `treeChanged`,
   `valuesChanged`, pick, hello, `untold`), and only the inspector's own errors queue unmerged, up to 1024 waiting, the
   rest left out, counted and said in protocol v6 `untold` (`Untold.Messages`, which the IDE logs).
-  `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging; what the app tells unasked is
-  heard on the UI thread a batch at a time); `LiveTreeController`
+  `App/LiveTree/LiveApp` is Passenger's end (held by its Debug tab, `DebugTab.App`, ended with its debugging, so each
+  app debugged at once keeps its own; `ProjectSession.LiveApp` is the chosen tab's, which the Live Visual Tree, binding
+  values and the Debug window's overlays follow; what the app tells unasked is heard on the UI thread a batch at a time); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
   selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools (`app_*`,
   `Mcp/PassengerTools.App.cs`) ask the same inspector: its windows, the tree with each element's box, text and state,
@@ -1452,7 +1455,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   said with the counts, which Problems' Bindings says under its list, the console once and `app_binding_errors` as a
   last entry of level Untold, so every failure is listed or counted. Run gives an
   Avalonia app the inspector too (`ProjectSession.InspectedRun`, `RunApp`; none under Hot Reload, whose dotnet watch
-  would load it); the Live Visual Tree follows only the debugger's `LiveApp`. `App/LiveTree/BindingErrors` is how a
+  would load it); the Live Visual Tree follows only the chosen Debug tab's `LiveApp`. Problems' Bindings lists Run's app's
+  failures and every Debug tab's, each kept while its tab is (`ProjectSession.InspectedApps`). Agents' app tools take
+  `app`: run, debug (the chosen tab's app while it is debugged, else the only one), a Debug tab's name, or ide
+  (`PassengerTools.DebugApp`, `NamedApp`). `App/LiveTree/BindingErrors` is how a
   failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),
   Problems' Bindings tab (`BindingProblem`, by file, each once with its count), and fixes through
   `CodeAssist.EditorFixes`, Passenger's own fixes that Show Context Actions lists before the server's.
@@ -1769,7 +1775,9 @@ in the package cache. `DecompiledSymbolsTests` (Alone) give each adapter a cache
 a callback from List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
 (`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
-("rename" typed into its console renames the customer on the UI thread). `AvaloniaFramesTests` (Alone) profile,
+("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
+debug BindingErrorsApp and LiveTreeApp at once (a solution over both), choosing each one's Debug tab in turn, and
+`McpTests.DebuggedApps.cs` has an agent's app tools name one by its tab's name. `AvaloniaFramesTests` (Alone) profile,
 debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `DebugSessionsTests` (Alone) debug two
 programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpTests.Sessions.cs` has an agent name
 which; its test of a session elsewhere has the adapter let its program go rather than killing the adapter, since on

@@ -88,6 +88,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Debug.Breakpoints.Changed += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Debug.Breakpoints.ExceptionsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Debug.Breakpoints.BindingErrorsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
+        Debug.TabsChanged += (_, _) => OnDebugTabsChanged();
         Bookmarks.Changed += (_, _) => State?.Bookmarks.Set(Bookmarks.Capture());
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);
@@ -263,23 +264,41 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The folder's debugger, its breakpoints with it.</summary>
     public DebugController Debug { get; }
 
-    /// <summary>The Avalonia or WPF app the debugger launched last, which the Live Visual Tree inspects; null after any other
-    /// program. It ends with its debugging, and with the folder.</summary>
-    public LiveApp? LiveApp { get; private set; }
+    /// <summary>The Avalonia or WPF app of the Debug tab chosen, which the Live Visual Tree, binding values and agents' app
+    /// tools inspect; null while the chosen tab's program is another, or no tab is. Each tab holds its own app
+    /// (<see cref="ToolWindows.DebugTab.App"/>), ended with its debugging, so several debugged at once each keep theirs.</summary>
+    public LiveApp? LiveApp => Debug.Chosen?.App;
+
+    /// <summary>The chosen Debug tab's app as <see cref="LiveAppChanged"/> last told it.</summary>
+    private LiveApp? liveAppTold;
 
     /// <summary>Another app is being inspected, or none.</summary>
     public event EventHandler? LiveAppChanged;
 
-    /// <summary>A plan as Debug launches it: an Avalonia or WPF app's carries the inspector the Live Visual Tree talks to (its
-    /// startup hook, and a socket of the app's own), any other's is the plan itself.</summary>
-    public LaunchPlan Inspected(LaunchPlan plan)
+    /// <summary>A plan as Debug launches it, and the app it is: an Avalonia or WPF app's carries the inspector the Live Visual
+    /// Tree talks to (its startup hook, and a socket of the app's own), which its Debug tab holds; any other's is the plan
+    /// itself, with no app.</summary>
+    public (LaunchPlan Plan, LiveApp? App) Inspected(LaunchPlan plan)
     {
         UiThread.Check();
-        LiveApp?.Dispose();
-        LiveApp = LiveTree.LiveApp.For(plan, Overlays);
-        LiveAppChanged?.Invoke(this, EventArgs.Empty);
+        LiveApp? app = LiveTree.LiveApp.For(plan, Overlays);
+        return (app?.Plan ?? plan, app);
+    }
+
+    /// <summary>A Debug tab came, went or was chosen: the chosen tab's app may be another, and the apps whose failed bindings
+    /// Problems lists others.</summary>
+    private void OnDebugTabsChanged()
+    {
+        if (IsEnded)
+        {
+            return;
+        }
+        if (LiveApp != liveAppTold)
+        {
+            liveAppTold = LiveApp;
+            LiveAppChanged?.Invoke(this, EventArgs.Empty);
+        }
         InspectedChanged?.Invoke(this, EventArgs.Empty);
-        return LiveApp?.Plan ?? plan;
     }
 
     /// <summary>The Avalonia or WPF app Run started last, inspected for its failed bindings and agents' tools (the Live Visual
@@ -322,13 +341,13 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>Run, Debug or Profile launched another app, inspected or not.</summary>
     public event EventHandler? InspectedChanged;
 
-    /// <summary>The bindings that failed in the apps Run and Debug launched last, each once with its count: those of an app
-    /// that ended stay until the next of its kind launches.</summary>
+    /// <summary>The bindings that failed in the app Run launched last and those of the Debug tabs, each once with its count:
+    /// those of an app that ended stay until the next Run, or while its tab is there.</summary>
     public IEnumerable<(LiveApp App, BindingFailure Failure)> FailedBindings =>
         InspectedApps.SelectMany(app => app.Bindings.Select(failure => (app, failure)));
 
-    /// <summary>The apps Run and Debug launched last with an inspector in them, whose failed bindings Problems lists.</summary>
-    public IEnumerable<LiveApp> InspectedApps => new[] { RunApp, LiveApp }.OfType<LiveApp>();
+    /// <summary>The app Run launched last and each Debug tab's, with an inspector in them, whose failed bindings Problems lists.</summary>
+    public IEnumerable<LiveApp> InspectedApps => new[] { RunApp }.Concat(Debug.Apps.Select(a => a.App)).OfType<LiveApp>();
 
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();
@@ -770,7 +789,10 @@ public sealed class ProjectSession : IAsyncDisposable
             parts.Add(("the profiler", Task.Run(() => run.LetGoAsync().AsTask())));
         }
         Profiling = null;
-        LiveApp?.Dispose();
+        foreach ((_, LiveApp app) in Debug.Apps)
+        {
+            app.Dispose();
+        }
         RunApp?.Dispose();
         ProfiledApp?.Dispose();
         Tests.Stop();

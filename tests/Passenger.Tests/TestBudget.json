@@ -37,6 +37,7 @@
     "XamlBreakpointsTests": 90,
     "BindingErrorsTests": 150,
     "BindingValuesTests": 120,
+    "DebuggedAppsTests": 150,
     "WpfLiveTreeTests": 180,
     "AvaloniaFramesTests": 90,
     "RazorTests": 90,
