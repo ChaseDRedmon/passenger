@@ -325,14 +325,15 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
 
         /// <summary>A container of the image, started as a person would start one (not by Passenger), labelled as the run's,
         /// once its program says what it keeps; <paramref name="held"/>, its runtime held at its start
-        /// (DOTNET_DefaultDiagnosticPortSuspend=1), as a container run's Profile will start each service.</summary>
-        public string Start(string name, bool held = false)
+        /// (DOTNET_DefaultDiagnosticPortSuspend=1), as a container run's Profile will start each service; <paramref
+        /// name="offWindow"/> for an agent's test, which has no window whose loop to run meanwhile.</summary>
+        public string Start(string name, bool held = false, bool offWindow = false)
         {
             string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}spins{name}";
             Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", named, "--label", Docker.RunLabel, .. held ? (string[])["-e", "DOTNET_DefaultDiagnosticPortSuspend=1"] : [], Image]);
-            // Started on the window's thread, its loop runs meanwhile; an agent's test starts it off that thread.
-            Assert.True(held || (Avalonia.Threading.Dispatcher.UIThread.CheckAccess() ? Ui.Pumped(() => Kept(named) > 0, TimeSpan.FromMinutes(1))
-                : Waiting.Until(() => Kept(named) > 0, TimeSpan.FromMinutes(1))),
+            // Not Dispatcher.UIThread.CheckAccess(): in a process no window test has run in yet, asking makes the asking thread Avalonia's.
+            Assert.True(held || (offWindow ? Waiting.Until(() => Kept(named) > 0, TimeSpan.FromMinutes(1))
+                : Ui.Pumped(() => Kept(named) > 0, TimeSpan.FromMinutes(1))),
                 $"The program in {named} never said what it keeps: {Docker.Ask(["logs", "--tail", "5", named])}");
             return named;
         }
