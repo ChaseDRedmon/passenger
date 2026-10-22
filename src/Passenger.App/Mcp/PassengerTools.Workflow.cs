@@ -239,8 +239,7 @@ public sealed partial class PassengerTools
         "longest, measure, arrange, render and compositor totals, the layout table by control type with the heaviest controls " +
         "and their XAML lines, and the longest frame's breakdown (or 0 and why). With attach, Attach Profiler instead: the " +
         "debugged program, else Run's, or with container the .NET program in it (debug_processes lists them), from now for " +
-        "seconds (else until it ends), left running. With resource, profiles that owned Aspire service without restarting it; " +
-        "starts its selected or explicit AppHost configuration if needed.")]
+        "seconds (else until it ends), left running. With resource, that Aspire resource as it runs.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -249,7 +248,7 @@ public sealed partial class PassengerTools
         [Description("With seconds: a memory snapshot too, the heap's types by size")] bool memory = false,
         [Description("Profile the program running (debugged, else Run's) from now, rather than launch one")] bool attach = false,
         string? container = null,
-        [Description(AspireResourceTarget)] string? resource = null,
+        string? resource = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectSession current = Session;

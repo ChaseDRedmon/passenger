@@ -10,13 +10,10 @@ namespace Passenger.App.Mcp;
 
 public sealed partial class PassengerTools
 {
-    private const string AspireResourceTarget = "Owned Aspire resource name; if ambiguous, absoluteAppHostPath::resourceName (workspace lists targets)";
-
     [McpServerTool(Name = "aspire_telemetry", Title = "Aspire logs and traces", ReadOnly = true), Description(
-        "Bounded Dashboard snapshots from an owned AppHost, independent of open panes. kind: logs or traces. " +
-        "With traceId, reads that trace's spans or logs. Limits: 1000 logs, 50 traces.")]
+        "An Aspire AppHost's structured logs or traces (kind) from its dashboard, or a resource's or trace's (traceId) alone.")]
     public Task<AspireTelemetryInfo> GetAspireTelemetry(string kind = "logs", string? appHost = null,
-        [Description(AspireResourceTarget)] string? resource = null, string? traceId = null, int limit = 200,
+        string? resource = null, string? traceId = null, int limit = 200,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (kind is not ("logs" or "traces"))
