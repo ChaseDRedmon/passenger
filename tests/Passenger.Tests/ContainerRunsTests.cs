@@ -122,8 +122,10 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         try
         {
             Launched(window, "the image to be built and run");
-            Ui.WaitFor(() => Run(window).Contains("at Shop.Program.Main()", StringComparison.Ordinal), "the container's frame in the Run window", TimeSpan.FromMinutes(1));
-            string line = Run(window).Split('\n').First(l => l.Contains("at Shop.Program.Main()", StringComparison.Ordinal));
+            // The container's own line, its service's prefix before it: Podman's build (Buildah) writes the CMD it builds in too.
+            static bool Logged(string l) => l.Contains("at Shop.Program.Main()", StringComparison.Ordinal) && l.Contains("| ", StringComparison.Ordinal);
+            Ui.WaitFor(() => Run(window).Split('\n').Any(Logged), "the container's frame in the Run window", TimeSpan.FromMinutes(1));
+            string line = Run(window).Split('\n').First(Logged);
             FileLink link = Assert.IsType<FileLink>(Assert.Single(window.BottomPanel.Run.Links.In(line)).Target);
             Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Shop", "Program.cs")), link.Path);
             Assert.Equal(0, link.Position.Line);
@@ -917,7 +919,8 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
     {
         string said = Docker.Ask(["compose", "-p", project, "port", service, "8080"]).Split('\n')[0].Trim();
         string? answer = null;
-        if (said.LastIndexOf(':') is int colon and > 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+        // Docker's CLI says 0.0.0.0:port; on Podman's socket ":port", the address left out.
+        if (said.LastIndexOf(':') is int colon and >= 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
             && Ui.Pumped(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)))
         {
             return answer!;
