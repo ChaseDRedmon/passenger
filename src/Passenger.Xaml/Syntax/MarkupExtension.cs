@@ -7,6 +7,10 @@ namespace Passenger.Xaml.Syntax;
 /// each where it stands in the file. Read as far as it goes while it is typed.</summary>
 public sealed class MarkupExtension
 {
+    /// <summary>How deep extensions are read inside one another; one deeper holds the rest of the value unread. Far past any
+    /// XAML written by hand, and short of the stack: a value nested a hundred thousand deep ended the IDE.</summary>
+    private const int Deepest = 64;
+
     private readonly List<MarkupArgument> arguments = [];
 
     private MarkupExtension(int start) => Start = start;
@@ -52,7 +56,7 @@ public sealed class MarkupExtension
         {
             return null;
         }
-        return Read(text, ref at, end);
+        return Read(text, ref at, end, depth: 0);
     }
 
     /// <summary>The innermost extension holding an offset: itself, or one nested in its arguments.</summary>
@@ -72,7 +76,7 @@ public sealed class MarkupExtension
     public MarkupArgument? ArgumentAt(int offset) =>
         arguments.FirstOrDefault(a => (a.Key is not null && offset >= a.KeyStart && offset <= a.KeyEnd) || (offset >= a.ValueStart && offset <= a.ValueEnd));
 
-    private static MarkupExtension Read(string text, ref int at, int end)
+    private static MarkupExtension Read(string text, ref int at, int end, int depth)
     {
         MarkupExtension extension = new(at);
         at++;
@@ -84,6 +88,12 @@ public sealed class MarkupExtension
         }
         extension.NameEnd = at;
         extension.Name = text[extension.NameStart..at];
+        if (depth == Deepest)
+        {
+            at = end;
+            extension.End = end;
+            return extension;
+        }
         int positional = 0;
         while (true)
         {
@@ -105,7 +115,7 @@ public sealed class MarkupExtension
                 at++;
                 continue;
             }
-            MarkupArgument argument = ReadArgument(text, ref at, end);
+            MarkupArgument argument = ReadArgument(text, ref at, end, depth);
             if (argument.Key is null)
             {
                 argument.Index = positional++;
@@ -114,7 +124,7 @@ public sealed class MarkupExtension
         }
     }
 
-    private static MarkupArgument ReadArgument(string text, ref int at, int end)
+    private static MarkupArgument ReadArgument(string text, ref int at, int end, int depth)
     {
         MarkupArgument argument = new();
         int first = at;
@@ -140,7 +150,7 @@ public sealed class MarkupExtension
         }
         if (at < end && text[at] == '{' && !(at + 1 < end && text[at + 1] == '}'))
         {
-            MarkupExtension nested = Read(text, ref at, end);
+            MarkupExtension nested = Read(text, ref at, end, depth + 1);
             argument.Nested = nested;
             argument.ValueStart = nested.Start;
             argument.ValueEnd = nested.End;

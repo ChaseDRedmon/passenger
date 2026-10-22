@@ -193,6 +193,25 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.Close();
     }
 
+    /// <summary>Markup extensions nested a hundred thousand deep in one value, whose reading, one inside another, overflowed
+    /// the stack and ended the IDE: the file stays checked, a mistake beside them marked and put right.</summary>
+    [AvaloniaFact]
+    public void A_value_of_markup_extensions_nested_a_hundred_thousand_deep_leaves_the_xaml_checked_and_the_ide_running()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        const int Depth = 100_000;
+        string nested = string.Concat(Enumerable.Repeat("{Binding Path=", Depth)) + "Greeting" + new string('}', Depth);
+        Replace(editor, "{Binding Greeting}", nested);
+        Replace(editor, "Content=\"Go\"", "Contnt=\"Go\"");
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("Contnt", StringComparison.Ordinal)), "the misspelt property beside the nested value marked");
+        Replace(editor, nested, "{Binding Greeting}");
+        Replace(editor, "Contnt=\"Go\"", "Content=\"Go\"");
+        Ui.WaitFor(() => document.Markers.Count == 0, "the file, put back as it was, no longer marked");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void An_interface_typed_as_its_own_base_or_in_a_cycle_beside_open_xaml_leaves_the_xaml_checked_and_the_ide_running()
     {
