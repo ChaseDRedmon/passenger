@@ -130,7 +130,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`realpath`, or `GetFinalPathNameByHandle` on Windows), answers `IsUnder` for every "is this inside that folder", and
   `FoldersUnder` is every walk of a project's folders (the XAML core's, and the project host's stamps, which compiles
   PathNames.cs in): each folder once by its canonical path whatever links reach it, none a link goes up to, as MSBuild's
-  globs walk them. `SocketFolders` is where every Unix socket Passenger makes goes (Mcp below), and a socket made catches
+  globs walk them. `PathNames.Comparer` (with `Comparison` and `Same`) is every path comparison and every collection keyed by
+  paths, the host's and the XAML core's too; `FilesUnder` is every walk of the open folder's files (each linked folder
+  resolved once, never entered twice or outside the walk), and `IsSystemFile` (.DS_Store, Thumbs.db) the one list of the
+  system's own files no walk or listing shows. `AtomicFile.Write(path, bytes, mode?)` is every write of a whole file: a
+  temporary file of its own made new beside it, its Unix mode set from creation, flushed, then renamed over it.
+  `SocketFolders` is where every Unix socket Passenger makes goes (Mcp below), and a socket made catches
   `ArgumentException`, a path too long for one, as it catches `SocketException`.
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
@@ -247,7 +252,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose request needs the
   `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address), each path, which the theme's own
   includes give, made canonical and refused outside its version's folder (`LibrarySources.Inside`), each file written
-  whole through a temporary file and a rename (`LibrarySources.WriteWhole`).
+  whole through a temporary file and a rename (`LibrarySources.WriteWhole`, over `AtomicFile`).
   `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
   ChildProcesses over Avalonia.Remote.Protocol, restarted by `BuildRunController.BuildFinished`; frames are bitmaps at
   96 DPI sized by the host's scale, and the host's viewport resize requests go unanswered (answering made it ask again
@@ -965,7 +970,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   `changes.log`), fed by `FileText.Wrote` (every IDE write, with the bytes it replaced), the folder watcher (External
   change, or the `VcsController.Activity` name), files opened, `EditorArea.MoveFile` and Explorer deletes, off the UI
   thread; it prunes to Rider's 5 days of activity and a size cap (`HistoryKeeping`), working from the log on disk, since
-  another process over the same state (an agent's `--mcp`) writes to it too. `LocalHistoryView` is the tool
+  another process over the same state (an agent's `--mcp`) writes to it too: each append, each prune (from its read of the
+  log to its last delete) and each reused blob's touch holds `localHistory/changes.lock` against that process (waited for
+  on the history's queue, 10 s at most). `Workspace/FolderWalk`, beside `IgnoredFolders`, is the open folder's one walk
+  (Go to File's index, Local History, a folder's projects, `TestFinder`, the XAML class lookup), passing over hidden
+  folders only where it looks for what projects build, as MSBuild's globs do. `LocalHistoryView` is the tool
   window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
 - `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
   `ProjectViewNestingRulesProvider`s, chained as IntelliJ's `FileNestingBuilder` does), the project's `DependentUpon`,
@@ -1010,7 +1019,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   nuget.config or Directory.Packages.props saves that file first if it's open (`MainWindow.SaveBeforeWriting`, or
   SaveAll before `dotnet add package`) and then loads what it wrote (`FollowWritten`); a delete saves the open files
   under it first, and holds off design-time builds under it (`ProjectBuilds.HoldOff`). Every write of a workspace file
-  goes through `FileText.Save`: a temporary file and rename, through symlinks, permissions kept, on Windows its
+  goes through `FileText.Save`: a temporary file and rename (`AtomicFile.Write`, the file's own metadata kept on top), through symlinks, permissions kept, on Windows its
   attributes, ACL and streams (ReplaceFile, `FileText.Over`), on macOS its tags, ACL and creation date
   (`MacFileMetadata`), a read-only file refused (`ReadOnlyFileException`; its first edit, Save and the
   window's close ask Clear Read-Only Status, `MainWindow.ReadOnly.cs`), an open file whose folder another program moved
