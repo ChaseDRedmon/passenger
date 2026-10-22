@@ -238,11 +238,29 @@ public sealed class KeymapChoiceTests : IDisposable
             Button breakpoints = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>()
                 .Single(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("View Breakpoints and Exceptions", StringComparison.Ordinal));
             Assert.Equal($"View Breakpoints and Exceptions ({Shortcut.Parse($"{Cmd} alt B").Display()})", ToolTip.GetTip(breakpoints));
+            // Containers' actions have no keys of either keymap's: Refresh is given one over VS Code's alone.
+            string refreshKeys = $"{Cmd} alt shift J";
+            window.ApplySettings(window.Settings with { VSCodeShortcuts = new() { [AppActions.ContainersRefresh] = [refreshKeys] } });
+            window.ShowToolWindow("containers");
+            Ui.Settle();
+            Button refresh = window.ContainersWindow.GetVisualDescendants().OfType<Button>().Single(b => b.Name == AppActions.ContainersRefresh);
+            Assert.Equal("Refresh", ToolTip.GetTip(refresh));
+            window.ShowToolWindow("debug");
+            Ui.Settle();
 
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
             Ui.Settle();
             string vsCodes = Shortcut.Parse($"{Cmd} shift F8").Display();
             Assert.Equal($"View Breakpoints and Exceptions ({vsCodes})", ToolTip.GetTip(breakpoints));
+            // The Containers window, hidden as the keymap changed, names the key once it is shown, and follows a change while shown.
+            window.ShowToolWindow("containers");
+            Ui.Settle();
+            Assert.Equal($"Refresh ({Shortcut.Parse(refreshKeys).Display()})", ToolTip.GetTip(refresh));
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VisualStudio });
+            Ui.Settle();
+            Assert.Equal("Refresh", ToolTip.GetTip(refresh));
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
+            Ui.Settle();
             NativeMenuItem goToFile = Ui.Submenu(window.MenuBar, "Navigate").Items.OfType<NativeMenuItem>().First(i => i.Header == window.Actions[AppActions.GoToFile]!.Title);
             Keystroke quickOpen = Keystroke.Parse($"{Cmd} P");
             Assert.Equal(new KeyGesture(quickOpen.Key, quickOpen.Modifiers), goToFile.Gesture);

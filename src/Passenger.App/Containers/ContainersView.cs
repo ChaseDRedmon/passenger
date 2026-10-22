@@ -476,9 +476,8 @@ public sealed class ContainersView : DockPanel
 
     private Button ActionTool(string action, string icon, string tip)
     {
-        string? keys = AppActions.Keymap().ShortcutsFor(action).FirstOrDefault()?.Display();
         Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false, Name = action };
-        ToolTip.SetTip(button, keys is null ? tip : $"{tip} ({keys})");
+        ActionTips.Set(button, action, tip);
         ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
         button.Click += (_, _) => ActionRequested?.Invoke(this, action);
         ActionButtons.Mark(button, action);
