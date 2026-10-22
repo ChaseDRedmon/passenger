@@ -478,7 +478,12 @@ public partial class MainWindow : Window
     /// <summary>Stop can be clicked while there is something to stop: a debug session, a program Run or Profile started, or a
     /// start or build under way. It keeps its place on the toolbar, greyed, while there is not: one that came and went moved
     /// Run and Debug from under the pointer the moment Run was clicked, so a second click landed on Debug.</summary>
-    private void ShowStop() => StopButton.IsEnabled = buildRun.WhyNotStop() is null;
+    private void ShowStop()
+    {
+        StopButton.IsEnabled = buildRun.WhyNotStop() is null;
+        // A configuration said to be running follows its run as Stop does.
+        ShowChosenConfiguration(session.Configurations);
+    }
 
     private void OnDebugStateChanged()
     {

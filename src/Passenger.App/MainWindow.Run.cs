@@ -42,7 +42,7 @@ public partial class MainWindow
     {
         RunConfigurations configurations = session.Configurations;
         RunConfigurationsDialog dialog = new([.. configurations.All.Where(c => c.Generated)], configurations.Own, [.. Projects.Where(p => p.Exists && p.IsRunnable)],
-            configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects))
+            configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects), buildRun.IsRunningConfiguration)
         {
             Folder = Folder,
             ReadServices = ReadServices(Projects, Engine),
@@ -144,12 +144,17 @@ public partial class MainWindow
     /// the toolbar's menu greys it; null when it can.</summary>
     public string? WhyNotHere(RunConfiguration configuration) => session.Configurations.WhyNotHere(configuration);
 
-    /// <summary>The toolbar widget names the configuration chosen, greyed with why when it cannot launch here.</summary>
+    /// <summary>A configuration's name as the toolbar and Edit Configurations show it: "(running)" after it while a run of it
+    /// is up.</summary>
+    public string Shown(RunConfiguration configuration) => buildRun.IsRunningConfiguration(configuration.Name) ? $"{configuration.Name} (running)" : configuration.Name;
+
+    /// <summary>The toolbar widget names the configuration chosen, greyed with why when it cannot launch here, and says it
+    /// runs while a run of it is up.</summary>
     private void ShowChosenConfiguration(RunConfigurations configurations)
     {
         RunConfiguration? chosen = configurations.Chosen;
         string? why = chosen is null ? null : configurations.WhyNotHere(chosen);
-        RunConfigName.Text = chosen?.Name ?? "No configurations";
+        RunConfigName.Text = chosen is null ? "No configurations" : Shown(chosen);
         RunConfigName.Classes.Set("muted", why is not null);
         ToolTip.SetTip(RunConfigButton, why is null ? "Run configuration" : $"{chosen!.Name} cannot run here: {why}");
     }
@@ -164,7 +169,7 @@ public partial class MainWindow
         {
             string name = each.Name;
             string? why = WhyNotHere(each);
-            MenuItem item = MenuChoice.Of(why is null ? name : Greyed(name, why), session.Configurations.Chosen?.Name == name, () => SelectConfiguration(name));
+            MenuItem item = MenuChoice.Of(why is null ? Shown(each) : Greyed(name, why), session.Configurations.Chosen?.Name == name, () => SelectConfiguration(name));
             if (why is not null)
             {
                 ToolTip.SetTip(item, $"{name} cannot run here: {why}");

@@ -32,8 +32,9 @@ public sealed class RunConfigurationsDialog : Window
     private bool showing;
 
     public RunConfigurationsDialog(IReadOnlyList<RunConfiguration> generated, IReadOnlyList<RunConfiguration> own,
-        IReadOnlyList<ProjectModel> projects, string? chosen, Action<IReadOnlyList<RunConfiguration>, string?> apply)
+        IReadOnlyList<ProjectModel> projects, string? chosen, Action<IReadOnlyList<RunConfiguration>, string?> apply, Func<string, bool>? isRunning = null)
     {
+        IsRunning = isRunning ?? (_ => false);
         this.generated = [.. generated.Select(c => new Entry(c))];
         mine = [.. own.Select(c => new Entry(c))];
         this.projects = projects;
@@ -51,7 +52,8 @@ public sealed class RunConfigurationsDialog : Window
         AddButton.Click += (_, _) => ChooseKind();
         CopyButton.Click += (_, _) => Copy();
         RemoveButton.Click += (_, _) => Remove();
-        list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration, row?.Configuration.WhyNotHere(projects)));
+        list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration, row?.Configuration.WhyNotHere(projects),
+            row is not null && IsRunning(row.Configuration.Name)));
         list.SelectionChanged += (_, _) =>
         {
             if (!showing)
@@ -724,12 +726,16 @@ public sealed class RunConfigurationsDialog : Window
         return header;
     }
 
-    /// <summary>A list row: the configuration's name, greyed when it cannot run here (why in its tip), and for a generated
-    /// one where it came from, muted beside it; where came from gives way first, then the name, each to an ellipsis.</summary>
-    private static Control RowView(RunConfiguration? row, string? whyNot)
+    /// <summary>Whether a run of a configuration (by its name) is up, which its row says; given as the rows are made.</summary>
+    private Func<string, bool> IsRunning { get; }
+
+    /// <summary>A list row: the configuration's name ("(running)" after it while a run of it is up), greyed when it cannot run
+    /// here (why in its tip), and for a generated one where it came from, muted beside it; where came from gives way first,
+    /// then the name, each to an ellipsis.</summary>
+    private static Control RowView(RunConfiguration? row, string? whyNot, bool running)
     {
         ShrinkingRow line = new();
-        TextBlock name = new() { Text = row?.Name, VerticalAlignment = VerticalAlignment.Center };
+        TextBlock name = new() { Text = running ? $"{row?.Name} (running)" : row?.Name, VerticalAlignment = VerticalAlignment.Center };
         if (whyNot is not null)
         {
             name.Classes.Add("muted");

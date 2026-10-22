@@ -770,7 +770,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `BuildRunController.Containers.cs`, Containers above, the store's version 2 giving older ones the Project kind);
   `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
-  Configurations. A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
+  Configurations. While a run of a configuration is up (Run's program or container run, a session Debug launched for it,
+  Profile's program: `BuildRunController.IsRunningConfiguration`), the toolbar, its chooser and Edit Configurations' row say
+  "(running)" after its name (`MainWindow.Shown`), the toolbar following as Stop does (`ShowStop`). A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
   brings the Build window forward as Showing build results says (errors only by default). Every build holds the host's
   generating design-time builds off while it runs (`ProjectBuilds.HoldAsync`, released in `FinishBuild`), its dotnet command

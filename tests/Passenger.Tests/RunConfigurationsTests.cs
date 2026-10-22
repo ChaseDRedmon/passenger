@@ -39,6 +39,50 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         TestFolders.Delete(settings);
     }
 
+    /// <summary>While a run of a configuration is up, the toolbar, its chooser and Edit Configurations' row say "(running)"
+    /// after its name, and stop saying it once the run has ended.</summary>
+    [AvaloniaFact]
+    public void A_configuration_says_it_is_running_in_the_toolbar_its_chooser_and_Edit_Configurations_while_a_run_of_it_is_up()
+    {
+        // A program of its own that runs until stopped, which the class's Hello never does.
+        string waits = PathNames.Canonical(TestFolders.Create("waits-"));
+        Write(waits, "Waits.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            + "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        Write(waits, "Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
+        Restore.Run(waits);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(waits);
+        Ui.Settle();
+        TextBlock shown = window.FindControl<TextBlock>("RunConfigName")!;
+        Ui.WaitFor(() => shown.Text == "Waits", $"the project's configuration to be chosen: {shown.Text}");
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "Waits to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => shown.Text == "Waits (running)", $"the toolbar to say Waits runs: {shown.Text}");
+            Click(window.FindControl<Button>("RunConfigButton")!);
+            ContextMenu chooser = Assert.IsType<ContextMenu>(window.OpenContextMenu);
+            Assert.Equal(["Waits (running)", "Edit Configurations..."], chooser.Items.OfType<MenuItem>().Select(i => i.Header as string));
+            Click(chooser.Items.OfType<MenuItem>().Last());
+            chooser.Close();
+            RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
+            Ui.Settle();
+            string[] texts = [.. dialog.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
+            Assert.True(texts.Contains("Waits (running)"), $"Edit Configurations' row does not say Waits runs: {string.Join(" | ", texts.Take(8))}");
+            // The configuration keeps its own name: the words are the row's alone.
+            Assert.Equal("Waits", dialog.Chosen?.Name);
+            dialog.Close();
+            Ui.Settle();
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.IsRunning, "Waits to stop");
+        }
+        Ui.WaitFor(() => shown.Text == "Waits", $"the toolbar to stop saying Waits runs: {shown.Text}");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_configuration_added_in_the_dialog_runs_with_what_was_typed_and_is_there_when_the_folder_opens_again()
     {

@@ -791,6 +791,13 @@ public sealed partial class BuildRunController
         session.InTerminal?.Stop();
     }
 
+    /// <summary>Whether a run of a configuration is up: Run's program (in the Run window or the terminal) or container run,
+    /// a session Debug launched for it, or the program Profile started.</summary>
+    public bool IsRunningConfiguration(string name) =>
+        IsRunning && (Containers?.Plan.Name ?? ran) == name
+        || session.Debug.Tabs.Any(t => t.IsLive && t.Name == name && debugged.ContainsKey(name))
+        || session.Profiled is { Run.HasExited: false } profiled && profiled.Name == name;
+
     /// <summary>Why Stop cannot run now: nothing it stops is running.</summary>
     public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Profiled is not null || session.Builder.IsRunning || parts.Work.CanStop ? null : "Nothing is running";
 }
