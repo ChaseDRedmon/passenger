@@ -1,8 +1,8 @@
 # The solution built (warnings are errors) and every test run, on macOS (arm64), Windows and Linux (Ubuntu LTS, x64), as
 # `just build` and `just test` run them, each system's tests split across shards that run at once (#206): CI's (ci.yml)
-# for every push to main and every pull request, and a release's (release.yml) before it packages anything. Every
-# restore is locked to the packages.lock.json files (GitHub sets CI, which Directory.Build.props makes
-# RestoreLockedMode). Actions are pinned to a release's commit.
+# when it is run by hand, and a release's (release.yml) before it packages anything. The results go where `just test`
+# puts them, artifacts/test-results. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
+# Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: Test
 
 on:
@@ -150,14 +150,15 @@ jobs:
         run: |
           python=python3
           [ "$RUNNER_OS" != Windows ] || python=python
-          mkdir -p TestResults/shards
-          "$python" -I tools/test-shards.py list TestResults/suite.txt
-          "$python" -I tools/test-shards.py split TestResults/suite.txt --system "$SYSTEM" --of "$SHARDS" --out TestResults/shards
+          results=artifacts/test-results
+          mkdir -p "$results/shards"
+          "$python" -I tools/test-shards.py list "$results/suite.txt"
+          "$python" -I tools/test-shards.py split "$results/suite.txt" --system "$SYSTEM" --of "$SHARDS" --out "$results/shards"
           for number in $(seq 1 "$SHARDS"); do
-            "$python" -I tools/test-shards.py list "TestResults/shards/listed-$number.txt" \
-              --settings "TestResults/shards/shard-$number.runsettings"
+            "$python" -I tools/test-shards.py list "$results/shards/listed-$number.txt" \
+              --settings "$results/shards/shard-$number.runsettings"
           done
-          "$python" -I tools/test-shards.py check TestResults/suite.txt TestResults/shards/listed-*.txt
+          "$python" -I tools/test-shards.py check "$results/suite.txt" "$results"/shards/listed-*.txt
 
       # A test hung for 10 minutes is stopped and named, rather than holding the job to its timeout. Each test class's
       # time goes in the job's summary (tools/test-times.py), a class over its budget is a warning, and the shard over
@@ -172,15 +173,16 @@ jobs:
           LABEL: ${{ matrix.name }}, shard ${{ matrix.shard }} of ${{ matrix.shards }}
           PASSENGER_TEST_TIME_SCALE: ${{ matrix.time_scale }}
         run: |
-          dotnet test tests/Passenger.Tests --no-build --settings "TestResults/shards/shard-$env:SHARD.runsettings" `
-            --results-directory TestResults --logger trx --logger "console;verbosity=normal" `
+          $results = 'artifacts/test-results'
+          dotnet test tests/Passenger.Tests --no-build --settings "$results/shards/shard-$env:SHARD.runsettings" `
+            --results-directory $results --logger trx --logger "console;verbosity=normal" `
             --blame-hang-timeout 10m --blame-hang-dump-type none
           $code = $LASTEXITCODE
           $python = if ($IsWindows) { 'python' } else { 'python3' }
-          & $python -I tools/test-times.py TestResults --budget tests/Passenger.Tests/TestBudget.json --shard $env:SHARD --label $env:LABEL
+          & $python -I tools/test-times.py $results --budget tests/Passenger.Tests/TestBudget.json --shard $env:SHARD --label $env:LABEL
           $budget = $LASTEXITCODE
           if ($code -eq 0) { exit $budget }
-          $failed = @(Get-ChildItem TestResults -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object {
+          $failed = @(Get-ChildItem $results -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object {
             ([xml](Get-Content -Raw $_.FullName)).TestRun.Results.UnitTestResult |
               Where-Object { $_ -and $_.outcome -notin 'Passed', 'NotExecuted' }
           })
@@ -214,16 +216,16 @@ jobs:
           SHARDS: ${{ matrix.shards }}
           STATUS: ${{ job.status }}
         run: |
-          mkdir -p TestResults
+          mkdir -p artifacts/test-results
           printf '{"system": "%s", "shard": %s, "shards": %s, "status": "%s"}\n' "$SYSTEM" "$SHARD" "$SHARDS" "$STATUS" \
-            > TestResults/shard.json
+            > artifacts/test-results/shard.json
 
       - name: Upload test results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ matrix.system }}-${{ matrix.shard }}
-          path: TestResults/
+          path: artifacts/test-results/
 
   # Each system's result as one check, under the name its one job had before the shards: every shard's job succeeded
   # and every test of the suite has exactly one result among them (tools/test-shards.py cover), with each class's time

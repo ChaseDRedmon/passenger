@@ -1,10 +1,9 @@
 # Only what this repository's own commands, and the editors and systems around them, leave behind. A broader
 # rule once hid a source folder (#58); CI fails if anything under src, tests, tools or site is ignored.
 
-# Every build, publish, package, icon download and MCP clone (UseArtifactsOutput, the justfile, tools/).
+# Every build, publish, package, icon download, MCP clone and test result (UseArtifactsOutput, the justfile, tools/,
+# the tests' VSTestResultsDirectory).
 /artifacts/
-# dotnet test's results.
-TestResults/
 
 # Claude Code's local settings and its agents' worktrees.
 /.claude/

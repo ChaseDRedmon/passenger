@@ -7,6 +7,9 @@
     <RootNamespace>Passenger.Tests</RootNamespace>
     <!-- The rig's LibraryImports (the run's nice value). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- dotnet test's results (VSTest's folder for each run, a .trx, a hang's dump) under artifacts/ with the builds, never
+         beside the sources, where VSTest puts them by default; CI's test.yml names the same folder. -->
+    <VSTestResultsDirectory>$([MSBuild]::NormalizeDirectory('$(ArtifactsPath)', 'test-results'))</VSTestResultsDirectory>
   </PropertyGroup>
 
   <ItemGroup>
