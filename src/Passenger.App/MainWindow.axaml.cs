@@ -550,6 +550,8 @@ public partial class MainWindow : Window
             ActionTitle = "Debug Tool Window",
             HeaderTools = Bottom.Debug.HeaderTools,
         });
+        Dock.Add(new Docking.ToolWindow("aspire", "Aspire", "Icon.Run", Bottom.AspireHost, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowAspire, ActionTitle = "Aspire Tool Window" });
+        Closed += (_, _) => Bottom.AspirePane.Dispose();
         Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowTests,

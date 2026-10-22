@@ -58,6 +58,11 @@ public partial class MainWindow
         if (changes.Structure)
         {
             session.Index.Build(folder);
+            _ = session.RefreshAspireFilesAsync();
+        }
+        else if (changes.Paths.Where(path => Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase)).ToArray() is { Length: > 0 } sources)
+        {
+            _ = session.RefreshAspireFilesAsync(sources);
         }
         // An .editorconfig written, made or deleted: each open file follows what the ones over it say now.
         if (changes.Paths.Any(p => Path.GetFileName(p) == EditorConfig.FileName))

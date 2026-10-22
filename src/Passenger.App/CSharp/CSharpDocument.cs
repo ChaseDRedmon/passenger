@@ -12,7 +12,7 @@ namespace Passenger.App.CSharp;
 /// Between pulls the markers move with the text, so a squiggle never drifts off its code. Of one server only: a server
 /// started again gives every open file a new one (<see cref="CSharpService"/>), so what asks the server for a file asks
 /// <see cref="CSharpService.For"/> each time rather than keep this or its <see cref="Lsp"/>.</summary>
-public sealed class CSharpDocument : IServerDocument, IDisposable
+public sealed partial class CSharpDocument : IServerDocument, IDisposable
 {
     /// <summary>How long typing must pause before diagnostics are asked for again.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(600);
@@ -158,7 +158,11 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
         semantic.Refreshed();
     }
 
-    public void RefreshDiagnostics() => Pull(TimeSpan.Zero);
+    public void RefreshDiagnostics()
+    {
+        ClearAspireDiagnostics();
+        Pull(TimeSpan.Zero);
+    }
 
     public void Dispose()
     {
@@ -201,7 +205,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
                 Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: h.Kind == InlayHintKind.Type),
             })];
         }
-        Pull(Settle);
+        service.AspireGraphChanged();
     }
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
@@ -230,11 +234,18 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
             {
                 await Task.Delay(delay, cancel);
             }
+            int graphVersion = service.AspireVersion;
             (IReadOnlyList<Diagnostic> found, int version) = await lsp.DiagnosticsAsync(cancel);
             if (cancel.IsCancellationRequested || version != document.Text.Version)
             {
                 return;
             }
+            IReadOnlyList<Diagnostic> aspire = await AspireDiagnosticsAsync(lsp, cancel);
+            if (cancel.IsCancellationRequested || version != document.Text.Version || graphVersion != service.AspireVersion || Lsp != lsp)
+            {
+                return;
+            }
+            found = [.. found, .. aspire];
             ServerLines lines = ServerLines.Of(document.Text.Snapshot);
             pulled = [.. found];
             ranges = [.. pulled.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];

@@ -253,6 +253,9 @@ public sealed record ProjectModel(
     public bool IsRunnable => (string.Equals(OutputType, "Exe", StringComparison.OrdinalIgnoreCase)
         || string.Equals(OutputType, "WinExe", StringComparison.OrdinalIgnoreCase)) && !IsTestProject;
 
+    /// <summary>Whether Aspire's evaluated SDK identifies this project as an AppHost.</summary>
+    public bool IsAspireHost => Evaluated?.IsAspireHost == true;
+
     /// <summary>Whether the project host evaluates and builds it with EnableWindowsTargeting (off Windows, for a framework
     /// the SDK marks Windows-only that the project does not enable itself), which Passenger's own builds of it give too.</summary>
     public bool WindowsTargeting => Evaluated?.Dependencies.Any(d => d.WindowsTargeting) == true;
@@ -349,7 +352,8 @@ public sealed record ProjectModel(
             .Select(PathNames.Canonical)
             .Distinct(StringComparer.Ordinal)];
         return new ProjectModel(path, name, evaluated.OutputType, evaluated.TargetFrameworks, packages, references,
-            evaluated.Problem is null || File.Exists(path), evaluated.IsTestProject) { Evaluated = evaluated };
+            evaluated.Problem is null || File.Exists(path), evaluated.IsTestProject)
+        { Evaluated = evaluated };
     }
 }
 

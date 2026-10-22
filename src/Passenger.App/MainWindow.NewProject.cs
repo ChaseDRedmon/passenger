@@ -22,6 +22,10 @@ public partial class MainWindow
         {
             WhyNot = _ => Solution is null ? "No solution is open to add a project to" : null,
         });
+        actions.Add(new IdeAction(AppActions.AddAspireOrchestration, "Aspire Orchestration...", "IDE", _ => ShowAddAspireOrchestration())
+        {
+            WhyNot = _ => Solution is null ? "No solution is open" : null,
+        });
     }
 
     /// <summary>dotnet new's templates read ahead of New Solution (where it puts a solution) once a person's window is up,

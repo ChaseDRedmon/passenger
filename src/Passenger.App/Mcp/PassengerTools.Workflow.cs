@@ -239,7 +239,8 @@ public sealed partial class PassengerTools
         "longest, measure, arrange, render and compositor totals, the layout table by control type with the heaviest controls " +
         "and their XAML lines, and the longest frame's breakdown (or 0 and why). With attach, Attach Profiler instead: the " +
         "debugged program, else Run's, or with container the .NET program in it (debug_processes lists them), from now for " +
-        "seconds (else until it ends), left running.")]
+        "seconds (else until it ends), left running. With resource, profiles that owned Aspire service without restarting it; " +
+        "starts its selected or explicit AppHost configuration if needed.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -248,9 +249,15 @@ public sealed partial class PassengerTools
         [Description("With seconds: a memory snapshot too, the heap's types by size")] bool memory = false,
         [Description("Profile the program running (debugged, else Run's) from now, rather than launch one")] bool attach = false,
         string? container = null,
+        [Description(AspireResourceTarget)] string? resource = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        if (attach && (configuration is not null || arguments is not null))
+        ProjectSession current = Session;
+        if (resource is not null && container is not null)
+        {
+            throw new ArgumentException("Name resource or container, not both");
+        }
+        if (attach && (arguments is not null || configuration is not null && resource is null))
         {
             throw new ArgumentException("An attached profiler profiles the program already running: name no configuration or arguments");
         }
@@ -258,20 +265,25 @@ public sealed partial class PassengerTools
         {
             throw new ArgumentException("A container's program is profiled as it runs: give attach with container");
         }
-        if (!attach)
+        if (!attach && resource is null)
         {
             Choose(configuration);
         }
-        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler);
+        AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler, AppActions.RunProgram);
         using (LaunchBuild built = new(Builds))
         {
-            Task<string?> started = !attach ? window.ProfileAsync(arguments)
+            Task<string?> started = resource is not null ? ProfileAspireTarget()
+                : !attach ? window.ProfileAsync(arguments)
                 : container is null ? window.AttachProfilerAsync()
                 : window.AttachProfilerAsync(await ProfiledIn(container));
             if (await started.WaitAsync(cancel) is { } problem)
             {
                 throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
             }
+        }
+        if (resource is not null && (Session != current || current.IsEnded))
+        {
+            throw new InvalidOperationException("The workspace changed while starting the resource profiler");
         }
         AgentCall.Say(seconds is { } lasting ? $"Profiling for {Math.Clamp(lasting, 1, 3600)} s" : "Profiling until the program ends (10 minutes at most)");
         Passenger.Profiler.ProfilingSession running = Session.Profiling!;
@@ -281,6 +293,7 @@ public sealed partial class PassengerTools
         if (seconds is { } limit)
         {
             await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)), cancel);
+            CheckProfileTarget();
             if (memory && !running.HasExited && await window.MemorySnapshotAsync(cancel) is { } taken)
             {
                 heap = [.. taken.Types.Take(Math.Clamp(top, 1, 200)).Select(t => new HeapTypeInfo(t.Name, t.Count, t.Bytes))];
@@ -291,7 +304,9 @@ public sealed partial class PassengerTools
             await Until(() => running.HasExited, TimeSpan.FromMinutes(10), cancel);
         }
         AgentCall.Say("Reading the profile");
+        CheckProfileTarget();
         SnapshotRead read = await window.SnapshotAsync();
+        CheckProfileTarget(snapshotCompleted: true);
         Passenger.Profiler.Snapshot snapshot = read.Snapshot ?? throw new InvalidOperationException(read.Message);
         List<ProfileFrame> path = [];
         if (snapshot.Threads.FirstOrDefault() is { } busiest)
@@ -337,6 +352,21 @@ public sealed partial class PassengerTools
             return PathNames.IsUnder(file, folder)
                 ? $"{Relative(file)}:{CSharp.ServerPlaces.PositionOfCompiled(file, texts(file), new Lsp.LspPosition(at.Line - 1, 0)).Line + 1}"
                 : null;
+        }
+
+        async Task<string?> ProfileAspireTarget()
+        {
+            (Aspire.AspireSelection selection, bool launched) = await PrepareAspireResource(resource!, configuration,
+                attach ? null : Aspire.AspireRunMode.Profile, arguments, cancel);
+            return launched ? null : await window.RunAspireToolResourceAsync(selection, "profile", cancel);
+        }
+
+        void CheckProfileTarget(bool snapshotCompleted = false)
+        {
+            if (resource is not null && (Session != current || current.IsEnded || current.Profiling != (snapshotCompleted ? null : running)))
+            {
+                throw new InvalidOperationException("The workspace or resource profile changed");
+            }
         }
     });
 

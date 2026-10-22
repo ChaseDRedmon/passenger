@@ -15,7 +15,7 @@ public static class ConfigurationEdit
 
     /// <summary>The fields that hold a path or paths (a dictionary's values for <c>serviceProjects</c>), which the store
     /// keeps relative to the folder.</summary>
-    private static readonly HashSet<string> PathFields = new(StringComparer.Ordinal) { "dockerfile", "context", "composeFiles", "envFiles", "serviceProjects" };
+    private static readonly HashSet<string> PathFields = new(StringComparer.Ordinal) { "dockerfile", "context", "composeFiles", "envFiles", "serviceProjects", "linkedAppHosts" };
 
     /// <summary>The fields of <paramref name="edited"/> that differ from <paramref name="source"/>, as an edit; null when
     /// none does.</summary>

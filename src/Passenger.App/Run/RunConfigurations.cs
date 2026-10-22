@@ -23,6 +23,7 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
     /// <summary>Whether the one chosen was the person's choice (in the toolbar, Edit Configurations or the store), which
     /// stays chosen, rather than the first there was, which follows the projects as their evaluations land.</summary>
     private bool picked;
+    private string? preferred;
 
     /// <summary>Every configuration: the generated ones, then the folder's own.</summary>
     public IReadOnlyList<RunConfiguration> All { get; private set; } = [];
@@ -32,6 +33,16 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
 
     /// <summary>The configuration chosen in the toolbar.</summary>
     public RunConfiguration? Chosen { get; private set; }
+
+    /// <summary>Single-file AppHosts discovered independently of MSBuild project evaluation.</summary>
+    public IReadOnlyList<string> SingleFileAppHosts { get; private set; } = [];
+
+    public void ConfigureAppHosts(IReadOnlyList<string> paths)
+    {
+        UiThread.Check();
+        SingleFileAppHosts = paths;
+        Configure(projects, picked ? preferred : null);
+    }
 
     /// <summary>The list or the one chosen changed, for the toolbar's widget.</summary>
     public event EventHandler? Changed;
@@ -46,12 +57,13 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
             StringComparer.OrdinalIgnoreCase);
         kept = document;
         picked |= read.Selected is not null;
-        Configure(projects, read.Selected ?? Chosen?.Name);
+        preferred = read.Selected ?? preferred ?? Chosen?.Name;
+        Configure(projects, preferred);
     }
 
     /// <summary>Makes the list again from the projects loaded now and the folder's own, the one the person chose kept while
     /// it is there.</summary>
-    public void Configure(IReadOnlyList<ProjectModel> projects) => Configure(projects, picked ? Chosen?.Name : null);
+    public void Configure(IReadOnlyList<ProjectModel> projects) => Configure(projects, picked ? preferred : null);
 
     /// <summary>Why a configuration cannot launch here among the projects loaded now, as the toolbar's menu greys it; null
     /// when it can.</summary>
@@ -60,7 +72,7 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
     private void Configure(IReadOnlyList<ProjectModel> projects, string? keep)
     {
         this.projects = projects;
-        All = [.. RunConfiguration.Generate(projects, workspace?.Invoke()).Select(Edited), .. own];
+        All = [.. RunConfiguration.Generate(projects, workspace?.Invoke(), SingleFileAppHosts).Select(Edited), .. own];
         Chosen = All.FirstOrDefault(c => string.Equals(c.Name, keep, StringComparison.OrdinalIgnoreCase)) ?? All.FirstOrDefault();
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -77,6 +89,7 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
             return false;
         }
         Chosen = chosen;
+        preferred = chosen.Name;
         picked = true;
         Changed?.Invoke(this, EventArgs.Empty);
         Write();
@@ -98,7 +111,8 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
             Change(each.Name, each.Source is { } source ? ConfigurationEdit.Between(source, each) : null);
         }
         picked |= chosen is not null;
-        Configure(projects, chosen ?? Chosen?.Name);
+        preferred = chosen ?? preferred ?? Chosen?.Name;
+        Configure(projects, preferred);
         Write();
     }
 
@@ -146,7 +160,7 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
     {
         Configurations = [.. own.Select(ForStore)],
         Edits = new(edits.Select(e => KeyValuePair.Create(e.Key, (JsonNode?)ConfigurationEdit.Mapped(e.Value, Relative))), StringComparer.OrdinalIgnoreCase),
-        Selected = Chosen?.Name,
+        Selected = preferred ?? Chosen?.Name,
     });
 
     /// <summary>A configuration as the store keeps it: its project and every file it names (compose files, env files, a
@@ -154,6 +168,7 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
     private RunConfiguration ForStore(RunConfiguration configuration) => folder is null ? configuration : configuration with
     {
         Project = Relative(configuration.Project),
+        LinkedAppHosts = [.. configuration.LinkedAppHosts.Select(Relative)],
         ComposeFiles = [.. configuration.ComposeFiles.Select(Relative)],
         EnvFiles = [.. configuration.EnvFiles.Select(Relative)],
         Dockerfile = Relative(configuration.Dockerfile),
@@ -164,6 +179,7 @@ public sealed class RunConfigurations(string? folder, Func<WorkspaceModel?>? wor
     private RunConfiguration FromStore(RunConfiguration configuration) => folder is null ? configuration : configuration with
     {
         Project = Full(configuration.Project),
+        LinkedAppHosts = [.. configuration.LinkedAppHosts.Select(Full)],
         ComposeFiles = [.. configuration.ComposeFiles.Select(Full)],
         EnvFiles = [.. configuration.EnvFiles.Select(Full)],
         Dockerfile = Full(configuration.Dockerfile),

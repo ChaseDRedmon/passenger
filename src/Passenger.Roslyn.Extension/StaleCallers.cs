@@ -145,7 +145,7 @@ internal static class StaleCallers
         return runs;
     }
 
-    private static Guid? Mvid(Project project)
+    internal static Guid? Mvid(Project project)
     {
         if ((project.CompilationOutputInfo.AssemblyPath ?? project.OutputFilePath) is not { } path || !File.Exists(path))
         {

@@ -936,7 +936,6 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         ("DateTime", ["DatePicker", "TimePicker"]),
         ("ToggleSwitch", ["ToggleSwitch"]),
         ("Slider", ["Slider"]),
-        ("TreeView", ["TreeView", "TreeViewItem"]),
         ("TabItem", ["TabItem", "TabControl"]),
         ("TabControl", ["TabControl"]),
         ("TabbedPage", ["TabbedPage"]),

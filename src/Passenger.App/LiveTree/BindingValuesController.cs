@@ -99,22 +99,26 @@ public sealed class BindingValuesController
     public void Bind(ProjectSession next)
     {
         UiThread.Check();
+        if (session is { } previous)
+        {
+            previous.Debug.StateChanged -= OnDebugStateChanged;
+            previous.Debug.SelectionChanged -= OnSelectedAppChanged;
+            previous.LiveAppChanged -= OnSelectedAppChanged;
+        }
         session = next;
-        next.Debug.StateChanged += (_, _) =>
-        {
-            if (session == next)
-            {
-                Invalidate();
-            }
-        };
-        next.LiveAppChanged += (_, _) =>
-        {
-            if (session == next)
-            {
-                FollowApp(next.LiveApp);
-            }
-        };
+        next.Debug.StateChanged += OnDebugStateChanged;
+        next.Debug.SelectionChanged += OnSelectedAppChanged;
+        next.LiveAppChanged += OnSelectedAppChanged;
         FollowApp(next.LiveApp);
+        Invalidate();
+    }
+
+    private void OnDebugStateChanged(object? sender, EventArgs e) => Invalidate();
+
+    private void OnSelectedAppChanged(object? sender, EventArgs e)
+    {
+        UiThread.Check();
+        FollowApp(session?.LiveApp);
         Invalidate();
     }
 

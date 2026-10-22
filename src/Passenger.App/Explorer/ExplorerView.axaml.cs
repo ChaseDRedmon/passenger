@@ -35,6 +35,7 @@ public enum ExplorerAction
     Reload,
     NewSolutionFolder,
     NewProject,
+    AddAspireOrchestration,
     AddExistingProject,
     AddExistingItem,
     RunTests,
@@ -245,6 +246,7 @@ public partial class ExplorerView : UserControl
             if (node.Kind is NodeKind.Solution or NodeKind.SolutionFolder)
             {
                 add.Items.Add(Action("New Project...", ExplorerAction.NewProject, AppActions.NewProject));
+                add.Items.Add(Action("Aspire Orchestration...", ExplorerAction.AddAspireOrchestration, AppActions.AddAspireOrchestration));
                 add.Items.Add(Item("New Solution Folder...", ExplorerAction.NewSolutionFolder));
                 add.Items.Add(Item("Existing Project...", ExplorerAction.AddExistingProject));
                 if (node.Kind == NodeKind.Solution)

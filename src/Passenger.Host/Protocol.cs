@@ -98,6 +98,9 @@ public sealed record EvaluatedProject
     /// <summary>IsTestProject as evaluated (a test SDK's props set it).</summary>
     public bool IsTestProject { get; init; }
 
+    /// <summary>Whether the evaluated project uses Aspire's AppHost SDK.</summary>
+    public bool IsAspireHost { get; init; }
+
     /// <summary>Its packages and project references, a target framework each, or one with none for a project with one.</summary>
     public IReadOnlyList<FrameworkDependencies> Dependencies { get; init; } = [];
 

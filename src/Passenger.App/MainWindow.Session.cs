@@ -53,7 +53,7 @@ public partial class MainWindow
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
-        OpenBrowserOnceListening, () => StateFolder, work)
+        OpenBrowserOnceListening, () => StateFolder, work, CheckAspireReadinessAsync)
     {
         Reveal = project => containersView?.Reveal(project),
         Tools = () => ToolsSource,
@@ -201,6 +201,7 @@ public partial class MainWindow
     {
         session = next;
         buildRun = new BuildRunController(next, BuildRunParts());
+        BindAspire(next);
         buildRun.RunningChanged += (_, _) =>
         {
             if (session == next)
@@ -367,14 +368,14 @@ public partial class MainWindow
         BindHotReload(next);
         debugger.ActionRequested += (_, action) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 Request(action);
             }
         };
         debugger.Message += (_, message) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 // A stop at a binding error says it, and Problems' Bindings lists it.
                 Say(message, debugger.BindingStop is { } stop && message == debugger.Summary ? BindingPlace(stop.Problem.Problem) : null);
@@ -382,7 +383,7 @@ public partial class MainWindow
         };
         debugger.Navigate += (_, target) =>
         {
-            if (session == next)
+            if (session == next && next.Debug == debugger)
             {
                 ShowStop(target.Path, target.Position);
             }
@@ -405,6 +406,20 @@ public partial class MainWindow
             service.StateChanged += (_, _) => usages.Refresh();
             service.StateChanged += (_, _) => OutlineWhenUnseen();
             service.StateChanged += (_, _) => Structure.FollowServer();
+            service.StateChanged += (_, _) =>
+            {
+                if (service == session.CSharp && !session.IsEnded && service.IsReady)
+                {
+                    runMarksLater?.Restart();
+                }
+            };
+            service.AspireGraphInvalidated += (_, _) =>
+            {
+                if (service == session.CSharp && !session.IsEnded && Configurations.Any(session.Aspire.IsAspire))
+                {
+                    runMarksLater?.Restart();
+                }
+            };
             // Each stop is logged with why: the log is where to see more.
             service.Stopped += (_, message) => Say(message, StatusPlace.Log);
             service.Said += (_, said) => status.Say(said.Text, said.Severity, said.Problem is { } problem ? LoadProblemPlace(problem) : null);

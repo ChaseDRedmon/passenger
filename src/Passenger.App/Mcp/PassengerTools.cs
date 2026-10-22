@@ -45,9 +45,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     // Workspace and editor
 
     [McpServerTool(Name = "open", Title = "Open a folder, solution, project or file", Destructive = false), Description(
-        "Opens a folder, solution or project (a directory, .sln, .slnx or .csproj) as the workspace, or a file in the editor " +
-        "(its folder first if none is open), starting the C# language server. On a person's window, replacing their folder is " +
-        "asked of them first. Returns the workspace.")]
+        "Opens a directory, .sln, .slnx or .csproj as workspace, or a file in the editor (opening its folder if needed). " +
+        "Starts the C# server. Replacing a person's folder requires their consent. Returns workspace.")]
     public Task<Workspace> Open(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         string full = Resolve(path);
@@ -93,15 +92,16 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         // A folder without a solution has its projects once the walk for them lands, and each project what MSBuild
         // evaluates once its evaluation lands.
         await Session.WorkspaceRead.WaitAsync(cancel);
+        await Session.AspireFilesRead.WaitAsync(cancel);
         await Task.Yield();
         await Session.Models.Idle.WaitAsync(cancel);
-        return Snapshot();
+        return await AspireWorkspace(Snapshot(), cancel);
     });
 
     [McpServerTool(Name = "workspace", Title = "The workspace", ReadOnly = true), Description(
-        "The open folder and solution, its projects (output type, frameworks), the run configurations and the chosen one, " +
-        "the language server's state, the open files (unsaved ones marked) and the active file with its caret.")]
-    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Snapshot()));
+        "Open folder, solution, projects with output types and frameworks, run configurations and selection, server state, " +
+        "open files with unsaved markers, active file and caret; owned Aspire AppHosts and resource targets.")]
+    public Task<Workspace> GetWorkspace(CancellationToken cancel = default) => OnUi(cancel, () => AspireWorkspace(Snapshot(), cancel));
 
     [McpServerTool(Name = "open_file", Title = "Show a file", Destructive = false), Description(
         "Opens a file in the editor, at a line and column if given, as the person sees it.")]
@@ -155,9 +155,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     // Code: the language server's
 
     [McpServerTool(Name = "diagnostics", Title = "Errors and warnings in a file", ReadOnly = true), Description(
-        "A file's errors and warnings as the editor marks them, fresh: C#'s from the language server (its messages too); any " +
-        "other file's once its checks have run: XAML's (Passenger's own), a project file's (MSBuild's evaluation, NuGet's " +
-        "advisories), the web languages' (their server's and ESLint's).")]
+        "Fresh editor errors and warnings: C# server diagnostics and messages; after checks, Passenger's XAML diagnostics, " +
+        "MSBuild evaluation and NuGet advisories, or web server and ESLint diagnostics.")]
     public Task<IReadOnlyList<Finding>> Diagnostics(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (Document(path) is { Language.Name: not ("C#" or "Razor") } marked)
@@ -195,10 +194,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "symbol_info", Title = "What a symbol is", ReadOnly = true), Description(
-        "What the symbol at a position is, as the hover card says: in C#, Razor and the web languages their language server's " +
-        "description (declaration and documentation, a JSON property's schema); in XAML the type, property, event, resource or " +
-        "element a name is; in a project, .props or .targets file what MSBuild's evaluation makes of a name (a property's " +
-        "value and where it was set, an item's items, a target, an import's files).")]
+        "Symbol hover: C#, Razor and web server declarations, documentation or JSON schema; XAML type, property, event, " +
+        "resource or element; MSBuild project/.props/.targets evaluation, including property value and origin, items, " +
+        "target or imported files.")]
     public Task<string> SymbolInfo(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -215,12 +213,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "definition", Title = "Go to definition", ReadOnly = true), Description(
-        "Where the symbol at a position is defined, as Go to Declaration goes; a C# symbol from a package or the framework has " +
-        "no source, and says so. From XAML: the C# or XAML declaring a type, property, event, resource or element, a library's " +
-        "type decompiled (read-only), or a theme's XAML through its Source Link. In the web languages, their server's; in " +
-        "package.json, a dependency's package and an npm run's script; in a compose file, a build's Dockerfile and project, a " +
-        "service, volume, network, config or secret named, a variable's .env line, an env_file. In an MSBuild file: where a property was set (the one " +
-        "in force first), an item type or target defined, or the files an import or SDK brings in.")]
+        "Symbol definitions. C# reports unavailable package/framework source. XAML resolves C#/XAML types, properties, " +
+        "events, resources and elements, read-only decompiled library types, or theme XAML via Source Link. Web languages " +
+        "use their server; package.json resolves dependencies and npm run scripts. Compose resolves Dockerfile/project, " +
+        "service, volume, network, config, secret, .env variable or env_file. MSBuild resolves property assignments " +
+        "(effective first), item types, targets, imports and SDK files.")]
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -242,9 +239,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "usages", Title = "Find usages", ReadOnly = true), Description(
-        "Every place the symbol at a position is used, its declaration included, each with its line's text, as Find Usages " +
-        "finds them: in C#, Razor and the web languages, their server's (JSON's has none); in XAML, an element's name in its " +
-        "file and its code-behind field's uses, or a resource's key across the project's XAML. MSBuild files have none.")]
+        "Symbol uses including declaration and line text: C#, Razor and web server references; XAML element names and " +
+        "code-behind field uses, or resource keys across project XAML. JSON and MSBuild have none.")]
     public Task<IReadOnlyList<Place>> Usages(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -295,10 +291,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
-        "Renames the symbol at a position everywhere it is used, as Rename does, and saves the files. A type's files named " +
-        "after it (Foo.cs, Foo.Designer.cs) take its new name unless renameFiles is false. In XAML: an element's name and its " +
-        "code-behind field's uses. In the web languages, their server's; in JSON a property, and in package.json's scripts " +
-        "every npm run of one. MSBuild files have none.")]
+        "Renames all symbol uses and saves files. Type-named files (Foo.cs, Foo.Designer.cs) follow unless renameFiles false. " +
+        "XAML includes element names and code-behind fields; web languages use their server; JSON supports properties and " +
+        "package.json scripts' npm run uses. Unsupported in MSBuild.")]
     public Task<string> Rename(string path, int line, int column, string newName,
         [Description("Rename a type's files named after it too")] bool renameFiles = true,
         CancellationToken cancel = default) => OnUi(cancel, () => Patience.RunAsync(async patience =>
@@ -336,13 +331,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }, cancel));
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
-        "The fixes and refactorings offered at a position (Alt+Enter), or over a selection to endLine:endColumn (where Extract " +
-        "Method and Introduce Variable are), as 'title [kind]', each followed by the choices it offers (actions nested under " +
-        "it, a Fix All's scopes, where a new XAML resource or style goes), which apply_code_action takes as choice. In C#, " +
-        "Razor and the web languages, the language server's, ESLint's fixes first where it checks the file (a compose file's " +
-        "names Compose finds undeclared have Passenger's own before them); in XAML, " +
-        "Passenger's own: the line's problems' fixes (a binding's missing property or command, a missing converter), Extract " +
-        "Resource and Extract Style. MSBuild files have none.")]
+        "Alt+Enter fixes/refactorings at a position or selection ending endLine:endColumn (Extract Method/Introduce Variable). " +
+        "Returns 'title [kind]' and choices for apply_code_action: nested actions, Fix All scopes, XAML destinations. " +
+        "C#/Razor/web use their server, preceded by ESLint fixes where applicable and Passenger's undeclared Compose-name fixes. " +
+        "XAML offers missing binding property/command/converter fixes, Extract Resource and Extract Style. No MSBuild actions.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -362,10 +354,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "apply_code_action", Title = "Apply a fix or refactoring", Destructive = true), Description(
-        "Applies the fix or refactoring with this title at a position (or over a selection to endLine:endColumn), as choosing " +
-        "it from Alt+Enter does, and saves the files; of one that offers choices, choice names the one (as code_actions lists " +
-        "them). XAML's Extract Resource and Extract Style take name as the new key or style's name (else their dialog's), " +
-        "replace every use of the value and extract the element's properties that are not bindings.")]
+        "Applies title at a position or selection ending endLine:endColumn and saves files. Select any required choice from " +
+        "code_actions. XAML Extract Resource/Style uses name as key/style name (otherwise the dialog default), replaces all " +
+        "value uses and extracts non-binding element properties.")]
     public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
         string? choice = null,
         string? name = null,
@@ -434,9 +425,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description(
-        "Reformats a file as Reformat Code does, and saves it: C# and Razor by the language server, XAML by Rider's XAML style " +
-        "under its .editorconfig, the web languages by the project's Prettier where it formats the file, else by their server. " +
-        "MSBuild files have none.")]
+        "Reformats and saves: C#/Razor via server, XAML via Rider's style and .editorconfig, web via project Prettier where " +
+        "supported, otherwise its server. Unsupported in MSBuild.")]
     public Task<string> Format(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
@@ -486,9 +476,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     [McpServerTool(Name = "find_symbol", Title = "Go to symbol", ReadOnly = true), Description(
-        "Types, members and other symbols of the solution's own C# and Razor code (not packages') whose names match a query by " +
-        "substring, initials or camel humps (\"GH\" finds GetHashCode), as Go to Symbol finds them. A XAML, web or MSBuild " +
-        "file's names are in its outline.")]
+        "Finds solution C#/Razor symbols, excluding packages, by substring, initials or camel humps (\"GH\" finds GetHashCode). " +
+        "Use outline for XAML, web or MSBuild names.")]
     public Task<IReadOnlyList<SymbolFound>> FindSymbol(
         string query,
         [Description("class, interface, struct, enum, method, property, field, event, constructor...")] string? kind = null,
@@ -515,9 +504,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         : 4;
 
     [McpServerTool(Name = "outline", Title = "A file's structure", ReadOnly = true), Description(
-        "A file's structure, indented, each part with its line: a C# file's types and members; a web language's symbols as its " +
-        "server outlines them; a XAML file's elements with what names them (x:Class, x:Name, x:Key, a style's selector or " +
-        "target type); an MSBuild file's properties with their values, items, targets and imports.")]
+        "Indented file structure with lines: C# types/members; web server symbols; XAML elements named by x:Class, x:Name, " +
+        "x:Key, style selector or target type; MSBuild property values, items, targets and imports.")]
     public Task<string> Outline(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Served served = await Serve(path, cancel);
@@ -575,18 +563,34 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
-        "Runs a run configuration (the chosen one by default) as Run does, built first when it says so, and waits up to " +
-        "waitSeconds for it to end or an Avalonia or WPF app's UI to be up. Returns its output so far and its exit code once " +
-        "it has one; a run refused (one running already, nothing to run, a failed build) is an error. A configuration that " +
-        "uses the terminal runs in a Terminal tab, whose text is its output; terminal_run types into it. A container configuration " +
-        "(Compose, Dockerfile, SDK container) answers once its services are up, with each one's state.")]
+        "Runs configuration (selected by default), building if configured. Waits up to waitSeconds for exit or Avalonia/WPF UI. " +
+        "Returns current output and available exit code; busy, missing configuration or failed build is an error. Terminal " +
+        "configurations return tab text; terminal_run sends input. Compose/Dockerfile/SDK containers return each service's " +
+        "state once services are up. With resource, runs only that owned Aspire service without the debugger; starts its " +
+        "selected or explicit AppHost configuration if needed.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
         int waitSeconds = 30,
         [Description("Under dotnet watch with Hot Reload (Settings' choice by default): hot_reload, or a save, applies the edits")] bool? hotReload = null,
+        [Description(AspireResourceTarget)] string? resource = null,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            if (hotReload is not null)
+            {
+                throw new ArgumentException("resource uses Run Without Debugger; omit hotReload");
+            }
+            AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
+            using LaunchBuild resourceBuild = new(Builds);
+            (Aspire.AspireSelection target, bool started) = await PrepareAspireResource(resource, configuration, Aspire.AspireRunMode.Run, arguments, cancel);
+            if (!started && await window.RunAspireToolResourceAsync(target, "run", cancel) is { } problem)
+            {
+                throw new InvalidOperationException(WithBuildErrors(problem, resourceBuild.Ended));
+            }
+            return new RunResult(true, null, $"Run requested for {target.AppHostPath}::{target.Resource.Name}", string.Empty);
+        }
         Choose(configuration);
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;
         BuildRunController builds = Builds;
@@ -617,12 +621,19 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
-        "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
-        "watch's words too), or a terminal configuration's tab as it shows now.")]
+        "Recent output from the current or last run: console including Hot Reload's dotnet watch messages, or current terminal tab text.")]
     public Task<string> RunOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, async () =>
-        Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines)
-        : Builds.Containers is { } running ? $"{await ServicesAsync(running, cancel)}\n{Tail(Session.Runner.Shown(), lines)}"
-        : Tail(Session.Runner.Shown(), lines));
+    {
+        if (Session.Configurations.Chosen is { } configuration && Session.Aspire.IsAspire(configuration)
+            && (Session.Aspire.FindApp(configuration.Project)?.Console ?? Session.Aspire.LastAppConsole) is { } console)
+        {
+            console.Flush();
+            return Tail(console.Document.Snapshot, lines);
+        }
+        return Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, lines)
+            : Builds.Containers is { } running ? $"{await ServicesAsync(running, cancel)}\n{Tail(Session.Runner.Shown(), lines)}"
+            : Tail(Session.Runner.Shown(), lines);
+    });
 
     /// <summary>A container run's services as the engine has them now, one line each: its state, health and ports.</summary>
     private static async Task<string> ServicesAsync(global::Passenger.App.Containers.ContainerRun run, CancellationToken cancel)
@@ -641,13 +652,26 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
     }
 
-    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does; a container run's containers are taken down.")]
-    public Task<string> Stop(string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop All does; a container run's containers are taken down. With resource, stops only that owned Aspire resource.")]
+    public Task<string> Stop(string? session = null, [Description(AspireResourceTarget)] string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            if (session is not null)
+            {
+                throw new ArgumentException("Name session or resource, not both");
+            }
+            (Aspire.AspireSelection target, _) = await PrepareAspireResource(resource, null, null, null, cancel);
+            if (await window.RunAspireToolResourceAsync(target, "stop", cancel) is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            return $"Stopped {target.AppHostPath}::{target.Resource.Name}";
+        }
         if (session is not null)
         {
             ToolWindows.DebugTab tab = TabFor(session)!;
-            await Session.Debug.StopAsync(tab.Name);
+            await Session.Debug.StopAsync(tab);
             return $"Stopped {tab.Name}";
         }
         await Builds.StopAllAsync().WaitAsync(cancel);
@@ -657,10 +681,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     // Unit tests
 
     [McpServerTool(Name = "tests_run", Title = "Run unit tests", Destructive = true), Description(
-        "Builds and runs unit tests as the Unit Tests window does, each test project through the runner its build asks for (a " +
-        "Microsoft Testing Platform application, as xUnit v3, MSTest's runner or TUnit, through the platform's protocol; any " +
-        "other through VSTest): all, or those whose full name contains filter. With debug, under the debugger: a stop in a " +
-        "test comes back, and debug_continue goes on. Returns the tally and every failure with its message and stack trace.")]
+        "Builds and runs all tests or full names containing filter, using each project's configured runner: Microsoft Testing " +
+        "Platform protocol for xUnit v3, MSTest's runner or TUnit applications, otherwise VSTest. debug runs under debugger, " +
+        "returning stops; debug_continue resumes. Returns tally and each failure's message and stack trace.")]
     public Task<TestRunInfo> TestsRun(
         [Description("Part of a test's full name (Namespace.Class.Method)")] string? filter = null,
         bool debug = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -701,9 +724,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
-        "The tests the Unit Tests window shows (from the test projects' code, and their runner once built), each with its full " +
-        "name, its state from the last run (passed, failed, skipped, notRun) and file:line: those whose full name contains " +
-        "filter and whose state is state, at most limit.")]
+        "Tests from project code and built runners, with full name, last state (passed, failed, skipped, notRun), file:line. " +
+        "Filters by full-name substring and state; returns at most limit.")]
     public Task<IReadOnlyList<TestInfoRow>> TestsList(
         [Description("Part of a test's full name (Namespace.Class.Method)")] string? filter = null,
         [Description("passed, failed, skipped or notRun")] string? state = null,
@@ -924,22 +946,25 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description(
-        "Every breakpoint: the line breakpoints (an .axaml one naming its attribute), the session's data and property " +
-        "breakpoints, then the CLR exception breakpoints (\"Any exception\" among them) with their scenarios and XAML Binding " +
-        "Errors (bindingErrors), each with whether the debugger took it. While Mute Breakpoints (ide_action " +
-        "app.debug.muteBreakpoints) is on, none stops.")]
+        "Lists line breakpoints (.axaml attributes included), session data/property breakpoints, CLR exceptions including " +
+        "\"Any exception\" and scenarios, and XAML Binding Errors (bindingErrors), with debugger acceptance. " +
+        "Mute Breakpoints (ide_action app.debug.muteBreakpoints) prevents all stops.")]
     public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints(CancellationToken cancel = default) =>
         OnUi(cancel, () => Task.FromResult<IReadOnlyList<BreakpointInfo>>([.. Breakpoints(null), .. DataBreakpoints(), .. ExceptionBreakpoints()]));
 
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration", Destructive = true), Description(
         "Builds and launches a run configuration (the chosen one by default) under the debugger, as Debug does, and waits up " +
         "to waitSeconds for a stop at a breakpoint or exception, its end, or an Avalonia or WPF app's UI to be up. Returns " +
-        "where it is.")]
+        "where it is. With resource, restarts only that owned Aspire service under the debugger, starting its AppHost if needed.")]
     public Task<DebugSnapshot> DebugStart(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
-        int waitSeconds = 60, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        int waitSeconds = 60, [Description(AspireResourceTarget)] string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            return await DebugAspireTarget(resource, configuration, arguments, attach: false, waitSeconds, cancel);
+        }
         Choose(configuration);
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
         using (LaunchBuild built = new(Builds))
@@ -1022,21 +1047,27 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     }
 
     [McpServerTool(Name = "debug_processes", Title = "The .NET programs to attach to", ReadOnly = true), Description(
-        "The .NET programs running here and in running containers that the debugger can attach to: each one's process id, " +
-        "executable, program (the .dll the dotnet host runs, else the executable), user, command line and container (its id " +
-        "there 0 until Passenger's tools, copied in as debug_attach attaches, say it).")]
+        "Attachable local/container .NET programs: process id, executable, program (hosted .dll or executable), user, command " +
+        "line and container. Container process id is 0 until tools copied by debug_attach report it.")]
     public Task<IReadOnlyList<ProcessInfo>> DebugProcesses(CancellationToken cancel = default) => OnUi(cancel, async () =>
         (IReadOnlyList<ProcessInfo>)[.. (await window.AttachableAsync()).Where(p => p.WhyNot is null)
             .Select(p => new ProcessInfo(p.Id, p.Name, p.Program, p.User, p.CommandLine, p.Container))]);
 
     [McpServerTool(Name = "debug_attach", Title = "Attach to a running program", Destructive = true), Description(
-        "Attaches the debugger to a running .NET program, as Attach to Process does: by processId, or by program when one " +
-        "running program has that name (debug_processes lists them), in container when it runs in one. The breakpoints apply " +
-        "at once; it waits up to waitSeconds for a stop or its end and returns where it is. debug_detach lets it go running " +
-        "on; stop ends it.")]
+        "Attaches by processId or unique program name from debug_processes; specify container when applicable. Applies " +
+        "breakpoints immediately, waits up to waitSeconds for stop/exit and returns state. debug_detach leaves it running; stop ends it. " +
+        "With resource instead of a process target, attaches to that owned Aspire service without restarting it.")]
     public Task<DebugSnapshot> DebugAttach(int? processId = null, [Description("A program's name, as debug_processes gives it")] string? program = null,
-        string? container = null, int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        string? container = null, int waitSeconds = 10, [Description(AspireResourceTarget)] string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (resource is not null)
+        {
+            if (processId is not null || program is not null || container is not null)
+            {
+                throw new ArgumentException("Name resource or a process target, not both");
+            }
+            return await DebugAspireTarget(resource, null, null, attach: true, waitSeconds, cancel);
+        }
         IReadOnlyList<DotnetProcess> running = [.. (await window.AttachableAsync()).Where(p => p.Container == container)];
         List<DotnetProcess> named = processId is int id and not 0 ? [.. running.Where(p => p.Id == id)]
             : program is { Length: > 0 } name ? [.. running.Where(p => p.Program.Equals(name, StringComparison.OrdinalIgnoreCase) || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))]
@@ -1064,10 +1095,9 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     });
 
     [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
-        "The debugger's state and, while paused, the stop: its reason, the stopped thread's frames and the chosen frame's " +
-        "variables; in a debugged Avalonia app also the binding values of the .axaml files open in the editor (open_file one " +
-        "to see them), read on its UI thread. With several programs debugged at once it lists them (sessions), and every " +
-        "debug_ tool and stop take session, a program's name there; without it they act on the one paused, else the only one.")]
+        "Debugger state; when paused, reason, stopped thread frames and selected frame variables. Avalonia includes open " +
+        ".axaml files' binding values read on its UI thread (use open_file). Lists concurrent programs as sessions. Every " +
+        "debug_ tool and stop accepts session by listed program name; default is the paused program, otherwise the only program.")]
     public Task<DebugSnapshot> GetDebugState(string? session = null, CancellationToken cancel = default) =>
         OnUi(cancel, () => DebugSnapshotAsync(session is null ? Unnamed() : TabFor(session)?.Session));
 
@@ -1720,7 +1750,10 @@ public sealed record Workspace(
     string LanguageServer,
     IReadOnlyList<string> OpenFiles,
     string? ActiveFile,
-    string Debugger);
+    string Debugger)
+{
+    public IReadOnlyList<AspireOwnedAppInfo> AspireApps { get; init; } = [];
+}
 
 public sealed record ProjectInfo(string Name, string Path, string? OutputType, IReadOnlyList<string> TargetFrameworks);
 

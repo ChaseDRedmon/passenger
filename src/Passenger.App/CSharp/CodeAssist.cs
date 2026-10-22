@@ -592,6 +592,10 @@ public sealed partial class CodeAssist
         TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
+            if (await StartAspireCompletion(lsp, caret, cancel.Token))
+            {
+                return;
+            }
             Web.WebDocument? web = WebCurrent;
             // A compose file's own names where one is typed, merged with the server's by label, ahead of them.
             (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;
@@ -1354,6 +1358,10 @@ public sealed partial class CodeAssist
                 .ToList();
             try
             {
+                if (only is null && own.Count == 0 && await ShowAspireFixes(document, lsp, primary.Caret, title))
+                {
+                    return;
+                }
                 // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
                 linted = only is null ? await LintFixes(document, primary.Caret) : [];
                 actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
@@ -1666,6 +1674,10 @@ public sealed partial class CodeAssist
         }
         try
         {
+            if (await AspireGoToProject(lsp, offset))
+            {
+                return;
+            }
             IReadOnlyList<LspLocation> found = await lsp.DefinitionAsync(offset);
             // A FROM's image that names no stage of the file: its registry's page, as a compose file's image goes.
             if (found.Count == 0 && WebCurrent is { Kind: Passenger.App.Web.WebServerKind.Dockerfile } && FromImageAt(Editor.Document.Snapshot, offset) is { } page)
@@ -2289,7 +2301,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
     /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
-    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
+    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (open?.ResourceNames == true && c == '-') || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
         || (msbuildOffered.Count > 0 && msbuildWordCharacters.Contains(c))
         || (WebCurrent is { } web && IsWebWordChar(web, c));
 
@@ -2356,6 +2368,8 @@ public sealed partial class CodeAssist
     /// item that names none of its own, and whether the server left items out until more is typed.</summary>
     private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete)
     {
+        public bool ResourceNames { get; init; }
+
         /// <summary>The text after the caret a web server's items replace as well (a JSON string's closing quote, the rest
         /// of a CSS name the caret is inside), as it stood when the list was asked for; empty for none.</summary>
         public string Tail { get; init; } = string.Empty;

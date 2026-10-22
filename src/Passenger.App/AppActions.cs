@@ -18,6 +18,7 @@ public static class AppActions
 
     /// <summary>Rider's New Project (NewRiderProject), a project added to the open solution.</summary>
     public const string NewProject = "app.newProject";
+    public const string AddAspireOrchestration = "app.addAspireOrchestration";
     public const string Exit = "app.exit";
 
     // Rider's NextProjectWindow and PreviousProjectWindow (Next and Previous Solution Window), whose keys its Visual Studio
@@ -133,6 +134,25 @@ public static class AppActions
     public const string EditConfigurations = "app.editConfigurations";
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
+    public const string ShowAspire = "app.showAspire";
+    public const string AspireDebug = "app.aspire.debug";
+    public const string AspireAttach = "app.aspire.attach";
+    public const string AspireRun = "app.aspire.runWithoutDebugger";
+    public const string AspireProfile = "app.aspire.profile";
+    public const string AspireRefresh = "app.aspire.refresh";
+    public const string AspireDiscover = "app.aspire.discover";
+    public const string AspireCommand = "app.aspire.command";
+    public const string AspireLogFind = "app.aspire.logFind";
+    public const string AspireShowTrace = "app.aspire.showTrace";
+    public const string AspireShowRelatedLogs = "app.aspire.showRelatedLogs";
+    public const string AspireResources = "app.aspire.resources";
+    public const string AspireConsole = "app.aspire.console";
+    public const string AspireLogs = "app.aspire.logs";
+    public const string AspireTraces = "app.aspire.traces";
+    public const string AspireAppHostConsole = "app.aspire.appHostConsole";
+    public const string AspireOpenLink = "app.aspire.openLink";
+    public const string AspireSource = "app.aspire.source";
+    public const string AspireContainer = "app.aspire.container";
     public const string ShowProblems = "app.showProblems";
     public const string ShowFind = "app.showFind";
     public const string ToggleSolutionAnalysis = "app.toggleSolutionAnalysis";

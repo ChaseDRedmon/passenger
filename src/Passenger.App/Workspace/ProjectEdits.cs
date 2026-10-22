@@ -47,10 +47,15 @@ public static partial class ProjectEdits
             return $"{Path.GetFileName(project)} is not a project file";
         }
         int closeLine = text.LastIndexOf('\n', Math.Max(0, close - 1)) + 1;
+        bool inline = text[closeLine..close].Trim().Length > 0;
+        if (inline)
+        {
+            closeLine = close;
+        }
         // A file that leaves a blank line between its groups gets one after the new group too.
         bool spaced = closeLine >= 2 && text[..closeLine].TrimEnd('\r', '\n').Length < text[..closeLine].Length - eol.Length;
         string group = $"{indent}<ItemGroup>{eol}{indent}{indent}{element}{eol}{indent}</ItemGroup>{eol}{(spaced ? eol : string.Empty)}";
-        file.Write(text.Insert(closeLine, group));
+        file.Write(text.Insert(closeLine, (inline ? eol : string.Empty) + group));
         return null;
     }
 

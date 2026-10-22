@@ -208,6 +208,21 @@
     <x:String x:Key="MenuFlyoutSubItemChevronSubMenuOpened">Passenger.Menu.SelectedText</x:String>
     <x:String x:Key="MenuFlyoutSubItemChevronDisabled">Passenger.TextDisabled</x:String>
 
+    <x:String x:Key="TreeViewItemBackgroundPointerOver">Passenger.Hover</x:String>
+    <x:String x:Key="TreeViewItemBackgroundPressed">Passenger.Selected</x:String>
+    <x:String x:Key="TreeViewItemBackgroundSelected">Passenger.RowSelected</x:String>
+    <x:String x:Key="TreeViewItemBackgroundSelectedPointerOver">Passenger.RowSelected</x:String>
+    <x:String x:Key="TreeViewItemBackgroundSelectedPressed">Passenger.RowSelected</x:String>
+    <x:String x:Key="TreeViewItemBackgroundSelectedDisabled">Passenger.RowSelected</x:String>
+    <x:String x:Key="TreeViewItemForeground">Passenger.Text</x:String>
+    <x:String x:Key="TreeViewItemForegroundPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="TreeViewItemForegroundPressed">Passenger.Text</x:String>
+    <x:String x:Key="TreeViewItemForegroundDisabled">Passenger.TextDisabled</x:String>
+    <x:String x:Key="TreeViewItemForegroundSelected">Passenger.Text</x:String>
+    <x:String x:Key="TreeViewItemForegroundSelectedPointerOver">Passenger.Text</x:String>
+    <x:String x:Key="TreeViewItemForegroundSelectedPressed">Passenger.Text</x:String>
+    <x:String x:Key="TreeViewItemForegroundSelectedDisabled">Passenger.TextDisabled</x:String>
+
     <!-- A tooltip on the popup's ground and edge in the window's words. -->
     <x:String x:Key="ToolTipBackground">Passenger.Popup</x:String>
     <x:String x:Key="ToolTipBorderBrush">Passenger.PopupBorder</x:String>

@@ -541,6 +541,49 @@ public sealed class ProfilerTests : IDisposable
     /// and under Hot Reload the app dotnet watch started, never dotnet watch's own process, whose threads it took for the
     /// app's.</summary>
     [AvaloniaFact]
+    public void An_attachment_that_cannot_write_its_trace_releases_EventPipe_and_leaves_the_program_running()
+    {
+        string project = Project("Blocked", """
+            using System.Diagnostics.Tracing;
+            using Frames frames = new();
+            Console.WriteLine("ready");
+            while (Console.ReadLine() is not null) { frames.Tick(); }
+            sealed class Frames : EventSource
+            {
+                public Frames() : base("Passenger-Avalonia") { }
+                [Event(1)] public void Tick() => WriteEvent(1);
+                protected override void OnEventCommand(EventCommandEventArgs command) => Console.WriteLine($"frames {command.Command}");
+            }
+            """);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "the test-owned program", TimeSpan.FromMinutes(3));
+            Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
+            Ui.WaitFor(() => Shows(run, "ready"), "the program's EventSource");
+            DateTime now = DateTime.Now;
+            for (int second = -1; second <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; second++)
+            {
+                string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+                Directory.CreateDirectory(Path.Combine(window.SnapshotFolder, $"Blocked-{stamp}.nettrace"));
+            }
+            string? refused = Ui.Await(window.AttachProfilerAsync(), "the refused trace attachment");
+            Assert.Contains("could not record", refused, StringComparison.Ordinal);
+            Assert.Null(window.Profiling);
+            Assert.True(window.Runner.IsRunning);
+            Ui.WaitFor(() => Shows(run, "frames Enable") && Shows(run, "frames Disable"), "the failed attachment's EventPipe session to be released");
+        }
+        finally
+        {
+            Ui.Run(window, AppActions.Stop);
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Attach_Profiler_profiles_the_program_run_in_the_terminal_and_the_app_dotnet_watch_runs()
     {
         string pids = TestFolders.Create("pids-");

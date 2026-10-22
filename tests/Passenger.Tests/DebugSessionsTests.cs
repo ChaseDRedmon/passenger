@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
@@ -116,6 +117,115 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             window.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void Additional_launches_with_the_same_name_keep_separate_native_tabs_and_capture_output_from_the_start()
+    {
+        MainWindow window = pair.Open(Counter);
+        try
+        {
+            Passenger.App.Run.LaunchPlan plan = LoopingPlan("Same name");
+            ConcurrentQueue<string> earlyOutput = new();
+            DebugTab? configured = null;
+            DebugLaunch first = Ui.Await(window.Debugger.StartAdditionalAsync(plan, configure: tab =>
+            {
+                configured = tab;
+                Assert.Null(tab.Session);
+                tab.ProgramOutput += (_, output) => earlyOutput.Enqueue(output.Output);
+            }), "the first additional program");
+            Assert.Same(configured, first.Tab);
+            Ui.WaitFor(() => string.Concat(earlyOutput).Contains("looping", StringComparison.Ordinal), "the output subscribed before launch");
+
+            DebugLaunch second = Ui.Await(window.Debugger.StartAdditionalAsync(plan), "another program with the same name");
+            Assert.Equal(["Same name", "Same name"], window.Debugger.Tabs.Select(tab => tab.Name));
+            Assert.NotSame(first.Tab, second.Tab);
+            Assert.NotSame(first.Tab.Session, second.Tab.Session);
+            Assert.NotSame(first.Tab.Console, second.Tab.Console);
+            Assert.NotEqual(first.ProcessId, second.ProcessId);
+            Assert.True(first.Tab.IsLive && second.Tab.IsLive);
+            Assert.True(Processes.IsRunning(first.ProcessId) && Processes.IsRunning(second.ProcessId));
+            Assert.Same(second.Tab, window.Debugger.Chosen);
+
+            Task choosing = window.Debugger.ChooseAsync(first.Tab);
+            Ui.WaitFor(() => choosing.IsCompleted, "choosing the first same-name program");
+            choosing.GetAwaiter().GetResult();
+            Assert.Same(first.Tab.Console, window.BottomPanel.Debug.Console);
+            Task stopping = window.Debugger.StopAsync(second.Tab);
+            Ui.WaitFor(() => stopping.IsCompleted, "stopping only the second same-name program");
+            stopping.GetAwaiter().GetResult();
+            Ui.WaitFor(() => !second.Tab.IsLive && !Processes.IsRunning(second.ProcessId), "the second program's exit");
+            Assert.True(first.Tab.IsLive && Processes.IsRunning(first.ProcessId));
+            Assert.Same(first.Tab, window.Debugger.Chosen);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Canceling_an_additional_start_before_or_during_adapter_start_cannot_stop_its_same_name_sibling(bool duringAdapterStart)
+    {
+        MainWindow window = pair.Open(Counter);
+        using CancellationTokenSource cancel = new();
+        try
+        {
+            Passenger.App.Run.LaunchPlan plan = LoopingPlan("Sibling");
+            DebugLaunch sibling = Ui.Await(window.Debugger.StartAdditionalAsync(plan), "the sibling to keep running");
+            DebugTab? canceled = null;
+            DebugSession? startingSession = null;
+            Task<DebugLaunch> starting = window.Debugger.StartAdditionalAsync(plan, cancel.Token, tab =>
+            {
+                canceled = tab;
+                if (duringAdapterStart)
+                {
+                    tab.StateChanged += (_, _) =>
+                    {
+                        if (tab.Session is { State: DebugState.Starting } session)
+                        {
+                            startingSession = session;
+                            cancel.Cancel();
+                        }
+                    };
+                }
+                else
+                {
+                    cancel.Cancel();
+                }
+            });
+            Ui.WaitFor(() => starting.IsCompleted, "the canceled additional launch's cleanup");
+            Assert.ThrowsAny<OperationCanceledException>(() => starting.GetAwaiter().GetResult());
+            Assert.NotNull(canceled);
+            Assert.False(canceled.IsLive);
+            if (duringAdapterStart)
+            {
+                Assert.NotNull(startingSession);
+                Ui.WaitFor(() => startingSession.State == DebugState.Ended && !Processes.IsRunning(startingSession.AdapterProcessId), "the canceled adapter's exit");
+            }
+            else
+            {
+                Assert.Null(canceled.Session);
+            }
+            Assert.Contains(sibling.Tab, window.Debugger.Tabs);
+            Assert.Same(sibling.Tab, Assert.Single(window.Debugger.Tabs, tab => tab.IsLive));
+            Assert.True(Processes.IsRunning(sibling.ProcessId));
+            Assert.Equal(DebugState.Running, sibling.Tab.Session!.State);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static Passenger.App.Run.LaunchPlan LoopingPlan(string name) => new()
+    {
+        Name = name,
+        Program = Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"),
+        Arguments = ["sleep"],
+        WorkingDirectory = Path.GetDirectoryName(Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"))!,
+    };
 
     /// <summary>A program elsewhere (a container's) has its machine's process id, which may be another program's here: a
     /// session told so never ends a process of this machine by it. A launched program its adapter leaves running as it goes

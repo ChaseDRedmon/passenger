@@ -802,7 +802,10 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
               }
             }
             """);
-        MainWindow window = Open();
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new Passenger.App.Containers.ContainerEngine(search: false) };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
         // A Docker profile is a container configuration of its project, which runs, not one greyed.
         Assert.Equal(["Hello: Greet", "Hello: Docker"], window.Configurations.Select(c => c.Name));
         RunConfiguration docker = window.Configurations.Single(c => c.Name == "Hello: Docker");
@@ -819,6 +822,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         // which this project, with a Docker profile and no Dockerfile, cannot make: Profile says so rather than profiling it here.
         Assert.True(window.SelectConfiguration("Hello: Docker"));
         Assert.Equal("Hello: Docker cannot run: Hello has no Dockerfile", Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
+        Assert.Null(window.Profiling);
         window.Close();
     }
 

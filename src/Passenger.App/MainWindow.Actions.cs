@@ -128,14 +128,40 @@ public partial class MainWindow
             {
                 ContainersWindow.Log.OpenFind();
             }
+            else if (c.ToolWindow?.Id == "aspire")
+            {
+                actions!.Run(A.AspireLogFind, c);
+            }
             else
             {
                 Editors.ShowFind(replace: false);
             }
-        }, c => c.ToolWindow?.Id is "tests" or "containers" ? null : NeedsFile(c), ("Edit/Find", 0, 0));
+        }, c => c.ToolWindow?.Id is "tests" or "containers" or "aspire" ? null : NeedsFile(c), ("Edit/Find", 0, 0));
         Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), NeedsFile, ("Edit/Find", 0, 1));
-        Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), NeedsFile, ("Edit/Find", 0, 2));
-        Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), NeedsFile, ("Edit/Find", 0, 3));
+        Add(A.FindNext, "Find Next", "IDE", c =>
+        {
+            if (c.ToolWindow?.Id == "aspire")
+            {
+                Aspire.Find.Next();
+            }
+            else
+            {
+                Editors.FindBar.Next();
+            }
+        },
+            c => c.ToolWindow?.Id == "aspire" ? null : NeedsFile(c), ("Edit/Find", 0, 2));
+        Add(A.FindPrevious, "Find Previous", "IDE", c =>
+        {
+            if (c.ToolWindow?.Id == "aspire")
+            {
+                Aspire.Find.Previous();
+            }
+            else
+            {
+                Editors.FindBar.Previous();
+            }
+        },
+            c => c.ToolWindow?.Id == "aspire" ? null : NeedsFile(c), ("Edit/Find", 0, 3));
         Add(A.FindInFiles, "Find in Files...", "IDE", c => ShowFindInFiles(replace: false, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 0));
         Add(A.ReplaceInFiles, "Replace in Files...", "IDE", c => ShowFindInFiles(replace: true, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 1));
         Add(A.ExtendSelection, "Extend Selection", "Editor", _ => ExtendSelection(), NeedsFile, ("Edit", 2, 1));
@@ -151,6 +177,7 @@ public partial class MainWindow
 
         AddBuilding();
         AddPublishing();
+        AddAspireActions();
         AddHotReload();
         AddAttaching();
         AddTests();

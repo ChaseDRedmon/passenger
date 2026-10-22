@@ -130,6 +130,7 @@ internal static class Evaluation
             OutputType = NonEmpty(first.GetPropertyValue("OutputType")),
             TargetFrameworks = frameworks,
             IsTestProject = each.Any(p => p.GetPropertyValue("IsTestProject").Equals("true", StringComparison.OrdinalIgnoreCase)),
+            IsAspireHost = each.Any(p => p.GetPropertyValue("IsAspireHost").Equals("true", StringComparison.OrdinalIgnoreCase)),
             Dependencies = [.. each.Select((p, i) => Dependencies(p, named[i]))],
             Items = items,
             Properties = Carried(first, excluded),

@@ -1,4 +1,5 @@
 using Passenger.App.CSharp;
+using Passenger.App.Aspire;
 using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.History;
@@ -65,12 +66,14 @@ public sealed class ProjectSession : IAsyncDisposable
     private int reads;
 
     private Task? ending;
+    private bool closing;
 
     private ProjectSession(SessionSetup setup, string? folder)
     {
         this.setup = setup;
         Folder = folder;
         Configurations = new RunConfigurations(folder, () => Workspace);
+        Aspire = new AspireController(this, setup.StateFolder);
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, () => Workspace, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
@@ -83,6 +86,17 @@ public sealed class ProjectSession : IAsyncDisposable
             Server = () => CSharp?.Session,
             HotReloadOn = () => setup.Settings().HotReloadWhileDebugging,
             HotReloadOnSave = () => setup.Settings().HotReloadOnSave,
+        };
+        Debug.SelectionChanged += (_, _) =>
+        {
+            Aspire.SelectDebugger(Debug.Chosen);
+            LiveAppChanged?.Invoke(this, EventArgs.Empty);
+            InspectedChanged?.Invoke(this, EventArgs.Empty);
+        };
+        Aspire.Changed += (_, _) =>
+        {
+            LiveAppChanged?.Invoke(this, EventArgs.Empty);
+            InspectedChanged?.Invoke(this, EventArgs.Empty);
         };
         // Kept with the folder from Keep on, while the window keeps state.
         Debug.Breakpoints.Changed += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
@@ -122,6 +136,7 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Workspace = session.Models.Apply(withSolution ?? new WorkspaceModel(folder, null, []));
         session.TimeSolutionView();
         session.Configurations.Configure(session.Projects);
+        _ = session.RefreshAspireFilesAsync();
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
         session.Web = new Web.WebLanguages(folder, setup.Settings, setup.Engine) { DockerHub = setup.DockerHub };
@@ -187,6 +202,65 @@ public sealed class ProjectSession : IAsyncDisposable
     public (string Name, IReadOnlyList<string> Files, IReadOnlyList<string> Folders)? ChosenScope { get; set; }
 
     public RunConfigurations Configurations { get; }
+
+    public AspireController Aspire { get; }
+    public Task AspireFilesRead { get; private set; } = Task.CompletedTask;
+
+    public Task RefreshAspireFilesAsync(IReadOnlyList<string>? changed = null)
+    {
+        UiThread.Check();
+        return AspireFilesRead = ReadAfterAsync(AspireFilesRead);
+
+        async Task ReadAfterAsync(Task previous)
+        {
+            await previous;
+            if (IsEnded || Folder is not { } folder)
+            {
+                return;
+            }
+            if (changed is null)
+            {
+                IReadOnlyList<string> files = await BackgroundWork.Run(() => AspireAppHosts.DiscoverFiles(folder, CancellationToken.None));
+                if (!IsEnded)
+                {
+                    Configurations.ConfigureAppHosts(files);
+                }
+                return;
+            }
+            List<(string Path, bool? AppHost)> checkedFiles = await BackgroundWork.Run(() =>
+            {
+                List<(string, bool?)> found = [];
+                foreach (string path in changed)
+                {
+                    try
+                    {
+                        found.Add((path, File.Exists(path) && AspireAppHosts.IsSingleFile(path)));
+                    }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                    {
+                        found.Add((path, null));
+                    }
+                }
+                return found;
+            });
+            if (!IsEnded)
+            {
+                HashSet<string> files = new(Configurations.SingleFileAppHosts, PathNames.Comparer);
+                foreach ((string path, bool? appHost) in checkedFiles)
+                {
+                    if (appHost == true)
+                    {
+                        files.Add(PathNames.Canonical(path));
+                    }
+                    else if (appHost == false)
+                    {
+                        files.Remove(path);
+                    }
+                }
+                Configurations.ConfigureAppHosts([.. files.Order(StringComparer.Ordinal)]);
+            }
+        }
+    }
 
     /// <summary>The folder's builds, rebuilds and cleans, in the window's Build console.</summary>
     public ProcessRunner Builder { get; }
@@ -267,7 +341,7 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The Avalonia or WPF app of the Debug tab chosen, which the Live Visual Tree, binding values and agents' app
     /// tools inspect; null while the chosen tab's program is another, or no tab is. Each tab holds its own app
     /// (<see cref="ToolWindows.DebugTab.App"/>), ended with its debugging, so several debugged at once each keep theirs.</summary>
-    public LiveApp? LiveApp => Debug.Chosen?.App;
+    public LiveApp? LiveApp => Aspire.SelectedService is not null ? Aspire.SelectedInspection : Debug.Chosen?.App;
 
     /// <summary>The chosen Debug tab's app as <see cref="LiveAppChanged"/> last told it.</summary>
     private LiveApp? liveAppTold;
@@ -347,7 +421,8 @@ public sealed class ProjectSession : IAsyncDisposable
         InspectedApps.SelectMany(app => app.Bindings.Select(failure => (app, failure)));
 
     /// <summary>The app Run launched last and each Debug tab's, with an inspector in them, whose failed bindings Problems lists.</summary>
-    public IEnumerable<LiveApp> InspectedApps => new[] { RunApp }.Concat(Debug.Apps.Select(a => a.App)).OfType<LiveApp>();
+    public IEnumerable<LiveApp> InspectedApps => new[] { RunApp }.Concat(Debug.Apps.Select(a => a.App))
+        .Concat(Aspire.Apps.SelectMany(app => app.Services.Select(service => service.Inspection))).OfType<LiveApp>().Distinct();
 
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();
@@ -486,7 +561,7 @@ public sealed class ProjectSession : IAsyncDisposable
     }
 
     /// <summary>Whether the session has been left, or its window closed.</summary>
-    public bool IsEnded => ending is not null;
+    public bool IsEnded => closing || ending is not null;
 
     /// <summary>The folder's documents from now on: what the store kept of the folder's own (its breakpoints, bookmarks,
     /// configurations, Find in Files' scope, unloaded projects, folds and recent files) taken first, so restoring them writes
@@ -718,7 +793,8 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             return ending;
         }
-        List<(string What, Task Ending)> parts = [.. with, ("the debugger", Debug.LeaveAsync())];
+        Task debuggers = Debug.LeaveAsync();
+        List<(string What, Task Ending)> parts = [.. with, ("the debuggers", debuggers)];
         // Their ends are posted to the window's thread, which carries on while it waits.
         if (Builder.IsRunning)
         {
@@ -736,7 +812,7 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             parts.Add(("the profiled program", program.Landed));
         }
-        Task ended = Within(MainWindow.EndLimit, Folder, End(parts));
+        Task ended = Within(MainWindow.EndLimit, Folder, End(parts, debuggers));
         ending = LetGoOnceEnded();
         return ending;
 
@@ -757,7 +833,8 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             return ending;
         }
-        ending = Within(MainWindow.EndLimit, Folder, End([.. with, ("the debugger", Debug.CloseAsync())]));
+        Task debuggers = Debug.CloseAsync();
+        ending = Within(MainWindow.EndLimit, Folder, End([.. with, ("the debuggers", debuggers)], debuggers));
         LetGo();
         return ending;
     }
@@ -766,8 +843,9 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>What ends at once (the store's documents, the watcher, Local History, programs, builds, the profiled run and
     /// its port, a test run), and what is asked to end: the test runner and the language server, with the parts given.</summary>
-    private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts)
+    private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts, Task debuggers)
     {
+        closing = true;
         State = null;
         Models.Close();
         DesignTimeBuilds.Close();
@@ -775,6 +853,7 @@ public sealed class ProjectSession : IAsyncDisposable
         LocalHistory?.Release();
         // A build stopped now says so with nothing of this folder's in Problems, which another folder's take next.
         Problems.Clear();
+        parts.Add(("the Aspire applications", Aspire.DisposeAsync().AsTask()));
         Runner.Stop();
         Builder.Stop();
         InTerminal?.Stop();
@@ -803,7 +882,8 @@ public sealed class ProjectSession : IAsyncDisposable
         Web = null;
         // No child holds a container: what the folder started is ended by asking the engine, once Compose bringing a run up
         // (ended here) has stopped making them.
-        parts.Add(("the folder's containers", Containers.EndAsync(ContainerRun?.Abandon())));
+        Task abandoned = ContainerRun?.Abandon() ?? Task.CompletedTask;
+        parts.Add(("the folder's containers", Containers.EndAsync(Task.WhenAll(debuggers, abandoned))));
         Xaml.Dispose();
         MSBuild.Dispose();
         return parts;

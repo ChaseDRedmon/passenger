@@ -358,7 +358,12 @@ public sealed class FindInFilesPopup : UserControl
         asking?.Cancel();
     }
 
-    private void Retype() => typing.Restart();
+    private void Retype()
+    {
+        asking?.Cancel();
+        Show([], "Searching...");
+        typing.Restart();
+    }
 
     private void Retyped(AvaloniaPropertyChangedEventArgs change, AvaloniaProperty text)
     {
@@ -421,7 +426,7 @@ public sealed class FindInFilesPopup : UserControl
             Show([], problem, (asked, where));
             return;
         }
-        status.Text = "Searching...";
+        Show([], "Searching...");
         try
         {
             IReadOnlyList<SearchMatch> found = await search(asked, where, cancel.Token);

@@ -32,6 +32,45 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     public void Dispose() => TestFolders.Delete(settings);
 
     [AvaloniaFact]
+    public void Changing_the_scope_cannot_replace_files_from_the_previous_search_before_the_next_search_finishes()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.OpenFile(Full("App/Main.cs"));
+            Ui.Settle();
+            int confirmations = 0;
+            window.Confirm = (_, _, _) =>
+            {
+                confirmations++;
+                return Task.FromResult(true);
+            };
+            Ui.Press(window, Ui.Shortcut(AppActions.ReplaceInFiles));
+            FindInFilesPopup popup = Assert.IsType<FindInFilesPopup>(window.Popup);
+            Search(popup, "total");
+            Assert.True(popup.Matches.Select(m => m.Path).Distinct().Count() > 1);
+            string outside = File.ReadAllText(Full("Lib/Money.cs"));
+            popup.Replacement = "sum";
+            popup.ScopeKind = SearchScopeKind.Scope;
+            popup.NamedScope = "Current File";
+            popup.RequestReplace();
+            Assert.Equal(0, confirmations);
+            Assert.Equal(outside, File.ReadAllText(Full("Lib/Money.cs")));
+            Ui.Settle();
+            Assert.Equal(["Main.cs"], Found(popup));
+            popup.RequestReplace();
+            Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the current-file replacement");
+            Assert.Equal(1, confirmations);
+            Assert.Equal(outside, File.ReadAllText(Full("Lib/Money.cs")));
+            Assert.Contains("sum", window.EditorArea.CodeEditor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_search_in_one_project_finds_only_its_files_and_leaves_a_project_nested_in_it_to_itself()
     {
         MainWindow window = Open();
