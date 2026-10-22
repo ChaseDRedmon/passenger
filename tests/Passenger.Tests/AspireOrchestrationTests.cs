@@ -20,16 +20,12 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
     public AspireOrchestrationTests(Project project)
     {
         this.project = project;
-        if (project.WhyNot is null)
-        {
-            project.Reset();
-        }
+        project.Reset();
     }
 
     [AvaloniaFact]
     public void Adding_orchestration_creates_the_missing_projects_and_one_global_undo_and_redo_restores_every_file()
     {
-        Assert.SkipWhen(project.WhyNot is not null, project.WhyNot ?? string.Empty);
         MainWindow window = Open();
         Dictionary<string, byte[]> before = Snapshot();
         string beforeProgram = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
@@ -72,7 +68,6 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
     [AvaloniaFact]
     public void Reordered_named_AddProject_arguments_do_not_add_the_same_resource_twice()
     {
-        Assert.SkipWhen(project.WhyNot is not null, project.WhyNot ?? string.Empty);
         MainWindow window = Open();
         Assert.Equal("Added Aspire orchestration.", Add(window, "Api", existing: true));
         string host = File.ReadAllText(project.PathOf("Host/Program.cs"));
@@ -91,7 +86,6 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
     [InlineData(true)]
     public void A_conflicting_folder_or_resource_is_refused_before_any_solution_file_is_written(bool resource)
     {
-        Assert.SkipWhen(project.WhyNot is not null, project.WhyNot ?? string.Empty);
         if (resource)
         {
             project.Write("Host/Program.cs", "using Aspire.Hosting;\nvar builder = DistributedApplication.CreateBuilder(args);\nvar occupied = builder.AddConnectionString(\"api\");\nbuilder.Build().Run();\n");
@@ -113,7 +107,6 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
     [AvaloniaFact]
     public void Windows_ServiceDefaults_cannot_be_referenced_by_a_plain_service_and_refusal_writes_nothing()
     {
-        Assert.SkipWhen(project.WhyNot is not null, project.WhyNot ?? string.Empty);
         MainWindow window = Open();
         Ui.WaitFor(() => window.WorkspaceModel!.Projects.Any(p => p.Name == "Plain" && p.TargetFrameworks.Contains(TestProjects.Framework)),
             "the plain service target framework to be evaluated");
@@ -232,22 +225,8 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
                 File.WriteAllText(path, text.Replace($">{TestProjects.Framework}<", $">{framework}<", StringComparison.Ordinal));
             }
             AspireApp.UseFeed(Folder);
-            try
-            {
-                Prepare(byRealPath: true);
-            }
-            catch (Xunit.Sdk.XunitException refused) when (refused.Message.Contains("NU1101", StringComparison.Ordinal))
-            {
-                WhyNot = NotInCache;
-            }
+            Prepare(byRealPath: true);
         }
-
-        /// <summary>Why the class's tests skip, or null: a package cache that only the test project's restore filled lacks the
-        /// net10.0 graph of an AppHost and a ServiceDefaults project, since that restore prunes what its frameworks bring
-        /// (Microsoft.Extensions.*), and the folder restores from the run's local feed alone (#400).</summary>
-        public string? WhyNot { get; }
-
-        private const string NotInCache = "The package cache lacks the net10.0 graph of an AppHost and ServiceDefaults (NU1101), which the test project's restore prunes: skipped until the build restores it (#400)";
 
         private void InstallTemplates()
         {

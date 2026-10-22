@@ -1926,9 +1926,10 @@ profile whatever the environment says), so `AspireTests` (Alone), `AspireExterna
 a real AppHost skip, saying why (`AspireApp.CliSkipped`), until they run with a home of the run's own; `AspireApp` makes two of
 Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`), as do `AspireOrchestrationTests`, on a
-solution of the tests' own target, from the package cache: the test project's restore prunes what its frameworks bring
-(Microsoft.Extensions.*), so a cache only it filled lacks a net10.0 AppHost's and ServiceDefaults' graph, and the
-orchestration class then skips saying so (NU1101; AspireCodeHelpTests fail) until the build restores that graph (#400);
+solution of the tests' own target, the rest from the package cache: `tests/AspireGraphs` (an AppHost's, ServiceDefaults'
+and the starter's API service's graphs at net10.0, restore-only projects of the solution, built empty) puts them there,
+since the test project's own restore prunes what its frameworks bring (Microsoft.Extensions.*), which a net10.0 AppHost
+asks at versions above its framework's, and an AppHost's project references take no part in its restore;
 Aspire's dashboard and orchestrator (`Aspire.Dashboard.Sdk.<rid>`, `Aspire.Hosting.Orchestration.<rid>`, about 900 MB in
 the package cache), which only running an AppHost needs, are downloaded only where `PassengerAspireRuntime` is true (a
 property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a

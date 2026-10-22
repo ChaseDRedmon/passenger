@@ -40,8 +40,8 @@
 
   <!-- Aspire's dashboard and orchestrator (DCP) for this machine, about 900 MB in the package cache (#400), which only a test
        that runs an AppHost needs: downloaded where PassengerAspireRuntime is true (a property, or an environment variable of
-       that name, which the person or CI sets). Without them every AppHost the run restores leaves them out
-       (SkipAddAspireDefaultReferences, TestRun), and a test that would run one skips, saying how to have them
+       that name, which the person or CI sets). Without them every AppHost the run restores leaves them out (the
+       Directory.Build.targets AspireApp.UseFeed writes), and a test that would run one skips, saying how to have them
        (AspireApp.Unavailable). -->
   <PropertyGroup>
     <PassengerAspireRuntime Condition="'$(PassengerAspireRuntime)' != 'true'">false</PassengerAspireRuntime>
@@ -54,18 +54,12 @@
     <AssemblyMetadata Include="AspireRuntime" Value="$(PassengerAspireRuntime)" />
   </ItemGroup>
 
-  <!-- The official container-free net10.0 starter's graph, available in the package cache before tests run.
-       No AppHost build targets or references enter the test assembly. -->
+  <!-- The package graphs of the AppHosts, ServiceDefaults and services the Aspire tests write, in the package cache before
+       they run (tests/AspireGraphs): restored and built first, never linked. -->
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.AppHost" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.Extensions.Http.Resilience" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" ExcludeAssets="all" PrivateAssets="all" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" ExcludeAssets="all" PrivateAssets="all" />
+    <ProjectReference Include="../AspireGraphs/AppHost/AspireGraphs.AppHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../AspireGraphs/ServiceDefaults/AspireGraphs.ServiceDefaults.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../AspireGraphs/ApiService/AspireGraphs.ApiService.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- VSTest's SDK and xunit's adapter at the versions this project restores, for the VSTest project TestFramesTests make
@@ -87,13 +81,6 @@
   <ItemGroup>
     <PackageDownload Include="Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)" Version="[$(BundledNETCoreAppPackageVersion)]" />
   </ItemGroup>
-  <!-- OpenApi is restored only for the starter feed; its generator has no corresponding references here. -->
-  <Target Name="ExcludeStarterOpenApiGenerator" BeforeTargets="CoreCompile">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer->WithMetadataValue('NuGetPackageId', 'Microsoft.AspNetCore.OpenApi'))" />
-    </ItemGroup>
-  </Target>
-
   <Target Name="SdkWindowsDesktopRefVersion" BeforeTargets="GetAssemblyAttributes">
     <ItemGroup>
       <AssemblyMetadata Include="SdkWindowsDesktopRefVersion"
