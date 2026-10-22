@@ -41,8 +41,6 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             Assert.True(tool.ProtocolTool.InputSchema.GetProperty("properties").TryGetProperty("resource", out _));
         }
         Assert.Equal("aspire_telemetry", Assert.Single(tools, tool => tool.Name.StartsWith("aspire_", StringComparison.Ordinal)).Name);
-        int listed = tools.Sum(tool => JsonSerializer.Serialize(tool.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length);
-        Assert.True(listed < 60_000, $"The tools an agent reads as each session starts take {listed} bytes");
 
         foreach (string name in new[] { "stop", "debug_attach", "aspire_telemetry" })
         {

@@ -1245,8 +1245,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
   angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
-  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpTests,
-  which the tools added since have all but reached), so it says each thing once: the
+  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpTests until
+  Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call), so it says each thing once: the
   element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
   own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the

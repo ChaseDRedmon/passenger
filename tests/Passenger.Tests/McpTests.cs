@@ -38,11 +38,12 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         Assert.True(testsRun.Contains("Testing Platform", StringComparison.Ordinal) && testsRun.Contains("xUnit v3", StringComparison.Ordinal),
             $"tests_run tells an agent its tests run otherwise than they do: {testsRun}");
         // What every session pays to read says each thing once: the app_ tools' element query in app_tree's description alone
-        // (it was in nine tools), and no optional parameter's null default or type; the list was 69 KB and is held under 60 KB.
+        // (it was in nine tools), and no optional parameter's null default or type; the list was 69 KB, held under 60 KB until
+        // Aspire's resources and telemetry took it to 60.6 KB, and is held under 62 KB (the owner's call).
         Assert.Equal(["app_tree"], tools.Where(t => JsonSerializer.Serialize(t.ProtocolTool).Contains("#Panel/Button", StringComparison.Ordinal)).Select(t => t.Name));
         Assert.DoesNotContain(tools, t => SaysNothing(t.ProtocolTool.InputSchema));
         int listed = tools.Sum(t => JsonSerializer.Serialize(t.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length);
-        Assert.True(listed < 60_000, $"The tools an agent reads as each session starts take {listed} bytes");
+        Assert.True(listed < 62_000, $"The tools an agent reads as each session starts take {listed} bytes");
 
         // The symbol named as asked comes first, so a limit of one finds it rather than one with the name inside its own.
         JsonElement symbol = Assert.Single((await Call(client, "find_symbol", new() { ["query"] = "Twice", ["limit"] = 1 })).EnumerateArray());
