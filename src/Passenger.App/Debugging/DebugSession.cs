@@ -29,7 +29,6 @@ public sealed class DebugSession
     private readonly Process adapter;
     private readonly DapConnection connection;
 
-    /// <summary>How the IDE's paths are named where the program runs, and back, at the protocol's edge.</summary>
     /// <summary>Where the adapter runs when not beside the app, whose path map paths cross at the protocol's edge.</summary>
     private readonly AdapterPlace? place;
 
@@ -232,6 +231,10 @@ public sealed class DebugSession
 
     /// <summary>Why the session ended other than by the program ending or being stopped: the adapter crashed.</summary>
     public string? Failure { get; private set; }
+
+    /// <summary>Why the program ended with the place it ran in, when it did ("web-1 stopped": its container stopped, taking
+    /// the adapter there with it), rather than of itself or by the debugger.</summary>
+    public string? Gone { get; private set; }
 
     public string Program { get; private set; } = string.Empty;
 
@@ -555,6 +558,48 @@ public sealed class DebugSession
     private void OnAdapterExited(Action<string> log)
     {
         int code = adapter.ExitCode;
+        if (code != 0 && !killed && place?.Running is { } running)
+        {
+            _ = PlaceEndedAsync(running, code, log);
+            return;
+        }
+        AdapterExited(code, log);
+    }
+
+    /// <summary>An adapter elsewhere that ended with a failure no one asked for: when its place has stopped (its container),
+    /// that took docker exec and the adapter with the program, which has ended, said so; else the debugger's own end.</summary>
+    private async Task PlaceEndedAsync(Func<Task<bool>> running, int code, Action<string> log)
+    {
+        using IDisposable held = Passenger.Editor.BackgroundWork.Scope();
+        bool stopped;
+        try
+        {
+            stopped = !await running().WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (Exception unknown) when (unknown is TimeoutException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception
+            or OperationCanceledException)
+        {
+            // Nothing could say: taken for the debugger's own end, as before any place could.
+            stopped = false;
+        }
+        if (!stopped)
+        {
+            AdapterExited(code, log);
+            return;
+        }
+        IdeLog.Write(IdeLog.Debugger, $"[adapter {adapter.Id}] ended with exit code {code} as {place!.Where} stopped, debugging {Program}");
+        if (State != DebugState.Ended && !programEnded)
+        {
+            Gone = $"{place.Where} stopped";
+            log($"{place.Where} stopped, and {Program} with it");
+        }
+        EndLaunched(log);
+        _ = EndAfterTerminal();
+    }
+
+    /// <summary>The adapter's process ended, its end read as <see cref="OnAdapterExited"/> says.</summary>
+    private void AdapterExited(int code, Action<string> log)
+    {
         if (code != 0 && !killed)
         {
             string said;

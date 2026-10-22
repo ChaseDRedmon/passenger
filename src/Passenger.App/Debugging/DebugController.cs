@@ -145,6 +145,10 @@ public sealed class DebugController : IDisposable
         disposed = true;
         clearing.Stop();
         letGo();
+        foreach (DebugTab tab in view.Sessions)
+        {
+            StopFollowing(tab);
+        }
         foreach (OpenDocument document in following.Keys.ToList())
         {
             Detach(document);
@@ -257,23 +261,30 @@ public sealed class DebugController : IDisposable
     /// <summary>Apply Changes as the action runs it: an edit that needs a restart restarts the program, as Settings says.</summary>
     public async Task ApplyAndRestartAsync()
     {
+        DebugTab? applied = chosen;
         if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome)
         {
-            await RestartAsked(outcome);
+            await RestartAsked(outcome, applied);
         }
     }
 
-    /// <summary>The window's restart for edits Hot Reload cannot apply; declined, those edits are not asked about again until
-    /// the next edit, as dotnet watch's No.</summary>
-    private async Task<bool> RestartAsked(HotReloadOutcome outcome)
+    /// <summary>The window's restart for edits Hot Reload cannot apply to the program of <paramref name="applied"/>'s tab,
+    /// chosen again first should another program's stop have taken the window meanwhile (the restart acts on the chosen);
+    /// declined, those edits are not asked about again until the next edit, as dotnet watch's No.</summary>
+    private async Task<bool> RestartAsked(HotReloadOutcome outcome, DebugTab? applied)
     {
-        if (await RestartFor(outcome))
+        if (applied is null || !applied.IsLive || disposed)
+        {
+            return false;
+        }
+        await ChooseAsync(applied);
+        if (applied == chosen && await RestartFor(outcome))
         {
             return true;
         }
-        if (hotReload is not null)
+        if (applied.HotReload is { } reload)
         {
-            hotReload.Changed = false;
+            reload.Changed = false;
         }
         return false;
     }
@@ -316,7 +327,8 @@ public sealed class DebugController : IDisposable
                 }
                 outcome = Together(each);
             }
-            if (session != Session || disposed)
+            // The program applied to is its own tab's, whichever tab is chosen now (another program's stop takes the window).
+            if (disposed || applied.Session != session || !applied.IsLive)
             {
                 return outcome;
             }
@@ -324,17 +336,18 @@ public sealed class DebugController : IDisposable
             {
                 List<string> files = [.. own.Files.Select(PathNames.Canonical)];
                 // The stop shown keeps its place in the text, then the files' lines are the program's.
-                (string Path, int Line)? shownAt = executionPoint is { } point && files.Contains(point.Path) ? (point.Path, Current(point.Path, point.Line)) : null;
+                bool shown = applied == chosen;
+                (string Path, int Line)? shownAt = shown && executionPoint is { } point && files.Contains(point.Path) ? (point.Path, Current(point.Path, point.Line)) : null;
                 foreach (string path in files)
                 {
-                    lines?.Reset(path);
+                    applied.Lines?.Reset(path);
                 }
                 if (shownAt is { } now)
                 {
                     executionPoint = (now.Path, Built(now.Path, now.Line));
                 }
                 await session.SendBreakpointsAgainAsync(files);
-                if (own.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread)
+                if (own.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread && applied == chosen && !disposed)
                 {
                     try
                     {
@@ -348,7 +361,7 @@ public sealed class DebugController : IDisposable
                 UpdateAllMarks();
             }
             LastApplied = outcome;
-            view.Console.Append($"Hot Reload: {outcome.Said}\n", error: outcome.Result is not (HotReloadResult.Applied or HotReloadResult.NothingToApply));
+            applied.Console.Append($"Hot Reload: {outcome.Said}\n", error: outcome.Result is not (HotReloadResult.Applied or HotReloadResult.NothingToApply));
             Message?.Invoke(this, outcome.Said);
             Applied?.Invoke(this, outcome);
             StateChanged?.Invoke(this, EventArgs.Empty);
@@ -480,6 +493,8 @@ public sealed class DebugController : IDisposable
             string failed = stopped
                 ? launched ? $"Debugging {name} was stopped as it started" : $"Debugging {name} was stopped as the debugger attached, and it runs on"
                 : $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}";
+            // Its output followed from outside (a container's log) ends with the start, whichever tab is the window's.
+            StopFollowing(tab);
             if (disposed || !view.Sessions.Contains(tab))
             {
                 // Another session took its tab meanwhile (Debug again): this one's end is not shown over it.
@@ -645,7 +660,7 @@ public sealed class DebugController : IDisposable
 
     /// <summary>What several programs' Apply Changes came to, as one: the gravest result, each one's words that say more than
     /// that nothing changed, and the programs that need a restart.</summary>
-    private static HotReloadOutcome Together(IReadOnlyList<(string Name, HotReloadOutcome Outcome)> each)
+    internal static HotReloadOutcome Together(IReadOnlyList<(string Name, HotReloadOutcome Outcome)> each)
     {
         if (each is [(_, var only)] && only.Result != HotReloadResult.RestartNeeded)
         {
@@ -752,6 +767,8 @@ public sealed class DebugController : IDisposable
         {
             await EndAsync(tab);
         }
+        // Its program's output followed from outside goes with it, ended or not.
+        StopFollowing(tab);
         int at = view.Sessions.IndexOf(tab);
         if (at < 0 || disposed)
         {
@@ -839,14 +856,17 @@ public sealed class DebugController : IDisposable
 
     /// <summary>Rider's Detach: the debugger lets go of the program it attached to, which runs on. Null once it has, else why
     /// it could not (nothing attached to).</summary>
-    public async Task<string?> DetachAsync()
+    public Task<string?> DetachAsync() => DetachAsync(Session);
+
+    /// <summary>Detach of one session's program (the chosen tab's by default, else one an agent names), as Detach does it.</summary>
+    public async Task<string?> DetachAsync(DebugSession? session)
     {
         UiThread.Check();
-        if (WhyNotDetach() is { } why)
+        if ((session == Session ? WhyNotDetach() : WhyNotDetach(session)) is { } why)
         {
             return why;
         }
-        await Session!.DetachAsync();
+        await session!.DetachAsync();
         return null;
     }
 
@@ -862,10 +882,13 @@ public sealed class DebugController : IDisposable
 
     /// <summary>Why Detach cannot run now: nothing is being debugged, or the debugger started the program, which ends with
     /// its session (its input and output are the adapter's).</summary>
-    private string? WhyNotDetach() => NotLive()
-        ?? (!Session!.Attached ? "The debugger started this program: Stop ends it, and Detach lets go only of a program attached to"
-        : Session.State == DebugState.Starting ? StillStarting
-        : null);
+    private string? WhyNotDetach() => NotLive() ?? WhyNotDetach(Session);
+
+    /// <summary>Why one session's program cannot be let go now: it has ended, the debugger started it, or it still starts.</summary>
+    private static string? WhyNotDetach(DebugSession? session) => session is not { State: not DebugState.Ended } ? NothingDebugged
+        : !session.Attached ? "The debugger started this program: Stop ends it, and Detach lets go only of a program attached to"
+        : session.State == DebugState.Starting ? StillStarting
+        : null;
 
     /// <summary>Why what needs the debugger's hold of the program cannot run while it starts (Stop can).</summary>
     private const string StillStarting = "The debugger is still taking hold of the program";
@@ -967,11 +990,13 @@ public sealed class DebugController : IDisposable
     {
         if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
         {
-            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome))
+            DebugTab? applied = chosen;
+            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome, applied))
             {
                 return false;
             }
-            if (session != Session || session.State != DebugState.Paused)
+            // Its own state alone: another program's stop may have taken the window meanwhile, and this one still goes on.
+            if (session.State != DebugState.Paused)
             {
                 return false;
             }
@@ -1170,9 +1195,10 @@ public sealed class DebugController : IDisposable
 
     private void OnSaved(object? sender, EventArgs e)
     {
-        // A program run with Hot Reload takes a save's edits, as one under dotnet watch does.
-        bool run = HotReload is null && !IsDebugging && running.Any(r => r.Reload.Changed);
-        if (applyOnSave || !run && (HotReload is not { Changed: true } || !HotReloadOnSave() || WhyNotApply() is not null))
+        // A program run with Hot Reload takes a save's edits, as one under dotnet watch does, whatever else is debugged.
+        bool run = running.Any(r => r.Reload.Changed);
+        bool debugged = HotReload is { Changed: true } && HotReloadOnSave() && WhyNotApply() is null;
+        if (applyOnSave || !run && !debugged)
         {
             return;
         }
@@ -1180,8 +1206,37 @@ public sealed class DebugController : IDisposable
         Dispatcher.UIThread.Post(() =>
         {
             applyOnSave = false;
-            _ = run ? ApplyRunningAndRestartAsync() : ApplyAndRestartAsync();
+            _ = SavedAsync();
         });
+
+        async Task SavedAsync()
+        {
+            if (run)
+            {
+                await ApplyRunningAndRestartAsync();
+            }
+            if (debugged && HotReload is { Changed: true } && WhyNotApply() is null)
+            {
+                await ApplyAndRestartAsync();
+            }
+        }
+    }
+
+    /// <summary>Apply Hot Reload Changes as the action runs it: the programs run with Hot Reload through the debugger take the
+    /// edits whenever they have any (or nothing else would take them), whatever else is debugged, and the chosen session
+    /// debugged with Hot Reload takes them too; each that needs it restarts as Settings says.</summary>
+    public async Task ApplyAllAndRestartAsync()
+    {
+        UiThread.Check();
+        bool debugged = HotReload is not null && WhyNotApply() is null;
+        if (running.Count > 0 && (!debugged || running.Any(r => r.Reload.Changed)))
+        {
+            await ApplyRunningAndRestartAsync();
+        }
+        if (debugged || running.Count == 0)
+        {
+            await ApplyAndRestartAsync();
+        }
     }
 
     /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word
@@ -1381,6 +1436,7 @@ public sealed class DebugController : IDisposable
         DebugState.Paused => $"{name}: paused ({session.StopReason})",
         DebugState.Running => $"{name}: running",
         _ when session.Detached => $"Detached from {name}, which runs on",
+        _ when session.Gone is { } gone => $"Debugging {name} ended: {gone}",
         _ => session.Failure is { } failure
             ? $"Debugging {name} ended: {failure}"
             : $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}",

@@ -134,16 +134,28 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             Assert.False(window.Debugger.IsDebugging, "Run with Hot Reload debugged its services");
             int port = ContainerRunsTests.Published(project, "web");
             Assert.Equal("web 2", Ui.Await(Get(port), "web's answer", TimeSpan.FromMinutes(1)));
+
+            // Another program debugged meanwhile, with Hot Reload of its own, takes nothing from them: the services still take
+            // the edits, on Apply and on a save.
+            string looping = Debugging.Helpers.Debuggees.Program("LoopingConsoleApp");
+            LaunchPlan other = new() { Name = "Looping", Program = looping, Arguments = ["sleep"], WorkingDirectory = Path.GetDirectoryName(looping)! };
+            Assert.Null(Ui.Await(window.Debugger.StartAsync(other), "another program to be debugged beside the run"));
+            Assert.NotNull(window.Debugger.HotReload);
             window.OpenFile(message);
             Ui.Settle();
             Typing.Replace(window, "\"web 2\"", "\"web 3\"");
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
-            Ui.WaitFor(() => window.Debugger.LastApplied?.Result == HotReloadResult.Applied, $"the edit to be applied: {window.Debugger.LastApplied?.Said}");
-            Assert.Equal("web 3", Ui.Await(Get(port), "web's answer after Apply", TimeSpan.FromMinutes(1)));
+            Assert.Equal("web 3", Ui.Await(Get(port), "web's answer after Apply with another program debugged", TimeSpan.FromMinutes(1)));
+            Typing.Replace(window, "\"web 3\"", "\"web 5\"");
+            Assert.True(window.Perform(AppActions.Save), $"Save could not run: {window.Status}");
+            Ui.Settle();
+            Assert.Equal("web 5", Ui.Await(Get(port), "web's answer after a save with another program debugged", TimeSpan.FromMinutes(1)));
+            _ = window.Debugger.StopAsync("Looping");
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the other program to end with Stop");
 
             // A field's type the runtime cannot change: web is built again, restarted and attached to again.
             Typing.Replace(window, "public static int Count;", "public static long Count;");
-            Typing.Replace(window, "\"web 3\"", "\"web 4\"");
+            Typing.Replace(window, "\"web 5\"", "\"web 4\"");
             Ui.Run(window, AppActions.ApplyHotReloadChanges);
             Ui.WaitFor(() => window.Status?.Contains("restarted web to apply changes", StringComparison.Ordinal) == true, $"web to be restarted for the edit: {window.Status}",
                 TimeSpan.FromMinutes(3));

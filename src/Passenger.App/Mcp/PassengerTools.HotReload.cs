@@ -37,24 +37,42 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException($"Hot Reload cannot apply changes: {why}");
         }
+        // As the window's Apply: a container run's services whenever they have edits to take, whatever else is debugged, and
+        // the program debugged with Hot Reload.
         bool running = window.HotReloadRunning;
+        bool debugged = debugger.HotReload is not null && debugger.WhyNotApply() is null || !running;
         DebugSession? before = debugger.Session;
-        AgentCall.Say(running ? "Applying the edits to the container run's services" : "Applying the edits to the program being debugged");
-        HotReloadOutcome outcome = await (running ? debugger.ApplyRunningAsync() : debugger.ApplyChangesAsync()).WaitAsync(cancel);
+        HotReloadOutcome? services = null;
+        if (running)
+        {
+            AgentCall.Say("Applying the edits to the container run's services");
+            services = await debugger.ApplyRunningAsync().WaitAsync(cancel);
+        }
+        HotReloadOutcome? program = null;
+        if (debugged)
+        {
+            AgentCall.Say("Applying the edits to the program being debugged");
+            program = await debugger.ApplyChangesAsync().WaitAsync(cancel);
+        }
+        HotReloadOutcome outcome = (services, program) switch
+        {
+            ({ } both, { } and) => DebugController.Together([("the run's services", both), (debugger.Chosen?.Name ?? "the program debugged", and)]),
+            _ => services ?? program!,
+        };
         bool needed = outcome.Result == HotReloadResult.RestartNeeded;
         bool restarted = false;
-        if (needed && running)
+        if (services is { Result: HotReloadResult.RestartNeeded })
         {
-            AgentCall.Say($"Restarting {string.Join(", ", outcome.Restart)} for edits they cannot take running");
-            restarted = (restart ?? window.Settings.RestartOnRudeEdit) && await window.RestartForAgentAsync(outcome);
+            AgentCall.Say($"Restarting {string.Join(", ", services.Restart)} for edits they cannot take running");
+            restarted = (restart ?? window.Settings.RestartOnRudeEdit) && await window.RestartForAgentAsync(services, running: true);
         }
-        else if (needed && (restart ?? window.Settings.RestartOnRudeEdit))
+        if (program is { Result: HotReloadResult.RestartNeeded } && (restart ?? window.Settings.RestartOnRudeEdit))
         {
             AgentCall.Say("Restarting the program for edits it cannot take running");
             AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
-            restarted = await window.RestartForAgentAsync(outcome);
+            restarted |= await window.RestartForAgentAsync(program, running: false);
         }
-        else if (needed && debugger.HotReload is { } reload)
+        else if (program is { Result: HotReloadResult.RestartNeeded } && debugger.HotReload is { } reload)
         {
             // Declined, as dotnet watch's No: the next resume goes on in the code it has rather than restarting for these edits.
             reload.Changed = false;

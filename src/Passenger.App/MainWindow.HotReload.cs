@@ -29,21 +29,18 @@ public partial class MainWindow
     {
         Add(AppActions.ApplyHotReloadChanges, "Apply Hot Reload Changes", "Run", context =>
         {
-            if (session.Debug.HotReload is not null)
+            // A container run's services take the edits through the debugger attached to each, whatever else is debugged.
+            if (session.Debug.HotReload is not null || session.Debug.Running.Count > 0)
             {
-                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAndRestartAsync);
-            }
-            else if (session.Debug.Running.Count > 0 && !session.Debug.IsDebugging)
-            {
-                // A container run's services take the edits through the debugger attached to each.
-                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyRunningAndRestartAsync);
+                _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", session.Debug.ApplyAllAndRestartAsync);
             }
             else
             {
                 _ = WorkingAsync(AppActions.ApplyHotReloadChanges, "Applying Hot Reload changes…", SaveForWatchAsync);
             }
-        }, _ => session.Debug.HotReload is not null || session.Debug.IsDebugging ? session.Debug.WhyNotApply()
-            : session.Debug.Running.Count > 0 || buildRun.WatchesHotReload ? null
+        }, _ => session.Debug.Running.Count > 0 ? null
+            : session.Debug.HotReload is not null || session.Debug.IsDebugging ? session.Debug.WhyNotApply()
+            : buildRun.WatchesHotReload ? null
             : buildRun.IsRunning ? "This program runs without Hot Reload: Run it with Hot Reload on (Settings, Hot Reload), or Debug it"
             : "Nothing runs: Debug the program, or Run it with Hot Reload on (Settings, Hot Reload)", ("Run", 0, 9));
     }
@@ -116,14 +113,17 @@ public partial class MainWindow
     internal bool HotReloadWatched => session.Debug.HotReload is null && !session.Debug.IsDebugging && session.Debug.Running.Count == 0 && buildRun.WatchesHotReload;
 
     /// <summary>Whether Apply Hot Reload Changes goes to the services of a container run with Hot Reload, through the
-    /// debugger attached quietly to each, nothing being debugged.</summary>
-    internal bool HotReloadRunning => session.Debug.HotReload is null && !session.Debug.IsDebugging && session.Debug.Running.Count > 0;
+    /// debugger attached quietly to each: whenever they have edits to take, or nothing debugged would take them, whatever
+    /// else is debugged (<see cref="DebugController.ApplyAllAndRestartAsync"/>).</summary>
+    internal bool HotReloadRunning => session.Debug.Running.Count > 0
+        && (session.Debug.HotReload is null || session.Debug.WhyNotApply() is not null || session.Debug.Running.Any(r => r.Reload.Changed));
 
     /// <summary>Why Apply Hot Reload Changes cannot run, as the action says it, or null.</summary>
     internal string? WhyNoHotReload() => actions!.WhyNot(AppActions.ApplyHotReloadChanges, actions.Context());
 
-    /// <summary>The restart for edits Hot Reload could not apply, as an agent asks it: never the question, which is the person's.</summary>
-    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome) => HotReloadRunning
+    /// <summary>The restart for edits Hot Reload could not apply, as an agent asks it: never the question, which is the
+    /// person's; <paramref name="running"/> for the services of a container run with Hot Reload, else the program debugged.</summary>
+    internal Task<bool> RestartForAgentAsync(HotReloadOutcome outcome, bool running) => running
         ? buildRun.RestartContainerServicesAsync(outcome, outcome.Restart)
         : RestartForEditAsync(session, outcome, ask: false);
 
@@ -134,7 +134,7 @@ public partial class MainWindow
         bool debugged = session.Debug.HotReload is not null;
         bool watched = buildRun.WatchesHotReload || session.Debug.Running.Count > 0;
         HotReloadButton.IsVisible = debugged || watched;
-        HotReloadButton.IsEnabled = !debugged || session.Debug.WhyNotApply() is null;
+        HotReloadButton.IsEnabled = !debugged || session.Debug.Running.Count > 0 || session.Debug.WhyNotApply() is null;
         Bottom.Debug.ShowHotReload(debugged, debugged && session.Debug.WhyNotApply() is null);
         Bottom.Run.ShowHotReload(watched);
     }

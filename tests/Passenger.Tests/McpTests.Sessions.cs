@@ -68,4 +68,67 @@ public sealed partial class McpTests
             window.Close();
         }
     }
+
+    /// <summary>An agent lets go of the program it names, the one the debugger attached to, which runs on to its end while
+    /// the other debugged stays paused; one the debugger started is refused as Detach refuses it, and with both paused one
+    /// named by neither cannot be told.</summary>
+    [AvaloniaFact]
+    public void An_agent_detaches_the_program_it_names_and_is_refused_one_the_debugger_started()
+    {
+        string pair = TestFolders.Create("pair-");
+        madeFolders.Add(pair);
+        DebugSessionsTests.Pair.WriteTo(pair);
+        Restore.Run(pair);
+        string firstMain = Path.Combine(PathNames.Canonical(pair), "First", "Program.cs");
+        MainWindow window = AgentsWindow(pair);
+        window.Debugger.Breakpoints.Toggle(firstMain, 3);
+        window.Debugger.Breakpoints.Toggle(Path.Combine(PathNames.Canonical(pair), "Second", "Program.cs"), 3);
+        window.Build(global::Passenger.App.Run.BuildKind.Build);
+        WaitFor(() => !window.IsBuilding, "the build");
+        DebugSession second = DebugSessionsTests.Debug(window, "Second");
+        // First started held for the debugger, as a container's service is, and attached to.
+        string built = Path.Combine(pair, "First", "bin", "Debug", "net10.0", OperatingSystem.IsWindows() ? "First.exe" : "First");
+        System.Diagnostics.ProcessStartInfo start = ChildProcesses.Command(built, []);
+        start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        start.RedirectStandardOutput = true;
+        using System.Diagnostics.Process program = ChildProcesses.Start(start);
+        Task<string> written = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        Assert.Null(Await(window.Debugger.AttachAsync(program.Id, "First"), "the debugger to attach to First"));
+        DebugSession first = window.Debugger.SessionNamed("First")!;
+        WaitFor(() => first.State == DebugState.Paused && second.State == DebugState.Paused, "both programs to stop at their breakpoints");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            CallToolResult unnamed = Await(Task.Run(() => Result(client, "debug_detach")), "the agent's unnamed detach");
+            string why = string.Concat(unnamed.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            Assert.True(unnamed.IsError == true && why.Contains("First: paused", StringComparison.Ordinal) && why.Contains("Second: paused", StringComparison.Ordinal),
+                $"An unnamed detach with two programs paused was answered: {why}");
+
+            CallToolResult started = Await(Task.Run(() => Result(client, "debug_detach", new() { ["session"] = "Second" })), "the agent's detach of Second");
+            string refused = string.Concat(started.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            Assert.True(started.IsError == true && refused.Contains("The debugger started this program", StringComparison.Ordinal),
+                $"The detach of a program the debugger started was answered: {refused}");
+
+            string detached = Unasked(window, client, "debug_detach", new() { ["session"] = "First" }).GetString()!;
+            Assert.True(detached.StartsWith("Detached from First, which runs on", StringComparison.Ordinal), $"The detach of First was answered: {detached}");
+            Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30).Scaled()), "First, let go, did not run on to its end");
+            Assert.Equal("first 3", written.Result.Trim());
+            Assert.Equal(DebugState.Paused, second.State);
+            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
+            WaitFor(() => !window.Debugger.IsDebugging, "every program to end");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+            if (!program.HasExited)
+            {
+                Processes.Kill(program.Id);
+            }
+        }
+    }
 }

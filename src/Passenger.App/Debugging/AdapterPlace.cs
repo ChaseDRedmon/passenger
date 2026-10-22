@@ -20,6 +20,16 @@ public sealed record AdapterPlace(Func<IReadOnlyList<string>, ProcessStartInfo> 
     /// protocol; null for a program attached to as it already ran, whose output goes where it always went.</summary>
     public Func<ProcessStartInfo>? Output { get; init; }
 
+    /// <summary>Whether the place still runs (its container), asked when its adapter ends with a failure no one asked for: a
+    /// container that stopped took docker exec and the adapter in it with the program, which is the program's end and not
+    /// the debugger's (<see cref="Runs"/>). Null where nothing can tell, such an end then taken for the debugger's.</summary>
+    public Func<Task<bool>>? Running { get; init; }
+
+    /// <summary>Whether a container runs now, as the engine says: what a container's place gives as its <see cref="Running"/>.</summary>
+    public static Func<Task<bool>> Runs(ContainerEngine engine, string container) => async () =>
+        await engine.RunAsync(["inspect", "-f", "{{.State.Running}}", container]).ConfigureAwait(false) is { Succeeded: true } said
+        && said.Output.Trim() == "true";
+
     /// <summary>A path of this machine as the program's names it.</summary>
     public string ToProgram(string path) => Paths.ToContainer(path) ?? path;
 

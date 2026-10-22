@@ -53,7 +53,9 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Assert.Equal(["First", "Second"], Tabs(window).Select(t => t.Name));
             Assert.True(Tabs(window).Single(t => t.Name == "Second").Chosen, "The Debug window's tab of the program that stopped last is not the one chosen");
             Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0 && window.BottomPanel.Debug.Frames[0].Line == Pair.Next + 1, "the second program's frames");
-            Assert.Contains("2 programs debugged, First and Second paused", window.Status, StringComparison.Ordinal);
+            // Said once the stop's frames and values are read, which take their own round trips.
+            Ui.WaitFor(() => window.Status?.Contains("2 programs debugged, First and Second paused", StringComparison.Ordinal) == true,
+                $"the status bar to say both programs are paused, not \"{window.Status}\"");
             Assert.Contains(new LineMark(Pair.Next, LineMarkKind.BreakpointBound), editor.LineMarks);
             Assert.NotSame(window.Debugger.Tabs[0].Console, window.Debugger.Tabs[1].Console);
             Assert.Same(window.Debugger.Tabs[1].Console, window.BottomPanel.Debug.Console);
@@ -123,7 +125,8 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         {
             (int here, int hereAdapter) = LeftRunning(window, "Here", elsewhere: false);
             started.AddRange([here, hereAdapter]);
-            Assert.True(Processes.Gone(here), "A session here left the program its adapter let go of running, where the IDE ends it");
+            // The IDE ends it on the window's thread as the adapter's end lands there: the wait runs that thread's loop.
+            Ui.PumpUntil(() => !Processes.IsRunning(here), "a session here to end the program its adapter let go of, left running");
 
             (int program, int adapter) = LeftRunning(window, "Elsewhere", elsewhere: true);
             started.AddRange([program, adapter]);
@@ -212,6 +215,126 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
                 program.Dispose();
             }
         }
+    }
+
+    /// <summary>Hot Reload's apply is its own program's whichever tab the window shows: one resumed with an edit made while it
+    /// was paused takes the edit and goes on, its console saying what the apply came to, though another program's stop takes
+    /// the window while the edit is applied; the other stays paused where it was.</summary>
+    [AvaloniaFact]
+    public void A_program_resumed_with_an_edit_takes_it_and_goes_on_while_another_programs_stop_takes_the_window()
+    {
+        MainWindow window = pair.Open(Counter);
+        try
+        {
+            string folder = PathNames.Canonical(pair.Folder);
+            string firstMain = Path.Combine(folder, "First", "Program.cs");
+            string secondMain = Path.Combine(folder, "Second", "Program.cs");
+            // Each stops at its own call of Next, so the edit to Next is no active statement's.
+            window.Debugger.Breakpoints.Toggle(firstMain, 3);
+            window.Debugger.Breakpoints.Toggle(secondMain, 3);
+            DebugSession first = Debug(window, "First");
+            DebugSession second = Debug(window, "Second");
+            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Assert.Same(first, window.Debugger.Session);
+
+            window.OpenFile(Counter);
+            Ui.Settle();
+            Typing.Replace(window, "value + 1", "value + 2");
+            Assert.True(window.Debugger.HotReload is { Changed: true }, "The edit was not taken for one the first program is to take");
+            // No breakpoint stops it again: it runs to its end in the edited code.
+            window.Debugger.Breakpoints.Toggle(firstMain, 3);
+            Assert.True(window.Perform(AppActions.Resume), $"Resume could not run: {window.Status}");
+            // The second program's tab takes the window as the edit is applied, as its stop would.
+            _ = window.Debugger.ChooseAsync(window.Debugger.Tabs.Single(t => t.Name == "Second"));
+
+            Ui.WaitFor(() => first.State == DebugState.Ended,
+                $"the first program to go on to its end with the edit (it is {first.State}, the status bar says \"{window.Status}\")");
+            Assert.True(window.Debugger.LastApplied?.Result == HotReloadResult.Applied, $"The apply was not told as the first program's: {window.Debugger.LastApplied?.Said}");
+            string written = window.Debugger.Output(first).ToString();
+            Assert.True(written.Contains("Hot Reload:", StringComparison.Ordinal) && written.Contains("first 6", StringComparison.Ordinal),
+                $"The first program's console does not say the apply and its edited total: {written}");
+            Assert.Equal(DebugState.Paused, second.State);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A program's output followed from outside (as a container run's log is) ends with a start that fails, rather
+    /// than run for the window's life; and a session whose place stops under it (its container) ends as its program's end,
+    /// said so, never as the debugger failing.</summary>
+    [AvaloniaFact]
+    public void A_failed_start_ends_the_output_it_followed_and_a_place_that_stopped_is_said_as_the_programs_end()
+    {
+        MainWindow window = pair.Open(Counter);
+        List<int> followers = [];
+        EventHandler<ChildStart> started = (_, child) =>
+        {
+            if (child.Command.Contains("DebuggableConsoleApp", StringComparison.Ordinal))
+            {
+                lock (followers)
+                {
+                    followers.Add(child.ProcessId);
+                }
+            }
+        };
+        ChildProcesses.Started += started;
+        Process? looping = null;
+        try
+        {
+            // An attach to a process that is no more fails, and its output followed meanwhile is ended with it.
+            using Process gone = ChildProcesses.Start(ChildProcesses.DotnetCommand(["--version"]));
+            gone.WaitForExit();
+            string? failed = Ui.Await(window.Debugger.AttachAsync(gone.Id, "Gone", place: Here(follow: true)), "the attach that cannot be done");
+            Assert.NotNull(failed);
+            int follower;
+            lock (followers)
+            {
+                follower = Assert.Single(followers);
+            }
+            Ui.PumpUntil(() => !Processes.IsRunning(follower), $"the output followed for the failed attach ({failed}) to be ended", TimeSpan.FromSeconds(30));
+
+            // A place whose adapter ends unasked with its place stopped: the program's end, said so, and no error of the IDE's.
+            ProcessStartInfo start = ChildProcesses.DotnetCommand([Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"), "sleep"]);
+            start.RedirectStandardOutput = true;
+            looping = ChildProcesses.Start(start);
+            Assert.Null(Ui.Await(window.Debugger.AttachAsync(looping.Id, "Placed", place: Here(follow: false, running: () => Task.FromResult(false))), "the attach in its place"));
+            DebugSession placed = window.Debugger.SessionNamed("Placed")!;
+            Ui.WaitFor(() => placed.State == DebugState.Running, "the program attached to in its place to run");
+            Processes.Kill(placed.AdapterProcessId);
+            Ui.WaitFor(() => placed.State == DebugState.Ended, "the session to end with its adapter");
+            Assert.Equal("Debugging Placed ended: here stopped", window.Debugger.SummaryOf(placed));
+            Assert.Null(placed.Failure);
+        }
+        finally
+        {
+            ChildProcesses.Started -= started;
+            window.Close();
+            lock (followers)
+            {
+                followers.ForEach(Processes.Kill);
+            }
+            if (looping is not null)
+            {
+                Processes.Kill(looping.Id);
+                looping.Dispose();
+            }
+        }
+    }
+
+    /// <summary>A place whose adapter runs here, as a container's runs over docker exec: the IDE's own adapter given the flags
+    /// a place's adapter is given, a program's output followed from outside when asked (DebuggableConsoleApp, which writes on
+    /// for good), and whether the place still runs as given.</summary>
+    private static AdapterPlace Here(bool follow, Func<Task<bool>>? running = null)
+    {
+        string adapter = Path.Combine(AppContext.BaseDirectory, "debugger", "Passenger.DebugAdapter.dll");
+        return new AdapterPlace(arguments => ChildProcesses.DotnetCommand([adapter, .. arguments]), TestFolders.Create("place-symbols-"),
+            Passenger.App.Containers.ContainerPaths.None, "here")
+        {
+            Output = follow ? () => ChildProcesses.DotnetCommand([Debugging.Helpers.Debuggees.Program("DebuggableConsoleApp")]) : null,
+            Running = running,
+        };
     }
 
     /// <summary>Debug with a configuration chosen, as Alt+F5 starts it; its program's session once it has stopped at the

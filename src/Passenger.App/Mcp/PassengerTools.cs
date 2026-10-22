@@ -1014,8 +1014,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "debug_detach", Title = "Detach", Destructive = false), Description(
         "Lets go of the program the debugger attached to, as Detach does: its breakpoints are taken out and it runs on.")]
-    public Task<string> DebugDetach(CancellationToken cancel = default) => OnUi(cancel, async () =>
-        await Session.Debug.DetachAsync() is { } problem ? throw new InvalidOperationException(problem) : Session.Debug.Summary ?? "Detached");
+    public Task<string> DebugDetach(string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        DebugSession attached = await Debugged(session);
+        return await Session.Debug.DetachAsync(attached) is { } problem ? throw new InvalidOperationException(problem)
+            : Session.Debug.SummaryOf(attached) ?? "Detached";
+    });
 
     [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
         "The debugger's state and, while paused, the stop: its reason, the stopped thread's frames and the chosen frame's " +

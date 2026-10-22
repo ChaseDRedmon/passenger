@@ -623,7 +623,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   it, of the run's group (`DebugTab.Group`, the configuration's name: Hot Reload's Apply goes to each tab of the group),
   its console the container's `docker logs --follow --since` its start (`AdapterPlace.Output`); Run with Hot Reload attaches
   quietly (`DebugController.AttachForHotReloadAsync`, `DebugSession.Quiet`: no breakpoint sent, no exception stops it, the
-  store never told), Apply Hot Reload Changes and a save applying the edits through it (`ApplyRunningAsync`). An edit Hot
+  store never told), Apply Hot Reload Changes and a save applying the edits through it (`ApplyRunningAsync`) whatever else
+  is debugged, a session debugged with Hot Reload taking them too (`ApplyAllAndRestartAsync`). An edit Hot
   Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartContainerServicesAsync`: only
   the services whose project holds a rude edit, since Roslyn names one in another project rude to each session; images mode
   `up --build --no-deps --force-recreate`), its session ended first and attached again, as Rerun's restart of a held service
@@ -1126,7 +1127,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   adapter's input there, which lets the program go and ends it), and crosses paths at the protocol's edge through the
   place's `ContainerPaths` (launch's program and folder, breakpoints, Run to Cursor, Set Next Statement, Hot Reload's
   line updates and active statements, stack frames): a path the map does not cover, or `ContainerPaths.None` (a build of
-  this machine's, fast mode), crosses as it is. The engine decides exception breakpoints (`ExceptionRule`)
+  this machine's, fast mode), crosses as it is. An adapter there that ends with a failure no one asked for while its
+  place has stopped (`AdapterPlace.Running`, Attach to Process's `AdapterPlace.Runs`: the container stopped, taking
+  docker exec with it) is the program's end, said so (`DebugSession.Gone`), never the debugger's. A tab's program output
+  followed from outside (`AdapterPlace.Output`) ends with its session, its failed start, its tab's close and the folder's
+  end. Hot Reload's apply is its own tab's whichever is chosen when it lands (another program's stop takes the window):
+  its built lines, breakpoints, console and resume are that program's. The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is

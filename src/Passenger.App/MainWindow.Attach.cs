@@ -148,7 +148,10 @@ public partial class MainWindow
         ContainerEngine engine = Engine;
         (DotnetProcess target, string executable) = await ToolsAndProgramAsync(process, container, UiThread.Marshal<string>(held.Say), held.Stopping);
         AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(container, executable, arguments)), ContainerTools.SymbolCache,
-            ContainerPaths.None, container);
+            ContainerPaths.None, container)
+        {
+            Running = AdapterPlace.Runs(engine, container),
+        };
         return (target, place);
     }
 
