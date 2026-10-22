@@ -793,9 +793,7 @@ public sealed class LocalHistory
                 events.RemoveAll(e => dropped.Contains(e.Set));
                 changed = true;
             }
-            string temporary = $"{log}.{Environment.ProcessId}.tmp";
-            File.WriteAllText(temporary, string.Concat(left.Select(line => line + "\n")));
-            File.Move(temporary, log, overwrite: true);
+            AtomicFile.Write(log, Encoding.UTF8.GetBytes(string.Concat(left.Select(line => line + "\n"))));
         }
         DateTime old = DateTime.UtcNow - Orphaned;
         foreach (string hash in sizes.Keys.Where(h => !references.ContainsKey(h)))
@@ -853,8 +851,8 @@ public sealed class LocalHistory
         return sizes;
     }
 
-    /// <summary>Keeps bytes once, compressed, by their hash, through a temporary file so a reader never finds half of
-    /// them; their hash.</summary>
+    /// <summary>Keeps bytes once, compressed, by their hash, written whole so a reader never finds half of them; their
+    /// hash.</summary>
     private string Store(byte[] bytes)
     {
         string hash = Hash(bytes);
@@ -864,13 +862,12 @@ public sealed class LocalHistory
             return hash;
         }
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        string temporary = $"{file}.{Environment.ProcessId}.tmp";
-        using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-        using (BrotliStream brotli = new(stream, CompressionLevel.Fastest))
+        using MemoryStream compressed = new();
+        using (BrotliStream brotli = new(compressed, CompressionLevel.Fastest, leaveOpen: true))
         {
             brotli.Write(bytes);
         }
-        File.Move(temporary, file, overwrite: true);
+        AtomicFile.Write(file, compressed.GetBuffer().AsSpan(0, (int)compressed.Length));
         return hash;
     }
 

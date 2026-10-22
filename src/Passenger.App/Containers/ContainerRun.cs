@@ -752,10 +752,8 @@ public static class ContainerPlans
         // A service's ports Passenger chose replace the file's (YAML's tag, on JSON's flow, which YAML reads alike).
         string text = json.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         text = overriding ? text.Replace("\"ports\": [", "\"ports\": !override [", StringComparison.Ordinal) : text;
-        string temporary = path + ".tmp";
         // It may hold the certificate's password and the configuration's environment: the person's alone to read.
-        OwnFiles.Write(temporary, text);
-        File.Move(temporary, path, overwrite: true);
+        OwnFiles.Write(path, text);
     }
 
     /// <summary>A name as Compose takes a project's: lowercase letters, digits, dashes and underscores.</summary>
@@ -806,20 +804,9 @@ internal static class OwnFiles
         File.SetUnixFileMode(path, OwnersFolder);
     }
 
-    /// <summary>Writes a file only the person reads: one there before is replaced, never written into, since it would
-    /// keep the mode it had.</summary>
-    public static void Write(string path, string text)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            File.WriteAllText(path, text);
-            return;
-        }
-        File.Delete(path);
-        using FileStream stream = new(path, new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, UnixCreateMode = OwnersFile });
-        using StreamWriter writer = new(stream);
-        writer.Write(text);
-    }
+    /// <summary>Writes a file only the person reads, whole (<see cref="AtomicFile"/>): one there before is replaced, never
+    /// written into, since it would keep the mode it had.</summary>
+    public static void Write(string path, string text) => AtomicFile.Write(path, System.Text.Encoding.UTF8.GetBytes(text), OwnersFile);
 
     /// <summary>A file another program wrote in such a folder, made only the person's to read too.</summary>
     public static void Keep(string path)

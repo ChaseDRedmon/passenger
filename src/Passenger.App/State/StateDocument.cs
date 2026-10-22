@@ -383,25 +383,8 @@ internal static class StateFile
             // Made read-only to keep it as it is: logged as a write that failed, never moved over.
             throw new Workspace.ReadOnlyFileException(path);
         }
-        string temporary = $"{target}.{Environment.ProcessId}.tmp";
-        try
-        {
-            using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                stream.Write(Encoding.UTF8.GetBytes(document.ToJsonString(Options) + "\n"));
-                stream.Flush(flushToDisk: true);
-            }
-            if (!OperatingSystem.IsWindows() && File.Exists(target))
-            {
-                File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
-            }
-            File.Move(temporary, target, overwrite: true);
-        }
-        catch
-        {
-            File.Delete(temporary);
-            throw;
-        }
+        UnixFileMode? mode = !OperatingSystem.IsWindows() && File.Exists(target) ? File.GetUnixFileMode(target) : null;
+        AtomicFile.Write(target, Encoding.UTF8.GetBytes(document.ToJsonString(Options) + "\n"), mode);
     }
 
     /// <summary>The file's document, its version first, with each value this side changed since it last read or wrote

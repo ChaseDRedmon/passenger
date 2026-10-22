@@ -29,8 +29,6 @@ public static partial class LibrarySources
     /// <summary>A temporary file this old is a write that never finished; a younger one may still be written.</summary>
     private static readonly TimeSpan Abandoned = TimeSpan.FromHours(1);
 
-    private const string Temporary = ".tmp";
-
     private static readonly Lock Pruning = new();
     private static bool pruned;
 
@@ -106,21 +104,12 @@ public static partial class LibrarySources
         return PathNames.IsUnder(path, root) ? path : null;
     }
 
-    /// <summary>Writes a file whole or not at all: a temporary file beside it, then renamed over it, so a write cut short
+    /// <summary>Writes a file whole or not at all, its folder made first (<see cref="AtomicFile"/>), so a write cut short
     /// never leaves a truncated file that a later session takes for the whole.</summary>
     public static void WriteWhole(string path, byte[] bytes)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        string temporary = $"{path}.{Guid.NewGuid():N}{Temporary}";
-        try
-        {
-            File.WriteAllBytes(temporary, bytes);
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            Delete(temporary);
-        }
+        AtomicFile.Write(path, bytes);
     }
 
     /// <summary>Deletes what no session needs: temporary files of writes that never finished, entries unused for
@@ -134,7 +123,7 @@ public static partial class LibrarySources
             {
                 return;
             }
-            foreach (FileInfo file in new DirectoryInfo(Folder).EnumerateFiles("*" + Temporary, SearchOption.AllDirectories))
+            foreach (FileInfo file in new DirectoryInfo(Folder).EnumerateFiles("*" + AtomicFile.Temporary, SearchOption.AllDirectories))
             {
                 if (now - file.LastWriteTimeUtc > Abandoned)
                 {
