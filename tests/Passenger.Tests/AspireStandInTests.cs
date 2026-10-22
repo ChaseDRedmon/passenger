@@ -324,6 +324,37 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>A prompt the AppHost shows (a real AppHost's own, as the development certificate's notification is) never keeps
+    /// the main window open: the window's close closes it with it, and ends the AppHost as Stop would, where the prompt
+    /// refused to close, which refused the window's close, so the AppHost and all it ran outlived the window.</summary>
+    [AvaloniaFact]
+    public void A_prompt_the_AppHost_shows_closes_with_the_window_whose_close_ends_the_AppHost()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            int host = Assert.Single(window.AspireRuntime.Apps).ProcessId!.Value;
+            backend.Push(new WatchInteractionsResponseUpdate
+            {
+                InteractionId = 7,
+                Title = "No trusted development certificate",
+                MessageBox = new InteractionMessageBox { Intent = MessageIntent.Warning },
+            });
+            Interaction(window, "No trusted development certificate");
+            window.Close();
+            Assert.False(window.IsVisible, "The AppHost's prompt kept the window open as it was closed");
+            Assert.True(window.Ended is not null, "The window's close did not end what its folder runs");
+            Ui.WaitFor(() => !Processes.IsRunning(host), "the window's close to end the AppHost", TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>A terminal prompt, which Passenger cannot give, closed by its button, by Escape and by the window's close, each
     /// answered as cancelled for the request it shows last, the connection and the next prompt going on.</summary>
     [AvaloniaFact]
