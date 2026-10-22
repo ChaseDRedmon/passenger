@@ -38,6 +38,8 @@ public partial class MainWindow
             row => row is { Kind: NodeKind.Project, Path: not null } ? null : "Docker support is added to a project", _ => "Docker Support…");
         Row(A.AddDockerCompose, "Add Docker Compose…", _ => ShowDockerCompose(),
             row => row.Kind == NodeKind.Solution ? null : "Docker Compose is added to the solution", _ => "Docker Compose…");
+        Row(A.AddAspireOrchestration, "Add Aspire Orchestration…", _ => ShowAddAspireOrchestration(),
+            row => row.Kind is NodeKind.Solution or NodeKind.SolutionFolder ? null : "Aspire orchestration is added to the solution", _ => "Aspire Orchestration…");
         Row(A.ManageNuGet, "Manage NuGet Packages", _ => ShowToolWindow(ToolWindowIds.NuGet),
             row => row is { Kind: NodeKind.Project } or { Kind: NodeKind.Dependencies, Owner: not null } ? null : $"{row.Name} has no packages");
         Row(A.EditProjectFile, "Edit Project File", row => OpenFile(row.Path!), row => row is { Kind: NodeKind.Project, Path: not null } ? null : $"{row.Name} is not a project");
@@ -217,7 +219,7 @@ public partial class MainWindow
             List<MenuEntry> add = [];
             if (node.Kind is NodeKind.Solution or NodeKind.SolutionFolder)
             {
-                add.AddRange([Item(A.NewProject), Item(A.NewSolutionFolder), Item(A.AddExistingProject)]);
+                add.AddRange([Item(A.NewProject), Item(A.AddAspireOrchestration), Item(A.NewSolutionFolder), Item(A.AddExistingProject)]);
                 if (node.Kind == NodeKind.Solution)
                 {
                     add.Add(Item(A.AddDockerCompose));

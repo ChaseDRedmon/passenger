@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Passenger.App.Run;
+using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -74,10 +75,30 @@ public partial class MainWindow
             }
         };
         Bottom.Tests.IsRunning = tests.IsBusy;
-        tests.LaunchUnderDebugger = start => LaunchTestHost(next.Debug, start);
-        tests.AttachDebugger = processId => AttachTestHost(next.Debug, processId);
+        HashSet<DebugTab> testHosts = [];
+        tests.BeginAspireTest = (project, debug, cancel) => next.Aspire.BeginTestAsync(project, debug, cancel);
+        tests.LaunchUnderDebugger = start => LaunchTestHost(next, start, testHosts);
+        tests.AttachDebugger = processId => AttachTestHost(next, processId, testHosts);
+        tests.EndDebugging = () => Task.WhenAll(testHosts.ToArray().Select(EndTestHost));
+        async Task EndTestHost(DebugTab tab)
+        {
+            try
+            {
+                await next.Debug.StopAsync(tab);
+            }
+            finally
+            {
+                testHosts.Remove(tab);
+            }
+        }
         // Rider's system labels: a test run's end.
-        tests.Ran += (_, passed) => next.LocalHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
+        tests.Ran += (_, passed) =>
+        {
+            if (session == next && !next.IsEnded)
+            {
+                next.LocalHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
+            }
+        };
     }
 
     /// <summary>The Unit Tests window's grouping and outcomes as the folder kept them, or Rider's defaults.</summary>
@@ -95,16 +116,16 @@ public partial class MainWindow
         session.Tests.Open(Folder, projectsRead: read.IsCompleted);
         if (!read.IsCompleted)
         {
-            _ = FindTestsOnceRead(read, Folder);
+            _ = FindTestsOnceRead(read, session);
         }
     }
 
-    private async Task FindTestsOnceRead(Task read, string? opening)
+    private async Task FindTestsOnceRead(Task read, ProjectSession opening)
     {
         // Held from the walk's end to the look it starts, so a screenshot or a test never finds the window between them.
         using IDisposable held = BackgroundWork.Scope();
         await read;
-        if (Folder == opening)
+        if (session == opening && !opening.IsEnded)
         {
             session.Tests.Open(Folder);
         }
@@ -118,6 +139,7 @@ public partial class MainWindow
             return;
         }
         ShowToolWindow(ToolWindowIds.Tests);
+        ProjectSession running = session;
         _ = Go();
 
         async Task Go()
@@ -133,7 +155,7 @@ public partial class MainWindow
                 IdeErrors.Report(error);
                 problem = $"The tests could not run: {error.Message}";
             }
-            if (problem is not null)
+            if (session == running && !running.IsEnded && problem is not null)
             {
                 Say(problem, StatusPlace.Window(Dock, ToolWindowIds.Tests));
                 Bottom.Tests.Status = problem;
@@ -196,10 +218,12 @@ public partial class MainWindow
         {
             return;
         }
+        ProjectSession running = session;
+        string workspace = Folder;
         RunTests(async () =>
         {
-            string? problem = await session.Tests.RunUntilFailureAsync(Folder, chosen);
-            if (session.Tests.FirstFailed(chosen) is { } failed)
+            string? problem = await running.Tests.RunUntilFailureAsync(workspace, chosen);
+            if (session == running && !running.IsEnded && running.Tests.FirstFailed(chosen) is { } failed)
             {
                 Bottom.Tests.Choose(failed);
             }
@@ -216,15 +240,21 @@ public partial class MainWindow
             return;
         }
         (string Type, string? Method) context = (type, method);
+        ProjectSession running = session;
+        string workspace = Folder;
         RunTests(async () =>
         {
             if (Matching() is not { Count: > 0 })
             {
                 // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
-                if (await session.Tests.DiscoverAsync(Folder) is { } problem)
+                if (await running.Tests.DiscoverAsync(workspace) is { } problem)
                 {
                     return problem;
                 }
+            }
+            if (session != running || running.IsEnded)
+            {
+                return "The test run's solution was closed";
             }
             if (Matching() is not { Count: > 0 } found)
             {
@@ -232,10 +262,10 @@ public partial class MainWindow
             }
             if (!untilFailure)
             {
-                return await session.Tests.RunAsync(Folder, found, debug);
+                return await running.Tests.RunAsync(workspace, found, debug);
             }
-            string? stopped = await session.Tests.RunUntilFailureAsync(Folder, found);
-            if (session.Tests.FirstFailed(found) is { } failed)
+            string? stopped = await running.Tests.RunUntilFailureAsync(workspace, found);
+            if (session == running && !running.IsEnded && running.Tests.FirstFailed(found) is { } failed)
             {
                 Bottom.Tests.Choose(failed);
             }
@@ -243,64 +273,67 @@ public partial class MainWindow
         });
 
         List<Testing.TestNode> Matching() =>
-            [.. session.Tests.Tree.Methods.Where(m => m.FullName is { } name && Testing.TestsAtCaret.Matches(name, context.Type, context.Method))];
+            [.. running.Tests.Tree.Methods.Where(m => m.FullName is { } name && Testing.TestsAtCaret.Matches(name, context.Type, context.Method))];
     }
 
     /// <summary>A test host a runner would start, started under the debugger as a plan of its own (the runner built it, and
     /// its environment has the test project's launch profile's); its process for the runner to talk to.</summary>
-    private async Task<int> LaunchTestHost(Debugging.DebugController debug, Testing.TestHostStart start)
+    private async Task<int> LaunchTestHost(ProjectSession running, Testing.TestHostStart start, HashSet<DebugTab> testHosts)
     {
+        CheckTestSession(running);
+        CancellationToken cancel = running.Tests.RunCancellation;
         LaunchPlan plan = new()
         {
             Name = "Tests",
             Program = start.FileName,
             Arguments = start.Arguments,
-            WorkingDirectory = start.WorkingDirectory ?? Folder ?? Environment.CurrentDirectory,
+            WorkingDirectory = start.WorkingDirectory ?? running.Folder ?? Environment.CurrentDirectory,
             Environment = new Dictionary<string, string>(start.Environment),
         };
         ShowToolWindow(ToolWindowIds.Debug);
-        string? problem = await debug.StartAsync(plan);
-        if (debug.SessionNamed(plan.Name) is not { } host)
-        {
-            throw new InvalidOperationException(problem ?? "The debugger could not start the test host");
-        }
+        Debugging.DebugLaunch launched = await running.Debug.StartAdditionalAsync(plan, cancel, tab => testHosts.Add(tab));
         try
         {
-            return await host.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
+            CheckTestSession(running);
+            cancel.ThrowIfCancellationRequested();
+            return launched.ProcessId;
         }
-        catch (TimeoutException)
+        catch
         {
-            // Given up on, as an attach is: left running, the session would say the tests run with nothing under it.
-            if (debug.SessionNamed(plan.Name) == host)
-            {
-                await debug.StopAsync(plan.Name);
-            }
-            throw new InvalidOperationException("The debugger did not say which test host it started within 30 s");
+            await running.Debug.StopAsync(launched.Tab);
+            throw;
         }
     }
 
     /// <summary>A test host a runner started itself, attached to: true once the debugger has hold of it.</summary>
-    private async Task<bool> AttachTestHost(Debugging.DebugController debug, int processId)
+    private async Task<bool> AttachTestHost(ProjectSession running, int processId, HashSet<DebugTab> testHosts)
     {
+        CheckTestSession(running);
+        CancellationToken cancel = running.Tests.RunCancellation;
         ShowToolWindow(ToolWindowIds.Debug);
-        await debug.AttachAsync(processId, "Tests");
-        if (debug.SessionNamed("Tests") is not { } host)
-        {
-            return false;
-        }
-        // VSTest runs the tests the moment this says yes: it waits until the debugger has hold of the test host.
+        Debugging.DebugLaunch? attached = null;
         try
         {
-            if (await host.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30)) == processId)
-            {
-                return true;
-            }
+            attached = await running.Debug.AttachAdditionalAsync(processId, "Tests", cancel, tab => testHosts.Add(tab));
+            CheckTestSession(running);
+            cancel.ThrowIfCancellationRequested();
+            return attached.ProcessId == processId;
         }
-        catch (TimeoutException)
+        catch (Exception error) when (error is TimeoutException or InvalidOperationException)
         {
+            if (attached is not null)
+            {
+                await running.Debug.StopAsync(attached.Tab);
+            }
+            return false;
         }
-        // Given up on: left running, the session would say the tests run until Stop, with nothing under it.
-        await debug.StopAsync("Tests");
-        return false;
+    }
+
+    private void CheckTestSession(ProjectSession running)
+    {
+        if (session != running || running.IsEnded)
+        {
+            throw new InvalidOperationException("The test run's solution was closed");
+        }
     }
 }

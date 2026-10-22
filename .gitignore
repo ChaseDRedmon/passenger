@@ -8,6 +8,9 @@
 # Claude Code's local settings and its agents' worktrees.
 /.claude/
 
+# Local agent working notes; contributor guidance lives in CLAUDE.md.
+/docs/agent/
+
 # Editors
 .idea/
 .vs/

@@ -23,4 +23,5 @@ public static class ToolWindowIds
     public const string Hierarchy = "hierarchy";
     public const string Endpoints = "endpoints";
     public const string LiveTree = "liveTree";
+    public const string Aspire = "aspire";
 }

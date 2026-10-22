@@ -19,7 +19,7 @@ public static partial class ContainerSecrets
     private static readonly string[] Anywhere = ["PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL", "CONNECTIONSTRING"];
 
     /// <summary>What makes a name a secret's as a word of it (DB_PASS, MYSQL_PW, DB_PWD, API_KEY), or its plural.</summary>
-    private static readonly HashSet<string> Whole = new(StringComparer.Ordinal) { "PASS", "PW", "PWD", "KEY" };
+    private static readonly HashSet<string> Whole = new(StringComparer.Ordinal) { "PASS", "PW", "PWD", "KEY", "AUTHORIZATION" };
 
     /// <summary>The words that end in KEY and name no key (a word ending in KEY otherwise is one: APIKEY, ACCESSKEY).</summary>
     private static readonly HashSet<string> Ordinary = new(StringComparer.Ordinal)
@@ -70,9 +70,41 @@ public static partial class ContainerSecrets
         {
             return value;
         }
-        string bare = UrlPassword().Replace(value, $"${{head}}{Masked}@");
+        string bare = AuthorizationCredentials().Replace(value, $"${{scheme}} {Masked}");
+        bare = UrlPassword().Replace(bare, $"${{head}}{Masked}@");
         return ConnectionPart().Replace(bare, part => Secret(part.Groups["name"].Value.Trim()) && part.Groups["value"].Length > 0
             ? $"{part.Groups["head"].Value}{Masked}" : part.Value);
+    }
+
+    /// <summary>A public navigable HTTP URL, without user information, secret query values, or fragments.</summary>
+    public static string? PublicHttpUrl(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) || uri.Scheme is not ("http" or "https")
+            || value.Any(char.IsControl))
+        {
+            return null;
+        }
+        UriBuilder safe = new(uri) { UserName = string.Empty, Password = string.Empty, Fragment = string.Empty };
+        List<string> query = [];
+        foreach (string part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int equals = part.IndexOf('=');
+            string name = Uri.UnescapeDataString((equals < 0 ? part : part[..equals]).Replace('+', ' '));
+            if (Secret(name))
+            {
+                continue;
+            }
+            if (equals < 0)
+            {
+                query.Add(part);
+                continue;
+            }
+            string original = Uri.UnescapeDataString(part[(equals + 1)..].Replace('+', ' '));
+            string shown = InValue(original);
+            query.Add(shown == original ? part : $"{part[..(equals + 1)]}{Uri.EscapeDataString(shown)}");
+        }
+        safe.Query = string.Join('&', query);
+        return safe.Uri.AbsoluteUri;
     }
 
     /// <summary>Whether what a line has before and after a place makes it a URL's password (<c>postgres://user:</c> before,
@@ -181,6 +213,9 @@ public static partial class ContainerSecrets
 
     [GeneratedRegex(@"[_.\-]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")]
     private static partial Regex Words();
+
+    [GeneratedRegex(@"\b(?<scheme>Bearer|Basic)[ \t]+[A-Za-z0-9+/_~.=-]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex AuthorizationCredentials();
 
     [GeneratedRegex(@"(?<head>[A-Za-z][A-Za-z0-9+.\-]*://[^\s/@:]*:)[^\s@]*@")]
     private static partial Regex UrlPassword();

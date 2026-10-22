@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Passenger.App.Aspire;
 using Passenger.App.Containers;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
@@ -29,7 +30,8 @@ public sealed record BuildRunParts(
     Func<string, ProcessStartInfo, Task<TerminalRun>> InTerminal,
     Action<LaunchPlan, Task> OpenBrowser,
     Func<string> StateFolder,
-    ActionWork Work)
+    ActionWork Work,
+    Func<RunConfiguration, CancellationToken, Task<string?>>? PrepareAspire = null)
 {
     /// <summary>Shows a Compose project in the Containers window, chosen there, as a container run comes up.</summary>
     public Action<string>? Reveal { get; init; }
@@ -127,6 +129,14 @@ public sealed partial class BuildRunController
             }
         };
         session.Builder.Exited += (_, code) => OnBuilt(code);
+        session.Aspire.Changed += (_, _) =>
+        {
+            if (!session.IsEnded)
+            {
+                ShowBindings();
+                RunningChanged?.Invoke(this, EventArgs.Empty);
+            }
+        };
         session.Runner.Exited += (_, code) =>
         {
             parts.Views.Run.SetRunning(false);
@@ -148,7 +158,7 @@ public sealed partial class BuildRunController
     public bool IsBuilding => building is not null;
 
     /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
-    public bool IsRunning => session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
+    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
 
     /// <summary>Whether the program Run started runs under dotnet watch (Settings' Hot Reload when running), which applies
     /// the edits of each file saved.</summary>
@@ -157,7 +167,9 @@ public sealed partial class BuildRunController
     private bool watching;
 
     /// <summary>The end of the program Run last started, in the Run window or the terminal, with its exit code.</summary>
-    public Task<int> RunEnd => session.InTerminal?.Ended ?? session.Runner.Ended;
+    public Task<int> RunEnd => aspireEnd ?? session.InTerminal?.Ended ?? session.Runner.Ended;
+
+    private Task<int>? aspireEnd;
 
     /// <summary>The project folder the Run window's program came from and the Debug window's, where a relative path in
     /// their output is looked for first.</summary>
@@ -477,16 +489,22 @@ public sealed partial class BuildRunController
     /// uses the terminal; under dotnet watch as Settings' Hot Reload says, or as <paramref name="hotReload"/> does (an agent's
     /// run, whose headless IDE keeps the default settings). Null once it runs (<see cref="RunEnd"/> is its end), else why it
     /// could not (a program Profile started has the Run console, say), which the status bar says too.</summary>
-    public async Task<string?> RunAsync(string? arguments = null, bool? hotReload = null)
+    public async Task<string?> RunAsync(string? arguments = null, bool? hotReload = null, CancellationToken cancellation = default)
     {
         if (session.Configurations.Chosen is not { } chosen)
         {
             return Said("Nothing to run: no executable project");
         }
+        if (session.Aspire.IsAspire(chosen))
+        {
+            AspireRunMode mode = (hotReload ?? parts.Settings().HotReload) ? AspireRunMode.HotReload : AspireRunMode.Run;
+            return await RunAspireAsync(chosen, arguments, mode, cancellation);
+        }
         if (IsRunning)
         {
             return Said("Already running");
         }
+        aspireEnd = null;
         // The Run console is one program's: Profile's writes there too, from its start to its end.
         if (parts.Work.Of(AppActions.Profile) is { } profiling)
         {
@@ -679,12 +697,120 @@ public sealed partial class BuildRunController
         return problem;
     }
 
+    public async Task<string?> RunAspireAsync(RunConfiguration chosen, string? arguments, AspireRunMode mode, CancellationToken cancellation = default)
+    {
+        string action = mode == AspireRunMode.Debug ? AppActions.Debug : AppActions.RunProgram;
+        if (parts.Work.Begin(action, $"Starting {chosen.Name}…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(action)!));
+        }
+        using (work)
+        using (BackgroundWork.Scope())
+        {
+            using CancellationTokenRegistration requestedStop = cancellation.Register(work.Cancel);
+            try
+            {
+                parts.Editors.SaveAll();
+                RunConfiguration configuration = arguments is null ? chosen : chosen with { Arguments = arguments };
+                if (parts.PrepareAspire is { } prepare && await prepare(configuration, work.Stopping) is { } notReady)
+                {
+                    return Said(notReady);
+                }
+                if (session.IsEnded || work.IsStopped)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
+                parts.Dock.Show("aspire");
+                string? problem = await session.Aspire.StartAsync(configuration, mode, BuildBeforeLaunchAsync, work.Stopping);
+                if (problem is not null)
+                {
+                    return Said(problem);
+                }
+                AspireAppRun[] running = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
+                aspireEnd = Ended(running);
+                parts.Say($"{mode switch { AspireRunMode.Debug => "Debugging", AspireRunMode.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}", StatusPlace.Window(parts.Dock, "aspire"));
+                RunningChanged?.Invoke(this, EventArgs.Empty);
+                return null;
+            }
+            catch (OperationCanceledException) when (work.IsStopped)
+            {
+                return Said(StoppedStarting(chosen.Name));
+            }
+            catch (Exception error) when (error is LaunchException or IOException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                return Said(error.Message);
+            }
+        }
+
+        static async Task<int> Ended(IReadOnlyList<AspireAppRun> running)
+        {
+            int[] codes = await Task.WhenAll(running.Select(app => app.Runner.Ended));
+            return codes.FirstOrDefault(code => code != 0);
+        }
+    }
+
+    public Task<string?> ProfileAspireAsync(RunConfiguration configuration, string? arguments = null, CancellationToken cancellation = default) =>
+        RunAspireAsync(configuration, arguments, AspireRunMode.Profile, cancellation);
+
+    public async Task<string?> RerunAspireAsync(CancellationToken cancellation = default)
+    {
+        if (session.Configurations.Chosen is not { } chosen || session.Aspire.FindApp(chosen.Project) is not { } main)
+        {
+            return "The chosen Aspire configuration is not running";
+        }
+        if (parts.Work.Begin(AppActions.RunProgram, $"Building {chosen.Name} again…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(AppActions.RunProgram)!));
+        }
+        using (work)
+        using (BackgroundWork.Scope())
+        using (cancellation.Register(work.Cancel))
+        {
+            try
+            {
+                parts.Editors.SaveAll();
+                AspireAppRun[] apps = session.Aspire.Apps.Where(app => app.Group == main.Group && !app.Stopping).ToArray();
+                BuildOutcome built = await BuildProjectsAsync(apps.Select(app => app.Configuration.Project).Distinct(StringComparer.Ordinal).ToArray());
+                if (!built.Succeeded)
+                {
+                    return Said(built.Message);
+                }
+                if (session.IsEnded || work.IsStopped)
+                {
+                    return Said(StoppedStarting(chosen.Name));
+                }
+                if (session.Aspire.RestartBuiltResource is not { } restart)
+                {
+                    return Said("Aspire resource restart is unavailable");
+                }
+                int changed = 0;
+                foreach (AspireAppRun app in apps)
+                {
+                    foreach (AspireResourceRun resource in app.Services.Where(resource => resource.BuildChanged).ToArray())
+                    {
+                        if (!await restart(app, resource, work.Stopping))
+                        {
+                            return Said($"Could not restart {resource.Plan.Name} after its build changed");
+                        }
+                        changed++;
+                    }
+                }
+                parts.Say(changed == 0 ? "No service's build changed" : $"Restart requested for {changed} changed services");
+                return null;
+            }
+            catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException or TimeoutException)
+            {
+                return Said(error is OperationCanceledException ? StoppedStarting(chosen.Name) : error.Message);
+            }
+        }
+    }
+
     /// <summary>Resolves and builds the chosen configuration, then launches its plan under the debugger, as Rider's Debug
     /// does, with these arguments in place of its own if given; the Debug window opens on its Console until the program
     /// stops somewhere. Null once its session is open, or what stopped it (a failed build, no configuration, the adapter's
     /// refusal).</summary>
-    public Task<string?> DebugAsync(string? arguments = null) =>
-        session.Configurations.Chosen is { } chosen ? DebugAsync(chosen, arguments) : Task.FromResult<string?>("Nothing to debug: no executable project");
+    public Task<string?> DebugAsync(string? arguments = null, CancellationToken cancellation = default) =>
+        session.Configurations.Chosen is { } chosen ? DebugAsync(chosen, arguments, cancellation) : Task.FromResult<string?>("Nothing to debug: no executable project");
 
     /// <summary>Each configuration Debug launched, by its name, and the arguments it was given, which a restart for Hot
     /// Reload launches again.</summary>
@@ -705,8 +831,12 @@ public sealed partial class BuildRunController
         return await DebugAsync(configuration, arguments);
     }
 
-    private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments)
+    private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments, CancellationToken cancellation = default)
     {
+        if (session.Aspire.IsAspire(chosen))
+        {
+            return await RunAspireAsync(chosen, arguments, AspireRunMode.Debug, cancellation);
+        }
         if (parts.Work.Begin(AppActions.Debug, $"Working out how to debug {chosen.Name}…") is not { } work)
         {
             return ActionWork.Busy(parts.Work.Of(AppActions.Debug)!);
@@ -824,9 +954,18 @@ public sealed partial class BuildRunController
         }
     }
 
-    /// <summary>The failed bindings of the apps Run and Debug launched last, and what each could not tell, in Problems' Bindings.</summary>
-    public void ShowBindings() => parts.Views.Problems.ShowBindings([.. session.FailedBindings.Select(b => Placed(b.App, b.Failure))],
-        [.. session.InspectedApps.SelectMany(BindingErrors.Untold)]);
+    /// <summary>The failed bindings of the apps Run and Debug launched last, in Problems' Bindings.</summary>
+    public void ShowBindings()
+    {
+        List<(LiveApp App, BindingFailure Failure)> bindings = [.. session.FailedBindings];
+        HashSet<LiveApp> showing = [.. bindings.Select(binding => binding.App)];
+        foreach ((LiveApp App, int Id) key in placed.Keys.Where(key => !showing.Contains(key.App)).ToArray())
+        {
+            placed.Remove(key);
+        }
+        parts.Views.Problems.ShowBindings([.. bindings.Select(binding => Placed(binding.App, binding.Failure))],
+            [.. session.InspectedApps.SelectMany(BindingErrors.Untold)]);
+    }
 
     /// <summary>A failure with its problem, which is placed once, when it first fails: at its misspelt member where its XAML
     /// has it, else at its control's element.</summary>
@@ -882,11 +1021,12 @@ public sealed partial class BuildRunController
     private Task StopRest()
     {
         Task containers = session.StopContainersAsync();
+        Task aspire = session.Aspire.StopAllAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Profiled?.Run.Kill();
         session.Builder.Stop();
-        return containers;
+        return Task.WhenAll(containers, aspire);
     }
 
     /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal), never
@@ -895,6 +1035,7 @@ public sealed partial class BuildRunController
     {
         parts.Work.Of(AppActions.RunProgram)?.Cancel();
         _ = session.StopContainersAsync();
+        BackgroundWork.Track(session.Aspire.StopAllAsync());
         session.Runner.Stop();
         session.InTerminal?.Stop();
     }

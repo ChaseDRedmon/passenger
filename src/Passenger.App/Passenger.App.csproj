@@ -34,6 +34,10 @@
     <PackageReference Include="Avalonia.HarfBuzz" />
     <PackageReference Include="Avalonia.Headless" />
     <PackageReference Include="Avalonia.Skia" />
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+    <Protobuf Include="Aspire/Protocol/dashboard_service.proto" GrpcServices="Client" />
     <!-- A library's type opened from XAML, decompiled as the debugger decompiles frames without source (Xaml/LibrarySources.cs). -->
     <PackageReference Include="ICSharpCode.Decompiler" />
     <!-- The Model Context Protocol server (Mcp/), the official SDK's core, without its ASP.NET half. -->

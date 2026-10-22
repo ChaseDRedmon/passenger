@@ -33,7 +33,8 @@ public sealed record ProfilerParts(
     EditorArea Editors,
     Func<Task<DotnetProcess?>> ChooseInContainer,
     Func<DotnetProcess, ContainerPaths, Action<string>, CancellationToken, Task<(DotnetProcess Target, ProfilePlace Place)>> InContainer,
-    Action<string> ShowInFileManager);
+    Action<string> ShowInFileManager,
+    Func<RunConfiguration, string?, Task<string?>>? ProfileAspire = null);
 
 /// <summary>The window's profiler, as Rider's: Profile builds and starts the chosen configuration under the sampling
 /// profiler (an Avalonia app with the inspector in it, which records its frames), or Attach Profiler profiles the program
@@ -55,6 +56,7 @@ public sealed class ProfilerCommands
     /// <summary>Ends the start under way, which waits for the program to reach the profiler: Kill while it starts.</summary>
     private CancellationTokenSource? starting;
     private Task<SnapshotRead>? snapshotting;
+    private readonly Dictionary<ProfilingSession, Task<SnapshotRead>?> serviceRuns = [];
 
     /// <summary>The process the snapshot shown came from, none for one opened from its file.</summary>
     private int? shownProcess;
@@ -113,6 +115,7 @@ public sealed class ProfilerCommands
     public void Rebind()
     {
         snapshotting = null;
+        serviceRuns.Clear();
         if (View.IsFollowing || View.CanKill)
         {
             View.Stopped($"Profiling {profilingName} ended with its folder");
@@ -128,18 +131,35 @@ public sealed class ProfilerCommands
     /// the UI thread.</summary>
     public async Task KeepSnapshotsAsync(bool trim = false)
     {
+        ProjectSession profiled = Session;
+        CancellationToken closing = profiled.Aspire.ClosingToken;
         string kept = SnapshotFolder;
-        IReadOnlyList<SnapshotFile> files = await BackgroundWork.Run(() =>
+        using IDisposable held = BackgroundWork.Scope();
+        IReadOnlyList<SnapshotFile> files = await Task.Run(() =>
         {
             if (trim)
             {
                 Snapshots.Trim(kept);
             }
             return Snapshots.List(kept);
-        });
-        if (kept == SnapshotFolder)
+        }).ConfigureAwait(false);
+        if (closing.IsCancellationRequested)
         {
-            View.ShowKept(kept, files);
+            return;
+        }
+        try
+        {
+            await UiThread.InvokeAsync(() =>
+            {
+                if (!closing.IsCancellationRequested && !profiled.IsEnded && profiled == Session && kept == SnapshotFolder)
+                {
+                    View.ShowKept(kept, files);
+                }
+                return true;
+            }).WaitAsync(closing).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (closing.IsCancellationRequested)
+        {
         }
     }
 
@@ -149,9 +169,13 @@ public sealed class ProfilerCommands
     public async Task<string?> ProfileAsync(string? arguments = null, RunConfiguration? configuration = null)
     {
         ProjectSession profiled = Session;
-        if (WhyNotProfile(profiled) is { } busy)
+        if (WhyNotProfile(profiled, configuration) is { } busy)
         {
             return busy;
+        }
+        if ((configuration ?? profiled.Configurations.Chosen) is { } chosen && profiled.Aspire.IsAspire(chosen) && parts.ProfileAspire is { } aspire)
+        {
+            return await aspire(chosen, arguments);
         }
         string name = (configuration ?? profiled.Configurations.Chosen)?.Name ?? "the program";
         if (parts.Actions.Work.Begin(AppActions.Profile, $"Working out how to profile {name}…") is not { } work)
@@ -178,7 +202,7 @@ public sealed class ProfilerCommands
     private ProjectSession? launching;
 
     /// <summary>Why another run cannot be profiled in a folder now: one is, or one is still starting.</summary>
-    private string? Busy(ProjectSession folder) => folder.Profiling is not null || launching == folder ? "A run is already being profiled" : null;
+    private string? Busy(ProjectSession folder) => folder.Profiling is not null || launching is not null ? "A run is already being profiled" : null;
 
     /// <summary>Why Profile cannot start another program: the one it started last goes on after its snapshot, and Kill, Stop
     /// and the folder's end reach one such program at a time.</summary>
@@ -193,7 +217,8 @@ public sealed class ProfilerCommands
         : null;
 
     /// <summary>Why Profile cannot start now, or null when it can.</summary>
-    private string? WhyNotProfile(ProjectSession folder) => Busy(folder) ?? GoesOn(folder) ?? RunConsoleTaken(folder);
+    private string? WhyNotProfile(ProjectSession folder, RunConfiguration? configuration = null) => Busy(folder)
+        ?? ((configuration ?? folder.Configurations.Chosen) is { } chosen && folder.Aspire.IsAspire(chosen) ? null : GoesOn(folder) ?? RunConsoleTaken(folder));
 
     private async Task<string?> LaunchAsync(ProjectSession profiled, string? arguments, Working work, RunConfiguration? configuration)
     {
@@ -382,6 +407,7 @@ public sealed class ProfilerCommands
     /// program's end (or its recording's, in a container) unless Get Snapshot read it first.</summary>
     private void Follow(ProjectSession profiled, ProfilingSession running, string name, bool killable)
     {
+        bool serviceOwned = serviceRuns.ContainsKey(running);
         profiled.Profiling = running;
         profilingName = name;
         View.Running(name, () => running.Elapsed, killable);
@@ -393,7 +419,7 @@ public sealed class ProfilerCommands
             {
                 _ = SnapshotAsync();
             }
-            else if (profiled.IsEnded)
+            else if (profiled.IsEnded && !serviceOwned)
             {
                 // Its folder's end let go of the run, read by no one.
                 BackgroundWork.Track(running.DisposeAsync().AsTask());
@@ -448,37 +474,171 @@ public sealed class ProfilerCommands
     /// or, with <paramref name="choose"/> and nothing of the folder's running, one chosen among the running containers'
     /// .NET programs) is recorded there by Passenger's tools, a program held at its start let go once recording. Null once
     /// it is profiled, else why not, which the profiler window says too.</summary>
-    public Task<string?> AttachAsync(DotnetProcess? inContainer = null, bool choose = false) =>
-        AttachAsync(inContainer is not null ? InContainer(inContainer, ContainerPaths.None, resume: true) : null, choose);
-
-    private async Task<string?> AttachAsync(AttachTarget? given, bool choose)
+    public Task<string?> AttachAsync(DotnetProcess? inContainer = null, bool choose = false)
     {
+        UiThread.Check();
+        if (inContainer is not null)
+        {
+            return AttachTargetAsync(InContainer(inContainer, ContainerPaths.None, resume: true));
+        }
+        AttachTarget? target = Attachable(out string? problem);
+        return problem is not null ? Task.FromResult<string?>(problem) : AttachTargetAsync(target, choose);
+    }
+
+    /// <summary>Profiles exactly this .NET process without changing the selected debugger or the workspace's run.</summary>
+    public Task<string?> AttachAsync(int processId, string name, string program)
+    {
+        UiThread.Check();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(program);
+        return AttachTargetAsync(new AttachTarget(processId, name, FileName(Path.GetFileNameWithoutExtension(program))));
+    }
+
+    /// <summary>Starts exactly one owned service, held until its first instruction can be recorded. The capture callback
+    /// takes ownership of native startup cleanup, including when this UI-facing start fails or is canceled.</summary>
+    public async Task<ProfilingSession> StartServiceAsync(LaunchPlan plan, ProgramPump pump, CancellationToken cancellation,
+        Action<Task<ProfilingSession>>? captureStarting = null, Func<bool>? ownerClosing = null)
+    {
+        UiThread.Check();
+        ProjectSession profiled = Session;
+        if (Busy(profiled) is { } busy)
+        {
+            throw new LaunchException(busy);
+        }
+        using Working work = parts.Actions.Work.Begin(AppActions.Profile, $"Starting {plan.Name} under the profiler…")
+            ?? throw new LaunchException(ActionWork.Busy(parts.Actions.Work.Of(AppActions.Profile)!));
+        launching = profiled;
+        using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation, work.Stopping);
+        starting = stop;
+        profiled.ProfileStarting = stop;
+        ProfilingSession? recording = null;
+        try
+        {
+            View.Starting(plan.Name);
+            ProfileTarget target = new(plan.Program, plan.Arguments.ToArray(), plan.WorkingDirectory,
+                new Dictionary<string, string>(plan.Environment));
+            string snapshots = SnapshotFolder;
+            string sockets = SocketFolders.Own(State.StateStore.DefaultRoot);
+            CancellationToken stopping = stop.Token;
+            Task<ProfilingSession> nativeStart = Task.Run(() => ProfilingSession.StartAsync(target, snapshots, sockets, pump, stopping));
+            captureStarting?.Invoke(nativeStart);
+            recording = await nativeStart;
+            stop.Token.ThrowIfCancellationRequested();
+            if (Session != profiled || profiled.IsEnded || ownerClosing?.Invoke() == true)
+            {
+                throw new LaunchException("The solution was closed");
+            }
+            serviceRuns.Add(recording, null);
+            Follow(profiled, recording, plan.Name, killable: false);
+            return recording;
+        }
+        catch
+        {
+            if (recording is not null && captureStarting is null)
+            {
+                recording.Kill();
+                await recording.ExitedAsync();
+                await recording.DisposeAsync();
+            }
+            throw;
+        }
+        finally
+        {
+            if (starting == stop)
+            {
+                starting = null;
+            }
+            if (profiled.ProfileStarting == stop)
+            {
+                profiled.ProfileStarting = null;
+            }
+            if (launching == profiled)
+            {
+                launching = null;
+            }
+        }
+    }
+
+    /// <summary>Finishes an owned service's recording, then ends its process and releases the profiler.</summary>
+    public async Task EndServiceAsync(ProfilingSession recording, Func<bool>? ownerClosing = null, Func<Task>? release = null)
+    {
+        ProjectSession profiled = Session;
+        CancellationToken closing = profiled.Aspire.ClosingToken;
+        Task reading = Session.Profiling == recording ? SnapshotAsync()
+            : serviceRuns.GetValueOrDefault(recording) is { } pending ? pending
+            : Task.Run(() => recording.StopAsync());
+        try
+        {
+            await reading.ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!closing.IsCancellationRequested)
+            {
+                try
+                {
+                    Task cleanup = await UiThread.InvokeAsync(() =>
+                    {
+                        if (closing.IsCancellationRequested || profiled.IsEnded || ownerClosing?.Invoke() == true)
+                        {
+                            return Task.CompletedTask;
+                        }
+                        serviceRuns.Remove(recording);
+                        return release is not null ? release() : Task.Run(async () =>
+                        {
+                            recording.Kill();
+                            await recording.ExitedAsync().ConfigureAwait(false);
+                            await recording.DisposeAsync().ConfigureAwait(false);
+                        });
+                    }).WaitAsync(closing).ConfigureAwait(false);
+                    await cleanup.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (closing.IsCancellationRequested)
+                {
+                }
+            }
+        }
+    }
+
+    private async Task<string?> AttachTargetAsync(AttachTarget? target, bool choose = false)
+    {
+        UiThread.Check();
         ProjectSession profiled = Session;
         if (Busy(profiled) is { } busy)
         {
             return busy;
         }
-        AttachTarget? target = given ?? Attachable();
-        if (target is null && choose)
+        launching = profiled;
+        string snapshotFolder = SnapshotFolder;
+        try
         {
-            if (await parts.ChooseInContainer() is not { } chosen)
+            if (target is null && choose)
             {
-                return NoneChosen;
+                DotnetProcess? chosen = await parts.ChooseInContainer();
+                if (profiled != Session || profiled.IsEnded)
+                {
+                    return "The solution was closed";
+                }
+                if (chosen is null)
+                {
+                    return NoneChosen;
+                }
+                target = InContainer(chosen, ContainerPaths.None, resume: true);
             }
-            if (profiled != Session || profiled.IsEnded)
-            {
-                return "The solution was closed";
-            }
-            if (Busy(profiled) is { } since)
-            {
-                return since;
-            }
-            target = InContainer(chosen, ContainerPaths.None, resume: true);
+            return target is null ? NothingRunning : await AttachTargetAsync(profiled, target, snapshotFolder);
         }
-        if (target is null)
+        finally
         {
-            return NothingRunning;
+            if (launching == profiled)
+            {
+                launching = null;
+            }
         }
+    }
+
+    private async Task<string?> AttachTargetAsync(ProjectSession profiled, AttachTarget target, string snapshotFolder)
+    {
         parts.Dock.Show(ToolWindowIds.Profiler);
         if (target.Watched is { } app)
         {
@@ -486,10 +646,17 @@ public sealed class ProfilerCommands
             if (started is not int process)
             {
                 string why = $"{target.Name} runs under dotnet watch, which has yet to start {app}: Attach Profiler once it runs";
-                View.Stopped(why);
+                if (profiled == Session && !profiled.IsEnded)
+                {
+                    View.Stopped(why);
+                }
                 return why;
             }
             target = target with { ProcessId = process };
+        }
+        if (profiled.IsEnded || profiled != Session)
+        {
+            return "The solution was closed";
         }
         ProfilingSession running;
         try
@@ -497,19 +664,22 @@ public sealed class ProfilerCommands
             using (BackgroundWork.Scope())
             {
                 running = target.Elsewhere is not null || target.Service is not null
-                    ? await AttachElsewhereAsync(target)
-                    : await ProfilingSession.AttachAsync(target.ProcessId, target.File, SnapshotFolder);
+                    ? await AttachElsewhereAsync(target, snapshotFolder)
+                    : await ProfilingSession.AttachAsync(target.ProcessId, target.File, snapshotFolder);
             }
         }
         catch (ProfilingException failed)
         {
-            View.Stopped(failed.Message);
+            if (profiled == Session && !profiled.IsEnded)
+            {
+                View.Stopped(failed.Message);
+            }
             return failed.Message;
         }
-        if (profiled.IsEnded || Busy(profiled) is not null)
+        if (profiled.IsEnded || profiled != Session || profiled.Profiling is not null)
         {
             await running.DisposeAsync();
-            return profiled.IsEnded ? "The solution was closed" : "A run is already being profiled";
+            return profiled.IsEnded || profiled != Session ? "The solution was closed" : "A run is already being profiled";
         }
         // Profile's own program, profiled again, is still Kill's to end.
         Follow(profiled, running, target.Name, killable: target.Elsewhere is null && target.Service is null && profiled.Profiled?.Run.ProcessId == target.ProcessId);
@@ -525,7 +695,7 @@ public sealed class ProfilerCommands
     /// <summary>Attach Profiler to a .NET service of the container run under way (the Containers window's and the gutter's
     /// Profile of one service): recorded in its container as it runs. Null once it is, else why not.</summary>
     public Task<string?> AttachServiceAsync(DotnetService service, string configuration) =>
-        AttachAsync(new AttachTarget(0, $"{service.Service} of {configuration}", FileName(service.Service)) { Service = service, Resume = true }, choose: false);
+        AttachTargetAsync(new AttachTarget(0, $"{service.Service} of {configuration}", FileName(service.Service)) { Service = service, Resume = true });
 
     /// <summary>A program in a container to profile there: by its name in its container, its file's name its program's, its
     /// PDBs' paths made this machine's through <paramref name="paths"/>.</summary>
@@ -534,7 +704,7 @@ public sealed class ProfilerCommands
 
     /// <summary>Attach Profiler in a container: Passenger's tools put in it as the window's (the work said in the status bar,
     /// Stop ending it), then the program recorded there.</summary>
-    private async Task<ProfilingSession> AttachElsewhereAsync(AttachTarget target)
+    private async Task<ProfilingSession> AttachElsewhereAsync(AttachTarget target, string snapshotFolder)
     {
         if (parts.Actions.Work.Begin(AppActions.AttachProfiler, $"Attaching the profiler to {target.Name}…") is not { } work)
         {
@@ -547,7 +717,7 @@ public sealed class ProfilerCommands
                 (DotnetProcess found, ProfilePlace place) = target.Service is { } service ? await InRunAsync(service, work.Stopping)
                     : await parts.InContainer(target.Elsewhere!, target.Paths ?? ContainerPaths.None, UiThread.Marshal<string>(work.Say), work.Stopping);
                 work.Say($"Recording {target.Name}…");
-                return await ProfilingSession.AttachAsync(found.Id, target.File, SnapshotFolder, place, target.Resume, work.Stopping);
+                return await ProfilingSession.AttachAsync(found.Id, target.File, snapshotFolder, place, target.Resume, work.Stopping);
             }
             catch (OperationCanceledException) when (work.IsStopped)
             {
@@ -575,12 +745,24 @@ public sealed class ProfilerCommands
         return (there.Program, BuildRunController.ProfilePlaceOf(run, service, there));
     }
 
-    /// <summary>The program Attach Profiler profiles: the one being debugged (in its container, too), else the one Profile
+    /// <summary>The program Attach Profiler profiles: the selected Aspire service, else the one being debugged (in its
+    /// container, too), else the one Profile
     /// started that goes on after its snapshot, else the one Run runs, in the Run console or the terminal (an Avalonia app
     /// by the process its inspector said it is; under Hot Reload, the app dotnet watch started, found as the attach begins).</summary>
-    private AttachTarget? Attachable()
+    private AttachTarget? Attachable(out string? problem)
     {
         ProjectSession current = Session;
+        problem = null;
+        if (current.Aspire.SelectedService is { } selected)
+        {
+            if (selected.ProcessId is not > 0 || selected.Stopping.IsCancellationRequested
+                || !current.Aspire.Apps.Any(app => !app.Stopping && app.Services.Contains(selected)))
+            {
+                problem = $"The selected Aspire service {selected.Plan.Name} is no longer available to profile";
+                return null;
+            }
+            return new(selected.ProcessId.Value, selected.Plan.Name, FileName(selected.Plan.ProgramName));
+        }
         // A container's program, by its id there, recorded there through the debugger's own map of its paths.
         if (current.Debug.Session is { State: not Debugging.DebugState.Ended, Elsewhere: true, Place: { } place, ProcessStarted.IsCompletedSuccessfully: true } remote)
         {
@@ -673,51 +855,104 @@ public sealed class ProfilerCommands
         {
             Session.Profiling = null;
             snapshotting = ReadSnapshotAsync(Session, run);
+            if (serviceRuns.ContainsKey(run))
+            {
+                serviceRuns[run] = snapshotting;
+            }
         }
         return snapshotting ?? Task.FromResult(new SnapshotRead(null, "Nothing has been profiled"));
     }
 
     private async Task<SnapshotRead> ReadSnapshotAsync(ProjectSession profiled, ProfilingSession run)
     {
+        bool serviceOwned = serviceRuns.ContainsKey(run);
+        bool dispose = profiled.Profiled?.Run != run && !serviceOwned;
+        CancellationToken closing = profiled.Aspire.ClosingToken;
         string name = profilingName;
+        string kept = SnapshotFolder;
         parts.Say($"Reading the snapshot of {name}…");
         using IDisposable held = BackgroundWork.Scope();
         try
         {
-            Snapshot snapshot = await run.StopAsync();
+            Snapshot snapshot = await Task.Run(() => run.StopAsync()).ConfigureAwait(false);
             string read = $"Snapshot of {name}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
-            if (profiled != Session)
+            if (closing.IsCancellationRequested)
             {
                 // Its folder was left as it was read: it is that folder's to list when it opens again.
                 return new SnapshotRead(snapshot, read);
             }
-            // A container's process id names nothing the Live Visual Tree follows.
-            shownProcess = run.Place is null ? run.ProcessId : null;
-            Show(snapshot, name);
-            // Brought forward over the console or Debug window the run's program was driven from.
-            parts.Dock.Show(ToolWindowIds.Profiler);
-            await KeepSnapshotsAsync(trim: true);
-            parts.Say(read);
+            IReadOnlyList<SnapshotFile> files = await Task.Run(() =>
+            {
+                Snapshots.Trim(kept);
+                return Snapshots.List(kept);
+            }).ConfigureAwait(false);
+            try
+            {
+                await UiThread.InvokeAsync(() =>
+                {
+                    if (!closing.IsCancellationRequested && profiled == Session && !profiled.IsEnded)
+                    {
+                        shownProcess = run.Place is null ? run.ProcessId : null;
+                        Show(snapshot, name);
+                        parts.Dock.Show(ToolWindowIds.Profiler);
+                        View.ShowKept(kept, files);
+                        parts.Say(read);
+                    }
+                    return true;
+                }).WaitAsync(closing).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (closing.IsCancellationRequested)
+            {
+            }
             return new SnapshotRead(snapshot, read);
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or TimeoutException)
         {
             string unread = $"The snapshot could not be read: {error.Message}";
-            if (profiled == Session)
+            if (!closing.IsCancellationRequested)
             {
-                View.Stopped(unread);
-                parts.Say(unread);
+                try
+                {
+                    await UiThread.InvokeAsync(() =>
+                    {
+                        if (!closing.IsCancellationRequested && profiled == Session && !profiled.IsEnded)
+                        {
+                            View.Stopped(unread);
+                            parts.Say(unread);
+                        }
+                        return true;
+                    }).WaitAsync(closing).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (closing.IsCancellationRequested)
+                {
+                }
             }
             return new SnapshotRead(null, unread);
         }
         finally
         {
             // A program Profile started goes on, Kill's to end, and is put away once it has ended.
-            if (profiled.Profiled?.Run != run)
+            if (dispose)
             {
-                await run.DisposeAsync();
+                await run.DisposeAsync().ConfigureAwait(false);
             }
-            ShowKill();
+            if (!closing.IsCancellationRequested)
+            {
+                try
+                {
+                    await UiThread.InvokeAsync(() =>
+                    {
+                        if (!closing.IsCancellationRequested && profiled == Session && !profiled.IsEnded)
+                        {
+                            ShowKill();
+                        }
+                        return true;
+                    }).WaitAsync(closing).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (closing.IsCancellationRequested)
+                {
+                }
+            }
         }
     }
 

@@ -478,6 +478,56 @@ public sealed class EndpointsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_redirect_to_another_port_does_not_forward_an_allowed_environment_header()
+    {
+        using StandInApi other = new();
+        api.RedirectRoot = other.Root;
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nGET {{base}}/other-port\nX-Secret: {{$env.PASSENGER_SETTINGS}}\n");
+        MainWindow window = Open(folder);
+        try
+        {
+            window.ShowToolWindow("endpoints");
+            Ui.WaitFor(() => window.Endpoints.Requests.Any(r => r.Name == "Other port"), "the redirect request");
+            Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
+            EndpointQuestionDialog question = Assert.IsType<EndpointQuestionDialog>(window.Endpoints.Question);
+            Click(question, question.AllowButton);
+            Assert.Equal(Environment.GetEnvironmentVariable("PASSENGER_SETTINGS"), Assert.Single(api.Received).Header("X-Secret"));
+            Assert.Null(Assert.Single(other.Received).Header("X-Secret"));
+            Assert.Equal(200, window.Endpoints.Response.Response!.Status);
+            Assert.Equal([$"Redirected to {other.Root}, another origin, without the request's headers"], window.Endpoints.Response.Response.Notes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_307_redirect_to_another_port_does_not_send_the_requests_body_there()
+    {
+        using StandInApi other = new();
+        api.RedirectRoot = other.Root;
+        string folder = Folder();
+        File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nPOST {{base}}/other-port\nContent-Type: application/json\n\n{\"secret\":\"synthetic\"}\n");
+        MainWindow window = Open(folder);
+        try
+        {
+            window.ShowToolWindow("endpoints");
+            Ui.WaitFor(() => window.Endpoints.Requests.Any(r => r.Name == "Other port"), "the redirect request");
+            Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
+            Assert.Contains("synthetic", Assert.Single(api.Received).Body, StringComparison.Ordinal);
+            Assert.Empty(other.Received);
+            Assert.Equal(307, window.Endpoints.Response.Response!.Status);
+            Assert.Equal([$"Not followed to {other.Root}: a 307 would send the request's body there"], window.Endpoints.Response.Response.Notes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void A_requests_last_outcome_stays_with_it_as_lines_move()
     {
         string folder = Folder();

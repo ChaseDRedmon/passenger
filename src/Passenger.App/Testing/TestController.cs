@@ -1,3 +1,4 @@
+using Passenger.App.Aspire;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -114,6 +115,14 @@ public sealed class TestController : IAsyncDisposable
 
     /// <summary>A test to debug in a test host the runner started itself: the debugger attaches to it, true once it has.</summary>
     public Func<int, Task<bool>>? AttachDebugger { get; set; }
+
+    /// <summary>Starts a project-scoped Aspire endpoint before its test host is launched.</summary>
+    public Func<ProjectModel, bool, CancellationToken, Task<AspireTestRun?>>? BeginAspireTest { get; set; }
+
+    /// <summary>Ends only the test hosts debugged by this run.</summary>
+    public Func<Task>? EndDebugging { get; set; }
+
+    internal CancellationToken RunCancellation => stopping?.Token ?? CancellationToken.None;
 
     /// <summary>Opens a folder's tests, or the same folder's again after its projects were read again: its test projects'
     /// code is read for the tests it declares, and what was discovered in projects no longer there goes. Until a folder
@@ -260,6 +269,7 @@ public sealed class TestController : IAsyncDisposable
             working?.Say($"{prefix}Running {Plural.Of(tests.Count, "test")}…");
             Tree.Begin(tests);
             RunSummary? summary = null;
+            List<AspireTestRun> aspireRuns = [];
             try
             {
                 Changed?.Invoke(this, EventArgs.Empty);
@@ -269,6 +279,25 @@ public sealed class TestController : IAsyncDisposable
                 // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
                 Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
                     .ToDictionary(p => p, p => containerized.Contains(p) ? WithDockerHost(EnvironmentOf(p), dockerHost) : EnvironmentOf(p), StringComparer.Ordinal);
+                if (BeginAspireTest is { } beginAspire)
+                {
+                    foreach (string path in environments.Keys.ToArray())
+                    {
+                        ProjectModel? project = resolved?.Assemblies.FirstOrDefault(assembly => assembly.Project.Path == path)?.Project;
+                        if (project is not null && await beginAspire(project, debug, stop.Token) is { } aspire)
+                        {
+                            aspireRuns.Add(aspire);
+                            Dictionary<string, string> environment = new(environments[path], StringComparer.Ordinal);
+                            environment.Remove("DEBUG_SESSION_SERVER_CERTIFICATE");
+                            foreach ((string name, string value) in aspire.Environment)
+                            {
+                                environment[name] = value;
+                            }
+                            environments[path] = environment;
+                        }
+                        stop.Token.ThrowIfCancellationRequested();
+                    }
+                }
                 foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
                     .Select(t => (Test: t, Environment: environments[t.Project]))
                     .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
@@ -293,6 +322,7 @@ public sealed class TestController : IAsyncDisposable
             {
                 // However the run ends, a runner's failure included, what it began and never heard of is no longer running.
                 Tree.End();
+                await Task.WhenAll(aspireRuns.Select(aspire => aspire.DisposeAsync().AsTask()));
             }
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
@@ -312,12 +342,22 @@ public sealed class TestController : IAsyncDisposable
         }
         finally
         {
-            stopping = null;
-            IsBusy = false;
-            working?.Dispose();
-            working = null;
-            ReleaseWork();
-            Changed?.Invoke(this, EventArgs.Empty);
+            try
+            {
+                if (debug && EndDebugging is { } endDebugging)
+                {
+                    await endDebugging();
+                }
+            }
+            finally
+            {
+                stopping = null;
+                IsBusy = false;
+                working?.Dispose();
+                working = null;
+                ReleaseWork();
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 
@@ -547,10 +587,17 @@ public sealed class TestController : IAsyncDisposable
     /// when the run is the debugger session's rather than work a screenshot waits for.</summary>
     private sealed class DebugLauncher(TestController owner) : ITestDebugLauncher
     {
+        private readonly CancellationToken run = owner.RunCancellation;
+        private bool IsCurrent => owner.IsBusy && owner.RunCancellation == run && !run.IsCancellationRequested;
+
         public Task<int> LaunchAsync(TestHostStart start) =>
             owner.LaunchUnderDebugger is { } launch
                 ? UiThread.InvokeAsync(() =>
                 {
+                    if (!IsCurrent)
+                    {
+                        return Task.FromCanceled<int>(new CancellationToken(canceled: true));
+                    }
                     owner.ReleaseWork();
                     return launch(start);
                 })
@@ -560,6 +607,10 @@ public sealed class TestController : IAsyncDisposable
             owner.AttachDebugger is { } attach
                 ? UiThread.InvokeAsync(() =>
                 {
+                    if (!IsCurrent)
+                    {
+                        return Task.FromResult(false);
+                    }
                     owner.ReleaseWork();
                     return attach(processId);
                 })

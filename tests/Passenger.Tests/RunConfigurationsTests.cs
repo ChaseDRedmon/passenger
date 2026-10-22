@@ -42,6 +42,18 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         TestFolders.Delete(settings);
     }
 
+    [Fact]
+    public void A_generated_Aspire_override_keeps_linked_AppHost_paths_relative_in_storage()
+    {
+        RunConfiguration source = new() { Name = "Aspire", Project = Path.Combine(folder, "Host", "Host.csproj"), Aspire = true };
+        string linked = Path.Combine(folder, "Linked", "Linked.csproj");
+        JsonObject edit = Assert.IsType<JsonObject>(ConfigurationEdit.Between(source, source with { LinkedAppHosts = [linked] }));
+        JsonObject stored = ConfigurationEdit.Mapped(edit, path => Path.GetRelativePath(folder, path));
+        Assert.Equal(Path.GetRelativePath(folder, linked), stored["linkedAppHosts"]![0]!.GetValue<string>());
+        JsonObject loaded = ConfigurationEdit.Mapped(stored, path => Path.GetFullPath(path, folder));
+        Assert.Equal(new[] { linked }, ConfigurationEdit.Over(source, loaded).LinkedAppHosts);
+    }
+
     /// <summary>While a run of a configuration is up, the toolbar, its chooser and Edit Configurations' row say "(running)"
     /// after its name, and stop saying it once the run has ended.</summary>
     [AvaloniaFact]

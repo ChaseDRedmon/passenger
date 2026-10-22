@@ -111,7 +111,8 @@ public sealed class ConsoleSink
     /// ending it, the last at the end). Once <paramref name="letGo"/> is cancelled (its program ended, what still holds the
     /// stream out of the kill's reach), what comes is dropped and nothing ended, since the console may be another program's
     /// by then. From any thread; it never throws.</summary>
-    public async Task PumpAsync(TextReader reader, ConsoleStream stream, CancellationToken letGo = default, Action<string>? lines = null)
+    public async Task PumpAsync(TextReader reader, ConsoleStream stream, CancellationToken letGo = default, Action<string>? lines = null,
+        Action<string>? chunks = null)
     {
         ControlCodes codes = new();
         LineSplitter? split = lines is null ? null : new LineSplitter(lines);
@@ -127,6 +128,7 @@ public sealed class ConsoleSink
                 }
                 Write(buffer.AsSpan(0, read), stream, codes);
                 split?.Add(buffer.AsSpan(0, read));
+                chunks?.Invoke(new string(buffer, 0, read));
             }
         }
         catch (OperationCanceledException) when (letGo.IsCancellationRequested)

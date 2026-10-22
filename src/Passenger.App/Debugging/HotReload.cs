@@ -72,6 +72,7 @@ public sealed class HotReload
     private int? id;
     private Task<string?>? starting;
     private RoslynSession? startedOn;
+    private bool ended;
 
     /// <summary>Why Hot Reload stopped for the session: the runtime refused an update part way.</summary>
     private string? stopped;
@@ -132,6 +133,11 @@ public sealed class HotReload
             }
             id = started.Session;
             startedOn = roslyn;
+            if (ended)
+            {
+                End();
+                return "The debugging session ended";
+            }
             return null;
         }
         catch (LanguageServerFailed failed)
@@ -258,6 +264,7 @@ public sealed class HotReload
     /// <summary>Ends Roslyn's session with the debugging session's end.</summary>
     public void End()
     {
+        ended = true;
         if (id is int session && startedOn is { } roslyn)
         {
             id = null;

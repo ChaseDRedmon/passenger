@@ -172,6 +172,31 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Saving_a_file_does_not_follow_a_planted_temporary_file_link()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        string sentinel = Path.Combine(TestFolders.Create("save-sentinel-"), "sentinel.txt");
+        File.WriteAllText(path, "class One { }\n");
+        File.WriteAllText(sentinel, "keep this file\n");
+        string planted = path + Passenger.App.Workspace.FileText.SaveSuffix;
+        TestFolders.Link(planted, sentinel);
+        MainWindow window = Open();
+        try
+        {
+            Edit(window, "One.cs", "public ");
+            Ui.Press(window, Ui.Shortcut(AppActions.Save));
+            Assert.Equal("public class One { }\n", File.ReadAllText(path));
+            Assert.Equal("keep this file\n", File.ReadAllText(sentinel));
+            Assert.NotNull(new FileInfo(planted).LinkTarget);
+            Assert.Equal([planted], Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Files_dropped_from_the_file_manager_open_in_the_editor_and_a_folder_dropped_on_the_Welcome_screen_opens()
     {
         File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");

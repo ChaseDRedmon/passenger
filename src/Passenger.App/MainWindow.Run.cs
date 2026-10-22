@@ -49,7 +49,9 @@ public partial class MainWindow
             Folder = Folder,
             ReadServices = ReadServices(Projects, Engine),
             WriteToProfile = WriteToLaunchProfile,
+            ReadAspireServices = ReadAspireConfigurationResourcesAsync,
         };
+        dialog.ShowRunningAppHosts(session.Aspire.Apps.Where(app => !app.IsTest && app.Runner.IsRunning).Select(app => app.Configuration.Project));
         RunConfigurationsDialog = dialog;
         dialog.Closed += (_, _) =>
         {
@@ -169,6 +171,11 @@ public partial class MainWindow
     /// runs (a debugged program, tests, a build) runs on.</summary>
     private async Task RerunAsync()
     {
+        if (session.Aspire.Apps.Any(app => !app.IsTest && app.Runner.IsRunning))
+        {
+            await buildRun.RerunAspireAsync();
+            return;
+        }
         // A container run builds again and restarts only the services whose build changed, its log followed on.
         if (buildRun.Containers is { Plan.Mode: ContainerMode.Fast } && buildRun.IsRunning)
         {
@@ -204,7 +211,18 @@ public partial class MainWindow
 
     /// <summary>A configuration's name as the toolbar and Edit Configurations show it: "(running)" after it while a run of it
     /// is up.</summary>
-    public string Shown(RunConfiguration configuration) => buildRun.IsRunningConfiguration(configuration.Name) ? $"{configuration.Name} (running)" : configuration.Name;
+    public string Shown(RunConfiguration configuration)
+    {
+        int running = session.Aspire.Apps.Count(app => !app.IsTest && app.Runner.IsRunning
+            && (PathNames.Same(app.Configuration.Project, configuration.Project)
+                || configuration.LinkedAppHosts.Any(path => PathNames.Same(path, app.Configuration.Project))));
+        return running switch
+        {
+            0 when !buildRun.IsRunningConfiguration(configuration.Name) => configuration.Name,
+            0 or 1 => $"{configuration.Name} (running)",
+            _ => $"{configuration.Name} ({running} apps running)",
+        };
+    }
 
     /// <summary>The toolbar widget names the configuration chosen, greyed with why when it cannot launch here, and says it
     /// runs while a run of it is up.</summary>
@@ -255,4 +273,5 @@ public partial class MainWindow
             },
         };
     }
+
 }

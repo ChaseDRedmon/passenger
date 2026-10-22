@@ -117,10 +117,10 @@ public static class AppActions
 
     // The Explorer's own actions, on the row its menu opened on or the one chosen while it has the keys: Rider's Project
     // view's NewFile, NewDir, Class/Interface, the solution's own (New Solution Folder, Existing Project, Existing Item),
-    // Add Reference, Docker Support and Compose, NuGet, Edit Project File, Unload and Reload Project, Compare Files
-    // (CompareTwoFiles, off macOS sharing the editor's Duplicate keys), Copy Path (CopyPaths), Reveal in Finder (RevealIn)
-    // and Open in Terminal. Rename and Delete are Rename's and the editor's Delete, as Rider's RenameElement and $Delete are one
-    // action wherever they are pressed.
+    // Add Reference, Docker Support and Compose, Aspire Orchestration, NuGet, Edit Project File, Unload and Reload Project,
+    // Compare Files (CompareTwoFiles, off macOS sharing the editor's Duplicate keys), Copy Path (CopyPaths), Reveal in Finder
+    // (RevealIn) and Open in Terminal. Rename and Delete are Rename's and the editor's Delete, as Rider's RenameElement and
+    // $Delete are one action wherever they are pressed.
     public const string NewFile = "app.explorer.newFile";
     public const string NewFolder = "app.explorer.newFolder";
     public const string NewType = "app.explorer.newType";
@@ -130,6 +130,7 @@ public static class AppActions
     public const string AddReference = "app.explorer.addReference";
     public const string AddDockerSupport = "app.explorer.addDockerSupport";
     public const string AddDockerCompose = "app.explorer.addDockerCompose";
+    public const string AddAspireOrchestration = "app.explorer.addAspireOrchestration";
     public const string ManageNuGet = "app.explorer.manageNuGet";
     public const string EditProjectFile = "app.explorer.editProjectFile";
     public const string UnloadProject = "app.explorer.unloadProject";
@@ -158,6 +159,25 @@ public static class AppActions
     public const string EditConfigurations = "app.editConfigurations";
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
+    public const string ShowAspire = "app.showAspire";
+    public const string AspireDebug = "app.aspire.debug";
+    public const string AspireAttach = "app.aspire.attach";
+    public const string AspireRun = "app.aspire.runWithoutDebugger";
+    public const string AspireProfile = "app.aspire.profile";
+    public const string AspireRefresh = "app.aspire.refresh";
+    public const string AspireDiscover = "app.aspire.discover";
+    public const string AspireCommand = "app.aspire.command";
+    public const string AspireLogFind = "app.aspire.logFind";
+    public const string AspireShowTrace = "app.aspire.showTrace";
+    public const string AspireShowRelatedLogs = "app.aspire.showRelatedLogs";
+    public const string AspireResources = "app.aspire.resources";
+    public const string AspireConsole = "app.aspire.console";
+    public const string AspireLogs = "app.aspire.logs";
+    public const string AspireTraces = "app.aspire.traces";
+    public const string AspireAppHostConsole = "app.aspire.appHostConsole";
+    public const string AspireOpenLink = "app.aspire.openLink";
+    public const string AspireSource = "app.aspire.source";
+    public const string AspireContainer = "app.aspire.container";
     public const string ShowProblems = "app.showProblems";
     public const string ShowFind = "app.showFind";
     public const string ToggleSolutionAnalysis = "app.toggleSolutionAnalysis";

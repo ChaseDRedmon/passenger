@@ -1,0 +1,319 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+using Passenger.App;
+using Passenger.App.Run;
+using Passenger.Core;
+
+namespace Passenger.Tests;
+
+/// <summary>Aspire for an agent: <c>run</c>, <c>debug_start</c>, <c>debug_attach</c>, <c>profile</c> and <c>stop</c> on an
+/// owned AppHost's resource, <c>aspire_telemetry</c> on its logs and traces, and an agent's start given up on or its
+/// Passenger's input ended taking down what the start made. Those needing the <c>aspire</c> CLI skip without it.</summary>
+[Collection(Alone.Name)]
+public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
+{
+    public McpAspireTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
+
+    [Fact]
+    public async Task Aspire_tools_are_discoverable_and_refuse_to_control_an_unowned_app()
+    {
+        await using McpClient client = await Start(["--mcp", Folder]);
+        IList<McpClientTool> tools = await Exchange("Listing Aspire tools", TimeSpan.FromMinutes(1),
+            cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
+        foreach (string name in new[] { "run", "debug_start", "debug_attach", "profile", "stop", "aspire_telemetry" })
+        {
+            McpClientTool tool = Assert.Single(tools, tool => tool.Name == name);
+            Assert.True(tool.ProtocolTool.InputSchema.GetProperty("properties").TryGetProperty("resource", out _));
+        }
+        Assert.Equal("aspire_telemetry", Assert.Single(tools, tool => tool.Name.StartsWith("aspire_", StringComparison.Ordinal)).Name);
+        int listed = tools.Sum(tool => JsonSerializer.Serialize(tool.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length);
+        Assert.True(listed < 60_000, $"The tools an agent reads as each session starts take {listed} bytes");
+
+        foreach (string name in new[] { "stop", "debug_attach", "aspire_telemetry" })
+        {
+            CallToolResult unowned = await Result(client, name,
+                new() { ["resource"] = Path.Combine(Folder, "Sum.csproj") + "::missing" });
+            Assert.True(unowned.IsError == true && Text(unowned).Contains("No owned Aspire resource", StringComparison.Ordinal),
+                $"{name} accepted an unowned resource: {Text(unowned)}");
+        }
+        CallToolResult ordinary = await Result(client, "run", new() { ["resource"] = "missing" });
+        Assert.True(ordinary.IsError == true, $"An ordinary configuration accepted an Aspire target: {Text(ordinary)}");
+        Assert.Equal("Stopped", (await Call(client, "stop")).GetString());
+        JsonElement workspace = await Call(client, "workspace");
+        Assert.Equal(PathNames.Canonical(Folder), workspace.GetProperty("folder").GetString());
+        Assert.Empty(workspace.GetProperty("aspireApps").EnumerateArray());
+    }
+
+    [Fact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    public async Task An_agent_must_qualify_duplicate_official_starter_resource_names_with_the_owned_AppHost()
+    {
+        using AspireApp project = new();
+        await using McpClient client = await Start(["--mcp", project.Folder]);
+        string first = $"Aspire: {AspireApp.Name}.AppHost: http";
+        string second = $"Aspire: {AspireApp.CompanionName}.AppHost: http";
+        Assert.True(await Waiting.UntilAsync(async () =>
+        {
+            string?[] names = (await Call(client, "workspace")).GetProperty("runConfigurations").EnumerateArray().Select(item => item.GetString()).ToArray();
+            return names.Contains(first) && names.Contains(second);
+        }, TimeSpan.FromMinutes(2), Cancel), $"Both official AppHosts were not discovered.{Said()}");
+        await Call(client, "run", new() { ["configuration"] = first, ["resource"] = project.Host + "::apiservice" });
+        await Call(client, "run", new() { ["configuration"] = second, ["resource"] = project.CompanionHost + "::apiservice" });
+        JsonElement[] apps = [];
+        Assert.True(await Waiting.UntilAsync(async () =>
+        {
+            apps = (await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray().ToArray();
+            return apps.Length == 2 && apps.All(app => app.GetProperty("resources").EnumerateArray().Count(resource =>
+                resource.GetProperty("displayName").GetString() == "apiservice" && resource.GetProperty("state").GetString() == "Running") == 1);
+        }, TimeSpan.FromMinutes(1), Cancel), $"Both owned API resources did not reach Running.{Said()}");
+        Assert.Equal(2, apps.Length);
+        JsonElement[] resources = apps.Select(app => Assert.Single(app.GetProperty("resources").EnumerateArray(), resource => resource.GetProperty("displayName").GetString() == "apiservice"
+            && resource.GetProperty("state").GetString() == "Running")).ToArray();
+        Assert.Equal(resources[0].GetProperty("displayName").GetString(), resources[1].GetProperty("displayName").GetString());
+        Assert.NotEqual(resources[0].GetProperty("target").GetString(), resources[1].GetProperty("target").GetString());
+        foreach (string tool in new[] { "stop", "debug_attach", "aspire_telemetry" })
+        {
+            CallToolResult refused = await Result(client, tool, new() { ["resource"] = "apiservice" });
+            Assert.True(refused.IsError == true && Text(refused).Contains("ambiguous", StringComparison.Ordinal),
+                $"{tool} accepted an ambiguous target: {Text(refused)}");
+        }
+        foreach (JsonElement app in apps)
+        {
+            JsonElement resource = Assert.Single(app.GetProperty("resources").EnumerateArray(), item => item.GetProperty("displayName").GetString() == "apiservice"
+                && item.GetProperty("state").GetString() == "Running");
+            string target = resource.GetProperty("target").GetString()!;
+            Assert.Equal(app.GetProperty("appHostPath").GetString() + "::" + resource.GetProperty("name").GetString(), target);
+            if (resource.GetProperty("name").GetString() != "apiservice")
+            {
+                CallToolResult refused = await Result(client, "aspire_telemetry", new() { ["resource"] = app.GetProperty("appHostPath").GetString() + "::apiservice" });
+                Assert.True(refused.IsError == true, "A running qualified target accepted the cold declaration alias");
+            }
+            JsonElement logs = await Call(client, "aspire_telemetry", new() { ["resource"] = target, ["limit"] = 1 });
+            Assert.InRange(logs.GetProperty("logs").GetArrayLength(), 0, 1);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Canceling_an_agents_Aspire_start_ends_the_starting_process_and_its_execution_listener()
+    {
+        Write("Sum.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+              </PropertyGroup>
+            </Project>
+            """);
+        string pidFile = Path.Combine(Folder, "aspire-starting.pid");
+        string endpointFile = Path.Combine(Folder, "aspire-starting.endpoint");
+        Write("Program.cs", $"File.WriteAllText({JsonSerializer.Serialize(endpointFile)}, Environment.GetEnvironmentVariable(\"DEBUG_SESSION_PORT\"));\nFile.WriteAllText({JsonSerializer.Serialize(pidFile)}, Environment.ProcessId.ToString());\nConsole.WriteLine(\"starting\");\nawait Task.Delay(Timeout.Infinite);\n");
+        MainWindow window = AgentsWindow(Folder);
+        window.SetConfigurations([new RunConfiguration
+        {
+            Name = "Pending Aspire",
+            Project = Path.Combine(Folder, "Sum.csproj"),
+            Aspire = true,
+        }], "Pending Aspire");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the Aspire agent attaching");
+        Process? started = null;
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Aspire), "the explicit Aspire run configuration");
+            string configuration = window.Configurations.First(candidate => candidate.Aspire).Name;
+            using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+            Task<CallToolResult> starting = Task.Run(() => CallGivingUp(client, "run",
+                new() { ["configuration"] = configuration }, giveUp.Token));
+            Window permission = Question(window, "permission for the Aspire startup");
+            Button allow = permission.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Allow"));
+            Point at = allow.TranslatePoint(new Point(allow.Bounds.Width / 2, allow.Bounds.Height / 2), permission)!.Value;
+            permission.MouseDown(at, MouseButton.Left);
+            permission.MouseUp(at, MouseButton.Left);
+            Ui.PumpUntil(() => File.Exists(pidFile) || starting.IsCompleted, "the starting AppHost process", TimeSpan.FromMinutes(5));
+            Assert.True(File.Exists(pidFile), $"The AppHost process did not start: {(starting.IsCompletedSuccessfully ? Text(starting.Result) : window.Status)}{Said()}");
+            int processId = Processes.WrittenId(pidFile, "the starting AppHost PID");
+            started = Process.GetProcessById(processId);
+            ProcessRunner runner = Assert.Single(window.AspireRuntime.Apps).Runner;
+            Ui.PumpUntil(() => runner.Shown().ToString().Contains("starting", StringComparison.Ordinal), "the AppHost's startup console marker");
+            int port = new Uri("http://" + File.ReadAllText(endpointFile)).Port;
+            Task<string?> reading = Task.Run(async () => (await Call(client, "run_output")).GetString());
+            Ui.PumpUntil(() => reading.IsCompleted, "reading the starting AppHost's console");
+            Assert.Contains("starting", reading.GetAwaiter().GetResult(), StringComparison.Ordinal);
+
+            giveUp.Cancel();
+            Ui.PumpUntil(() => starting.IsCompleted && window.AspireRuntime.Apps.Count == 0 && started.HasExited,
+                "canceling the start to roll back the AppHost and listener", TimeSpan.FromMinutes(1));
+            Assert.ThrowsAny<OperationCanceledException>(() => starting.GetAwaiter().GetResult());
+            Assert.False(Await(Task.Run(async () =>
+            {
+                using TcpClient socket = new();
+                try
+                {
+                    await socket.ConnectAsync(IPAddress.Loopback, port, Cancel);
+                    return true;
+                }
+                catch (SocketException)
+                {
+                    return false;
+                }
+            }), "checking the canceled execution listener"), "The canceled Aspire startup left its DCP listener running");
+            Assert.False(window.IsRunning, "The canceled Aspire startup remained a running IDE configuration");
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+            started?.Dispose();
+        }
+    }
+
+    [Fact(Skip = AspireApp.MissingCliReason, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    public async Task Ending_a_windowless_Passengers_input_stops_the_official_starter_tree_and_Dcp_listener()
+    {
+        string starter = TestFolders.Create("mcp-aspire-shutdown-");
+        DeleteAtEnd(starter);
+        string hostPid = Path.Combine(starter, "apphost.pid");
+        string apiPid = Path.Combine(starter, "api.pid");
+        string webPid = Path.Combine(starter, "web.pid");
+        string endpointFile = Path.Combine(starter, "execution-endpoint.txt");
+        TestFolders.Prepare(() =>
+        {
+            AspireApp.Create(starter, AspireApp.Name);
+            RecordPid("AppHost", "AppHost.cs", hostPid);
+            RecordPid("ApiService", "Program.cs", apiPid);
+            RecordPid("Web", "Program.cs", webPid);
+            string host = Path.Combine(starter, AspireApp.Name + ".AppHost", "AppHost.cs");
+            string text = File.ReadAllText(host);
+            File.WriteAllText(host, $"File.WriteAllText({JsonSerializer.Serialize(endpointFile)}, Environment.GetEnvironmentVariable(\"DEBUG_SESSION_PORT\") ?? string.Empty);\n" + text);
+            Restore.Run(starter);
+        }, starter);
+
+        await using McpClient client = await Start(["--mcp", starter], environment: new()
+        {
+            ["DEBUG_SESSION_SERVER_CERTIFICATE"] = "not-a-certificate",
+        });
+        string configuration = $"Aspire: {AspireApp.Name}.AppHost: http";
+        Assert.True(await Waiting.UntilAsync(async () =>
+            (await Call(client, "workspace")).GetProperty("runConfigurations").EnumerateArray().Any(item => item.GetString() == configuration),
+            TimeSpan.FromMinutes(2), Cancel), $"The official starter's HTTP configuration was not discovered.{Said()}");
+        await Call(client, "run", new() { ["configuration"] = configuration, ["resource"] = "apiservice" });
+        JsonElement app = default;
+        Assert.True(await Waiting.UntilAsync(async () =>
+        {
+            app = Assert.Single((await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray());
+            return new[] { "apiservice", "webfrontend" }.All(name => app.GetProperty("resources").EnumerateArray().Count(resource =>
+                resource.GetProperty("displayName").GetString() == name && resource.GetProperty("state").GetString() == "Running") == 1);
+        }, TimeSpan.FromMinutes(1), Cancel), $"The official starter services did not reach Running.{Said()}");
+        int hostId = await Processes.WrittenIdAsync(hostPid, "the real AppHost PID");
+        int apiId = await Processes.WrittenIdAsync(apiPid, "the real API PID");
+        int webId = await Processes.WrittenIdAsync(webPid, "the real frontend PID");
+        Assert.Equal(hostId, app.GetProperty("processId").GetInt32());
+        Assert.All(new[] { hostId, apiId, webId }, id => Assert.True(Processes.IsRunning(id), $"The official starter process {id} never remained alive"));
+        string hostProject = Path.Combine(starter, AspireApp.Name + ".AppHost", AspireApp.Name + ".AppHost.csproj");
+        JsonElement api = Assert.Single(app.GetProperty("resources").EnumerateArray(), resource => resource.GetProperty("displayName").GetString() == "apiservice"
+            && resource.GetProperty("state").GetString() == "Running");
+        string target = api.GetProperty("target").GetString()!;
+        Assert.Equal(hostProject + "::" + api.GetProperty("name").GetString(), target);
+        Assert.Contains(app.GetProperty("resources").EnumerateArray(), resource => resource.GetProperty("displayName").GetString() == "webfrontend"
+            && resource.GetProperty("state").GetString() == "Running");
+
+        foreach (string missing in new[] { "not-a-resource", hostProject + "::not-a-resource" })
+        {
+            ModelContextProtocol.Protocol.CallToolResult refused = await Result(client, "stop", new() { ["resource"] = missing });
+            Assert.True(refused.IsError == true && Text(refused).Contains("No owned Aspire resource", StringComparison.Ordinal));
+        }
+        JsonElement attached = await Call(client, "debug_attach", new() { ["resource"] = target, ["waitSeconds"] = 1 });
+        Assert.True(attached.GetProperty("state").GetString() is "running" or "paused", attached.ToString());
+        Assert.Equal(apiId, await Processes.WrittenIdAsync(apiPid, "the attached API PID"));
+        Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
+
+        await Call(client, "run", new() { ["resource"] = target });
+        await Until(() => !Processes.IsRunning(apiId) && ReadPid(apiPid) != apiId, "Run Without Debugger to restart only the API");
+        apiId = await Processes.WrittenIdAsync(apiPid, "the run API PID");
+        Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
+        JsonElement restarted = await Call(client, "debug_start", new() { ["resource"] = target, ["waitSeconds"] = 1 });
+        Assert.True(restarted.GetProperty("state").GetString() is "running" or "paused", restarted.ToString());
+        await Until(() => !Processes.IsRunning(apiId) && ReadPid(apiPid) != apiId, "Debug to restart only the API");
+        apiId = await Processes.WrittenIdAsync(apiPid, "the debug API PID");
+        Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
+
+        JsonElement profile = await Call(client, "profile", new() { ["resource"] = target, ["seconds"] = 1 });
+        Assert.True(profile.GetProperty("durationMs").GetDouble() > 0, profile.ToString());
+        Assert.Equal(apiId, await Processes.WrittenIdAsync(apiPid, "the profiled API PID"));
+        Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
+
+        api = Assert.Single(Assert.Single((await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray())
+            .GetProperty("resources").EnumerateArray(), resource => resource.GetProperty("displayName").GetString() == "apiservice");
+        Uri apiUrl = new(Assert.Single(api.GetProperty("urls").EnumerateArray(), url => url.GetProperty("url").GetString()!.StartsWith("http:", StringComparison.Ordinal))
+            .GetProperty("url").GetString()!);
+        using (HttpClient http = new())
+        {
+            await http.GetStringAsync(new Uri(apiUrl, "/weatherforecast"), Cancel);
+        }
+        Assert.True(await Waiting.UntilAsync(async () =>
+        {
+            JsonElement logs = await Call(client, "aspire_telemetry", new() { ["resource"] = target, ["limit"] = 1 });
+            Assert.InRange(logs.GetProperty("logs").GetArrayLength(), 0, 1);
+            return logs.GetProperty("logs").GetArrayLength() == 1;
+        }, TimeSpan.FromMinutes(1), Cancel), "Native HTTP telemetry did not return a bounded log snapshot");
+        JsonElement traces = await Call(client, "aspire_telemetry", new() { ["resource"] = target, ["kind"] = "traces", ["limit"] = 1 });
+        Assert.InRange(traces.GetProperty("traces").GetArrayLength(), 0, 1);
+
+        await Call(client, "stop", new() { ["resource"] = target });
+        await Until(() => !Processes.IsRunning(apiId), "resource Stop to end only the API");
+        Assert.True(Processes.IsRunning(hostId) && Processes.IsRunning(webId));
+        await Call(client, "run", new() { ["resource"] = target });
+        await Until(() => ReadPid(apiPid) != apiId, "the API to restart before testing EOF cleanup");
+        apiId = await Processes.WrittenIdAsync(apiPid, "the restarted API PID");
+        await Until(() => File.Exists(endpointFile) && new FileInfo(endpointFile).Length > 0, "the owned DCP endpoint written by the real AppHost");
+        string address = File.ReadAllText(endpointFile).Trim();
+        Assert.StartsWith("localhost:", address, StringComparison.Ordinal);
+        int port = int.Parse(address["localhost:".Length..], CultureInfo.InvariantCulture);
+        using (TcpClient listener = new())
+        {
+            await listener.ConnectAsync(IPAddress.Loopback, port, Cancel);
+        }
+        Process passenger = LastPassenger();
+        int[] owned = [.. Processes.Descendants(passenger.Id), hostId, apiId, webId];
+        Assert.Contains(hostId, Processes.Descendants(passenger.Id));
+        EndInput(passenger);
+        await Until(() => passenger.HasExited && owned.All(id => !Processes.IsRunning(id)),
+            "EOF to end windowless Passenger, both services, AppHost, DCP, dashboard and the remaining owned child tree without a dispatcher pump");
+        using TcpClient closed = new();
+        await Assert.ThrowsAsync<SocketException>(async () => await closed.ConnectAsync(IPAddress.Loopback, port, Cancel));
+
+        void RecordPid(string project, string source, string marker)
+        {
+            string path = Path.Combine(starter, AspireApp.Name + "." + project, source);
+            string text = File.ReadAllText(path);
+            string statement = $"File.WriteAllText({JsonSerializer.Serialize(marker)}, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));\n";
+            if (text.StartsWith("using ", StringComparison.Ordinal))
+            {
+                int builder = text.IndexOf("var builder =", StringComparison.Ordinal);
+                Assert.True(builder >= 0, $"The official {project} source has no application builder");
+                text = text.Insert(builder, statement);
+            }
+            else
+            {
+                text = statement + text;
+            }
+            File.WriteAllText(path, text);
+        }
+
+        static int ReadPid(string path) => File.Exists(path) && int.TryParse(File.ReadAllText(path), CultureInfo.InvariantCulture, out int id) ? id : 0;
+    }
+}

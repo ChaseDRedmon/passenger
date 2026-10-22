@@ -24,14 +24,34 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <!-- Avalonia's templates, restored from nuget.org as every package is and served to the tests from the package cache
        as a local feed (AvaloniaApp.Feed), so installing them never reaches nuget.org at test time. -->
   <ItemGroup>
     <PackageDownload Include="Avalonia.Templates" Version="[$(AvaloniaTemplatesVersion)]" />
+    <PackageDownload Include="Aspire.ProjectTemplates" Version="[$(AspireTemplatesVersion)]" />
+    <PackageDownload Include="Aspire.AppHost.Sdk" Version="[$(AspireTemplatesVersion)]" />
+    <PackageDownload Include="Aspire.Dashboard.Sdk.$(NETCoreSdkRuntimeIdentifier)" Version="[$(AspireTemplatesVersion)]" />
+    <PackageDownload Include="Aspire.Hosting.Orchestration.$(NETCoreSdkRuntimeIdentifier)" Version="[$(AspireTemplatesVersion)]" />
     <AssemblyMetadata Include="NuGetPackageRoot" Value="$(NuGetPackageRoot)" />
     <AssemblyMetadata Include="AvaloniaTemplatesVersion" Value="$(AvaloniaTemplatesVersion)" />
+    <AssemblyMetadata Include="AspireTemplatesVersion" Value="$(AspireTemplatesVersion)" />
+  </ItemGroup>
+
+  <!-- The official container-free net10.0 starter's graph, available in the package cache before tests run.
+       No AppHost build targets or references enter the test assembly. -->
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" ExcludeAssets="all" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- VSTest's SDK and xunit's adapter at the versions this project restores, for the VSTest project TestFramesTests make
@@ -53,6 +73,13 @@
   <ItemGroup>
     <PackageDownload Include="Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)" Version="[$(BundledNETCoreAppPackageVersion)]" />
   </ItemGroup>
+  <!-- OpenApi is restored only for the starter feed; its generator has no corresponding references here. -->
+  <Target Name="ExcludeStarterOpenApiGenerator" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer->WithMetadataValue('NuGetPackageId', 'Microsoft.AspNetCore.OpenApi'))" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="SdkWindowsDesktopRefVersion" BeforeTargets="GetAssemblyAttributes">
     <ItemGroup>
       <AssemblyMetadata Include="SdkWindowsDesktopRefVersion"

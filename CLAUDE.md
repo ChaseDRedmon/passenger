@@ -767,6 +767,29 @@ window or takes the focus; it shows everything but the system's own window chrom
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
+- `src/Passenger.App/Aspire`: an AppHost and its project resources, owned by `AspireController` for the
+  folder. AppHosts are found by evaluated `IsAspireHost`; file-based hosts use `PathNames.FoldersUnder`.
+  Each launch keeps its authenticated resource-service endpoint, rather than discovering its own process
+  through repeated CLI snapshots. `AspireInteractions` follows native resource and console streams;
+  `AspireTelemetry` reads the dashboard's bounded log/span HTTP streams and assembles traces by identity.
+  Display subscriptions stop when the pane is hidden; interaction prompts keep their AppHost connection.
+  Public snapshots mask environment values and sensitive properties. Browser links go through `Browse`.
+  `AspireExecutionServer` is the loopback DCP execution endpoint. Its bounded HTTP/1.1 transport
+  (`AspireExecutionConnection`) serves one ordinary request per connection and upgrades notifications to
+  BCL WebSockets. Authentication precedes admission, each orchestrator has its own hashed bearer token,
+  and a disconnected pending create cancels independently of its notification connection. Headers,
+  bodies and writes have ten-second deadlines; callbacks retain their own launch cancellation.
+  Services use the folder's one native `DebugController`: debug tabs share breakpoints, while Run with
+  Hot Reload attaches quietly to held processes through Edit and Continue, not one `dotnet watch` per
+  service. A rude edit and Rerun restart only affected services. Startup profiling holds the chosen
+  process until recording begins; shutdown reads its rundown before ending that owned process.
+  Edit Configurations and the `AddProject` gutter actions read the same semantic resource locations from
+  `AspireRunResources`; stale source fingerprints produce no gutter action. Resource buttons are
+  registered actions, including the merged log's native Find. Agent run/debug/attach/profile/stop use
+  resource targeting; telemetry shares one tool instead of a separate family of Aspire controls.
+  `AspireApp` generates pinned official starters from the restored local package feed. Tests do not
+  install a CLI or restore from a public feed; unavailable CLI/engine prerequisites are skipped with
+  their reason. Runtime protocol compatibility is not an exact CLI patch-version requirement.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test

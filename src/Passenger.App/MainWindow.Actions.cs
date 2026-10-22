@@ -118,14 +118,40 @@ public partial class MainWindow
             {
                 ContainersWindow.Log.OpenFind();
             }
+            else if (c.ToolWindow?.Id == ToolWindowIds.Aspire)
+            {
+                actions!.Run(A.AspireLogFind, c);
+            }
             else
             {
                 Editors.ShowFind(replace: false);
             }
-        }, c => c.ToolWindow?.Id is ToolWindowIds.Tests or ToolWindowIds.Containers ? null : Refusals.NeedsFile(c), ("Edit/Find", 0, 0));
+        }, c => c.ToolWindow?.Id is ToolWindowIds.Tests or ToolWindowIds.Containers or ToolWindowIds.Aspire ? null : Refusals.NeedsFile(c), ("Edit/Find", 0, 0));
         Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), Refusals.NeedsFile, ("Edit/Find", 0, 1));
-        Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), Refusals.NeedsFile, ("Edit/Find", 0, 2));
-        Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), Refusals.NeedsFile, ("Edit/Find", 0, 3));
+        Add(A.FindNext, "Find Next", "IDE", c =>
+        {
+            if (c.ToolWindow?.Id == ToolWindowIds.Aspire)
+            {
+                Aspire.Find.Next();
+            }
+            else
+            {
+                Editors.FindBar.Next();
+            }
+        },
+            c => c.ToolWindow?.Id == ToolWindowIds.Aspire ? null : Refusals.NeedsFile(c), ("Edit/Find", 0, 2));
+        Add(A.FindPrevious, "Find Previous", "IDE", c =>
+        {
+            if (c.ToolWindow?.Id == ToolWindowIds.Aspire)
+            {
+                Aspire.Find.Previous();
+            }
+            else
+            {
+                Editors.FindBar.Previous();
+            }
+        },
+            c => c.ToolWindow?.Id == ToolWindowIds.Aspire ? null : Refusals.NeedsFile(c), ("Edit/Find", 0, 3));
         Add(A.FindInFiles, "Find in Files…", "IDE", c => ShowFindInFiles(replace: false, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 0));
         Add(A.ReplaceInFiles, "Replace in Files…", "IDE", c => ShowFindInFiles(replace: true, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 1));
         Add(A.ExtendSelection, "Extend Selection", "Editor", _ => ExtendSelection(), Refusals.NeedsFile, ("Edit", 2, 1));
@@ -141,6 +167,7 @@ public partial class MainWindow
 
         AddBuilding();
         AddPublishing();
+        AddAspireActions();
         AddHotReload();
         AddAttaching();
         AddTests();

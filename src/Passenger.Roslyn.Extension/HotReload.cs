@@ -87,6 +87,35 @@ internal static class HotReload
                 return Failed("the last update has not been committed or discarded");
             }
         }
+        if (session.Projects is null)
+        {
+            HashSet<Guid> loaded = [.. message.Modules, .. message.Locked.Select(module => module.Module)];
+            HashSet<ProjectId> projects = [];
+            ProjectDependencyGraph graph = session.Committed.GetProjectDependencyGraph();
+            foreach (Project project in session.Committed.Projects)
+            {
+                if (StaleCallers.Mvid(project) is { } module && loaded.Contains(module))
+                {
+                    projects.Add(project.Id);
+                    projects.UnionWith(graph.GetProjectsThatThisProjectTransitivelyDependsOn(project.Id));
+                }
+            }
+            if (projects.Count > 0)
+            {
+                session.Projects = projects;
+            }
+        }
+        if (session.Projects is { } scope)
+        {
+            foreach (ProjectId project in session.Committed.ProjectIds.Where(project => !scope.Contains(project)))
+            {
+                session.Committed = session.Committed.RemoveProject(project);
+            }
+            foreach (ProjectId project in solution.ProjectIds.Where(project => !scope.Contains(project)))
+            {
+                solution = solution.RemoveProject(project);
+            }
+        }
         session.Debugger.Take(message);
         session.Originals.Take(message.Originals);
         // A new edit session, which reads the active statements again: paused, Edit and Continue; running, Hot Reload.
@@ -250,6 +279,7 @@ internal static class HotReload
         public DebuggingSessionId Id { get; } = id;
         public Debugger Debugger { get; } = debugger;
         public Originals Originals { get; } = originals;
+        public HashSet<ProjectId>? Projects { get; set; }
 
         /// <summary>The solution as last committed (as built, at first): what the files changed since are measured from.</summary>
         public Solution Committed { get; set; } = null!;

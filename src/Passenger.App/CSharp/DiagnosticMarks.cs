@@ -118,6 +118,21 @@ internal sealed class ServerDiagnostics(OpenDocument document, bool holdsChecks)
         return [.. found.Select((d, i) => marker(d, ranges[i])).OfType<Marker>()];
     }
 
+    /// <summary>Leaves out the diagnostics <paramref name="which"/> names, giving the markers the rest draw as, or null when
+    /// it named none.</summary>
+    public IReadOnlyList<Marker>? Drop(Func<Diagnostic, bool> which, Func<Diagnostic, TextRange, Marker?> marker)
+    {
+        if (!found.Any(which))
+        {
+            return null;
+        }
+        int[] kept = [.. Enumerable.Range(0, found.Length).Where(i => !which(found[i]))];
+        ranges = [.. kept.Select(i => ranges[i])];
+        found = [.. kept.Select(i => found[i])];
+        placed = null;
+        return [.. found.Select((d, i) => marker(d, ranges[i])).OfType<Marker>()];
+    }
+
     /// <summary>Asks the server again after <paramref name="delay"/>, ending the ask under way: <paramref name="ask"/> pulls
     /// (<see cref="PulledAsync"/>) and shows what answers, a server that fails or a later ask leaving the markers as they
     /// stand; when it <c>holdsChecks</c>, the file's checks are held until the ask ends.</summary>

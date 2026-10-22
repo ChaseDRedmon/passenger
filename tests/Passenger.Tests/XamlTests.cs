@@ -26,6 +26,30 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void Deeply_nested_markup_extensions_do_not_end_the_editor_and_diagnostics_still_finish()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            const int depth = 100_000;
+            string nested = string.Concat(Enumerable.Repeat("{Binding Path=", depth)) + "Greeting" + new string('}', depth);
+            Replace(editor, "{Binding Greeting}", nested);
+            Replace(editor, "Content=\"Go\"", "Contnt=\"Go\"");
+            Ui.WaitFor(() => window.EditorArea.Active!.Markers.Any(m => m.Message.Contains("Contnt", StringComparison.Ordinal)),
+                "diagnostics after a deeply nested attribute");
+            Assert.Contains(nested, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Replace(editor, nested, "{Binding Greeting}");
+            Replace(editor, "Contnt=\"Go\"", "Content=\"Go\"");
+            Ui.WaitFor(() => window.EditorArea.Active!.Markers.Count == 0, "the repaired XAML's diagnostics");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Typing_a_tag_offers_the_controls_then_a_controls_properties_and_then_the_values_of_the_one_chosen()
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));

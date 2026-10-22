@@ -25,6 +25,7 @@ public sealed class LiveTreeController
     private readonly ToolWindow window;
     private ProjectSession? session;
     private LiveApp? app;
+    private DebugController? followedDebugger;
     private long? chosen;
 
     /// <summary>Bumped by each ask for the tree, and for details, so an answer that lands after a later ask is dropped.</summary>
@@ -90,30 +91,46 @@ public sealed class LiveTreeController
     public void Bind(ProjectSession next)
     {
         UiThread.Check();
+        if (session is { } previous)
+        {
+            previous.LiveAppChanged -= OnSelectedAppChanged;
+            previous.Debug.SelectionChanged -= OnSelectedAppChanged;
+            previous.Debug.StateChanged -= OnSelectedDebugStateChanged;
+        }
         session = next;
-        next.LiveAppChanged += (_, _) =>
+        next.LiveAppChanged += OnSelectedAppChanged;
+        next.Debug.SelectionChanged += OnSelectedAppChanged;
+        next.Debug.StateChanged += OnSelectedDebugStateChanged;
+        OnSelectedAppChanged(null, EventArgs.Empty);
+    }
+
+    private void OnSelectedAppChanged(object? sender, EventArgs e)
+    {
+        UiThread.Check();
+        if (followedDebugger != session?.Debug)
         {
-            if (session == next)
+            if (followedDebugger is not null)
             {
-                Follow(next.LiveApp);
+                followedDebugger.Breakpoints.PropertiesChanged -= OnPropertiesChanged;
             }
-        };
-        next.Debug.StateChanged += (_, _) =>
-        {
-            if (session == next)
+            followedDebugger = session?.Debug;
+            if (followedDebugger is not null)
             {
-                OnDebugState();
+                followedDebugger.Breakpoints.PropertiesChanged += OnPropertiesChanged;
             }
-        };
-        next.Debug.Breakpoints.PropertiesChanged += (_, _) =>
-        {
-            if (session == next)
-            {
-                ShowWatched();
-                _ = SyncWatchesAsync();
-            }
-        };
-        Follow(next.LiveApp);
+        }
+        Follow(session?.LiveApp);
+        OnDebugState();
+        OnPropertiesChanged(null, EventArgs.Empty);
+    }
+
+    private void OnSelectedDebugStateChanged(object? sender, EventArgs e) => OnDebugState();
+
+    private void OnPropertiesChanged(object? sender, EventArgs e)
+    {
+        UiThread.Check();
+        ShowWatched();
+        _ = SyncWatchesAsync();
     }
 
     /// <summary>Break When Value Changes on a property of the chosen element: a property breakpoint set, or the one there
@@ -206,18 +223,22 @@ public sealed class LiveTreeController
                 watchesStale = true;
                 continue;
             }
-            await SyncWatchesAsync(store, debugged, live);
+            await SyncWatchesAsync(current, store, debugged, live);
         }
     }
 
     /// <summary>One app's inspector told of its session's property breakpoints, as <see cref="LiveApp.Watched"/> last said them.</summary>
-    private async Task SyncWatchesAsync(BreakpointStore store, DebugSession debugged, LiveApp live)
+    private async Task SyncWatchesAsync(ProjectSession current, BreakpointStore store, DebugSession debugged, LiveApp live)
     {
         Dictionary<PropertyBreakpoint, string> wanted = store.Muted ? []
             : store.Properties.Where(p => p.Enabled && p.Session == debugged).ToDictionary(p => p, p => p.HitCondition ?? string.Empty);
         Dictionary<PropertyBreakpoint, string> watched = live.Watched;
         foreach (PropertyBreakpoint gone in watched.Keys.Where(p => !wanted.ContainsKey(p)).ToList())
         {
+            if (session != current || current.IsEnded || current.Debug.SessionOf(live) != debugged)
+            {
+                return;
+            }
             watched.Remove(gone);
             try
             {
@@ -230,6 +251,10 @@ public sealed class LiveTreeController
         }
         foreach ((PropertyBreakpoint breakpoint, string hits) in wanted)
         {
+            if (session != current || current.IsEnded || current.Debug.SessionOf(live) != debugged)
+            {
+                return;
+            }
             if (watched.TryGetValue(breakpoint, out string? was) && was == hits)
             {
                 continue;
@@ -241,12 +266,15 @@ public sealed class LiveTreeController
             }
             catch (LiveAppException error)
             {
-                parts.Say($"Break When Value Changes on {breakpoint.Location}: {error.Message}");
+                if (session == current && !current.IsEnded && current.Debug.SessionOf(live) == debugged)
+                {
+                    parts.Say($"Break When Value Changes on {breakpoint.Location}: {error.Message}");
+                }
             }
         }
     }
 
-    private bool Paused => session?.Debug.Session is { State: DebugState.Paused };
+    private bool Paused => Debugged() is { State: DebugState.Paused };
 
     private void Follow(LiveApp? next)
     {

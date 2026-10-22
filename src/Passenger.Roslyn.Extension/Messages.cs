@@ -20,11 +20,15 @@ public static class Handlers
     public const string PullMembersUp = "Passenger.Roslyn.Extension.PullMembersUp";
     public const string PushMembersDown = "Passenger.Roslyn.Extension.PushMembersDown";
     public const string DocumentTexts = "Passenger.Roslyn.Extension.DocumentTexts";
+    public const string AspireProjectDeclaration = "Passenger.Roslyn.Extension.AspireProjectDeclaration";
+    public const string AspireCodeHelp = "Passenger.Roslyn.Extension.AspireCodeHelp";
+    public const string AspireReferenceFix = "Passenger.Roslyn.Extension.AspireReferenceFix";
+    public const string AspireRunResources = "Passenger.Roslyn.Extension.AspireRunResources";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
-        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts,
+        DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
     ];
 }
 
@@ -53,6 +57,30 @@ public sealed record Place([property: JsonPropertyName("line")] int Line, [prope
 
 /// <summary>Where the caret is: what a describing message asks about.</summary>
 public sealed record Caret([property: JsonPropertyName("at")] Place At);
+
+/// <summary>The source project identified by an Aspire AddProject call, or null when its path cannot be proven.</summary>
+public sealed record AspireProjectTarget([property: JsonPropertyName("path")] string? Path);
+
+/// <summary>Semantic Aspire help; a caret requests resource-name completion as well as diagnostics.</summary>
+public sealed record AspireHelpRequest([property: JsonPropertyName("at")] Place? At, bool Explain = false);
+
+/// <summary>The selected missing edge; its identity is checked again against the current semantic graph.</summary>
+public sealed record AspireFixRequest(Place At, string Service, string Resource);
+
+/// <summary>A proven absent AppHost reference, with its source range and proposed workspace change.</summary>
+public sealed record AspireMissingReference(Place Start, Place End, string Service, string Resource, Refactored Fix);
+
+/// <summary>Names valid at the caret's string argument and references missing from this service's AppHost.</summary>
+public sealed record AspireHelp(Place? Start, Place? End, IReadOnlyList<string> Names, IReadOnlyList<AspireMissingReference> Missing, string? Evidence = null);
+
+/// <summary>The AppHost whose proven project resources and source locations are read.</summary>
+public sealed record AspireResourcesRequest(string AppHost);
+
+/// <summary>A project resource and the source fingerprint that makes its gutter location current.</summary>
+public sealed record AspireRunResource(string Name, string Project, string Source, Place At, string SourceHash);
+
+/// <summary>Proven resources, or why the AppHost cannot be read yet.</summary>
+public sealed record AspireRunResourcesResult(IReadOnlyList<AspireRunResource> Resources, string? Problem = null);
 
 /// <summary>One edit to a file's text, between two places of it as it was.</summary>
 public sealed record Edit(

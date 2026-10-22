@@ -2,14 +2,16 @@ using System.Text.RegularExpressions;
 using Avalonia.Controls;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.App.Aspire;
 using Passenger.Editor;
+using Passenger.Roslyn.Extension;
 using Passenger.Text;
 
 namespace Passenger.App;
 
 /// <summary>Something a run configuration runs from a line of an open file: a Compose configuration's service on its line
 /// of a compose file the configuration reads, or a Dockerfile configuration's image on its Dockerfile's final FROM.</summary>
-public sealed record RunTarget(int Line, RunConfiguration Configuration, string? Service);
+public sealed record RunTarget(int Line, RunConfiguration Configuration, string? Service, AspireRunResource? Declaration = null);
 
 /// <summary>The gutter's run icons beside what the folder's container configurations run: each service of a compose
 /// file a Compose configuration reads, and the final FROM of a Dockerfile a Dockerfile configuration builds, only in files
@@ -18,14 +20,21 @@ public sealed record RunTarget(int Line, RunConfiguration Configuration, string?
 public partial class MainWindow
 {
     private Debounce? runMarksLater;
+    private CancellationTokenSource? readingAspireMarks;
+    private readonly Dictionary<string, (int Version, IReadOnlyList<AspireRunResource> Resources)> aspireRunMarks = new(Core.PathNames.Comparer);
 
     private void AddRunMarks()
     {
         runMarksLater = new Debounce(TimeSpan.FromMilliseconds(300), () =>
         {
-            ShowRunMarks();
+            _ = ReadRunMarksAsync();
             return Task.CompletedTask;
         });
+        Closed += (_, _) =>
+        {
+            runMarksLater.Stop();
+            readingAspireMarks?.Cancel();
+        };
         Editors.Opened += (_, document) =>
         {
             document.Text.Changed += (_, _) =>
@@ -36,11 +45,67 @@ public partial class MainWindow
                 }
             };
             ShowRunMarks(document);
+            if (IsRunFile(document.Path))
+            {
+                runMarksLater.Restart();
+            }
         };
     }
 
     /// <summary>Whether a file is one a run icon may stand in: a compose file or a Dockerfile.</summary>
-    private static bool IsRunFile(string path) => Web.ComposeDeclarations.IsCompose(path) || Web.WebLanguages.IsDockerfile(Path.GetFileName(path));
+    private bool IsRunFile(string path) => Web.ComposeDeclarations.IsCompose(path) || Web.WebLanguages.IsDockerfile(Path.GetFileName(path))
+        || Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase) && Configurations.Any(session.Aspire.IsAspire);
+
+    private async Task ReadRunMarksAsync()
+    {
+        using IDisposable held = BackgroundWork.Scope();
+        readingAspireMarks?.Cancel();
+        readingAspireMarks?.Dispose();
+        using CancellationTokenSource cancel = new();
+        CancellationToken token = cancel.Token;
+        readingAspireMarks = cancel;
+        ProjectSession current = session;
+        int? version = current.CSharp?.AspireVersion;
+        aspireRunMarks.Clear();
+        ShowRunMarks();
+        try
+        {
+            if (current.IsEnded || version is null || current.CSharp is not { IsReady: true })
+            {
+                return;
+            }
+            RunConfiguration[] configurations = [.. Configurations.Where(current.Aspire.IsAspire)
+                .DistinctBy(configuration => configuration.Project, Core.PathNames.Comparer)];
+            foreach (RunConfiguration configuration in configurations)
+            {
+                IReadOnlyList<AspireRunResource> resources = await ReadAspireConfigurationResourcesAsync(configuration, token).ConfigureAwait(false);
+                bool currentVersion = await UiThread.InvokeAsync(() =>
+                {
+                    if (token.IsCancellationRequested || session != current || current.IsEnded || current.CSharp?.AspireVersion != version)
+                    {
+                        return false;
+                    }
+                    aspireRunMarks[configuration.Project] = (version.Value, resources);
+                    ShowRunMarks();
+                    return true;
+                }).WaitAsync(token).ConfigureAwait(false);
+                if (!currentVersion)
+                {
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException or Lsp.LanguageServerFailed)
+        {
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref readingAspireMarks, null, cancel);
+        }
+    }
 
     private void ShowRunMarks()
     {
@@ -71,7 +136,14 @@ public partial class MainWindow
         List<RunTarget> targets = [];
         foreach (RunConfiguration configuration in Configurations)
         {
-            if (configuration.Kind == RunKind.Compose && configuration.ComposeFiles.Any(f => Core.PathNames.Same(f, path)))
+            if (session.Aspire.IsAspire(configuration) && aspireRunMarks.TryGetValue(configuration.Project, out (int Version, IReadOnlyList<AspireRunResource> Resources) known)
+                && session.CSharp?.AspireVersion == known.Version)
+            {
+                string hash = TextHash.Of(text.ToString());
+                targets.AddRange(known.Resources.Where(resource => Core.PathNames.Same(resource.Source, path) && resource.SourceHash == hash)
+                    .Select(resource => new RunTarget(resource.At.Line, configuration, resource.Name, resource)));
+            }
+            else if (configuration.Kind == RunKind.Compose && configuration.ComposeFiles.Any(f => Core.PathNames.Same(f, path)))
             {
                 targets.AddRange(ServiceLines(text).Select(s => new RunTarget(s.Line, configuration, s.Service)));
             }
@@ -150,7 +222,7 @@ public partial class MainWindow
         foreach (RunTarget target in here)
         {
             string what = target.Service ?? target.Configuration.Name;
-            if (target.Service is { } service && InRunNow(document.Path, service))
+            if (!target.Configuration.Aspire && target.Service is { } service && InRunNow(document.Path, service))
             {
                 if (joined.Add(service))
                 {
@@ -189,6 +261,10 @@ public partial class MainWindow
     /// is in the status bar.</summary>
     public Task<string?> RunTarget(RunTarget target, Containers.ContainerStart how = Containers.ContainerStart.Run)
     {
+        if (target.Configuration.Aspire)
+        {
+            return RunAspireTargetAsync(target, how);
+        }
         RunConfiguration configuration = target.Service is { } service
             ? target.Configuration.Copied() with
             {
@@ -199,6 +275,57 @@ public partial class MainWindow
             }
             : target.Configuration;
         return how == Containers.ContainerStart.Profile ? ProfileAsync(configuration) : buildRun.RunContainersAsync(configuration, how);
+    }
+
+    private async Task<string?> RunAspireTargetAsync(RunTarget target, Containers.ContainerStart how)
+    {
+        ProjectSession current = session;
+        if (target.Service is not { } name)
+        {
+            return "No Aspire project resource is selected";
+        }
+        IReadOnlyList<AspireRunResource> declared = await ReadAspireConfigurationResourcesAsync(target.Configuration, CancellationToken.None);
+        if (session != current || current.IsEnded || target.Declaration is not { } original
+            || !declared.Any(resource => resource == original)
+            || !Editors.Documents.Any(document => Core.PathNames.Same(document.Path, original.Source)
+                && TextHash.Of(document.Text.Snapshot.ToString()) == original.SourceHash))
+        {
+            return "The AppHost source changed; open its gutter action again";
+        }
+        if (current.Aspire.FindApp(target.Configuration.Project) is { } app)
+        {
+            IReadOnlyList<AspireResource> resources = await ReadAspireResourcesAsync(app.Configuration.Project);
+            if (session != current || current.IsEnded)
+            {
+                return "The solution was closed";
+            }
+            AspireResource[] matches = [.. resources.Where(resource => resource.Name == name || resource.DisplayName == name)];
+            if (matches.Length != 1)
+            {
+                return "The selected Aspire resource is unavailable or ambiguous";
+            }
+            AspireResource resource = matches[0];
+            return how switch
+            {
+                Containers.ContainerStart.Debug => await DebugAspireResourceAsync(app.Configuration.Project, resource.Name),
+                Containers.ContainerStart.Profile => await ProfileAspireResourceAsync(app.Configuration.Project, resource.Name),
+                _ => await RestartAspireServiceAsync(current, new(app.Configuration.Project, resource), debugging: false),
+            };
+        }
+        if (session != current || current.IsEnded || declared.Count(resource => resource.Name == name) != 1)
+        {
+            return "The selected AppHost resource changed";
+        }
+        RunConfiguration configuration = target.Configuration with
+        {
+            ServiceActions = declared.ToDictionary(resource => resource.Name,
+                resource => resource.Name == name && how is Containers.ContainerStart.Debug or Containers.ContainerStart.Profile ? ServiceStart.Debug : ServiceStart.Run,
+                StringComparer.Ordinal),
+            ServiceProjects = declared.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
+            LaunchService = name,
+        };
+        return how == Containers.ContainerStart.Profile ? await buildRun.ProfileAspireAsync(configuration)
+            : await buildRun.RunAspireAsync(configuration, null, AspireRunMode.Run);
     }
 
     /// <summary>Whether a compose file's service is a .NET service of the container run under way, which reads that file.</summary>

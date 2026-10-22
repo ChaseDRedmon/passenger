@@ -32,6 +32,19 @@ public sealed class DebugTab(string name, OutputView console) : Observable
     /// <summary>Its session, from its first moment; null until the debugger hands it over.</summary>
     public DebugSession? Session { get; internal set; }
 
+    /// <summary>Unformatted output from this program, on the debugger transport's callback thread.</summary>
+    public event EventHandler<OutputEvent>? ProgramOutput;
+
+    /// <summary>This session started, paused, ran on or ended.</summary>
+    public event EventHandler? StateChanged;
+
+    /// <summary>The owner's restart for edits Hot Reload cannot apply, instead of a configuration restart.</summary>
+    public Func<HotReloadOutcome, Task<bool>>? RestartFor { get; set; }
+
+    internal bool OpeningStopped { get; set; }
+    internal void OnProgramOutput(OutputEvent output) => ProgramOutput?.Invoke(this, output);
+    internal void OnStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
+
     /// <summary>The session's built lines, from its start to its end.</summary>
     internal BuiltLines? Lines { get; set; }
 

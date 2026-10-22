@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Passenger.App.Aspire;
 using Passenger.App.State;
 using Passenger.App.Workspace;
 
@@ -57,6 +58,12 @@ public sealed record RunConfiguration
 
     /// <summary>The project's file: a canonical path in the window, relative to the open folder in the store.</summary>
     public string Project { get; init; } = string.Empty;
+
+    /// <summary>Whether Passenger coordinates this AppHost and its project resources.</summary>
+    public bool Aspire { get; init; }
+
+    /// <summary>Additional AppHosts started and stopped with this Aspire configuration.</summary>
+    public IReadOnlyList<string> LinkedAppHosts { get; init; } = [];
 
     /// <summary>The target framework run, for a project with several; empty for the first.</summary>
     public string Framework { get; init; } = string.Empty;
@@ -160,24 +167,45 @@ public sealed record RunConfiguration
     /// <summary>Why it cannot launch here among these projects: its launch profile's kind, or, when it runs its project's
     /// own program, a project that runs only on Windows (WPF, Windows Forms) elsewhere; null when it can.</summary>
     public string? WhyNotHere(IEnumerable<ProjectModel> projects) => Unsupported
+        ?? (!IsContainer && Aspire && Path.GetExtension(Project).Equals(".cs", StringComparison.OrdinalIgnoreCase)
+            ? AspireAppHosts.SingleFileWhyNot(Project, projects.Select(project => project.Path)) : null)
         ?? (!IsContainer && Program.Length == 0 && projects.FirstOrDefault(p => Core.PathNames.Same(p.Path, Project)) is { } project ? project.RunsOnlyOnWindows(Framework) : null);
 
     /// <summary>The configurations the folder's executable projects make: one per launch profile, named "Project: profile"
-    /// as Rider names them, and the project itself when none of its profiles runs it here; then the container ones the
-    /// workspace's compose files, Dockerfiles, SDK container projects and Docker Compose projects (.dcproj) make
-    /// (<see cref="Containers.ContainerConfigurations"/>).</summary>
-    public static IReadOnlyList<RunConfiguration> Generate(IEnumerable<ProjectModel> projects, WorkspaceModel? workspace = null)
+    /// as Rider names them, and the project itself when none of its profiles runs it here; then single-file AppHosts and
+    /// the container ones the workspace's compose files, Dockerfiles, SDK container projects and Docker Compose projects
+    /// (.dcproj) make (<see cref="Containers.ContainerConfigurations"/>).</summary>
+    public static IReadOnlyList<RunConfiguration> Generate(IEnumerable<ProjectModel> projects, WorkspaceModel? workspace = null,
+        IEnumerable<string>? singleFileAppHosts = null)
     {
         List<RunConfiguration> generated = [];
         List<ProjectModel> all = [.. projects];
         foreach (ProjectModel project in all.Where(p => p.Exists && p.IsRunnable))
         {
+            string name = project.IsAspireHost ? $"Aspire: {project.Name}" : project.Name;
             IReadOnlyList<LaunchProfile> profiles = Run.LaunchProfile.Read(project);
             if (!profiles.Any(p => p.Unsupported is null && !p.RunsInContainer))
             {
-                generated.Add(new RunConfiguration { Name = project.Name, Project = project.Path, Generated = true });
+                generated.Add(new RunConfiguration { Name = name, Project = project.Path, Aspire = project.IsAspireHost, Generated = true });
             }
-            generated.AddRange(profiles.Select(p => From(project, p) with { Name = $"{project.Name}: {p.Name}", Generated = true }));
+            generated.AddRange(profiles.Select(p => From(project, p) with { Name = $"{name}: {p.Name}", Generated = true }));
+        }
+        foreach (string path in singleFileAppHosts ?? [])
+        {
+            generated.Add(new RunConfiguration
+            {
+                Name = $"Aspire: {Path.GetFileNameWithoutExtension(path)}",
+                Project = path,
+                Aspire = true,
+                Generated = true,
+            });
+        }
+        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < generated.Count; i++)
+        {
+            string name = UniqueName(generated[i].Name, names);
+            generated[i] = generated[i] with { Name = name };
+            names.Add(name);
         }
         if (workspace is not null)
         {
@@ -202,6 +230,7 @@ public sealed record RunConfiguration
         {
             Name = profile.Name,
             Project = project.Path,
+            Aspire = project.IsAspireHost,
             LaunchProfile = profile.Name,
             Program = profile.RunsProject ? string.Empty : profile.ExecutablePath ?? string.Empty,
             Arguments = profile.CommandLineArgs ?? string.Empty,
@@ -234,6 +263,8 @@ public sealed record RunConfiguration
     {
         Kind = Enum.IsDefined(Kind) ? Kind : RunKind.Project,
         Project = Project ?? string.Empty,
+        LinkedAppHosts = [.. (LinkedAppHosts ?? []).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(
+            StringComparer.FromComparison(Core.PathNames.Comparison))],
         Framework = Framework ?? string.Empty,
         LaunchProfile = LaunchProfile ?? string.Empty,
         Program = Program ?? string.Empty,
@@ -262,6 +293,7 @@ public sealed record RunConfiguration
     public RunConfiguration Copied() => this with
     {
         Environment = new Dictionary<string, string>(Environment),
+        LinkedAppHosts = [.. LinkedAppHosts],
         ComposeFiles = [.. ComposeFiles],
         EnvFiles = [.. EnvFiles],
         Profiles = [.. Profiles],

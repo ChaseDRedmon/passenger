@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Passenger.App.Debugging;
+using Passenger.App.ToolWindows;
 
 namespace Passenger.App.Mcp;
 

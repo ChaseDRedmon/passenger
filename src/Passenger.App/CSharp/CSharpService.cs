@@ -597,7 +597,11 @@ public sealed class CSharpService : IAsyncDisposable
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             EventHandler onLoaded = (_, _) => loaded.TrySetResult();
             EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.ColoursMoved()));
-            EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
+            EventHandler onDiagnostics = (_, _) => UiThread.Post(() =>
+            {
+                AspireVersion++;
+                Each(document => document.RefreshDiagnostics());
+            });
             // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
             EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
             EventHandler<string> onExited = (_, _) => UiThread.Post(() => OnExited(started));
@@ -998,7 +1002,22 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    private void RefreshAll() => Each(document => document.Refresh());
+    internal int AspireVersion { get; private set; }
+    internal event EventHandler? AspireGraphInvalidated;
+
+    internal void AspireGraphChanged()
+    {
+        AspireVersion++;
+        Each(document => document.AspireChanged());
+        AspireGraphInvalidated?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RefreshAll()
+    {
+        AspireVersion++;
+        Each(document => document.Refresh());
+        AspireGraphInvalidated?.Invoke(this, EventArgs.Empty);
+    }
 
     private void Each(Action<CSharpDocument> act)
     {

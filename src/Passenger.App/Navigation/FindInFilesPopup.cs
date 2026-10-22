@@ -352,7 +352,12 @@ public sealed class FindInFilesPopup : UserControl
         asking?.Cancel();
     }
 
-    private void Retype() => typing.Restart();
+    private void Retype()
+    {
+        asking?.Cancel();
+        Show([], "Searching…", null);
+        typing.Restart();
+    }
 
     private void Retyped(AvaloniaPropertyChangedEventArgs change, AvaloniaProperty text)
     {
@@ -415,7 +420,7 @@ public sealed class FindInFilesPopup : UserControl
             Show([], problem, (asked, where));
             return;
         }
-        status.Text = "Searching…";
+        Show([], "Searching…", null);
         try
         {
             IReadOnlyList<SearchMatch> found = await search(asked, where, cancel.Token);
@@ -431,7 +436,7 @@ public sealed class FindInFilesPopup : UserControl
         }
     }
 
-    private void Show(IReadOnlyList<SearchMatch> found, string said, (SearchQuery Query, SearchScope Scope) of)
+    private void Show(IReadOnlyList<SearchMatch> found, string said, (SearchQuery Query, SearchScope Scope)? of)
     {
         matches = found;
         shownFor = of;

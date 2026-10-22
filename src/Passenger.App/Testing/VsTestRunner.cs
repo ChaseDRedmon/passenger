@@ -146,7 +146,7 @@ public sealed class VsTestRunner : ITestRunner
                 }
                 else
                 {
-                    console.RunTestsWithCustomTestHost(chosen, settings, new TestPlatformOptions(), handler, new DebugLauncher(debugger));
+                    console.RunTestsWithCustomTestHost(chosen, settings, new TestPlatformOptions(), handler, new DebugLauncher(debugger, environment));
                 }
             }));
             return await handler.Done.Task;
@@ -349,7 +349,7 @@ public sealed class VsTestRunner : ITestRunner
 
     /// <summary>VSTest's way to debug: it hands over the test host it would start, and the IDE starts it under its
     /// debugger instead, or attaches to the one it started. VSTest waits on its own thread for each answer.</summary>
-    private sealed class DebugLauncher(ITestDebugLauncher debugger) : ITestHostLauncher3
+    private sealed class DebugLauncher(ITestDebugLauncher debugger, IReadOnlyDictionary<string, string>? environment) : ITestHostLauncher3
     {
         public bool IsDebug => true;
 
@@ -360,8 +360,19 @@ public sealed class VsTestRunner : ITestRunner
                 defaultTestHostStartInfo.FileName ?? throw new InvalidOperationException("VSTest gave no test host"),
                 Passenger.App.Run.CommandLine.Split(defaultTestHostStartInfo.Arguments),
                 defaultTestHostStartInfo.WorkingDirectory,
-                defaultTestHostStartInfo.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? []))
+                EnvironmentOf(defaultTestHostStartInfo)))
             .GetAwaiter().GetResult();
+
+        private Dictionary<string, string> EnvironmentOf(TestProcessStartInfo start)
+        {
+            Dictionary<string, string> merged = start.EnvironmentVariables?.Where(variable => variable.Value is not null)
+                .ToDictionary(variable => variable.Key, variable => variable.Value!) ?? [];
+            foreach ((string name, string value) in environment ?? new Dictionary<string, string>())
+            {
+                merged[name] = value;
+            }
+            return merged;
+        }
 
         public bool AttachDebuggerToProcess(int pid) => AttachDebuggerToProcess(pid, CancellationToken.None);
 
