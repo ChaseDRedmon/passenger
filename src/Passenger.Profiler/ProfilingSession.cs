@@ -303,14 +303,17 @@ public sealed class ProfilingSession : IAsyncDisposable
     /// program's own diagnostic port and stream it out, which is written to the trace here as it comes; Get Snapshot closes
     /// their input, which stops the session with its rundown. With <paramref name="resume"/> a program held at its start
     /// (DOTNET_DefaultDiagnosticPortSuspend=1) is let go once recording, so the run begins at its first instruction. The
-    /// program is left as it was. One the tools cannot reach is a <see cref="ProfilingException"/> saying why.</summary>
+    /// program is left as it was. One the tools cannot reach, or whose snapshot cannot be written, is a
+    /// <see cref="ProfilingException"/> saying why, nothing left recording it: its file is made before the tools start.</summary>
     public static async Task<ProfilingSession> AttachAsync(int processId, string name, string folder, ProfilePlace place, bool resume = false,
         CancellationToken cancellation = default)
     {
         string trace;
+        FileStream file;
         try
         {
             trace = NewTrace(folder, name);
+            file = new FileStream(trace, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -321,18 +324,24 @@ public sealed class ProfilingSession : IAsyncDisposable
         {
             words.Add("--resume");
         }
-        ProcessStartInfo start = place.Tools(words);
-        start.RedirectStandardInput = true;
-        start.RedirectStandardOutput = true;
-        start.RedirectStandardError = true;
         Process tools;
         try
         {
+            ProcessStartInfo start = place.Tools(words);
+            start.RedirectStandardInput = true;
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
             tools = ChildProcesses.Start(start);
         }
         catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException)
         {
+            Unmade(file, trace);
             throw new ProfilingException($"Could not start Passenger's tools in {place.Where} to profile {name}: {error.Message}", error);
+        }
+        catch
+        {
+            Unmade(file, trace);
+            throw;
         }
         TaskCompletionSource recording = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // The last line the tools said, all that is kept of what a container writes there.
@@ -348,7 +357,6 @@ public sealed class ProfilingSession : IAsyncDisposable
                 Volatile.Write(ref said, words);
             }
         }), CancellationToken.None);
-        FileStream file = new(trace, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
         Task copying = Task.Run(async () =>
         {
             await using (file)
@@ -387,6 +395,19 @@ public sealed class ProfilingSession : IAsyncDisposable
         throw new ProfilingException(ended
             ? why ?? $"Passenger's tools in {place.Where} could not profile {name}"
             : $"Passenger's tools in {place.Where} did not begin recording {name} in 30 s");
+    }
+
+    /// <summary>A trace's file let go and deleted, its recording never begun: no snapshot to list.</summary>
+    private static void Unmade(FileStream file, string trace)
+    {
+        file.Dispose();
+        try
+        {
+            File.Delete(trace);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     /// <summary>The session's stream written to the trace as it comes, until the session or the program ends.</summary>

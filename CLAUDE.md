@@ -753,7 +753,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ProfilePlace` (the tools' command over `docker exec -i`, the container's name, a PDB document's path made this
   machine's) runs the tools' `trace` there (`InContainer.TraceAsync`: the same `ProfilingSession.Providers` at the
   program's own diagnostic port, the .nettrace on their standard output, a `recording` line on their errors once it
-  begins, their input's end stopping the session with its rundown; `resume` lets a program held at its start by
+  begins, their input's end stopping the session with its rundown; the snapshot's file made before they start, so one that
+  cannot be written starts no recording there; `resume` lets a program held at its start by
   DOTNET_DefaultDiagnosticPortSuspend=1 go once recording), the bytes written to the trace here as they come and read by
   `Snapshot` as ever, which keeps the `Place`. Attach Profiler takes the debugged container session first
   (`DebugSession.Place`, by its id there and the debugger's path map), else, from the action with nothing of the
