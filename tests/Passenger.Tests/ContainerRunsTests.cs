@@ -855,9 +855,14 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
 
         """;
 
-    internal static MainWindow Open(string folder, DotnetWords? devCertificates = null, bool agentsAllowed = true)
+    /// <summary>A window on a Compose solution; with no C# language server unless a test asks it something (Hot Reload),
+    /// since a container run, its debugging and its profiling ask it nothing.</summary>
+    internal static MainWindow Open(string folder, DotnetWords? devCertificates = null, bool agentsAllowed = true, bool languageServer = false)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, DevCertificates = devCertificates, AgentsAllowed = agentsAllowed };
+        MainWindow window = new()
+        {
+            Width = 1200, Height = 800, DevCertificates = devCertificates, AgentsAllowed = agentsAllowed, StartsLanguageServer = languageServer,
+        };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();

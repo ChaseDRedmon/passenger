@@ -65,14 +65,34 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
     }
 
     [AvaloniaFact]
-    public void Memory_snapshots_of_a_program_in_a_container_are_taken_there_list_what_it_keeps_and_compare_object_by_object()
+    public void Memory_snapshots_of_a_program_in_a_container_are_taken_there_and_compared_once_its_snapshot_can_be_written_and_none_is_recorded_before()
     {
         Assert.SkipWhen(spins.WhyNot is not null, spins.WhyNot ?? string.Empty);
         string container = spins.Start("memory");
         MainWindow window = Open();
+        List<string> blocking = [];
         try
         {
             DotnetProcess program = Assert.Single(Ui.Await(window.AttachableAsync(), "the containers' programs to be listed"), p => p.Container == container);
+
+            // Where its snapshot cannot be written, Attach Profiler says so and starts no recording there: the snapshot's
+            // file is made before the tools, which were left recording for no one when it failed. A folder takes the place
+            // of each name the snapshot could take for the next while.
+            DateTime now = DateTime.Now;
+            for (int ahead = -1; ahead <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; ahead++)
+            {
+                string stamp = now.AddSeconds(ahead).ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+                blocking.Add(Directory.CreateDirectory(Path.Combine(window.SnapshotFolder, $"Spins-{stamp}.nettrace")).FullName);
+            }
+            string? refused = Ui.Await(window.AttachProfilerAsync(program), "Attach Profiler's answer");
+            Assert.True(refused?.StartsWith("Could not profile Spins: no snapshot can be written in ", StringComparison.Ordinal) == true, $"Attach Profiler answered: {refused}");
+            Assert.Null(window.Profiling);
+            Assert.DoesNotContain($"{ContainerTools.Executable} trace", Spins.Top(container), StringComparison.Ordinal);
+            int ranOn = Spins.Kept(container);
+            Ui.WaitFor(() => Spins.Kept(container) > ranOn, "the program in the container to run on");
+            blocking.ForEach(Directory.Delete);
+            blocking.Clear();
+
             Ui.Launched(window, window.AttachProfilerAsync(program), "the profiler to attach to the program in the container");
             Recording(window, container);
 
@@ -111,6 +131,8 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
         finally
         {
             window.Close();
+            // The folder's snapshots are the class's other tests' too.
+            blocking.ForEach(Directory.Delete);
         }
     }
 
@@ -175,47 +197,10 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
         }
     }
 
-    /// <summary>Attach Profiler to a program in a container where its snapshot cannot be written says so, and starts no
-    /// recording there: the snapshot's file is made before the tools, which were left recording for no one when it failed.</summary>
-    [AvaloniaFact]
-    public void Attach_Profiler_in_a_container_that_cannot_write_its_snapshot_says_why_and_records_nothing_there()
-    {
-        Assert.SkipWhen(spins.WhyNot is not null, spins.WhyNot ?? string.Empty);
-        string container = spins.Start("unwritten");
-        MainWindow window = Open();
-        List<string> blocking = [];
-        try
-        {
-            DotnetProcess program = Assert.Single(Ui.Await(window.AttachableAsync(), "the containers' programs to be listed"), p => p.Container == container);
-            // A folder in the place of each name the snapshot could take for the next while: its file cannot be made.
-            DateTime now = DateTime.Now;
-            for (int second = -1; second <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; second++)
-            {
-                string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-                blocking.Add(Directory.CreateDirectory(Path.Combine(window.SnapshotFolder, $"Spins-{stamp}.nettrace")).FullName);
-            }
-            string? refused = Ui.Await(window.AttachProfilerAsync(program), "Attach Profiler's answer");
-            Assert.True(refused?.StartsWith("Could not profile Spins: no snapshot can be written in ", StringComparison.Ordinal) == true, $"Attach Profiler answered: {refused}");
-            Assert.Null(window.Profiling);
-            Assert.DoesNotContain($"{ContainerTools.Executable} trace", Spins.Top(container), StringComparison.Ordinal);
-            int kept = Spins.Kept(container);
-            Ui.WaitFor(() => Spins.Kept(container) > kept, "the program in the container to run on");
-        }
-        finally
-        {
-            window.Close();
-            // The folder's snapshots are the class's other tests' too.
-            foreach (string folder in blocking)
-            {
-                Directory.Delete(folder);
-            }
-        }
-    }
-
     /// <summary>A window on the program's folder.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(spins.Folder);
         Ui.Settle();

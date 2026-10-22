@@ -32,7 +32,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
     public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
-    public void A_debugged_avalonia_app_shows_its_controls_and_where_each_value_and_style_comes_from()
+    public void A_debugged_avalonia_app_shows_its_controls_where_each_value_and_style_comes_from_and_the_control_clicked_in_it()
     {
         MainWindow window = Debugged();
         LiveTreeView tree = window.LiveTree;
@@ -97,6 +97,18 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => tree.BannerText is null, "the tree to be live again once the app runs");
 
+        // Select Element chooses the control clicked in the app.
+        Box saved = Choose(window, "Save").Layout.InWindow!;
+        Choose(window, "Greeting");
+        Ui.Click(tree.SelectElement);
+        Assert.True(tree.SelectElement.IsChecked, "Select Element did not stay on");
+        // Inside Save's border, short of its text: the button's own presenter, a part of its template.
+        Ui.TypeToDebugged(window, $"click {saved.X + 3},{saved.Y + 3}");
+        Ui.WaitFor(() => tree.SelectElement.IsChecked == false && tree.Details?.TemplatedParent == "Button#Save",
+            "the control clicked in the app to be chosen in the tree", TimeSpan.FromSeconds(30));
+        Assert.Equal("ContentPresenter", tree.Details!.Type);
+        Assert.Contains(tree.Details.Styles, s => s.Kind == StyleKinds.TemplatedParentTheme && s.Selector.StartsWith("Button:pointerover", StringComparison.Ordinal));
+
         Stop(window);
         Assert.Empty(tree.Rows);
         window.Close();
@@ -147,31 +159,10 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void Select_element_chooses_the_control_clicked_in_the_app()
-    {
-        MainWindow window = Debugged();
-        LiveTreeView tree = window.LiveTree;
-        Box save = Choose(window, "Save").Layout.InWindow!;
-        Choose(window, "Greeting");
-
-        Ui.Click(tree.SelectElement);
-        Assert.True(tree.SelectElement.IsChecked, "Select Element did not stay on");
-        // Inside Save's border, short of its text: the button's own presenter, a part of its template.
-        Ui.TypeToDebugged(window, $"click {save.X + 3},{save.Y + 3}");
-        Ui.WaitFor(() => tree.SelectElement.IsChecked == false && tree.Details?.TemplatedParent == "Button#Save",
-            "the control clicked in the app to be chosen in the tree", TimeSpan.FromSeconds(30));
-        Assert.Equal("ContentPresenter", tree.Details!.Type);
-        Assert.Contains(tree.Details.Styles, s => s.Kind == StyleKinds.TemplatedParentTheme && s.Selector.StartsWith("Button:pointerover", StringComparison.Ordinal));
-
-        Stop(window);
-        window.Close();
-    }
-
     /// <summary>The folder opened in a window and its app launched by Debug, its tree shown.</summary>
     private MainWindow Debugged()
     {
-        MainWindow window = new() { Width = 1400, Height = 900 };
+        MainWindow window = new() { Width = 1400, Height = 900, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();

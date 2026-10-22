@@ -138,7 +138,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
     {
         Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
         (string folder, string project) = Shop("reload");
-        MainWindow window = ContainerRunsTests.Open(folder);
+        MainWindow window = ContainerRunsTests.Open(folder, languageServer: true);
         Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the projects ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
         string message = Path.Combine(folder, "Web", "Message.cs");
         try
