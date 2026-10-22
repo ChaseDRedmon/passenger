@@ -9,9 +9,10 @@ using Passenger.App.Workspace;
 namespace Passenger.App.Run;
 
 /// <summary>Rider's Run/Debug Configurations dialog (Run, Edit Configurations): the configurations down the left under
-/// Add, Copy and Remove, the chosen one's fields on the right, OK, Cancel and Apply below. The generated ones are marked so
-/// and change only by copying them, as Rider shows launch profiles; the folder's own change in place. It edits a copy of
-/// the folder's own, which Apply and OK hand back with the one chosen.</summary>
+/// Add, Copy and Remove, the chosen one's fields on the right, OK, Cancel and Apply below. A generated one changes in place
+/// but for what makes it the one it is (its name, project and launch profile): each field changed from what its source gives
+/// is marked, and kept with the folder over that source, or written to its launch profile; Reset puts it back as its source
+/// makes it. It edits copies, which Apply and OK hand back with the one chosen.</summary>
 public sealed class RunConfigurationsDialog : Window
 {
     private const double LabelWidth = 170;
@@ -19,7 +20,7 @@ public sealed class RunConfigurationsDialog : Window
     private readonly IReadOnlyList<Entry> generated;
     private readonly List<Entry> mine;
     private readonly IReadOnlyList<ProjectModel> projects;
-    private readonly Action<IReadOnlyList<RunConfiguration>, string?> apply;
+    private readonly Action<IReadOnlyList<RunConfiguration>, IReadOnlyList<RunConfiguration>, string?> apply;
     private readonly ListBox list = new() { Classes = { "tree" } };
     private readonly StackPanel variables = new() { Spacing = 4 };
     private readonly TextBlock note = new() { TextWrapping = TextWrapping.Wrap, Classes = { "muted" } };
@@ -27,15 +28,28 @@ public sealed class RunConfigurationsDialog : Window
     private readonly Control form;
     private readonly TextBlock nothing = new() { Text = "No configuration is chosen", Classes = { "muted" }, Margin = new Thickness(0, 8) };
 
+    /// <summary>Each row's label (or a box's own words) with the fields it shows, by the store's names, marked when the
+    /// generated configuration chosen has one changed from its source.</summary>
+    private readonly List<(TextBlock Label, string Title, string[] Fields)> marks = [];
+
+    /// <summary>What the chosen generated configuration has changed from its source, with Write to Launch Profile and Reset.</summary>
+    private readonly StackPanel changes = new() { Spacing = 6 };
+    private readonly TextBlock changesText = new() { TextWrapping = TextWrapping.Wrap };
+
+    /// <summary>What the last Write to Launch Profile did, said in place of the changes until the configuration changes
+    /// again or another is chosen.</summary>
+    private string? written;
+
     /// <summary>Set while the fields show a configuration, so what they hold then is no edit of it, and while the list is
     /// made again under the fields, which show its chosen row already.</summary>
     private bool showing;
 
     public RunConfigurationsDialog(IReadOnlyList<RunConfiguration> generated, IReadOnlyList<RunConfiguration> own,
-        IReadOnlyList<ProjectModel> projects, string? chosen, Action<IReadOnlyList<RunConfiguration>, string?> apply, Func<string, bool>? isRunning = null)
+        IReadOnlyList<ProjectModel> projects, string? chosen, Action<IReadOnlyList<RunConfiguration>, IReadOnlyList<RunConfiguration>, string?> apply,
+        Func<string, bool>? isRunning = null)
     {
         IsRunning = isRunning ?? (_ => false);
-        this.generated = [.. generated.Select(c => new Entry(c))];
+        this.generated = [.. generated.Select(c => new Entry(c with { Source = null }, c.Source ?? c with { Source = null }))];
         mine = [.. own.Select(c => new Entry(c))];
         this.projects = projects;
         this.apply = apply;
@@ -53,11 +67,12 @@ public sealed class RunConfigurationsDialog : Window
         CopyButton.Click += (_, _) => Copy();
         RemoveButton.Click += (_, _) => Remove();
         list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration, row?.Configuration.WhyNotHere(projects),
-            row is not null && IsRunning(row.Configuration.Name)));
+            row is not null && IsRunning(row.Configuration.Name), row?.IsChanged == true));
         list.SelectionChanged += (_, _) =>
         {
             if (!showing)
             {
+                written = null;
                 ShowChosen();
             }
         };
@@ -68,10 +83,14 @@ public sealed class RunConfigurationsDialog : Window
         ProfileBox = new ComboBox { Classes = { "form" } };
         ProjectBox.ItemTemplate = new FuncDataTemplate<object>((item, _) => new TextBlock { Text = item is ProjectModel p ? p.Name : item?.ToString() });
         ProgramBox = Field("The project's own program");
+        // Named, as the boxes a screenshot's --click-name reaches.
         ArgumentsBox = Field();
+        ArgumentsBox.Name = "ArgumentsBox";
         WorkingDirectoryBox = Field("The project's output folder");
         BuildBox = new CheckBox { Content = "Build the project first" };
-        ConsoleBox = new CheckBox { Content = "Use external console" };
+        // Its words a TextBlock of their own, which a change from the source marks as a row's label is marked.
+        TextBlock consoleWords = new() { Text = "Use external console" };
+        ConsoleBox = new CheckBox { Content = consoleWords, Name = "ConsoleBox" };
         ToolTip.SetTip(ConsoleBox, "Runs and debugs the program in a tab of the Terminal window, a real terminal it reads keys from and draws on, rather than in the Run and Debug windows' consoles");
         BrowserBox = new CheckBox { Content = "After launch" };
         ToolTip.SetTip(BrowserBox, "Opens the URL in the browser once the program listens there");
@@ -107,7 +126,8 @@ public sealed class RunConfigurationsDialog : Window
         LaunchServiceBox = Field("The first .NET service");
         ModeBox = new ComboBox { Classes = { "form" }, ItemsSource = (string[])[FastMode, ImagesMode] };
         ToolTip.SetTip(ModeBox, "Fast runs each .NET service in its image's runtime stage with Passenger's build mounted in, so a code change needs no image rebuild; the other builds every image as Compose says");
-        KeepBackingBox = new CheckBox { Content = "Keep backing services running after Stop" };
+        TextBlock keepWords = new() { Text = "Keep backing services running after Stop" };
+        KeepBackingBox = new CheckBox { Content = keepWords };
         DockerfileBox = Field("The project's own, beside it");
         ContextBox = Field("The project's DockerfileContext, else the solution's folder");
         BuildArgumentsBox = Field("NAME=value");
@@ -145,35 +165,43 @@ public sealed class RunConfigurationsDialog : Window
         leftPane.Bind(Border.BorderBrushProperty, leftPane.GetResourceObservable("Passenger.Divider"));
 
         // Each kind's page is the rows it takes: a project's as before, a Compose application's files and services, a
-        // Dockerfile's build, an SDK container's run; the name, environment and browser every kind's.
-        Control projectRow = Row("Project", ProjectBox);
-        Control environmentRow = Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true);
+        // Dockerfile's build, an SDK container's run; the name, environment and browser every kind's. Each row names the
+        // fields it shows, which a change from a generated configuration's source marks.
         pages =
         [
-            (projectRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row("Target framework", FrameworkBox), [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Project", ProjectBox), [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Target framework", FrameworkBox, fields: ["framework"]), [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
             (Row("Launch profile", ProfileBox), [RunKind.Project]),
-            (Row("Exe path", ProgramBox), [RunKind.Project]),
-            (Row("Program arguments", ArgumentsBox), [RunKind.Project]),
-            (Row("Working directory", WorkingDirectoryBox), [RunKind.Project]),
-            (Row("Compose files", ComposeFilesBox), [RunKind.Compose]),
-            (Row("Env files", EnvFilesBox), [RunKind.Compose]),
-            (Row("Profiles", ProfilesBox), [RunKind.Compose]),
-            (Row("Services", ServicesTable, top: true), [RunKind.Compose]),
-            (Row("Dockerfile", DockerfileBox), [RunKind.Dockerfile]),
-            (Row("Context", ContextBox), [RunKind.Dockerfile]),
-            (Row("Build arguments", BuildArgumentsBox), [RunKind.Dockerfile]),
-            (Row("Run arguments", RunArgumentsBox), [RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row("Mode", ModeBox), [RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row(string.Empty, KeepBackingBox), [RunKind.Compose]),
-            (environmentRow, [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row(string.Empty, ConsoleBox), [RunKind.Project]),
-            (Row("Open browser", BrowserBox), [RunKind.Project, RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row("URL", BrowserUrlBox), [RunKind.Project, RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
-            (Row("Launched service", LaunchServiceBox), [RunKind.Compose]),
-            (Row("Before launch", BuildBox), [RunKind.Project]),
+            (Row("Exe path", ProgramBox, fields: ["program"]), [RunKind.Project]),
+            (Row("Program arguments", ArgumentsBox, fields: ["arguments"]), [RunKind.Project]),
+            (Row("Working directory", WorkingDirectoryBox, fields: ["workingDirectory"]), [RunKind.Project]),
+            (Row("Compose files", ComposeFilesBox, fields: ["composeFiles"]), [RunKind.Compose]),
+            (Row("Env files", EnvFilesBox, fields: ["envFiles"]), [RunKind.Compose]),
+            (Row("Profiles", ProfilesBox, fields: ["profiles"]), [RunKind.Compose]),
+            (Row("Services", ServicesTable, top: true, fields: ["services", "serviceActions", "serviceProjects"]), [RunKind.Compose]),
+            (Row("Dockerfile", DockerfileBox, fields: ["dockerfile"]), [RunKind.Dockerfile]),
+            (Row("Context", ContextBox, fields: ["context"]), [RunKind.Dockerfile]),
+            (Row("Build arguments", BuildArgumentsBox, fields: ["buildArguments"]), [RunKind.Dockerfile]),
+            (Row("Run arguments", RunArgumentsBox, fields: ["runArguments"]), [RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Mode", ModeBox, fields: ["mode"]), [RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row(string.Empty, KeepBackingBox, marked: keepWords, fields: ["keepBackingServices"]), [RunKind.Compose]),
+            (Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true, fields: ["environment"]),
+                [RunKind.Project, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row(string.Empty, ConsoleBox, marked: consoleWords, fields: ["console"]), [RunKind.Project]),
+            (Row("Open browser", BrowserBox, fields: ["launchBrowser"]), [RunKind.Project, RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("URL", BrowserUrlBox, fields: ["browserUrl"]), [RunKind.Project, RunKind.Compose, RunKind.Dockerfile, RunKind.SdkContainer]),
+            (Row("Launched service", LaunchServiceBox, fields: ["launchService"]), [RunKind.Compose]),
+            (Row("Before launch", BuildBox, fields: ["buildBeforeLaunch"]), [RunKind.Project]),
         ];
-        StackPanel rows = new() { Spacing = 10, Children = { Row("Name", NameBox), Row("Kind", KindText), note } };
+
+        WriteButton = new Button { Content = "Write to Launch Profile", Name = "WriteButton" };
+        ToolTip.SetShowOnDisabled(WriteButton, true);
+        ResetButton = new Button { Content = "Reset to Launch Profile", Name = "ResetButton" };
+        WriteButton.Click += (_, _) => WriteToLaunchProfile();
+        ResetButton.Click += (_, _) => Reset();
+        changes.Children.Add(changesText);
+        changes.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { WriteButton, ResetButton } });
+        StackPanel rows = new() { Spacing = 10, Children = { Row("Name", NameBox), Row("Kind", KindText), note, changes } };
         foreach ((Control row, _) in pages)
         {
             rows.Children.Add(row);
@@ -207,6 +235,23 @@ public sealed class RunConfigurationsDialog : Window
     public Button RemoveButton { get; }
 
     public Button OkButton { get; }
+
+    /// <summary>Writes a generated configuration's changes into the launch profile it was made from.</summary>
+    public Button WriteButton { get; }
+
+    /// <summary>Puts a generated configuration back as its source makes it.</summary>
+    public Button ResetButton { get; }
+
+    /// <summary>Writes the changes of the generated configuration of that name, as applied, into its launch profile (the
+    /// window's, as one command Undo takes back): the configuration as it then stands, or why not.</summary>
+    public Func<string, (RunConfiguration? Configuration, string? Problem)>? WriteToProfile { get; init; }
+
+    /// <summary>What the chosen generated configuration has changed from its source (or what Write to Launch Profile did),
+    /// or empty.</summary>
+    public string Changes => changes.IsVisible ? changesText.Text ?? string.Empty : string.Empty;
+
+    /// <summary>The rows (their titles) marked as changed from the chosen generated configuration's source.</summary>
+    public IReadOnlyList<string> Marked => [.. marks.Where(m => m.Label.Classes.Contains("changed") && m.Label.IsEffectivelyVisible).Select(m => m.Title)];
 
     public Button AddVariableButton { get; }
 
@@ -268,11 +313,10 @@ public sealed class RunConfigurationsDialog : Window
             return;
         }
         string key = ServicesKey(shown);
-        bool editable = !shown.Generated;
         if (readServices.TryGetValue(key, out IReadOnlyList<(Containers.ComposeService, string?, bool)>? known))
         {
             shownServices = known;
-            ServicesTable.Set(known, projects, shown, editable);
+            ServicesTable.Set(known, projects, shown, editable: true);
             return;
         }
         if (ReadServices is not { } read)
@@ -310,7 +354,7 @@ public sealed class RunConfigurationsDialog : Window
             if (Chosen is { Kind: RunKind.Compose } still && ServicesKey(still) == key)
             {
                 shownServices = services;
-                ServicesTable.Set(services, projects, still, !still.Generated);
+                ServicesTable.Set(services, projects, still, editable: true);
             }
         }
     }
@@ -333,6 +377,9 @@ public sealed class RunConfigurationsDialog : Window
     public TextBox BuildArgumentsBox { get; }
 
     public TextBox RunArgumentsBox { get; }
+
+    private const string WriteTip = "Applies the changes here, then writes those its launch profile has a place for into the project's Properties/launchSettings.json, "
+        + "as one step Undo takes back; the rest stay kept with the folder";
 
     private const string FastMode = "Fast, from Passenger's build";
 
@@ -414,8 +461,58 @@ public sealed class RunConfigurationsDialog : Window
             return false;
         }
         problem.Text = string.Empty;
-        apply([.. mine.Select(e => e.Configuration)], Chosen?.Name);
+        apply([.. mine.Select(e => e.Configuration)], [.. generated.Select(e => e.Configuration with { Source = e.Source })], Chosen?.Name);
         return true;
+    }
+
+    /// <summary>Write to Launch Profile: the dialog applied as Apply does, then the chosen generated configuration's changes
+    /// its launch profile has a place for written there; the dialog says what was written and what stays kept here.</summary>
+    private void WriteToLaunchProfile()
+    {
+        if (list.SelectedItem is not Entry { Source: { } before } row || WriteToProfile is not { } write || !Apply())
+        {
+            return;
+        }
+        IReadOnlyList<string> changed = ConfigurationEdit.Changed(before, row.Configuration);
+        (RunConfiguration? now, string? failed) = write(row.Configuration.Name);
+        if (now is null)
+        {
+            problem.Text = failed ?? $"{row.Configuration.Name} could not be written to its launch profile";
+            return;
+        }
+        row.Source = now.Source ?? now with { Source = null };
+        row.Configuration = now with { Source = null };
+        IReadOnlyList<string> left = ConfigurationEdit.Changed(row.Source, row.Configuration);
+        string done = Titles(changed.Except(left));
+        written = (done.Length > 0 ? $"Written to its launch profile in launchSettings.json: {done}." : "Its launch profile in launchSettings.json was written.")
+            + (left.Count > 0 ? $" Kept here, as launchSettings.json has no place for it: {Titles(left)}." : string.Empty);
+        showing = true;
+        try
+        {
+            List();
+        }
+        finally
+        {
+            showing = false;
+        }
+        ShowChosen();
+    }
+
+    /// <summary>Reset to Launch Profile (or its other source): every field of the chosen generated configuration as its
+    /// source gives it, kept so once applied.</summary>
+    private void Reset()
+    {
+        if (list.SelectedItem is Entry { Source: { } source })
+        {
+            Edit(_ => source.Copied(), reshow: true);
+        }
+    }
+
+    /// <summary>The rows' titles that show the fields named, in the form's order.</summary>
+    private string Titles(IEnumerable<string> fields)
+    {
+        HashSet<string> named = [.. fields];
+        return string.Join(", ", marks.Where(m => m.Fields.Any(named.Contains)).Select(m => m.Title).Distinct());
     }
 
     /// <summary>The first of the folder's own that cannot be kept, and why: Rider's own checks, a name and a project.</summary>
@@ -502,13 +599,14 @@ public sealed class RunConfigurationsDialog : Window
             Generated = false,
             Unsupported = null,
             Origin = null,
+            Source = null,
         });
         mine.Insert(mine.IndexOf(source) is >= 0 and var at ? at + 1 : mine.Count, copy);
         List();
         list.SelectedItem = copy;
     }
 
-    /// <summary>Removes the chosen one of the folder's own; a generated one stays, its project's to change.</summary>
+    /// <summary>Removes the chosen one of the folder's own; a generated one stays while its source makes it.</summary>
     private void Remove()
     {
         if (list.SelectedItem is not Entry removed || mine.IndexOf(removed) is not (>= 0 and var at))
@@ -528,10 +626,10 @@ public sealed class RunConfigurationsDialog : Window
         list.SelectedItem = keep;
     }
 
-    /// <summary>Changes the chosen one of the folder's own as a field says, unless the fields are only showing it.</summary>
+    /// <summary>Changes the chosen configuration as a field says, unless the fields are only showing it.</summary>
     private void Edit(Func<RunConfiguration, RunConfiguration> change, bool reshow = false)
     {
-        if (showing || list.SelectedItem is not Entry row || !mine.Contains(row))
+        if (showing || list.SelectedItem is not Entry row)
         {
             return;
         }
@@ -541,10 +639,13 @@ public sealed class RunConfigurationsDialog : Window
             return;
         }
         bool renamed = after.Name != row.Configuration.Name;
+        bool wasChanged = row.IsChanged;
         row.Configuration = after;
-        if (renamed)
+        written = null;
+        if (renamed || row.IsChanged != wasChanged)
         {
-            // A rename shows in the list as it is typed; the fields hold what they show already.
+            // A rename shows in the list as it is typed, as does a generated one's being changed from its source or back;
+            // the fields hold what they show already.
             showing = true;
             try
             {
@@ -558,6 +659,10 @@ public sealed class RunConfigurationsDialog : Window
         if (reshow)
         {
             ShowChosen();
+        }
+        else
+        {
+            ShowChanges(row);
         }
     }
 
@@ -580,7 +685,7 @@ public sealed class RunConfigurationsDialog : Window
         };
     }
 
-    /// <summary>Shows the chosen configuration in the fields, read-only when it is generated.</summary>
+    /// <summary>Shows the chosen configuration in the fields, a generated one's name, project and launch profile read-only.</summary>
     private void ShowChosen()
     {
         RunConfiguration? shown = Chosen;
@@ -634,29 +739,77 @@ public sealed class RunConfigurationsDialog : Window
             }
             note.Text = NoteOn(shown, project, shown.WhyNotHere(projects));
             note.IsVisible = note.Text.Length > 0;
-            bool editable = !shown.Generated;
-            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BrowserBox, BrowserUrlBox, BuildBox, AddVariableButton, variables,
-                ComposeFilesBox, EnvFilesBox, ProfilesBox, LaunchServiceBox, ModeBox, KeepBackingBox, DockerfileBox, ContextBox, BuildArgumentsBox, RunArgumentsBox])
+            // What makes a generated one the one it is, its link to its source, changes only in a copy.
+            foreach (Control identity in (Control[])[NameBox, ProjectBox, ProfileBox])
             {
-                field.IsEnabled = editable;
+                identity.IsEnabled = !shown.Generated;
+                ToolTip.SetShowOnDisabled(identity, true);
+                ToolTip.SetTip(identity, shown.Generated ? $"Its link to its {SourceName(shown)}, which a copy can change" : null);
             }
         }
         finally
         {
             showing = false;
         }
+        ShowChanges(list.SelectedItem as Entry);
         ShowServices();
     }
 
-    /// <summary>What the fields cannot say: where a generated one comes from, and why one cannot run here.</summary>
+    /// <summary>What the fields cannot say: where a generated one comes from and how a change to it is kept, and why one
+    /// cannot run here.</summary>
     private static string NoteOn(RunConfiguration shown, ProjectModel? project, string? whyNot)
     {
         string name = project?.Name ?? Path.GetFileNameWithoutExtension(shown.Project);
         string origin = !shown.Generated ? string.Empty
-            : shown.Origin is { } container ? $"{container}. Copy it to change it."
-            : shown.LaunchProfile.Length > 0 ? $"Generated from the launch profile {shown.LaunchProfile} in {name}'s Properties/launchSettings.json. Copy it to change it."
-            : $"Generated for the executable project {name}. Copy it to change it.";
+            : shown.Origin is { } container ? container
+            : shown.LaunchProfile.Length > 0 ? $"Generated from the launch profile {shown.LaunchProfile} in {name}'s Properties/launchSettings.json"
+            : $"Generated for the executable project {name}";
+        if (shown.Generated)
+        {
+            origin += $": a field changed here is kept with the folder over its {SourceName(shown)}, the rest follow it.";
+        }
         return whyNot is { } why ? $"{origin} It cannot run here: {why}.".Trim() : origin;
+    }
+
+    /// <summary>What a generated configuration is made from, in words: its launch profile, a Docker Compose project, a
+    /// compose file, a Dockerfile, or its project.</summary>
+    private static string SourceName(RunConfiguration generated) => generated switch
+    {
+        { LaunchProfile.Length: > 0 } => "launch profile",
+        { Kind: RunKind.Compose } when Containers.ContainerConfigurations.IsComposeProject(generated.Project) => "Docker Compose project",
+        { Kind: RunKind.Compose } => "compose file",
+        { Kind: RunKind.Dockerfile } => "Dockerfile",
+        _ => "project",
+    };
+
+    /// <summary>Marks the rows whose fields a generated configuration has changed from its source and says which, with
+    /// Reset and (made from a project's launch profile) Write to Launch Profile; nothing for one unchanged or the person's own.</summary>
+    private void ShowChanges(Entry? row)
+    {
+        HashSet<string> changed = row?.Source is { } source ? [.. ConfigurationEdit.Changed(source, row.Configuration)] : [];
+        string from = row?.Source is { } made ? SourceName(made) : string.Empty;
+        foreach ((TextBlock label, _, string[] fields) in marks)
+        {
+            bool marked = fields.Any(changed.Contains);
+            label.Classes.Set("changed", marked);
+            ToolTip.SetTip(label, marked ? $"Changed here from what its {from} gives" : null);
+        }
+        changes.IsVisible = changed.Count > 0 || written is not null;
+        changesText.Text = written ?? (changed.Count > 0 ? $"Changed here from its {from}: {Titles(changed)}." : string.Empty);
+        ResetButton.Content = $"Reset to {Capitalized(from)}";
+        ResetButton.IsVisible = changed.Count > 0;
+        // A Docker Compose project's own profiles are left as its project file and compose files are: they hold no project's.
+        WriteButton.IsVisible = changed.Count > 0 && WriteToProfile is not null && row!.Configuration is { LaunchProfile.Length: > 0, Kind: not RunKind.Compose };
+        if (WriteButton.IsVisible)
+        {
+            bool writable = Project(row!.Configuration) is { } project
+                && LaunchProfile.Read(project).FirstOrDefault(p => p.Name == row.Configuration.LaunchProfile) is { } profile
+                && LaunchSettingsEdits.For(project, profile, row.Source!, row.Configuration).Count > 0;
+            WriteButton.IsEnabled = writable;
+            ToolTip.SetTip(WriteButton, writable ? WriteTip : "launchSettings.json has no place for these changes, which stay kept with the folder");
+        }
+
+        static string Capitalized(string words) => string.Join(' ', words.Split(' ').Select(w => w.Length > 0 && char.IsLower(w[0]) ? char.ToUpperInvariant(w[0]) + w[1..] : w));
     }
 
     private int IndexOf(ProjectModel project)
@@ -730,9 +883,9 @@ public sealed class RunConfigurationsDialog : Window
     private Func<string, bool> IsRunning { get; }
 
     /// <summary>A list row: the configuration's name ("(running)" after it while a run of it is up), greyed when it cannot run
-    /// here (why in its tip), and for a generated one where it came from, muted beside it; where came from gives way first,
-    /// then the name, each to an ellipsis.</summary>
-    private static Control RowView(RunConfiguration? row, string? whyNot, bool running)
+    /// here (why in its tip), marked as a changed field's row is when it is a generated one changed from its source, and for
+    /// a generated one where it came from, muted beside it; where came from gives way first, then the name, each to an ellipsis.</summary>
+    private static Control RowView(RunConfiguration? row, string? whyNot, bool running, bool changed)
     {
         ShrinkingRow line = new();
         TextBlock name = new() { Text = running ? $"{row?.Name} (running)" : row?.Name, VerticalAlignment = VerticalAlignment.Center };
@@ -740,6 +893,11 @@ public sealed class RunConfigurationsDialog : Window
         {
             name.Classes.Add("muted");
             ToolTip.SetTip(line, $"{row?.Name} cannot run here: {whyNot}");
+        }
+        else if (changed)
+        {
+            name.Classes.Add("changed");
+            ToolTip.SetTip(line, $"{row?.Name} is changed here from what its {SourceName(row!)} gives");
         }
         line.Children.Add(name);
         if (row is { Generated: true })
@@ -757,13 +915,21 @@ public sealed class RunConfigurationsDialog : Window
         return line;
     }
 
-    /// <summary>A configuration as the list holds it: the same row while its values change.</summary>
-    private sealed class Entry(RunConfiguration configuration)
+    /// <summary>A configuration as the list holds it: the same row while its values change; a generated one's with the
+    /// configuration its source makes, which its fields are told apart from.</summary>
+    private sealed class Entry(RunConfiguration configuration, RunConfiguration? source = null)
     {
         public RunConfiguration Configuration { get; set; } = configuration;
+
+        public RunConfiguration? Source { get; set; } = source;
+
+        /// <summary>Whether it is a generated one changed from its source.</summary>
+        public bool IsChanged => Source is not null && ConfigurationEdit.Between(Source, Configuration) is not null;
     }
 
-    private static Control Row(string label, Control editor, bool top = false)
+    /// <summary>A form's row: its label and the field; given the fields it shows, it is marked (its label, or for a box with
+    /// no label <paramref name="marked"/>, its own words) when a generated configuration has one changed.</summary>
+    private Control Row(string label, Control editor, bool top = false, TextBlock? marked = null, string[]? fields = null)
     {
         TextBlock name = new() { Text = label, Width = LabelWidth, VerticalAlignment = top ? VerticalAlignment.Top : VerticalAlignment.Center, Margin = new Thickness(0, top ? 4 : 0, 0, 0) };
         DockPanel row = new();
@@ -771,6 +937,11 @@ public sealed class RunConfigurationsDialog : Window
         row.Children.Add(name);
         row.Children.Add(editor);
         editor.HorizontalAlignment = editor is TextBox or StackPanel or ComposeServicesTable ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        if (fields is not null)
+        {
+            TextBlock shown = marked ?? name;
+            marks.Add((shown, shown.Text ?? label, fields));
+        }
         return row;
     }
 

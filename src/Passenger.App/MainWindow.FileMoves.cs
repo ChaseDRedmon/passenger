@@ -334,7 +334,7 @@ public partial class MainWindow
         IEnumerable<string> files = command.Texts.Select(t => t.Document?.Path ?? (redo ? t.Path : command.Moved(t.Path)))
             .Concat(command.Moves.Select(m => redo ? m.From : m.To))
             .Concat(command.Created.Select(c => c.Path));
-        if (!await Confirm(verb, $"{verb} {command.Name}? It changes {Together([.. files.Select(Path.GetFileName).OfType<string>().Distinct()])}.", verb))
+        if (!await Confirm(verb, $"{verb} {command.Name}? It changes {Together([.. files.Select(Path.GetFileName).OfType<string>().Distinct(), .. command.Parts.Select(p => p.Name)])}.", verb))
         {
             return;
         }

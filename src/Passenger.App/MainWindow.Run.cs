@@ -1,6 +1,8 @@
+using System.Text.Json.Nodes;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Passenger.App.Containers;
+using Passenger.App.Editors;
 using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Editor;
@@ -42,10 +44,11 @@ public partial class MainWindow
     {
         RunConfigurations configurations = session.Configurations;
         RunConfigurationsDialog dialog = new([.. configurations.All.Where(c => c.Generated)], configurations.Own, [.. Projects.Where(p => p.Exists && p.IsRunnable)],
-            configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects), buildRun.IsRunningConfiguration)
+            configurations.Chosen?.Name, (mine, generated, chosen) => configurations.Set(mine, generated, chosen, Projects), buildRun.IsRunningConfiguration)
         {
             Folder = Folder,
             ReadServices = ReadServices(Projects, Engine),
+            WriteToProfile = WriteToLaunchProfile,
         };
         RunConfigurationsDialog = dialog;
         dialog.Closed += (_, _) =>
@@ -57,6 +60,61 @@ public partial class MainWindow
         };
         _ = dialog.ShowDialog(this);
         return dialog;
+    }
+
+    /// <summary>Edit Configurations' Write to Launch Profile: what of a generated configuration's changes its launch profile
+    /// has a place for written into the project's launchSettings.json (saved first if open, taken in after), the rest still
+    /// kept with the folder; one command Undo takes back whole, the file and the changes kept here as they were. The
+    /// configuration as it then stands, or why not.</summary>
+    public (RunConfiguration? Configuration, string? Problem) WriteToLaunchProfile(string name)
+    {
+        RunConfigurations configurations = session.Configurations;
+        if (configurations.All.FirstOrDefault(c => c.Generated && string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is not { Source: { } source } edited)
+        {
+            return (null, $"{name} has no change to write to its launch profile");
+        }
+        if (Projects.FirstOrDefault(p => PathNames.Same(p.Path, edited.Project)) is not { } project
+            || LaunchProfile.Read(project).FirstOrDefault(p => p.Name == edited.LaunchProfile) is not { } profile)
+        {
+            return (null, $"The launch profile {edited.LaunchProfile} is no longer in its project's launchSettings.json");
+        }
+        IReadOnlyList<LaunchSettingsEdits.Change> changes = LaunchSettingsEdits.For(project, profile, source, edited);
+        if (changes.Count == 0)
+        {
+            return (null, $"launchSettings.json has no place for {name}'s changes: they stay kept with the folder");
+        }
+        string path = LaunchProfile.SettingsPath(project);
+        if (SaveBeforeWriting([path]) is { } unsaved)
+        {
+            return (null, $"launchSettings.json could not be changed: {unsaved}");
+        }
+        JsonObject? before = configurations.EditOf(name);
+        using CommandHistory.Recording made = Editors.Commands.Record($"Write {name} to Its Launch Profile");
+        made.Watch(path);
+        string? problem;
+        try
+        {
+            problem = LaunchSettingsEdits.Write(path, profile.Name, changes);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            problem = error.Message;
+        }
+        finally
+        {
+            // Open, it takes the text now, inside the command, so the command's undo takes it back too.
+            FollowWritten([path]);
+        }
+        if (problem is not null)
+        {
+            return (null, $"launchSettings.json could not be changed: {problem}");
+        }
+        RunConfiguration? now = configurations.Rebase(name, edited);
+        JsonObject? after = configurations.EditOf(name);
+        made.Also(new CommandHistory.Part($"the run configuration {name}",
+            redo => JsonNode.DeepEquals(configurations.EditOf(name), redo ? before : after) ? null : $"{name} has been changed since",
+            redo => configurations.SetEdit(name, redo ? after : before)));
+        return (now, null);
     }
 
     /// <summary>How Edit Configurations reads a Compose configuration's services: Compose's model through the window's engine,

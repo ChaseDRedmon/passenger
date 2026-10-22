@@ -335,8 +335,9 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
-    <!-- An action whose shortcuts the person changed, on Settings' Keymap page, in the colour Rider's keymap gives one. -->
-    <Style Selector="TextBlock.shortcutsChanged">
+    <!-- What the person changed from what it comes as, in the colour Rider's keymap gives one: an action's shortcuts on
+         Settings' Keymap page, a generated run configuration (and each field's label) changed from its launch profile. -->
+    <Style Selector="TextBlock.changed">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Modified}" />
     </Style>
     <Style Selector="PathIcon">

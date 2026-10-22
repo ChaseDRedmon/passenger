@@ -65,7 +65,7 @@ public sealed partial class SettingsDialog
         [.. keymapRows[action].Keys.Children.OfType<Border>().Select(b => ((TextBlock)b.Child!).Text ?? string.Empty)];
 
     /// <summary>Whether an action's row shows it in the colour of one whose shortcuts the person changed.</summary>
-    public bool ShowsChanged(string action) => keymapRows[action].Title.Classes.Contains("shortcutsChanged");
+    public bool ShowsChanged(string action) => keymapRows[action].Title.Classes.Contains("changed");
 
     /// <summary>Gives an action exactly these shortcuts (keymap notation, "meta shift K"); none unbinds it. Each other
     /// action's shortcut one clashes with (<see cref="Keymap.Conflicts"/>) is taken from it, as Rider's Remove does, and
@@ -341,7 +341,7 @@ public sealed partial class SettingsDialog
                 int option = options.FindIndex(o => o.Page == KeymapPage && o.Action == id);
                 options[option] = options[option] with { Words = $"{KeymapPage} {row.Action.Title} {RowWords(row.Action, shown)}" };
             }
-            row.Title.Classes.Set("shortcutsChanged", IsChanged(id, current));
+            row.Title.Classes.Set("changed", IsChanged(id, current));
         }
         if (shortcutFilter is not null)
         {

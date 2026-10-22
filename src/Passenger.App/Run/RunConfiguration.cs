@@ -139,9 +139,15 @@ public sealed record RunConfiguration
     [JsonIgnore]
     public bool IsContainer => Kind != RunKind.Project;
 
-    /// <summary>Made from the folder's projects rather than by the person, and so changed only by copying it.</summary>
+    /// <summary>Made from the folder's projects and container files rather than by the person: changed in place, its
+    /// changes kept with the folder over what its source makes (<see cref="Source"/>), or copied to be the person's own.</summary>
     [JsonIgnore]
     public bool Generated { get; init; }
+
+    /// <summary>For a generated one the person changed in place, the configuration its source makes now, which every field
+    /// they left alone follows (<see cref="ConfigurationEdit"/>); null for one unchanged and for the person's own.</summary>
+    [JsonIgnore]
+    public RunConfiguration? Source { get; init; }
 
     /// <summary>Where a generated container configuration came from, in words (a .dcproj, a compose file, a Dockerfile).</summary>
     [JsonIgnore]
@@ -222,6 +228,36 @@ public sealed record RunConfiguration
         return $"{wanted} ({n})";
     }
 
+    /// <summary>Its values brought into range, as read from a file this build did not write: a missing value its default,
+    /// a kind, console, mode or service action this build does not know the default, empty names and paths left out.</summary>
+    public RunConfiguration Clamped() => this with
+    {
+        Kind = Enum.IsDefined(Kind) ? Kind : RunKind.Project,
+        Project = Project ?? string.Empty,
+        Framework = Framework ?? string.Empty,
+        LaunchProfile = LaunchProfile ?? string.Empty,
+        Program = Program ?? string.Empty,
+        Arguments = Arguments ?? string.Empty,
+        Environment = (Environment ?? []).Where(v => !string.IsNullOrEmpty(v.Key)).ToDictionary(v => v.Key, v => v.Value ?? string.Empty),
+        WorkingDirectory = WorkingDirectory ?? string.Empty,
+        BrowserUrl = BrowserUrl ?? string.Empty,
+        Console = Enum.IsDefined(Console) ? Console : ConsoleKind.Internal,
+        ComposeFiles = [.. (ComposeFiles ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
+        EnvFiles = [.. (EnvFiles ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
+        Profiles = [.. (Profiles ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
+        Services = [.. (Services ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
+        ServiceActions = (ServiceActions ?? []).Where(a => !string.IsNullOrEmpty(a.Key))
+            .ToDictionary(a => a.Key, a => Enum.IsDefined(a.Value) ? a.Value : ServiceStart.Run),
+        ServiceProjects = (ServiceProjects ?? []).Where(a => !string.IsNullOrEmpty(a.Key) && !string.IsNullOrEmpty(a.Value))
+            .ToDictionary(a => a.Key, a => a.Value),
+        Mode = Enum.IsDefined(Mode) ? Mode : ContainerMode.Fast,
+        LaunchService = LaunchService ?? string.Empty,
+        Dockerfile = Dockerfile ?? string.Empty,
+        Context = Context ?? string.Empty,
+        BuildArguments = BuildArguments ?? string.Empty,
+        RunArguments = RunArguments ?? string.Empty,
+    };
+
     /// <summary>A deep enough copy to edit in Edit Configurations without touching the one it came from.</summary>
     public RunConfiguration Copied() => this with
     {
@@ -235,16 +271,22 @@ public sealed record RunConfiguration
     };
 }
 
-/// <summary>A folder's own run configurations and the one chosen, kept in its place in the store as Rider keeps them in
-/// its workspace.xml. The generated ones are not kept: they are made again from the projects each time.</summary>
+/// <summary>A folder's own run configurations, the person's changes to the generated ones and the one chosen, kept in its
+/// place in the store as Rider keeps them in its workspace.xml. The generated ones are not kept: they are made again from
+/// the projects each time, each one's changes (<see cref="Edits"/>) put over it.</summary>
 public sealed record RunConfigurationsState : IStateDocument<RunConfigurationsState>
 {
     public List<RunConfiguration> Configurations { get; init; } = [];
 
+    /// <summary>The person's changes to generated configurations, by the generated one's name (<see cref="ConfigurationEdit"/>),
+    /// its paths relative to the folder: kept while its source is gone too, for a launch profile a branch takes away and
+    /// brings back.</summary>
+    public Dictionary<string, JsonNode?> Edits { get; init; } = [];
+
     /// <summary>The name of the configuration chosen in the toolbar, the person's or a generated one.</summary>
     public string? Selected { get; init; }
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, Kinded];
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, Kinded, Edited];
 
     /// <summary>Version 2, when a configuration gained a kind: every one before it ran a project.</summary>
     private static void Kinded(JsonObject document)
@@ -258,9 +300,13 @@ public sealed record RunConfigurationsState : IStateDocument<RunConfigurationsSt
         }
     }
 
+    /// <summary>Version 3, when a generated configuration could be changed in place: none had been, and the person's own
+    /// (their copies among them) stay as they are.</summary>
+    private static void Edited(JsonObject document) => document["edits"] ??= new JsonObject();
+
     /// <summary>One without a name is left out, as is a second of the same name, a project, Dockerfile or SDK container
     /// configuration without its project and a Compose one without its files; a kind, console, mode or service action this
-    /// build does not know is the default.</summary>
+    /// build does not know is the default. A change to a generated one that is no object of fields is left out.</summary>
     public RunConfigurationsState Clamped()
     {
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
@@ -271,40 +317,21 @@ public sealed record RunConfigurationsState : IStateDocument<RunConfigurationsSt
             {
                 continue;
             }
-            RunKind kind = Enum.IsDefined(configuration.Kind) ? configuration.Kind : RunKind.Project;
-            List<string> files = [.. (configuration.ComposeFiles ?? []).Where(f => !string.IsNullOrWhiteSpace(f))];
-            if ((kind == RunKind.Compose ? files.Count == 0 : string.IsNullOrWhiteSpace(configuration.Project)) || !names.Add(configuration.Name))
+            RunConfiguration clamped = configuration.Clamped();
+            if ((clamped.Kind == RunKind.Compose ? clamped.ComposeFiles.Count == 0 : string.IsNullOrWhiteSpace(clamped.Project)) || !names.Add(clamped.Name))
             {
                 continue;
             }
-            kept.Add(configuration with
-            {
-                Kind = kind,
-                Project = configuration.Project ?? string.Empty,
-                Framework = configuration.Framework ?? string.Empty,
-                LaunchProfile = configuration.LaunchProfile ?? string.Empty,
-                Program = configuration.Program ?? string.Empty,
-                Arguments = configuration.Arguments ?? string.Empty,
-                Environment = (configuration.Environment ?? []).Where(v => !string.IsNullOrEmpty(v.Key)).ToDictionary(v => v.Key, v => v.Value ?? string.Empty),
-                WorkingDirectory = configuration.WorkingDirectory ?? string.Empty,
-                BrowserUrl = configuration.BrowserUrl ?? string.Empty,
-                Console = Enum.IsDefined(configuration.Console) ? configuration.Console : ConsoleKind.Internal,
-                ComposeFiles = files,
-                EnvFiles = [.. (configuration.EnvFiles ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
-                Profiles = [.. (configuration.Profiles ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
-                Services = [.. (configuration.Services ?? []).Where(f => !string.IsNullOrWhiteSpace(f))],
-                ServiceActions = (configuration.ServiceActions ?? []).Where(a => !string.IsNullOrEmpty(a.Key))
-                    .ToDictionary(a => a.Key, a => Enum.IsDefined(a.Value) ? a.Value : ServiceStart.Run),
-                ServiceProjects = (configuration.ServiceProjects ?? []).Where(a => !string.IsNullOrEmpty(a.Key) && !string.IsNullOrEmpty(a.Value))
-                    .ToDictionary(a => a.Key, a => a.Value),
-                Mode = Enum.IsDefined(configuration.Mode) ? configuration.Mode : ContainerMode.Fast,
-                LaunchService = configuration.LaunchService ?? string.Empty,
-                Dockerfile = configuration.Dockerfile ?? string.Empty,
-                Context = configuration.Context ?? string.Empty,
-                BuildArguments = configuration.BuildArguments ?? string.Empty,
-                RunArguments = configuration.RunArguments ?? string.Empty,
-            });
+            kept.Add(clamped);
         }
-        return this with { Configurations = kept };
+        Dictionary<string, JsonNode?> edits = new(StringComparer.OrdinalIgnoreCase);
+        foreach ((string name, JsonNode? edit) in Edits ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(name) && edit is JsonObject)
+            {
+                edits.TryAdd(name, edit);
+            }
+        }
+        return this with { Configurations = kept, Edits = edits };
     }
 }

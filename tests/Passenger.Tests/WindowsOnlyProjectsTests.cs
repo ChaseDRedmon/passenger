@@ -107,7 +107,8 @@ public sealed class WindowsOnlyProjectsTests : IClassFixture<WindowsOnlyProjects
             // Edit Configurations says why too.
             Assert.True(window.Perform(AppActions.EditConfigurations));
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
-            Assert.Equal("Generated for the executable project Gallery. Copy it to change it. It cannot run here: WPF runs only on Windows.", dialog.Note);
+            Assert.Equal("Generated for the executable project Gallery: a field changed here is kept with the folder over its project, the rest follow it. "
+                + "It cannot run here: WPF runs only on Windows.", dialog.Note);
             dialog.Close();
             Ui.Settle();
         }

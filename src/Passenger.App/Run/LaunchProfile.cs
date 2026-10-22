@@ -36,6 +36,12 @@ public sealed record LaunchProfile(
     /// <summary>The container's <c>docker run</c> words (<c>DockerfileRunArguments</c> or <c>containerRunArguments</c>).</summary>
     public string? RunArguments { get; init; }
 
+    /// <summary>Which of the two names the profile gives its <c>docker run</c> words under, or null when it gives none.</summary>
+    public string? RunArgumentsKey { get; init; }
+
+    /// <summary>The names a profile gives its container's <c>docker run</c> words under, Visual Studio's Docker one first.</summary>
+    public static readonly IReadOnlyList<string> RunArgumentsKeys = ["DockerfileRunArguments", "containerRunArguments"];
+
     /// <summary>The env files the container reads (<c>containerRunEnvironmentFiles</c>, separated by ';').</summary>
     public string? EnvironmentFiles { get; init; }
 
@@ -115,7 +121,8 @@ public sealed record LaunchProfile(
                     SslPort = Number(value, "sslPort"),
                     UseSsl = value.TryGetProperty("useSSL", out JsonElement ssl) && ssl.ValueKind == JsonValueKind.True,
                     PublishAllPorts = value.TryGetProperty("publishAllPorts", out JsonElement all) && all.ValueKind == JsonValueKind.True,
-                    RunArguments = Text(value, "DockerfileRunArguments") ?? Text(value, "containerRunArguments"),
+                    RunArguments = Text(value, RunArgumentsKeys[0]) ?? Text(value, RunArgumentsKeys[1]),
+                    RunArgumentsKey = RunArgumentsKeys.FirstOrDefault(k => Text(value, k) is not null),
                     EnvironmentFiles = Text(value, "containerRunEnvironmentFiles"),
                 });
             }

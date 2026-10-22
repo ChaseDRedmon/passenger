@@ -395,7 +395,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   windows is one `OpenDocument`; the folder keeps the windows in `WorkspaceState.EditorWindows`. Pinned tabs come
   first (`EditorTab.IsPinned`, kept as `KeptTab.Pinned`); `EditorArea.CloseTab` is the one close a person's goes
   through, which Reopen Closed Tab remembers. `EditorArea.Commands` is Rider's global undo: a command that changes
-  several files or moves one (`Commands.Record`, as renames do) is undone and redone whole, asked first. The tab
+  several files or moves one (`Commands.Record`, as renames do), or something besides files with one (`Recording.Also`, a
+  `CommandHistory.Part`: Write to Launch Profile's run configuration), is undone and redone whole, asked first. The tab
   actions are `MainWindow.Tabs.cs`, filling a tab's menu through
   `EditorArea.TabMenuOpening` with `ActionContext.Tab` naming the tab they act on. `MainWindow.CloseSolution` ends the
   folder's session and shows the Welcome screen; `LeaveFolder` keeps or closes editors and `EndSession` ends the
@@ -835,7 +836,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   cannot launch here saying why: a project whose framework references Microsoft.WindowsDesktop.App runs only on
   Windows (`ProjectModel.WindowsOnly`), so off Windows the Solution view marks it, `RunConfiguration.WhyNotHere` greys
   its configurations and `LaunchPlan.ResolveAsync` refuses it before its build; a container kind's are run by
-  `BuildRunController.Containers.cs`, Containers above, the store's version 2 giving older ones the Project kind);
+  `BuildRunController.Containers.cs`, Containers above, the store's version 2 giving older ones the Project kind). A
+  generated one is changed in place in Edit Configurations but for its name, project and launch profile, its link to its
+  source (a copy changes those): what differs from what its source makes is kept with the folder as an edit over it
+  (`ConfigurationEdit`: fields by the store's names, a dictionary's entry by entry, null for one taken out; the store's
+  `edits` by the generated one's name, version 3, kept while its source is gone), so a field left alone follows its
+  launch profile, compose file or Dockerfile as it changes; `RunConfiguration.Source` is what the source makes, which the
+  dialog marks changed rows against (`TextBlock.changed`, the Keymap page's colour) and Reset to Launch Profile (Compose
+  File, Dockerfile, Project) puts back. Write to Launch Profile, for one made from a project's launch profile (Project,
+  Executable, Docker or SdkContainer; never a compose file, Dockerfile or .dcproj, which Passenger does not rewrite),
+  applies the dialog, then writes what the profile has a place for into launchSettings.json as text (`LaunchSettingsEdits`:
+  a value replaced where it stands, a property added indented as the others, the rest byte for byte) as one command whose
+  Part puts the folder's edit back on Undo (`MainWindow.WriteToLaunchProfile`, `RunConfigurations.Rebase`); what the file
+  has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
   `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. While a run of a configuration is up (Run's program or container run, a session Debug launched for it,

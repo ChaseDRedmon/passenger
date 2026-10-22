@@ -113,6 +113,110 @@ public sealed class ContainerConfigurationsTests
         second.Close();
     }
 
+    /// <summary>A Dockerfile configuration's run arguments and mode changed in place are kept with the folder over what its
+    /// Dockerfile makes: marked as changed, Reset to Dockerfile offered and no Write to Launch Profile, which it has none of,
+    /// and there as changed when the folder opens again, its source as the Dockerfile makes it.</summary>
+    [AvaloniaFact]
+    public void A_Dockerfile_configuration_changed_in_place_is_kept_with_the_folder_over_what_its_Dockerfile_makes()
+    {
+        string folder = Solution("ctr-inplace-", ["App"], string.Empty);
+        Write(folder, "App/Dockerfile", "FROM mcr.microsoft.com/dotnet/runtime:10.0\n");
+        string settings = TestFolders.Create("settings-");
+        MainWindow first = Open(folder, settings);
+        RunConfigurationsDialog dialog = first.ShowRunConfigurations();
+        Assert.True(dialog.Choose("App: Dockerfile"), $"No App: Dockerfile among [{string.Join(", ", dialog.Rows.Select(r => r.Name))}]");
+        Assert.True(dialog.RunArgumentsBox.IsEnabled && dialog.ModeBox.IsEnabled, "A generated container configuration's run arguments or mode cannot be changed in place");
+        dialog.RunArgumentsBox.Text = "-P -e MODE=dev";
+        dialog.ModeBox.SelectedIndex = 1;
+        Ui.Settle();
+        Assert.Equal(["Run arguments", "Mode"], dialog.Marked);
+        Assert.True(dialog.ResetButton.IsEffectivelyVisible && (string?)dialog.ResetButton.Content == "Reset to Dockerfile",
+            $"A changed Dockerfile configuration offers {(dialog.ResetButton.IsEffectivelyVisible ? dialog.ResetButton.Content : "no reset")}, not Reset to Dockerfile");
+        Assert.False(dialog.WriteButton.IsEffectivelyVisible, "A configuration made from a Dockerfile offers to write to a launch profile it does not have");
+        dialog.Ok();
+        Ui.Settle();
+        first.Close();
+
+        MainWindow second = Open(folder, settings);
+        RunConfiguration kept = second.Configurations.Single(c => c.Name == "App: Dockerfile");
+        Assert.Equal(("-P -e MODE=dev", ContainerMode.Images, true), (kept.RunArguments, kept.Mode, kept.Generated));
+        Assert.Equal(("-P", ContainerMode.Fast), (kept.Source?.RunArguments, kept.Source?.Mode));
+        second.Close();
+    }
+
+    /// <summary>A Docker launch profile's configuration writes back what the profile holds: the <c>docker run</c> words added
+    /// after those its ports make, as its DockerfileRunArguments, a variable added and one taken out with its line; the
+    /// configuration is then as the profile makes it, nothing kept here.</summary>
+    [AvaloniaFact]
+    public void A_Docker_launch_profiles_configuration_writes_its_own_run_words_and_variables_back_to_the_profile()
+    {
+        string folder = Solution("ctr-writeback-", ["App"], string.Empty);
+        const string Settings = """
+            {
+              "profiles": {
+                "Container (Dockerfile)": {
+                  "commandName": "Docker",
+                  "httpPort": 5080,
+                  "environmentVariables": {
+                    "ASPNETCORE_ENVIRONMENT": "Development",
+                    "OLD": "x"
+                  }
+                }
+              }
+            }
+
+            """;
+        const string Written = """
+            {
+              "profiles": {
+                "Container (Dockerfile)": {
+                  "commandName": "Docker",
+                  "httpPort": 5080,
+                  "environmentVariables": {
+                    "ASPNETCORE_ENVIRONMENT": "Development",
+                    "LOG": "1"
+                  },
+                  "DockerfileRunArguments": "--memory 512m"
+                }
+              }
+            }
+
+            """;
+        Write(folder, "App/Properties/launchSettings.json", Settings);
+        MainWindow window = Open(folder, settings: null);
+        try
+        {
+            RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+            Assert.True(dialog.Choose("App: Container (Dockerfile)"), $"No App: Container (Dockerfile) among [{string.Join(", ", dialog.Rows.Select(r => r.Name))}]");
+            Assert.Equal("-p 5080:8080", dialog.RunArgumentsBox.Text);
+            dialog.RunArgumentsBox.Text = "-p 5080:8080 --memory 512m";
+            Ui.Settle();
+            dialog.AddVariableButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Settle();
+            dialog.Variables[^1].Name.Text = "LOG";
+            dialog.Variables[^1].Value.Text = "1";
+            Ui.Settle();
+            // OLD's row taken out by its own button, beside its value.
+            Avalonia.Controls.Grid old = (Avalonia.Controls.Grid)dialog.Variables.Single(v => v.Name.Text == "OLD").Name.Parent!;
+            old.Children.OfType<Avalonia.Controls.Button>().Single().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Settle();
+            Assert.Equal(["Run arguments", "Environment variables"], dialog.Marked);
+            dialog.WriteButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Settle();
+            Assert.Equal(Written, File.ReadAllText(Path.Combine(folder, "App", "Properties", "launchSettings.json")));
+            Assert.Equal("Written to its launch profile in launchSettings.json: Run arguments, Environment variables.", dialog.Changes);
+            Assert.Empty(dialog.Marked);
+            dialog.Ok();
+            Ui.Settle();
+            RunConfiguration written = window.Configurations.Single(c => c.Name == "App: Container (Dockerfile)");
+            Assert.Equal(("-p 5080:8080 --memory 512m", "1", null), (written.RunArguments, written.Environment.GetValueOrDefault("LOG"), written.Source));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A folder with a solution of console projects, each named in it, their framework and output type from a
     /// Directory.Build.props that also holds <paramref name="more"/>.</summary>
     private static string Solution(string prefix, string[] projects, string more)

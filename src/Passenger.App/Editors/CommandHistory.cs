@@ -6,11 +6,11 @@ using Passenger.Text;
 
 namespace Passenger.App.Editors;
 
-/// <summary>Rider's undo of a command that changed more than one file, moved one or made one, as a rename or an extracted
-/// interface does: Undo where the command is the last change (an editor of one of its files, or the Solution view) takes
-/// all of it back at once, the files it moved going back, every file's text as it was and the files it made gone, and Redo
-/// makes all of it again, each only while every file is still as the command left it. A command that changed one open
-/// file's text alone is that file's own undo step; one file not open, which has no undo of its own, is a command.</summary>
+/// <summary>Rider's undo of a command that changed more than one file, moved, made one or changed more than files (a
+/// <see cref="Part"/>), as a rename or Write to Launch Profile does: Undo where it is the last change (an editor of one of its
+/// files, or the Solution view) takes all of it back at once, the files it moved going back, every file's text as it was and
+/// the files it made gone, and Redo makes all of it again, each only while every file is still as the command left it. One
+/// that changed one open file's text alone is that file's own undo step; one file not open, with no undo of its own, is one.</summary>
 public sealed class CommandHistory
 {
     /// <summary>The most commands kept, the oldest going first, as IntelliJ's registry has undo.globalUndoLimit.</summary>
@@ -87,6 +87,13 @@ public sealed class CommandHistory
                 }
             }
         }
+        foreach (Part part in command.Parts)
+        {
+            if (part.Blocked(redo) is { } changed)
+            {
+                return changed;
+            }
+        }
         return null;
     }
 
@@ -114,6 +121,10 @@ public sealed class CommandHistory
             {
                 return failed;
             }
+        }
+        foreach (Part part in command.Parts.Reverse())
+        {
+            part.Put(false);
         }
         done.Remove(command);
         undone.Add(command);
@@ -149,6 +160,10 @@ public sealed class CommandHistory
             {
                 return failed;
             }
+        }
+        foreach (Part part in command.Parts)
+        {
+            part.Put(true);
         }
         undone.Remove(command);
         done.Add(command);
@@ -243,10 +258,14 @@ public sealed class CommandHistory
     }
 
     /// <summary>What a command did: its name ("Rename Foo to Bar"), each file's text before and after it (at the path the
-    /// file had then; an open file's with the undo step that made it), the files it moved, in order, and the files it made.</summary>
-    public sealed class Command(string name, IReadOnlyList<TextChange> texts, IReadOnlyList<(string From, string To)> moves, IReadOnlyList<Creation>? created = null)
+    /// file had then; an open file's with the undo step that made it), the files it moved, in order, the files it made, and
+    /// what else it changed.</summary>
+    public sealed class Command(string name, IReadOnlyList<TextChange> texts, IReadOnlyList<(string From, string To)> moves, IReadOnlyList<Creation>? created = null,
+        IReadOnlyList<Part>? parts = null)
     {
         public IReadOnlyList<Creation> Created { get; } = created ?? [];
+
+        public IReadOnlyList<Part> Parts { get; } = parts ?? [];
 
         public string Name { get; } = name;
 
@@ -268,6 +287,11 @@ public sealed class CommandHistory
     /// <summary>A file a command made, with the text it wrote there.</summary>
     public sealed record Creation(string Path, TextSnapshot Text);
 
+    /// <summary>Something besides files a command changed (a run configuration's changes kept with the folder), named as the
+    /// question before Undo names it: why it cannot be taken back (or made again, given true) now, null when it can; and
+    /// how it is put as it was before the command (false) or after it (true).</summary>
+    public sealed record Part(string Name, Func<bool, string?> Blocked, Action<bool> Put);
+
     /// <summary>One file's text changed by a command: the open file (null for one changed on disk) and the undo step its
     /// change is there.</summary>
     public sealed record TextChange(OpenDocument? Document, string Path, TextSnapshot Before, TextSnapshot After, object? Step);
@@ -282,6 +306,7 @@ public sealed class CommandHistory
         private readonly Dictionary<OpenDocument, (string Path, object? Step, TextSnapshot Text)> open;
         private readonly Dictionary<string, TextSnapshot?> closed = [];
         private readonly List<(string From, string To)> moves = [];
+        private readonly List<Part> parts = [];
         private bool ended;
 
         internal Recording(CommandHistory history, EditorArea editors, string name)
@@ -304,6 +329,10 @@ public sealed class CommandHistory
                 closed[began] = File.Exists(path) && FileText.Load(path) is { } file ? TextSnapshot.From(file.Text) : null;
             }
         }
+
+        /// <summary>Something besides files the command changed, taken back and made again with them; the command is kept
+        /// for it however few files it changed.</summary>
+        public void Also(Part part) => parts.Add(part);
 
         public void Dispose()
         {
@@ -338,9 +367,9 @@ public sealed class CommandHistory
                     texts.Add(new TextChange(null, path, before, TextSnapshot.From(after), null));
                 }
             }
-            if (texts.Count > 1 || texts.Any(t => t.Document is null) || moves.Count > 0 || created.Count > 0)
+            if (texts.Count > 1 || texts.Any(t => t.Document is null) || moves.Count > 0 || created.Count > 0 || parts.Count > 0)
             {
-                history.Keep(new Command(name, texts, made.Moves, created));
+                history.Keep(new Command(name, texts, made.Moves, created, [.. parts]));
             }
         }
 
