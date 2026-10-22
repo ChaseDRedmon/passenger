@@ -175,24 +175,24 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             Assert.True(ServiceChoice(dialog, "webfrontend")!.IsEnabled);
             Assert.Equal(0, ServiceChoice(dialog, "apiservice")!.SelectedIndex);
             Assert.Equal(0, ServiceChoice(dialog, "webfrontend")!.SelectedIndex);
-            Click(dialog, dialog.CopyButton);
-            Click(dialog, dialog.NameBox);
+            Ui.Click(dialog.CopyButton);
+            Ui.Click(dialog.NameBox);
             Ui.Press(dialog, "control A");
             dialog.KeyTextInput("API debug, frontend run");
             Ui.Settle();
             ComboBox api = ServiceChoice(dialog, "apiservice")!;
             Assert.True(api.IsEnabled);
-            Click(dialog, api);
+            Ui.Click(api);
             Ui.Press(dialog, "END");
             Ui.Press(dialog, "ENTER");
             ComboBox web = ServiceChoice(dialog, "webfrontend")!;
-            Click(dialog, web);
+            Ui.Click(web);
             Ui.Press(dialog, "END");
             Ui.Press(dialog, "ENTER");
-            Click(dialog, web);
+            Ui.Click(web);
             Ui.Press(dialog, "HOME");
             Ui.Press(dialog, "ENTER");
-            Click(dialog, dialog.OkButton);
+            Ui.Click(dialog.OkButton);
             RunConfiguration saved = Assert.Single(window.Configurations, configuration => configuration.Name == "API debug, frontend run");
             Assert.Equal(ServiceStart.Debug, saved.ServiceActions["apiservice"]);
             Assert.Equal(ServiceStart.Run, saved.ServiceActions["webfrontend"]);
@@ -243,7 +243,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         string before = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
         string after = change(before);
         Assert.NotEqual(before, after);
-        Click(window, window.EditorArea.CodeEditor);
+        Ui.Click(window.EditorArea.CodeEditor);
         Assert.Same(document, window.EditorArea.Active);
         Assert.Same(document.Text, window.EditorArea.CodeEditor.Document);
         Ui.Press(window, "control A");
@@ -289,7 +289,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             Choose(window);
             window.ApplySettings(window.Settings with { HotReload = false });
             OpenGutter(window, "apiservice");
-            ClickMenu(window, debugging ? "Debug 'apiservice'" : "Run 'apiservice'");
+            Ui.Choose(Assert.IsType<MenuFlyout>(window.RunMarkMenu), debugging ? "Debug 'apiservice'" : "Run 'apiservice'");
             WaitNativeServices(window);
             AspireResourceRun api = Service(window, Resource(window, "apiservice"));
             AspireResourceRun web = Service(window, Resource(window, "webfrontend"));
@@ -319,7 +319,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             File.WriteAllText(path, source + "\n// Changed while the run menu was open.\n");
             Ui.WaitFor(() => window.EditorArea.CodeEditor.Document.Snapshot.ToString() != source,
                 "the editor to observe the changed AppHost source");
-            ClickMenu(window, "Run 'apiservice'");
+            Ui.Choose(Assert.IsType<MenuFlyout>(window.RunMarkMenu), "Run 'apiservice'");
             Assert.Empty(window.AspireRuntime.Apps);
             Assert.False(window.IsRunning);
         }
@@ -359,7 +359,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 && configuration.LaunchProfile == "http");
             Assert.True(window.SelectConfiguration(companion.Name));
             OpenGutter(window, "apiservice");
-            ClickMenu(window, "Profile 'apiservice'");
+            Ui.Choose(Assert.IsType<MenuFlyout>(window.RunMarkMenu), "Profile 'apiservice'");
             WaitNativeServices(window);
             AspireAppRun app = Assert.Single(window.AspireRuntime.Apps);
             Assert.True(PathNames.Same(project.Host, app.Configuration.Project));
@@ -394,18 +394,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             && editor.PointOf(document.Text.Snapshot.GetLineStart(line)).Y + editor.LineHeight < editor.Bounds.Height,
             $"the visible {resource} run gutter mark");
         double x = Enumerable.Range(0, 400).First(x => editor.IsInMarkColumn(new Point(x, 0))) + 3;
-        Point at = editor.TranslatePoint(new Point(x, editor.PointOf(document.Text.Snapshot.GetLineStart(line)).Y + editor.LineHeight / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(editor, new Point(x, editor.PointOf(document.Text.Snapshot.GetLineStart(line)).Y + editor.LineHeight / 2));
         Assert.NotNull(window.RunMarkMenu);
-    }
-
-    private static void ClickMenu(MainWindow window, string header)
-    {
-        MenuFlyout menu = Assert.IsType<MenuFlyout>(window.RunMarkMenu);
-        MenuItem item = Assert.Single(menu.Items.OfType<MenuItem>(), item => Equals(item.Header, header));
-        Click(Assert.IsAssignableFrom<TopLevel>(TopLevel.GetTopLevel(item)), item);
     }
 
     [AvaloniaFact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
@@ -430,7 +420,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             Uri endpoint = HttpUrl(Resource(window, "apiservice"));
             Button portLink = apiNode.GetVisualDescendants().OfType<Button>().First(button => Equals(ToolTip.GetTip(button), endpoint.AbsoluteUri)
                 || Equals(ToolTip.GetTip(button), endpoint.AbsoluteUri.TrimEnd('/')));
-            Click(window, portLink);
+            Ui.Click(portLink);
             Assert.Contains(window.Browsed, browsed => browsed == endpoint);
             List<CancellationToken> streams = [];
             var native = window.Aspire.ConsoleProvider!;
@@ -454,7 +444,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             CancellationToken[] active = streams.Where(token => !token.IsCancellationRequested).ToArray();
             Assert.NotEmpty(active);
             ChildProcesses.Started += observe;
-            Click(window, window.Aspire.Console.Editor);
+            Ui.Click(window.Aspire.Console.Editor);
             Ui.Run(window, AppActions.HideToolWindow);
             Ui.WaitFor(() => active.All(token => token.IsCancellationRequested), "hiding Aspire to cancel every display stream");
             Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(Resource(window, "webfrontend")), "/passenger-test")), "traffic while Aspire is hidden"));
@@ -521,25 +511,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         };
         Assert.True(index >= 0);
         ListBoxItem row = Assert.IsType<ListBoxItem>(list.ContainerFromIndex(0));
-        Point origin = row.TranslatePoint(default, window)
-            ?? throw new Xunit.Sdk.XunitException($"Row {index} is not in the window");
-        Rect bounds = new(origin, row.Bounds.Size);
-        Rect visible = bounds;
-        foreach (Visual ancestor in row.GetVisualAncestors())
-        {
-            if (ancestor.ClipToBounds && ancestor.TranslatePoint(default, window) is { } topLeft)
-            {
-                visible = visible.Intersect(new Rect(topLeft, ancestor.Bounds.Size));
-            }
-        }
-        Point at = visible.Center;
-        Avalonia.Input.IInputElement? hit = Avalonia.Input.InputExtensions.InputHitTest(window, at);
-        string before = Identity(list.SelectedItem);
-        string geometry = $"index={index}, depth={(item as AspireView.SpanRow)?.Depth}, row={bounds}, visible={visible}, hit={hit}, selectedBefore={before}";
-        Assert.True(visible.Width > 0 && visible.Height > 0, geometry);
-        Assert.True(hit is Visual visual && (visual == row || visual.GetVisualAncestors().Contains(row)), geometry);
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        string geometry = $"index={index}, depth={(item as AspireView.SpanRow)?.Depth}, selectedBefore={Identity(list.SelectedItem)}";
+        Ui.Click(row, settle: false);
         Press(Avalonia.Input.Key.Home);
         for (int step = 0; step < index; step++)
         {
@@ -616,27 +589,27 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         {
             TreeViewItem node = window.Aspire.ResourceList.GetVisualDescendants().OfType<TreeViewItem>().Single(item =>
                 item.Tag is AspireResource resource && resource.DisplayName == "apiservice");
-            Click(window, node.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
+            Ui.Click(node.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
             FindAction(window, "Show Aspire Resources");
             Ui.WaitFor(() => window.Aspire.GetVisualDescendants().OfType<Button>().Any(button => button.Content is TextBlock { Text: "Passenger interaction" }),
                 "the real AppHost's advertised command");
-            Click(window, window.Aspire.GetVisualDescendants().OfType<Button>().Single(button => button.Content is TextBlock { Text: "Passenger interaction" }));
+            Ui.Click(window.Aspire.GetVisualDescendants().OfType<Button>().Single(button => button.Content is TextBlock { Text: "Passenger interaction" }));
             AspireInteractionDialog confirmation = Interaction(window, "Restart API?");
-            Click(confirmation, confirmation.Secondary);
+            Ui.Click(confirmation.Secondary);
             AspireInteractionDialog form = Interaction(window, "API settings");
             TextBox input = Assert.IsType<TextBox>(form.InputControls["value"]);
-            Click(form, input);
+            Ui.Click(input);
             Ui.Press(form, "control A");
             form.KeyTextInput("typed while connected");
-            Click(form, form.Primary);
+            Ui.Click(form.Primary);
             Ui.WaitFor(() => form.Problem.Text?.Contains("Choose another value", StringComparison.Ordinal) == true,
                 "the AppHost's validation update");
             input = Assert.IsType<TextBox>(form.InputControls["value"]);
             Assert.Equal("typed while connected", input.Text);
-            Click(form, input);
+            Ui.Click(input);
             Ui.Press(form, "control A");
             form.KeyTextInput("latest value");
-            Click(form, form.Primary);
+            Ui.Click(form.Primary);
             Ui.WaitFor(() => File.Exists(answered), "the real AppHost's submitted value");
             Assert.Equal("latest value", File.ReadAllText(answered));
             Ui.WaitFor(() => !window.OwnedWindows.OfType<AspireInteractionDialog>().Any(), "the completed native form to close");
@@ -787,7 +760,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     {
         Directory.CreateDirectory(project.PathOf("Loose"));
         string file = project.Write("Loose/apphost.cs", $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n");
-        project.Write("Loose/Sibling.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        project.Write("Loose/Sibling.csproj", TestProjects.Library());
         MainWindow window = project.OpenHost();
         Ui.WaitFor(() => window.Configurations.Any(configuration => PathNames.Same(configuration.Project, file)), "SDK directive discovery beside a project");
         Assert.True(window.SelectConfiguration(window.Configurations.Single(configuration => PathNames.Same(configuration.Project, file)).Name));
@@ -912,10 +885,10 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Assert.True(Service(window, api).DebugTab?.IsLive);
         Assert.Null(Service(window, web).DebugTab);
         window.Aspire.SelectResource(api.Name);
-        window.ShowToolWindow("aspire");
+        window.ShowToolWindow(ToolWindowIds.Aspire);
         Button noDebug = window.GetVisualDescendants().OfType<Button>().Single(button => ActionButtons.GetAction(button) == AppActions.AspireRun);
         Ui.WaitFor(() => noDebug.IsEffectivelyVisible && noDebug.IsEnabled, "the selected resource's Run without debugger action");
-        Click(window, noDebug);
+        Ui.Click(noDebug);
         RefreshUntil(window, () => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice"
             && window.AspireRuntime.FindService(new(project.Host, resource)) is { ProcessId: int pid, DebugTab: null } && pid != apiPid), "the selected API to restart without a debugger");
         Ui.WaitFor(() => !Processes.IsRunning(apiPid), "the attached API process to exit during restart");
@@ -1212,7 +1185,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             TreeViewItem parent = window.Aspire.ResourceList.Items.OfType<TreeViewItem>().Single();
             Assert.Equal("apiservice", Assert.IsType<AspireResource>(parent.Tag).Name);
             Assert.Equal("worker", Assert.IsType<AspireResource>(Assert.Single(parent.Items.OfType<TreeViewItem>()).Tag).Name);
-            Click(window, parent.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
+            Ui.Click(parent.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "apiservice"));
             Ui.Press(window, "RIGHT");
             Ui.WaitFor(() => parent.IsExpanded, "real keyboard input to expand the resource hierarchy");
             Assert.Equal("apiservice", window.Aspire.SelectedResource?.Name);
@@ -1318,7 +1291,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 Notification = new InteractionNotification { Intent = MessageIntent.Confirmation },
             });
             AspireInteractionDialog confirmation = Interaction(window, "Restart API?");
-            Click(confirmation, confirmation.Secondary);
+            Ui.Click(confirmation.Secondary);
             Ui.WaitFor(() => backend.Answers.Length == 1, "the native confirmation answer on the wire");
             WatchInteractionsRequestUpdate canceled = Assert.Single(backend.Answers);
             Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.Notification, canceled.KindCase);
@@ -1328,7 +1301,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             backend.Push(Form("before"));
             AspireInteractionDialog form = Interaction(window, "API settings");
             TextBox input = Assert.IsType<TextBox>(form.InputControls["value"]);
-            Click(form, input);
+            Ui.Click(input);
             Ui.WaitFor(() => backend.Answers.Any(answer => answer.InteractionId == 2
                 && answer.KindCase == WatchInteractionsRequestUpdate.KindOneofCase.InputsDialog
                 && answer.ResponseUpdate && answer.InputsDialog.InputItems[0].Value == "before"),
@@ -1346,7 +1319,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 "the server update while the first response is still in flight");
             input = Assert.IsType<TextBox>(form.InputControls["value"]);
             Assert.Equal(firstValue, input.Text);
-            ClickDuringWork(form, input);
+            Ui.Click(input, settle: false);
             ReplaceDuringWork(form, "superseded value");
             ReplaceDuringWork(form, "latest value");
             sending.Release.TrySetResult();
@@ -1360,7 +1333,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.InputsDialog, answer.KindCase);
                 Assert.True(answer.ResponseUpdate);
             });
-            Click(form, form.Primary);
+            Ui.Click(form.Primary);
             Ui.WaitFor(() => backend.Answers.Length == baseline + 3, "the final form response");
             Assert.False(backend.Answers[^1].ResponseUpdate);
             Assert.Equal("latest value", backend.Answers[^1].InputsDialog.InputItems[0].Value);
@@ -1404,7 +1377,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             switch (action)
             {
                 case "close":
-                    Click(terminal, terminal.Primary);
+                    Ui.Click(terminal.Primary);
                     break;
                 case "escape":
                     Ui.Press(terminal, "ESCAPE");
@@ -1430,7 +1403,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
                 MessageBox = new InteractionMessageBox { Intent = MessageIntent.Confirmation },
             });
             AspireInteractionDialog ordinary = Interaction(window, "Continue normally");
-            Click(ordinary, ordinary.Primary);
+            Ui.Click(ordinary.Primary);
             Ui.WaitFor(() => backend.Answers.Length == 2, "the ordinary response after terminal cancellation");
             Assert.Equal(901, backend.Answers[1].InteractionId);
             Assert.Equal(WatchInteractionsRequestUpdate.KindOneofCase.MessageBox, backend.Answers[1].KindCase);
@@ -1472,7 +1445,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             backend.FirstUpload.Release.TrySetResult();
             Ui.WaitFor(() => dialog.Problem.IsEffectivelyVisible && dialog.Problem.Text!.Contains("Choose the file again", StringComparison.Ordinal),
                 "the stale upload rejection in the real owned modal");
-            Click(dialog, dialog.Primary);
+            Ui.Click(dialog.Primary);
             Ui.WaitFor(() => backend.Answers.Length == 1, "the unchanged file input response");
             WatchInteractionsRequestUpdate rejected = Assert.Single(backend.Answers);
             Assert.Equal(string.Empty, Assert.Single(rejected.InputsDialog.InputItems).Value);
@@ -1484,7 +1457,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             Assert.False(nextPicker.IsVisible);
             Assert.Equal(2, backend.Uploads.Length);
             Assert.Equal(File.ReadAllBytes(project.WebProgram), backend.Uploads[1].SelectMany(chunk => chunk.Data.ToByteArray()).ToArray());
-            Click(dialog, dialog.Primary);
+            Ui.Click(dialog.Primary);
             Ui.WaitFor(() => backend.Answers.Length == 2, "the current uploaded file response");
             Assert.False(backend.Answers[^1].ResponseUpdate);
             string value = Assert.Single(backend.Answers[^1].InputsDialog.InputItems).Value;
@@ -1515,7 +1488,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
 
     private static Window PickUploadFile(AspireInteractionDialog dialog, string path)
     {
-        ClickDuringWork(dialog, dialog.InputControls["attachment"]);
+        Ui.Click(dialog.InputControls["attachment"], settle: false);
         Ui.PumpUntil(() => dialog.OwnedWindows.Any(window => window.IsVisible
             && window.GetVisualDescendants().OfType<ManagedFileChooser>().Any()), "the real managed file chooser");
         Window picker = Assert.Single(dialog.OwnedWindows, window => window.IsVisible
@@ -1524,7 +1497,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         Ui.PumpUntil(() => picker.GetVisualDescendants().OfType<TextBox>().Any(box => box.Name == "Location" && box.IsEffectivelyVisible),
             "the managed chooser's location field");
         TextBox location = picker.GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "Location" && box.IsEffectivelyVisible);
-        ClickDuringWork(picker, location);
+        Ui.Click(location, settle: false);
         ReplaceDuringWork(picker, path);
         Assert.Equal(path, location.Text);
         picker.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
@@ -1583,14 +1556,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             "the server-completed interaction to close");
     }
 
-    private static void ClickDuringWork(TopLevel window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not in the window");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-    }
-
     private static void ReplaceDuringWork(TopLevel window, string text)
     {
         Avalonia.Input.RawInputModifiers modifiers = OperatingSystem.IsMacOS()
@@ -1598,17 +1563,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         window.KeyPress(Avalonia.Input.Key.A, modifiers, Avalonia.Input.PhysicalKey.None, null);
         window.KeyRelease(Avalonia.Input.Key.A, modifiers, Avalonia.Input.PhysicalKey.None, null);
         window.KeyTextInput(text);
-    }
-
-    private static void Click(TopLevel window, Control control)
-    {
-        control.BringIntoView();
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not in the window");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
     }
 
     private void Choose(MainWindow window)
@@ -1620,7 +1574,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
 
     private void WaitServices(MainWindow window)
     {
-        window.ShowToolWindow("aspire");
+        window.ShowToolWindow(ToolWindowIds.Aspire);
         RefreshUntil(window, () => new[] { "apiservice", "webfrontend" }.All(name =>
             window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == name && resource.State == "Running"
                 && window.AspireRuntime.FindService(new(project.Host, resource))?.ProcessId is > 0)), "the API and frontend's real DCP-owned processes");
@@ -1740,13 +1694,11 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         int line = editor.Document.Snapshot.GetLineFromOffset(offset);
         editor.ScrollTo(new Vector(0, Math.Max(0, line * editor.LineHeight - editor.Bounds.Height / 3)));
         Ui.Settle();
-        Point at = editor.TranslatePoint(editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2), window)!.Value;
-        window.MouseMove(at);
+        Point at = editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2);
+        window.MouseMove(editor.TranslatePoint(at, window)!.Value);
         Ui.WaitFor(() => editor.HoveredLink is { } link && link.Range.Start <= offset && offset < link.Range.End,
             $"the native console link hit for {text}");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(editor, at);
     }
 
     private static WatchInteractionsResponseUpdate Form(string value) => new()

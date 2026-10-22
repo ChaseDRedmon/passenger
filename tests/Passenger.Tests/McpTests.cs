@@ -156,7 +156,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         // Its code help is MSBuild's, from the evaluation before the import that is not there broke it.
         // The hover card's lines end as the system's do (Windows' "\r\n").
         string framework = (await Call(client, "symbol_info", new() { ["path"] = "Sum.csproj", ["line"] = 4, ["column"] = 8 })).GetString()!.ReplaceLineEndings("\n");
-        Assert.True(framework.StartsWith("TargetFramework = net10.0\nMSBuild property, set in Sum.csproj, line 4", StringComparison.Ordinal),
+        Assert.True(framework.StartsWith($"TargetFramework = {TestProjects.Framework}\nMSBuild property, set in Sum.csproj, line 4", StringComparison.Ordinal),
             $"symbol_info on a project file's property did not say its value and where it was set: {framework}");
     }
 
@@ -167,7 +167,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         string tests = PathNames.Canonical(TestFolders.Create("mcp-tests-"));
         DeleteAtEnd(tests);
         File.WriteAllText(Path.Combine(tests, "Sums.Tests.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n  </PropertyGroup>\n"
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <OutputType>Exe</OutputType>\n  </PropertyGroup>\n"
             + "  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"3.2.2\" />\n  </ItemGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(tests, "SumTests.cs"),
             "using Xunit;\n\nnamespace Sums;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four() => Assert.Equal(4, 2 + 2);\n\n"
@@ -223,7 +223,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         TestFolders.Prepare(() =>
         {
             File.WriteAllText(Path.Combine(tests, "Sums.Tests.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+                $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
                 "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
                 "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
             File.WriteAllText(Path.Combine(tests, "SumTests.cs"),
@@ -270,7 +270,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         {
             if (await Task.WhenAny(held, debugging) == debugging)
             {
-                Assert.Fail($"debug_start answered before the program came to the hold: {Words(await debugging)}{Said()}");
+                Assert.Fail($"debug_start answered before the program came to the hold: {Text(await debugging)}{Said()}");
             }
             program = await held;
 
@@ -278,8 +278,8 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
             Assert.True(await Waiting.Within(debugging, TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken),
                 $"debug_start still waited for the program {TimeSpan.FromSeconds(15).Scaled().TotalSeconds} s after the agent's stop{Said()}");
             CallToolResult stopped = await debugging;
-            Assert.True(stopped.IsError == true && Words(stopped).Contains("Debugging Sum: Held was stopped as it started", StringComparison.Ordinal),
-                $"debug_start, stopped as it started, answered: {Words(stopped)}");
+            Assert.True(stopped.IsError == true && Text(stopped).Contains("Debugging Sum: Held was stopped as it started", StringComparison.Ordinal),
+                $"debug_start, stopped as it started, answered: {Text(stopped)}");
             Assert.True(Processes.Gone(program), $"The agent's stop left the program running: {Processes.Describe(program)}");
             Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
         }
@@ -287,8 +287,6 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
         {
             Processes.Kill(program);
         }
-
-        static string Words(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
     }
 
     /// <summary>A package an agent installs or removes is in or out of the project file and Directory.Packages.props the
@@ -306,7 +304,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
             "<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"local\" value=\"feed\" />\n  </packageSources>\n"
             + "  <config>\n    <add key=\"globalPackagesFolder\" value=\"packages\" />\n  </config>\n</configuration>\n");
         File.WriteAllText(Path.Combine(library, "Lib.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Library());
         // Central package management: the version goes in Directory.Packages.props.
         File.WriteAllText(Path.Combine(library, "Directory.Packages.props"),
             "<Project>\n  <PropertyGroup>\n    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>\n  </PropertyGroup>\n</Project>\n");
@@ -444,7 +442,7 @@ public sealed class McpTests : McpRig, IClassFixture<RestoredFolders>
             string work = Repository(root, refusing: true);
             await using McpClient client = await Start(["--mcp", work]);
             CallToolResult refused = await Result(client, "vcs_commit", new() { ["message"] = "Two as a number", ["push"] = true });
-            string said = string.Concat(refused.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            string said = Text(refused);
             Assert.True(refused.IsError == true, $"A push the remote refused was answered as done: {said}");
             Assert.Contains("pre-receive hook declined", said, StringComparison.Ordinal);
             Assert.Contains("pushes are closed here", said, StringComparison.Ordinal);

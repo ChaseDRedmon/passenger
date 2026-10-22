@@ -424,10 +424,10 @@ public sealed class FileTests : IDisposable
         window.Close();
         ChoiceDialog asked = Asked(window);
         Assert.Contains("Locked.cs (read-only)", asked.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text).OfType<string>().Single(t => t.Contains("could not be saved", StringComparison.Ordinal)), StringComparison.Ordinal);
-        Press(asked, "Cancel");
+        Ui.ClickButton(asked, "Cancel");
         Assert.True(window.IsVisible, "Cancel closed the window, and the file's changes with it");
         window.Close();
-        Press(Asked(window), "Close Without Saving");
+        Ui.ClickButton(Asked(window), "Close Without Saving");
         Ui.WaitFor(() => !window.IsVisible, "the window to close without the file's changes");
         Assert.Equal("class Locked { }\n", File.ReadAllText(path));
         Assert.True(new FileInfo(path).IsReadOnly);
@@ -437,7 +437,7 @@ public sealed class FileTests : IDisposable
         window.Confirm = (_, _, _) => Task.FromResult(false);
         Edit(window, "Locked.cs", "public ");
         window.Close();
-        Press(Asked(window), "Make Writable");
+        Ui.ClickButton(Asked(window), "Make Writable");
         Ui.WaitFor(() => !window.IsVisible, "the window to close once the file was saved");
         Assert.Equal("public class Locked { }\n", File.ReadAllText(path));
         Assert.False(new FileInfo(path).IsReadOnly);
@@ -450,13 +450,6 @@ public sealed class FileTests : IDisposable
         ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
         Assert.Equal("Clear Read-Only Status", asked.Title);
         return asked;
-    }
-
-    private static void Press(Avalonia.Controls.Window dialog, string button)
-    {
-        Avalonia.Controls.Button pressed = dialog.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button);
-        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.Settle();
     }
 
     /// <summary>What a program of the system says, failing when it fails.</summary>
@@ -474,14 +467,7 @@ public sealed class FileTests : IDisposable
         return output;
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(folder);
 
     private static string? EncodingShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "EncodingText")!.Text;
 

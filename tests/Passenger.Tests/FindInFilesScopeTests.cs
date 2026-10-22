@@ -310,21 +310,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     /// <summary>A row's right-click menu, Edit, and an item of it, as clicks on them would; the popup it opens.</summary>
     private static FindInFilesPopup FromMenu(MainWindow window, ExplorerNode row, string item)
     {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control shown = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Solution view does not show {row.Name}");
-        Point at = shown.TranslatePoint(new Point(shown.Bounds.Width / 2, shown.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {row.Name}");
-        MenuItem edit = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == "Edit")
-            ?? throw new InvalidOperationException($"{row.Name}'s menu has no Edit: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem chosen = edit.Items.OfType<MenuItem>().First(i => (string?)i.Header == item);
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
+        Ui.ChooseFromRowMenu(window, row, "Edit", item);
         return Assert.IsType<FindInFilesPopup>(window.Popup);
     }
 
@@ -355,7 +341,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     /// docs outside every project; restored once for every test, and the warm server they share on it.</summary>
     public sealed class Shop : SharedProject
     {
-        private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+        private static readonly string Project = TestProjects.Library();
 
         public Shop()
             : base("scope-")

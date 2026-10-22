@@ -32,7 +32,7 @@ public sealed class AspireExternalDataTests(AspireApp project) : IClassFixture<A
                 limit: TimeSpan.FromMinutes(3)), "the external starter", TimeSpan.FromMinutes(3));
             Assert.True(started.Succeeded, $"The external starter did not start (exit {started.ExitCode}).");
             window = project.OpenHost();
-            window.ShowToolWindow("aspire");
+            window.ShowToolWindow(ToolWindowIds.Aspire);
             Assert.Empty(window.AspireRuntime.Apps);
             Ui.WaitFor(() => window.Aspire.IsEffectivelyVisible, "the external AppHost pane");
             Button discover = window.Aspire.GetVisualDescendants().OfType<Button>()

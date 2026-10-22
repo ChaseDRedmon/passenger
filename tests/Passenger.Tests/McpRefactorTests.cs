@@ -385,15 +385,7 @@ public sealed class McpRefactorTests : McpRig, IClassFixture<RestoredFolders>
         window.ExplorerView.Reveal(PathNames.Canonical(PathOf(file)));
         Ui.Settle();
         Passenger.App.Explorer.ExplorerNode row = Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == file);
-        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ExplorerView).OfType<Avalonia.Controls.ListBox>()
-            .First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Avalonia.Controls.Control item = rows.ContainerFromItem(row)!;
-        Avalonia.Point at = item.TranslatePoint(new Avalonia.Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.ClickRow(window, row);
         Ui.Run(window, EditorActions.Undo);
         Ui.Settle();
     }
@@ -409,11 +401,7 @@ public sealed class McpRefactorTests : McpRig, IClassFixture<RestoredFolders>
     /// <summary>The agent goes, then the window closes.</summary>
     private void Leave(McpClient client, MainWindow window)
     {
-        Await(Task.Run(async () =>
-        {
-            await client.DisposeAsync();
-            return true;
-        }), "the agent going");
+        Gone(client);
         window.Close();
     }
 }

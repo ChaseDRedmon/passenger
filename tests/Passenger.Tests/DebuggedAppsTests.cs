@@ -36,12 +36,7 @@ public sealed class DebuggedAppsTests : IClassFixture<RestoredFolders>, IDisposa
     {
         foreach (string app in (string[])["BindingErrorsApp", "LiveTreeApp"])
         {
-            string under = Directory.CreateDirectory(Path.Combine(folder, app)).FullName;
-            foreach (string file in Directory.GetFiles(Debuggees.Source(app)))
-            {
-                File.Copy(file, Path.Combine(under, Path.GetFileName(file)));
-            }
-            File.WriteAllText(Path.Combine(under, $"{app}.csproj"), AvaloniaApp.HeadlessProject());
+            AvaloniaApp.Debuggee(Directory.CreateDirectory(Path.Combine(folder, app)).FullName, app);
         }
         string solution = Path.Combine(folder, "Apps.slnx");
         File.WriteAllText(solution, "<Solution>\n  <Project Path=\"BindingErrorsApp/BindingErrorsApp.csproj\" />\n  <Project Path=\"LiveTreeApp/LiveTreeApp.csproj\" />\n</Solution>\n");
@@ -132,10 +127,7 @@ public sealed class DebuggedAppsTests : IClassFixture<RestoredFolders>, IDisposa
         Ui.Settle();
         ToggleButton tab = window.BottomPanel.Debug.HeaderTools.GetVisualDescendants().OfType<ToggleButton>()
             .First(button => button.GetVisualDescendants().OfType<TextBlock>().First().Text == name);
-        Point centre = tab.TranslatePoint(new Point(tab.Bounds.Width / 2, tab.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, MouseButton.Left);
-        window.MouseUp(centre, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(tab);
         Assert.True(window.Debugger.Chosen?.Name == name, $"A click on {name}'s tab chose {window.Debugger.Chosen?.Name}");
     }
 

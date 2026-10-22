@@ -1823,6 +1823,17 @@ what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys
 widths, titles and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
 `DialogButtonsTests.Check` also holds dialogs to the plain button look, a disabled default, the chrome page, one
 drop-down width per column and Don't ask again's place.
+A click is `Ui.Click`: a real press and release at a control's centre (or a point in it) in the window or popup showing
+it, failing unless the control is shown, enabled and what the pointer finds there (an open menu's light-dismiss layer
+passes it on), then settled unless told not to (a click during work that holds background work); `RightClick`,
+`DoubleClick`, `ClickButton` (by its words), `ClickRow` (an Explorer row, scrolled to by `Ui.Row`) and `ClickLink` (a
+console's link) are its kinds. A menu item is chosen by clicks, through its submenus, by `Ui.Choose` (an open menu),
+`ChooseFromMenu` (the menu key), `ChooseFromRowMenu` (an Explorer row's right click) and `ChooseFromEditorMenu`; a
+raised `Button.ClickEvent` or `MenuItem.ClickEvent` is banned (RS0030), allowed only where no pointer could reach, saying why. A console's input is `Ui.TypeLine`
+(`TypeToRun`, `TypeToDebugged`), a caret's place `Ui.PlaceAfter`, a window on a folder `Ui.OpenFolder`. A project a test
+writes is `TestProjects.Console`, `Library` or `Web` (`.With` for its item groups), every one on `TestProjects.Framework`;
+a file of a test's folder `TestFolders.Write`; a container run's Stop and take-down `Docker.Stopped` (`TakenDown` for the
+wait alone); an MCP answer's words `McpRig.Text`, an agent's going `Gone`.
 A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says the status with `Ui.Said`, both naming
 the build's errors (`Ui.BuildErrors`: Problems' rows, else the Build window's last lines) when it failed, so a CI-only
 build failure says why. A test's stand-in that holds a file a target writes leaves it as it found it: a file it creates, newer than the
@@ -1907,8 +1918,8 @@ once it lets them in and the person answers its questions, and `McpProcessesTest
 rest by what the tools reach; each checks a tool's answer, leaving the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
 client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
-(headless, its popups windows of their own; `AgentAppFolder` writes and restores it once per class from
-`AvaloniaApp.HeadlessProject()`, which LiveTreeApp and BindingErrorsApp also use). The Windows on Arm VM runs a test
+(headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through
+`AvaloniaApp.Debuggee`, its project `AvaloniaApp.HeadlessProject()`, as every headless app of tests/Debuggees is). The Windows on Arm VM runs a test
 filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's
 load); the VM can't see dot folders, and a batch file in the share runs as `powershell -Command "& cmd.exe /c '…'"`.
 The Ubuntu VM ("Ubuntu 26.04 ARM64", a real GNOME desktop CI lacks) runs one with

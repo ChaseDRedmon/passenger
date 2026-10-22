@@ -207,14 +207,7 @@ public sealed class HotReloadEditsTests : IClassFixture<HotReloadEditsTests.Tick
 
     /// <summary>A window on the project, on the server the last row's left, which never saves what its row typed: what is
     /// on disk stays what the build was made from.</summary>
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = project.Server };
-        window.Show();
-        window.OpenFolder(project.Folder);
-        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
-        return window;
-    }
+    private MainWindow Open() => project.Open(null);
 
     private static void End(MainWindow window)
     {
@@ -233,7 +226,7 @@ public sealed class HotReloadEditsTests : IClassFixture<HotReloadEditsTests.Tick
             : base("hotreload-edits-")
         {
             File.WriteAllText(PathOf("Ticks.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>"));
             File.WriteAllText(PathOf("Program.cs"), "for (int i = 1; ; i++)\n{\n    Demo.Tick(i);\n    Thread.Sleep(100);\n}\n");
             File.WriteAllText(PathOf("Demo.cs"), Demo);
             // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.

@@ -43,7 +43,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         (string folder, string project) = ContainerRunsTests.Shop("services");
         foreach (string app in (string[])["Web", "Api"])
         {
-            ContainerRunsTests.Write(folder, $"{app}/Program.cs", Program);
+            TestFolders.Write(folder, $"{app}/Program.cs", Program);
         }
         // web is published on the loopback address alone, on a port the engine chooses (which Passenger pins for the run).
         string compose = Path.Combine(folder, "compose.yaml");
@@ -61,33 +61,33 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Assert.False(window.Debugger.IsDebugging, "Run debugged a service");
             string webAt = WebPublished();
             Assert.StartsWith("127.0.0.1:", webAt, StringComparison.Ordinal);
-            string apiStarted = Started(project, "api");
+            string apiStarted = ContainerRunsTests.Started(project, "api");
             ContainersView view = Shown(window);
 
             // Debug of web alone: made again held at its start, it stops in Main; api runs on, never restarted.
             Act(window, view, project, "web", AppActions.ServiceDebug);
             DebugTab web = ContainerRunDebuggingTests.Tab(window, "web");
             ContainerRunDebuggingTests.StoppedAt(window, web, Source(folder, "Web"), InMain, "web, made again held, to stop in Main");
-            Assert.Equal(apiStarted, Started(project, "api"));
+            Assert.Equal(apiStarted, ContainerRunsTests.Started(project, "api"));
             Assert.True(window.IsRunning, "Debug of one service took the run down");
             // Made anew, still on the loopback address and the port the browser was opened at.
             Assert.Equal(webAt, WebPublished());
             ContainerRunDebuggingTests.Resume(window, web);
 
             // The Containers window's Restart goes through the run: its session ended, held again, stopping in Main again.
-            string webDebugged = Started(project, "web");
+            string webDebugged = ContainerRunsTests.Started(project, "web");
             Act(window, view, project, "web", AppActions.ContainerRestart);
-            Ui.WaitFor(() => Started(project, "web") is { Length: > 0 } now && now != webDebugged, "web to restart", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => ContainerRunsTests.Started(project, "web") is { Length: > 0 } now && now != webDebugged, "web to restart", TimeSpan.FromMinutes(2));
             web = ContainerRunDebuggingTests.Tab(window, "web");
             ContainerRunDebuggingTests.StoppedAt(window, web, Source(folder, "Web"), InMain, "web, restarted from the Containers window, to stop in Main again");
             Assert.Equal(webAt, WebPublished());
             ContainerRunDebuggingTests.Resume(window, web);
 
             // Run without Debugger lets its session go, no restart, web answering on.
-            string webRestarted = Started(project, "web");
+            string webRestarted = ContainerRunsTests.Started(project, "web");
             Act(window, view, project, "web", AppActions.ServiceRun);
             Ui.WaitFor(() => !window.Debugger.Tabs.Any(t => t.Name == "web" && t.IsLive), "web's session to be let go");
-            Assert.Equal(webRestarted, Started(project, "web"));
+            Assert.Equal(webRestarted, ContainerRunsTests.Started(project, "web"));
             Assert.Equal("web 1", Answered(Request(project, "web"), project, "web"));
 
             // Attach reaches api as it runs, no restart, saying its startup has run; a request stops in its handler.
@@ -95,7 +95,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             DebugTab api = ContainerRunDebuggingTests.Tab(window, "api");
             Ui.WaitFor(() => api.Session is { State: DebugState.Running }, "api to be attached to as it runs");
             Assert.Contains("its startup has run already", window.Status, StringComparison.Ordinal);
-            Assert.Equal(apiStarted, Started(project, "api"));
+            Assert.Equal(apiStarted, ContainerRunsTests.Started(project, "api"));
             Task<string> answer = ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "api"));
             ContainerRunDebuggingTests.StoppedAt(window, api, Source(folder, "Api"), InRequest, "api's request to stop in its handler");
             ContainerRunDebuggingTests.Resume(window, api);
@@ -118,9 +118,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the sessions to end with Stop");
         window.Close();
@@ -158,9 +156,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         }
         finally
         {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project),
-                "Stop to take every container down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take every container down");
         }
         window.Close();
     }
@@ -202,14 +198,6 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             : Task.FromResult($"(no answer: {service} publishes no port: {said})");
     }
 
-    /// <summary>When a service's container last started; empty while it has none, stopped or not (a restart between its
-    /// stop and its start, a container made anew), which a wait reads as not yet.</summary>
-    internal static string Started(string project, string service) =>
-        Docker.Ask(["ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", $"label=com.docker.compose.service={service}"]).Trim() is { Length: > 0 } container
-            && !container.Contains('\n', StringComparison.Ordinal)
-            ? Docker.Ask(["inspect", "-f", "{{.State.StartedAt}}", container]).Trim()
-            : string.Empty;
-
     internal static ContainersView Shown(MainWindow window)
     {
         window.ShowToolWindow(ToolWindowIds.Containers);
@@ -235,10 +223,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         Ui.WaitFor(() => compose.RunMarks.Any(m => m.Line == at), $"the run icon beside {line.Trim()}");
         Passenger.Editor.CodeEditor shown = window.EditorArea.CodeEditor;
         double x = Enumerable.Range(0, 400).First(x => shown.IsInMarkColumn(new Avalonia.Point(x, 0))) + 3;
-        Avalonia.Point point = shown.TranslatePoint(new Avalonia.Point(x, shown.PointOf(compose.Text.Snapshot.GetLineStart(at)).Y + (shown.LineHeight / 2)), window)!.Value;
-        window.MouseDown(point, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(point, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(shown, new Avalonia.Point(x, shown.PointOf(compose.Text.Snapshot.GetLineStart(at)).Y + (shown.LineHeight / 2)));
         return [.. Assert.IsType<MenuFlyout>(window.RunMarkMenu).Items.OfType<Avalonia.Controls.MenuItem>()];
     }
 }

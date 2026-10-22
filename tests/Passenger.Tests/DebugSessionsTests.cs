@@ -73,7 +73,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
 
             // Its tab chosen, the first program's frames, values, console and execution point are the window's, still at the
             // breakpoint it stopped at.
-            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Ui.Click(Tabs(window).Single(t => t.Name == "First").Button);
             Assert.Same(first, window.Debugger.Session);
             Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0 && window.BottomPanel.Debug.Frames[0].Line == Pair.Next + 1, "the first program's frames");
             Ui.WaitFor(() => Value(window, "value") == "0", "the first program's values at its stop");
@@ -106,9 +106,9 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Assert.DoesNotContain(editor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint);
 
             // A tab closed goes; the last closed leaves the window as before any program was debugged.
-            ClickOn(window, Tabs(window).Single(t => t.Name == "Second").Close);
+            Ui.Click(Tabs(window).Single(t => t.Name == "Second").Close);
             Assert.Equal(["First"], window.Debugger.Tabs.Select(t => t.Name));
-            ClickOn(window, Tabs(window).Single().Close);
+            Ui.Click(Tabs(window).Single().Close);
             Assert.Empty(window.Debugger.Tabs);
             Assert.Null(window.Debugger.Session);
         }
@@ -299,7 +299,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         {
             window.Build(Passenger.App.Run.BuildKind.Build);
             Ui.WaitFor(() => !window.IsBuilding, "the build");
-            string built = Path.Combine(pair.Folder, "First", "bin", "Debug", "net10.0", OperatingSystem.IsWindows() ? "First.exe" : "First");
+            string built = Path.Combine(pair.Folder, "First", "bin", "Debug", TestProjects.Framework, OperatingSystem.IsWindows() ? "First.exe" : "First");
             Assert.True(File.Exists(built), $"The build made no {built}: {Ui.Said(window)}");
             string main = Path.Combine(PathNames.Canonical(pair.Folder), "First", "Program.cs");
             window.Debugger.Breakpoints.Toggle(main, 3);
@@ -355,7 +355,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             window.Debugger.Breakpoints.Toggle(secondMain, 3);
             DebugSession first = Debug(window, "First");
             DebugSession second = Debug(window, "Second");
-            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Ui.Click(Tabs(window).Single(t => t.Name == "First").Button);
             Assert.Same(first, window.Debugger.Session);
 
             window.OpenFile(Counter);
@@ -396,7 +396,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             window.Debugger.Breakpoints.Toggle(Path.Combine(folder, "Second", "Program.cs"), 3);
             DebugSession first = Debug(window, "First");
             DebugSession second = Debug(window, "Second");
-            ClickOn(window, Tabs(window).Single(t => t.Name == "First").Button);
+            Ui.Click(Tabs(window).Single(t => t.Name == "First").Button);
             Assert.Same(first, window.Debugger.Session);
 
             window.OpenFile(Counter);
@@ -576,15 +576,6 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         return window.Assist.HoverText!;
     }
 
-    /// <summary>A click on a control of the window, where it is drawn.</summary>
-    private static void ClickOn(MainWindow window, Control control)
-    {
-        Point centre = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(centre, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>Two programs, First and Second, each adding one three times with the Counter their projects share from
     /// Shared/, and a solution of both.</summary>
     public sealed class Pair : SharedProject
@@ -611,7 +602,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             {
                 Directory.CreateDirectory(Path.Combine(folder, name));
                 File.WriteAllText(Path.Combine(folder, name, $"{name}.csproj"),
-                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+                    $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
                     + "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n"
                     + "    <Compile Include=\"../Shared/Counter.cs\" Link=\"Counter.cs\" />\n  </ItemGroup>\n</Project>\n");
                 File.WriteAllText(Path.Combine(folder, name, "Program.cs"),

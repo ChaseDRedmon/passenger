@@ -18,3 +18,5 @@ M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.Threading.Cancellatio
 M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.TimeProvider);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
 M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.TimeProvider,System.Threading.CancellationToken);A test waits for what it checks (Waiting.UntilAsync, Waiting.Within), and time it needs to pass is Waiting.ForAsync's
 M:Passenger.App.Screenshot.Pump(System.TimeSpan);A test waits for what it checks (Ui.WaitFor, Ui.PumpUntil), and time the window must run for is Ui.Hold's
+F:Avalonia.Controls.Button.ClickEvent;A test clicks as a person does (Ui.Click, Ui.Choose), which a hidden, disabled or covered control refuses
+F:Avalonia.Controls.MenuItem.ClickEvent;A test chooses a menu item by clicks (Ui.Choose, Ui.ChooseFromMenu), which a disabled or hidden item refuses

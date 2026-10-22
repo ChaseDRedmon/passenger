@@ -410,7 +410,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
             Assert.Equal([PathNames.Canonical(wanted)], taking.AgentFolderList.Items.OfType<string>());
             Assert.False(taking.RemoveAgentFolderButton.IsEnabled, "Remove was offered with no folder chosen");
             taking.AgentFolderList.SelectedIndex = 0;
-            taking.RemoveAgentFolderButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            Ui.Click(taking.RemoveAgentFolderButton, settle: false);
             Assert.Empty(taking.AgentFolderList.Items.OfType<string>());
             taking.Ok();
             Ui.Settle();
@@ -631,10 +631,10 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
 
             // Copy puts the text on the clipboard whole, and says it did until another is copied.
             Button copy = dialog.CopyButtons["Claude Desktop"];
-            copy.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.Click(copy, settle: false);
             Ui.WaitFor(() => Ui.Clipboard(dialog) == setups["Claude Desktop"], "Claude Desktop's configuration on the clipboard");
             Assert.Equal("Copied", copy.Content);
-            dialog.CopyButtons["Claude Code"].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.Click(dialog.CopyButtons["Claude Code"], settle: false);
             Ui.WaitFor(() => Ui.Clipboard(dialog) == claude, "Claude Code's command on the clipboard");
             Assert.Equal(("Copy", "Copied"), (copy.Content, dialog.CopyButtons["Claude Code"].Content));
         }
@@ -822,7 +822,7 @@ public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
 
             // The Settings open since before take back the folder they list.
             dialog.AgentFolderList.SelectedIndex = 0;
-            dialog.RemoveAgentFolderButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.Click(dialog.RemoveAgentFolderButton, settle: false);
             dialog.Ok();
             Ui.Settle();
             Assert.False(settingsWindow.AlwaysLetsAgentsIn, "The folder Settings took back still lets agents in unasked");

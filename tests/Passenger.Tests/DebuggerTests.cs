@@ -207,8 +207,6 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
-
-
     [AvaloniaFact]
     public void Dragging_the_execution_arrow_past_the_loop_goes_on_from_there_and_skips_it()
     {
@@ -619,9 +617,9 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         ExceptionBreakpoint operation = AddException(window, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
         // Rider's new breakpoint on a type stops wherever it is thrown, however it is handled.
         Assert.Equal(ExceptionScenarios.All, operation.Scenarios);
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
         window.KeyTextInput("turn == 2");
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Button(breakpoints, "Done"));
         Assert.Null(window.Popup);
         Assert.Equal("turn == 2", operation.Condition);
 
@@ -650,12 +648,12 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         CodeEditor editor = window.EditorArea.CodeEditor;
         BreakpointsWindow breakpoints = OpenBreakpoints(window);
         // "Any exception" off, so only the breakpoint on the type stops the program.
-        Click(window, Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
+        Ui.Click(Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
         Assert.False(window.Debugger.Breakpoints.Exceptions[0].Enabled);
         ExceptionBreakpoint operation = AddException(window, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
         // Rider's user-unhandled: handled outside the user's code, or not at all.
-        Click(window, Scenario(breakpoints, "Exception handler:", "User code"));
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Scenario(breakpoints, "Exception handler:", "User code"));
+        Ui.Click(Button(breakpoints, "Done"));
         Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInExternalCode | ExceptionScenarios.Unhandled, operation.Scenarios);
 
         StartDebugging(window);
@@ -667,11 +665,11 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
         // Handled in the user's code only: the program's own catches stop it, the comparer's exception does not.
         breakpoints = OpenBreakpoints(window);
-        Click(window, Row(breakpoints, "System.InvalidOperationException"));
-        Click(window, Scenario(breakpoints, "Exception handler:", "User code"));
-        Click(window, Scenario(breakpoints, "Exception handler:", "External code"));
-        Click(window, Scenario(breakpoints, "Exception handler:", "Unhandled"));
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Row(breakpoints, "System.InvalidOperationException"));
+        Ui.Click(Scenario(breakpoints, "Exception handler:", "User code"));
+        Ui.Click(Scenario(breakpoints, "Exception handler:", "External code"));
+        Ui.Click(Scenario(breakpoints, "Exception handler:", "Unhandled"));
+        Ui.Click(Button(breakpoints, "Done"));
         Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInUserCode, operation.Scenarios);
         StartDebugging(window);
         WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
@@ -700,7 +698,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.Run(window, AppActions.ToggleBreakpoint);
         BreakpointsWindow breakpoints = OpenBreakpoints(window);
         AddException(window, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
-        Click(window, Button(breakpoints, "Done"));
+        Ui.Click(Button(breakpoints, "Done"));
 
         // Run > Mute Breakpoints: each stays, grey in the gutter as Rider draws muted ones, the menu item checked and the Debug
         // window's toggle pressed.
@@ -745,19 +743,19 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             MainWindow first = Keeping(settings);
             BreakpointsWindow breakpoints = OpenBreakpoints(first);
             AddException(first, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
-            Click(first, Scenario(breakpoints, "Exception handler:", "User code"));
+            Ui.Click(Scenario(breakpoints, "Exception handler:", "User code"));
             AddException(first, breakpoints, "ArgumentNull", "System.ArgumentNullException");
-            Click(first, Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
+            Ui.Click(Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
             Assert.Equal([ExceptionBreakpoint.AnyException, "System.InvalidOperationException", "System.ArgumentNullException", BindingErrorBreakpoint.AnyBindingError],
                 breakpoints.Listed.Select(b => b.Location));
             // XAML Binding Errors, off at first, turned on by its box and given a condition, as an exception breakpoint is.
             Assert.False(first.Debugger.Breakpoints.BindingErrors.Enabled, "XAML Binding Errors was on in a folder that never turned it on");
             Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "XAML Binding Errors");
-            Click(first, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
-            Click(first, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
-            Click(first, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+            Ui.Click(Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
+            Ui.Click(Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
+            Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
             first.KeyTextInput("$bindingError.Path == \"Name\"");
-            Click(first, Button(breakpoints, "Done"));
+            Ui.Click(Button(breakpoints, "Done"));
             first.Close();
 
             // Another window on the folder has them as they were left.
@@ -772,11 +770,11 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
             // Delete removes the one chosen, but never "Any exception" or XAML Binding Errors, whose boxes turn them off.
             breakpoints = OpenBreakpoints(second);
-            Click(second, Row(breakpoints, "System.ArgumentNullException"));
+            Ui.Click(Row(breakpoints, "System.ArgumentNullException"));
             Ui.Press(second, "Delete");
-            Click(second, Row(breakpoints, ExceptionBreakpoint.AnyException));
+            Ui.Click(Row(breakpoints, ExceptionBreakpoint.AnyException));
             Ui.Press(second, "Delete");
-            Click(second, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
+            Ui.Click(Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
             Ui.Press(second, "Delete");
             Assert.Equal([ExceptionBreakpoint.AnyException, "System.InvalidOperationException", BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
             Ui.Press(second, "Escape");
@@ -820,7 +818,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     /// Enter on the type it offers first, which is then the one chosen.</summary>
     private static ExceptionBreakpoint AddException(MainWindow window, BreakpointsWindow breakpoints, string typed, string type)
     {
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) as string == "Add CLR Exception Breakpoints"));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) as string == "Add CLR Exception Breakpoints"));
         window.KeyTextInput(typed);
         Ui.WaitFor(() => breakpoints.Offered.FirstOrDefault() == type, $"{type} offered first for \"{typed}\", not [{string.Join(", ", breakpoints.Offered.Take(5))}]");
         Ui.Press(window, "Enter");
@@ -844,15 +842,6 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
     private static Button Button(Control within, string content) =>
         within.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == content && b.IsEffectivelyVisible);
-
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>Waits for a top-level row of Variables to show a value; a failure says what the rows showed instead.</summary>
     private static void Shows(Passenger.App.ToolWindows.DebugView view, string name, string value, string what)
@@ -971,9 +960,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         ListBox list = window.BottomPanel.Debug.VariablesList;
         VariableNode total = window.BottomPanel.Debug.Tree.Rows.First(r => r.Name == "total");
         Control row = list.ContainerFromItem(total)!;
-        Point middle = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(middle, MouseButton.Left);
-        window.MouseUp(middle, MouseButton.Left);
+        Ui.Click(row, settle: false);
         Ui.Press(window, "F2");
         Assert.True(total.IsEditing);
         window.KeyTextInput("100");
@@ -1023,12 +1010,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             VariableNode row = Child(Child(top, range), element);
             // Click the row, F2, type over the value, Enter: Rider's Set Value.
             ListBox list = view.VariablesList;
-            list.ScrollIntoView(row);
-            Ui.Settle();
-            Control shown = list.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Variables view does not show {element}");
-            Point middle = shown.TranslatePoint(new Point(shown.Bounds.Width / 2, shown.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(middle, MouseButton.Left);
-            window.MouseUp(middle, MouseButton.Left);
+            Ui.Click(Ui.Row(list, row), settle: false);
             Ui.Press(window, "F2");
             Assert.True(row.IsEditing, $"F2 on {local}'s {element} did not open its value for editing");
             window.KeyTextInput(value);
@@ -1237,13 +1219,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             StartDebugging(window);
             Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
             Ui.WaitFor(() => console.Document.Snapshot.ToString().Contains("Name? ", StringComparison.Ordinal), "the program to ask");
-            window.BottomPanel.Debug.ShowTab(console: true);
-            Ui.Settle();
-            Point inConsole = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(inConsole, MouseButton.Left);
-            window.MouseUp(inConsole, MouseButton.Left);
-            window.KeyTextInput("Ada");
-            Ui.Press(window, "ENTER");
+            Ui.TypeToDebugged(window, "Ada");
             Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to read the line and end");
             Assert.Contains("Name? Ada\nread: Ada\n", console.Document.Snapshot.ToString(), StringComparison.Ordinal);
         }
@@ -1909,10 +1885,8 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Button stop = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
             Assert.True(stop.IsEnabled, "The Debug window's Stop was greyed while the debugger waited for the program to start");
 
-            // Clicked as Click does, not settled: without Stop the start would hold the background work for good.
-            Point at = stop.TranslatePoint(new Point(stop.Bounds.Width / 2, stop.Bounds.Height / 2), window) ?? throw new InvalidOperationException("The Debug window's Stop is not in the window");
-            window.MouseDown(at, MouseButton.Left);
-            window.MouseUp(at, MouseButton.Left);
+            // Not settled: without Stop the start would hold the background work for good.
+            Ui.Click(stop, settle: false);
             try
             {
                 Ui.PumpUntil(() => window.Debugger.Session is null && !Processes.IsRunning(program), "Stop to end the starting session and its program", TimeSpan.FromSeconds(15));
@@ -1965,7 +1939,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             int first = Runs()[0];
 
             Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
-            Click(window, rerun);
+            Ui.Click(rerun);
             Ui.WaitFor(() => Runs().Length == 2, "Run's program to run again", TimeSpan.FromMinutes(2));
             Assert.True(Processes.Gone(first), $"Rerun left Run's first program going: {Processes.Describe(first)}");
             Assert.True(window.IsRunning, "The program Rerun started again is not running");
@@ -2100,7 +2074,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             : base("debug-sleeper-")
         {
             File.WriteAllText(PathOf("Sleeper.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
             File.WriteAllText(PathOf("Program.cs"), "File.WriteAllText(args[0], Environment.ProcessId.ToString());\nConsole.WriteLine(\"stopped here\");\nThread.Sleep(Timeout.Infinite);\n");
             // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
             Directory.CreateDirectory(PathOf("bin"));
@@ -2123,7 +2097,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         public static void WriteTo(string folder)
         {
             File.WriteAllText(Path.Combine(folder, "Sum.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
             File.WriteAllText(Path.Combine(folder, "Program.cs"),
                 "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n");
         }

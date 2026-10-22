@@ -32,19 +32,19 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     public TypeRenameTests(RestoredFolders folders) => folder = PathNames.Canonical(folders.Take("type-rename-", made =>
     {
         string project = PathNames.Canonical(made);
-        Write(project, "Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-        Write(project, ".gitignore", "bin/\nobj/\n");
-        Write(project, "Order.cs", Order);
-        Write(project, "Till.cs", Till);
-        Write(project, "Shapes.cs", Shapes);
+        TestFolders.Write(project, "Shop.csproj", TestProjects.Library());
+        TestFolders.Write(project, ".gitignore", "bin/\nobj/\n");
+        TestFolders.Write(project, "Order.cs", Order);
+        TestFolders.Write(project, "Till.cs", Till);
+        TestFolders.Write(project, "Shapes.cs", Shapes);
         // Files a test renames are the project's from the start, as a person's are: one written a moment before a rename
         // is one the server may not have read again, which the rename refuses (WorkspaceEdits.StaleAsync).
-        Write(project, "Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
-        Write(project, "Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
-        Write(project, "Form1.resx", "<root />\n");
-        Write(project, "Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");
-        Write(project, "Basket.Lines.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Lines;\n}\n");
-        Write(project, "BasketExtras.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Extras;\n}\n");
+        TestFolders.Write(project, "Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
+        TestFolders.Write(project, "Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
+        TestFolders.Write(project, "Form1.resx", "<root />\n");
+        TestFolders.Write(project, "Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");
+        TestFolders.Write(project, "Basket.Lines.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Lines;\n}\n");
+        TestFolders.Write(project, "BasketExtras.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Extras;\n}\n");
         TestGit.Init(project);
         return project;
     }));
@@ -60,7 +60,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     {
         MainWindow window = Open("Order.cs");
         OpenDocument document = window.EditorArea.Active!;
-        PlaceAfter(window, "Total;");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "Total;");
         Ui.Run(window, AppActions.ToggleBreakpoint);
         Ui.Run(window, AppActions.ToggleBookmark);
 
@@ -88,12 +88,12 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     public void With_the_file_option_turned_off_only_the_code_is_renamed_and_it_stays_off_for_the_next_rename()
     {
         MainWindow window = Open("Order.cs");
-        PlaceAfter(window, "class Ord");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ord");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.RenameOffersFiles.Count > 0, "the rename to offer Order.cs");
         CheckBox option = Option(window, "Also rename files to reflect this change");
         Assert.True(option.IsChecked, "Renaming a class named like its file does not rename the file unless asked, as Rider's does");
-        Click(window, option);
+        Ui.Click(option);
         Assert.False(option.IsChecked, "A click did not clear Also rename files to reflect this change");
         window.KeyTextInput("Purchase");
         Ui.Press(window, "ENTER");
@@ -107,7 +107,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         // The option stays as it was left for the next type named like its file, as Rider keeps it.
         window.OpenFile(Path.Combine(folder, "Till.cs"));
         Ui.Settle();
-        PlaceAfter(window, "class Ti");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ti");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.RenameOffersFiles.Count > 0, "the rename to offer Till.cs");
         Assert.False(Option(window, "Also rename files to reflect this change").IsChecked, "The file option turned off came back on");
@@ -232,7 +232,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
 
         // What was typed after it is the file's own to undo, asking nothing.
         editor.Focus();
-        PlaceAfter(window, "Total;");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "Total;");
         window.KeyTextInput(" // kept");
         Ui.Run(window, EditorActions.Undo);
         Assert.Empty(asked);
@@ -278,7 +278,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     /// files it offered.</summary>
     private static IReadOnlyList<string> RenameAt(MainWindow window, string after, string name, bool offered = true)
     {
-        PlaceAfter(window, after);
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, AppActions.Rename);
         Ui.Settle();
@@ -292,25 +292,9 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         return files;
     }
 
-    private static void PlaceAfter(MainWindow window, string text)
-    {
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-    }
-
     private static CheckBox Option(MainWindow window, string text) =>
         window.GetVisualDescendants().OfType<CheckBox>().FirstOrDefault(c => c.IsEffectivelyVisible && (string?)c.Content == text)
         ?? throw new Xunit.Sdk.XunitException($"No check box '{text}' shows");
-
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>Clicks a file's row in the Explorer, its folders opened down to it, as a person chooses it before a key.</summary>
     private static void Choose(MainWindow window, string path)
@@ -319,12 +303,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         Ui.Settle();
         ExplorerNode row = window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == path)
             ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {path}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row) ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {row.Name}");
-        Click(window, item);
-        Assert.Equal([row], window.ExplorerView.SelectedNodes);
+        Ui.ClickRow(window, row);
     }
 
     /// <summary>Agrees to every question the window asks, keeping each one's title and text in order.</summary>
@@ -340,6 +319,4 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     }
 
     private string Git(params string[] arguments) => TestGit.Run(folder, arguments);
-
-    private static void Write(string folder, string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
 }

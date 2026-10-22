@@ -25,13 +25,9 @@ public sealed class AgentAppFolder : IDisposable
         Folder = PathNames.Canonical(TestFolders.Create("agentapp-"));
         TestFolders.Prepare(() =>
         {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("AgentApp")))
-            {
-                File.Copy(file, Path.Combine(Folder, Path.GetFileName(file)));
-            }
+            AvaloniaApp.Debuggee(Folder, "AgentApp");
             string xaml = Path.Combine(Folder, "MainWindow.axaml");
             File.WriteAllText(xaml, File.ReadAllText(xaml).Replace("Title=\"Agent App\" Width", "Title=\"Agent App\"\r        Width", StringComparison.Ordinal));
-            File.WriteAllText(Path.Combine(Folder, "AgentApp.csproj"), AvaloniaApp.HeadlessProject());
             Restore.Run(Folder);
         }, Folder);
     }
@@ -320,11 +316,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
             shown?.Close();
             if (client is { } going)
             {
-                Await(Task.Run(async () =>
-                {
-                    await going.DisposeAsync();
-                    return true;
-                }), "the agent going");
+                Gone(going);
             }
             window.Runner.Stop();
             WaitFor(() => !window.Runner.IsRunning, "the app stopped");
@@ -370,11 +362,7 @@ public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }

@@ -273,6 +273,10 @@ public sealed class BranchesTests : IDisposable
         GitLogView main = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.GitWindow).OfType<GitLogView>().Single(v => v.Range?.To == "main");
         Assert.Equal(["Notes on main"], main.Rows.Select(r => r.Commit.Subject));
 
+        // The branches are the Log's, where the person goes back to them.
+        window.GitWindow.ShowLog();
+        Ui.Settle();
+
         // The files feature's tree and the working tree differ in: Shop.cs edited, Feature.cs only there, Notes.txt only here.
         Choose(panel, rows, "feature", "Show Diff with Working Tree");
         ChangesWindow changes = Assert.IsType<ChangesWindow>(window.Frontmost);
@@ -353,9 +357,7 @@ public sealed class BranchesTests : IDisposable
     private static ContextMenu OpenBranchWidget(MainWindow window)
     {
         Button button = window.FindControl<Button>("BranchButton")!;
-        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Click(button, settle: false);
         Ui.WaitFor(() => window.OpenContextMenu is { IsOpen: true }, "the branch widget's menu");
         Ui.Settle();
         return window.OpenContextMenu!;

@@ -54,7 +54,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<'");
@@ -94,7 +94,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<'");
@@ -129,7 +129,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<Button Name=\"Go\" Content=\"Go\"");
+        Ui.PlaceAfter(editor, "<Button Name=\"Go\" Content=\"Go\"");
         window.KeyTextInput(" Foreground=");
         window.KeyTextInput("\"");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Red"), "the named colours a brush takes");
@@ -145,7 +145,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Assert.Contains("Brand", window.Assist.CompletionLabels);
         Assert.Contains("Gallery.Gap", window.Assist.CompletionLabels);
 
-        PlaceAfter(editor, "Text=\"{Binding ");
+        Ui.PlaceAfter(editor, "Text=\"{Binding ");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Greeting"), "the view model's properties, x:DataType's type's");
         Assert.Contains("Owner", window.Assist.CompletionLabels);
@@ -169,23 +169,23 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.OpenFile(Path.Combine(Repository, "src", "Passenger.App", "MainWindow.axaml"));
         Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "Background=\"{DynamicResource Passenger.");
+        Ui.PlaceAfter(editor, "Background=\"{DynamicResource Passenger.");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Passenger.Panel"), "Tokens.axaml's keys, which App.axaml merges in");
         Assert.Contains("Passenger.Editor.Background", window.Assist.CompletionLabels);
         Ui.Press(window, "ESCAPE");
-        PlaceAfter(editor, "<PathIcon Data=\"{StaticResource Icon.");
+        Ui.PlaceAfter(editor, "<PathIcon Data=\"{StaticResource Icon.");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Icon.Menu"), "Icons.axaml's geometries");
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "<Button Name=\"MenuButton\" Classes=\"");
+        Ui.PlaceAfter(editor, "<Button Name=\"MenuButton\" Classes=\"");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("tool"), "the style classes Shell.axaml styles");
         Assert.Contains("widget", window.Assist.CompletionLabels);
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "<editors:");
+        Ui.PlaceAfter(editor, "<editors:");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("EditorArea"), "Passenger's own controls, from its C#, under their prefix");
         window.Close();
@@ -198,7 +198,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         Assert.Empty(document.Markers);
-        PlaceAfter(editor, "<Button Name=\"Go\" Content=\"Go\"");
+        Ui.PlaceAfter(editor, "<Button Name=\"Go\" Content=\"Go\"");
         window.KeyTextInput(" Foregrund=\"Red\" HorizontalAlignment=\"Centre\"");
         Replace(editor, "{Binding Greeting}", "{Binding Greting}");
         Replace(editor, "{StaticResource Accent}", "{StaticResource Acent}");
@@ -241,7 +241,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         OpenDocument view = window.EditorArea.Active!;
-        PlaceAfter(window.EditorArea.CodeEditor, "<TextBlock Text=\"{Binding #Go.Content}\" />");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "<TextBlock Text=\"{Binding #Go.Content}\" />");
         window.KeyTextInput("\n        <TextBlock Text=\"{Binding Subtitle}\" />\n        <TextBlock Text=\"{Binding Caption}\" />");
         Ui.WaitFor(() => view.Markers.Count == 2, "the two properties the view model lacks marked");
 
@@ -262,7 +262,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
 
         window.OpenFile(app.PathOf("MainWindow.axaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "{Binding Subt");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "{Binding Subt");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes offered on the binding's line");
         Assert.Equal("Create property 'Subtitle'", window.Assist.Offered[0]);
@@ -290,7 +290,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument view = window.EditorArea.Active!;
         Ui.WaitFor(() => window.XamlService.For(view)?.IsLoaded == true, "the project's XAML read, the file with the references among it");
-        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
         window.KeyTextInput("\n        <TextBlock Text=\"&#xD83D;\" />\n        ");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered beside a typed reference to half a pair");
@@ -302,7 +302,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.OpenFile(emoji);
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<TextBlock Text=\"&#55357;\"");
+        Ui.PlaceAfter(editor, "<TextBlock Text=\"&#55357;\"");
         window.KeyTextInput(" ");
         window.KeyTextInput("F");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Foreground"), "a TextBlock's properties in the file holding the references");
@@ -327,7 +327,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
                     "  <ItemGroup>\n    <ProjectReference Include=\"..\\Shop.Core\\Shop.Core.csproj\" />\n  </ItemGroup>\n</Project>", StringComparison.Ordinal));
                 Directory.CreateDirectory(Path.GetDirectoryName(viewModel)!);
                 File.WriteAllText(Path.Combine(core, "Shop.Core.csproj"),
-                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+                    TestProjects.Library("<Nullable>enable</Nullable>"));
                 File.WriteAllText(viewModel, "namespace Shop.Core.ViewModels;\n\npublic class MainViewModel\n{\n    public string Greeting { get; set; } = \"Hello\";\n}\n");
                 File.WriteAllText(Path.Combine(shop, "MainWindow.axaml"), """
                     <Window xmlns="https://github.com/avaloniaui"
@@ -360,13 +360,13 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             window.OpenFile(viewModel);
             Ui.Settle();
             CodeEditor code = window.EditorArea.CodeEditor;
-            PlaceAfter(code, "public string Subtitle { get; set; } = \"\";");
+            Ui.PlaceAfter(code, "public string Subtitle { get; set; } = \"\";");
             window.KeyTextInput("\n\n    public string Caption { get; set; } = \"\";");
             Ui.WaitFor(() => view.Markers.Count == 0, "the property typed into the referenced project's view model no longer marked");
 
             window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
             Ui.Settle();
-            PlaceAfter(window.EditorArea.CodeEditor, "Text=\"{Binding ");
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, "Text=\"{Binding ");
             Ui.Run(window, AppActions.Complete);
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Caption"), "the property typed into the referenced project offered in a binding");
             Assert.Contains("Subtitle", window.Assist.CompletionLabels);
@@ -443,7 +443,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             window.OpenFile(Path.Combine(shop, "MainWindow.axaml"));
             Ui.Settle();
             CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "<StackPanel>");
+            Ui.PlaceAfter(editor, "<StackPanel>");
             Ui.Press(window, "ENTER");
             window.KeyTextInput("<");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<', once the project's XAML files are read");
@@ -452,7 +452,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             window.OpenFile(Path.Combine(deep, "Card.axaml.cs"));
             Ui.WaitFor(() => window.CSharpService?.IsReady == true, "the language server to load Shop");
             CodeEditor code = window.EditorArea.CodeEditor;
-            PlaceAfter(code, "        Pa");
+            Ui.PlaceAfter(code, "        Pa");
             Ui.Run(window, AppActions.GoToDeclaration);
             Ui.WaitFor(() => window.EditorArea.Active?.Name == "Card.axaml", "Go to Declaration of Pay to land in the XAML declaring Card, found among the links");
             Assert.Contains("<Button Name=\"|Pay\"", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
@@ -471,7 +471,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         // A library with XAML in it but no Avalonia yet: nothing Passenger reads until the package is added and restored.
         string folder = PathNames.Canonical(TestFolders.Create("xaml-later-"));
         string project = Path.Combine(folder, "Later.csproj");
-        const string Plain = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n";
+        const string Plain = $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n";
         try
         {
             TestFolders.Prepare(() =>
@@ -503,7 +503,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             Restore.Run(folder);
             Ui.WaitFor(() => xaml.IsLoaded, "the project's XAML read as Avalonia's once the package it now references was restored", TimeSpan.FromSeconds(30));
             CodeEditor editor = window.EditorArea.CodeEditor;
-            PlaceAfter(editor, "<TextBlock Text=\"Later\" />");
+            Ui.PlaceAfter(editor, "<TextBlock Text=\"Later\" />");
             window.KeyTextInput("\n        ");
             window.KeyTextInput("<");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<' once the project references it");
@@ -645,7 +645,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
         // A number the compiler reads: checked by the build alone.
-        PlaceAfter(editor, "<TextBlock Name=\"Title\"");
+        Ui.PlaceAfter(editor, "<TextBlock Name=\"Title\"");
         window.KeyTextInput(" Width=\"wide\"");
         Ui.Settle();
         Assert.Empty(document.Markers);
@@ -693,7 +693,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         string message = console.Document.Snapshot.ToString().Split('\n').First(l => l.Contains("AVLN1000", StringComparison.Ordinal));
         Assert.True(message.Contains($"MainWindow.axaml({width.Line + 2},{width.Column + 1}", StringComparison.Ordinal), $"The Build window does not name the compiler's line: {message}");
         editor.GoTo(new TextPosition(0, 0));
-        ProblemsTests.ClickLink(window, console, message);
+        Ui.ClickLink(console, message);
         Assert.Equal(PathNames.Canonical(xaml), window.EditorArea.Active?.Path);
         Assert.True(editor.CaretPosition == width, $"The Build window's link went to {editor.CaretPosition.Line + 1}:{editor.CaretPosition.Column + 1}, not {width.Line + 1}:{width.Column + 1}");
 
@@ -726,7 +726,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "x:Class=\"Gallery.Main");
+        Ui.PlaceAfter(editor, "x:Class=\"Gallery.Main");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainWindow.axaml.cs", window.EditorArea.Active?.Name);
@@ -735,7 +735,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.OpenFile(app.PathOf("MainWindow.axaml"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<Butt");
+        Ui.PlaceAfter(editor, "<Butt");
         Ui.Run(window, AppActions.QuickDocumentation);
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the card describing the tag's type");
         Assert.Equal("class Avalonia.Controls.Button : ContentControl", window.Assist.HoverText);
@@ -753,7 +753,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.OpenFile(app.PathOf("MainWindow.axaml"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "{StaticResource Acc");
+        Ui.PlaceAfter(editor, "{StaticResource Acc");
         Ui.Run(window, AppActions.GoToDeclaration);
         // A key the theme's dark and light dictionaries both define: a place to choose for each.
         Ui.WaitFor(() => window.Assist.Offered.Count == 2, "Accent's dark and light definitions to choose from");
@@ -767,7 +767,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.OpenFile(app.PathOf("MainWindow.axaml"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "{Binding Gree");
+        Ui.PlaceAfter(editor, "{Binding Gree");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainViewModel.cs", window.EditorArea.Active?.Name);
@@ -781,7 +781,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml.cs"));
         CodeEditor code = window.EditorArea.CodeEditor;
         // The field Avalonia's generator makes for the button leads to its name in the XAML.
-        PlaceAfter(code, "        G");
+        Ui.PlaceAfter(code, "        G");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("MainWindow.axaml", window.EditorArea.Active?.Name);
@@ -824,13 +824,13 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         OpenDocument view = window.EditorArea.Active!;
-        PlaceAfter(window.EditorArea.CodeEditor, "<Button Name=\"Go\" Content=\"Go\"");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "<Button Name=\"Go\" Content=\"Go\"");
         window.KeyTextInput(" Foreground=\"{DynamicResource Danger}\"");
         window.OpenFile(app.PathOf("Styles/Palette.axaml"));
         Ui.Settle();
         CodeEditor palette = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
-        PlaceAfter(palette, "<SolidColorBrush x:Key=\"Muted\" Color=\"#868A91\" />");
+        Ui.PlaceAfter(palette, "<SolidColorBrush x:Key=\"Muted\" Color=\"#868A91\" />");
         window.KeyTextInput("\n            <SolidColorBrush x:Key=\"Danger\" Color=\"#E55765\" />");
         Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Warning), "the warning on the key only Dark defines");
         Assert.Equal("'Danger' is defined for Dark but not for Light", MarkerOn(palette, document, "Danger").Message);
@@ -855,7 +855,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
-        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        Ui.PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
         window.KeyTextInput("\n        <Image Source=");
         window.KeyTextInput("\"");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("avares://Gallery/Assets/logo.png"), "the project's asset as an avares:// path");
@@ -877,7 +877,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
 
         window.OpenFile(app.PathOf("App.axaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "Source=\"avares://Gallery/Sty");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "Source=\"avares://Gallery/Sty");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Palette.axaml", window.EditorArea.Active?.Name);
@@ -918,15 +918,12 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Ui.Settle();
         CodeEditor code = window.EditorArea.CodeEditor;
         OpenDocument behind = window.EditorArea.Active!;
-        PlaceAfter(code, "Go.Content = \"Start\";");
+        Ui.PlaceAfter(code, "Go.Content = \"Start\";");
         window.KeyTextInput("\n        Go.Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0x33, 0x66, 0x99));");
         int line = code.CaretPosition.Line;
         Ui.WaitFor(() => behind.ColourMarks.Any(m => m.Line == line), "the swatch of the colour FromRgb makes");
         Assert.Equal(Color.Parse("#336699"), behind.ColourMarks.Single(m => m.Line == line).Colour);
-        Point made = code.TranslatePoint(code.GutterColumnPoint(GutterColumn.Marks, line), window)!.Value;
-        window.MouseDown(made, MouseButton.Left);
-        window.MouseUp(made, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(code, code.GutterColumnPoint(GutterColumn.Marks, line));
         window.KeyTextInput("#AA0000");
         Ui.Press(window, "ENTER");
         Ui.Settle();
@@ -942,7 +939,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         ThemeSources sources = new(TestFolders.Create("xaml-theme-"));
         window.XamlService.LibraryFiles = sources;
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<Butt");
+        Ui.PlaceAfter(editor, "<Butt");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the class and its control theme to choose from");
         Assert.Equal(["Avalonia.Controls.Button", "Button's control theme"], window.Assist.Offered);
@@ -957,9 +954,9 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
 
         window.OpenFile(app.PathOf("App.axaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "<FluentTheme />");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "<FluentTheme />");
         window.KeyTextInput("\n        <Style Selector=\"Button /template/ ContentPresenter#PART_ContentPresenter\">\n            <Setter Property=\"Background\" Value=\"{DynamicResource ButtonBackground}\" />\n        </Style>");
-        PlaceAfter(window.EditorArea.CodeEditor, "#PART_Con");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "#PART_Con");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Button.xaml", window.EditorArea.Active?.Name);
@@ -967,7 +964,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
 
         window.OpenFile(app.PathOf("App.axaml"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "{DynamicResource ButtonBack");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "{DynamicResource ButtonBack");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Button.xaml", window.EditorArea.Active?.Name);
@@ -993,7 +990,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
             File.WriteAllText(Path.Combine(entry, "Controls", "FluentControls.xaml"),
                 "<ResourceDictionary xmlns=\"https://github.com/avaloniaui\">\n  <ResourceDictionary.MergedDictionaries>\n"
                 + "    <MergeResourceInclude Source=\"../../../../../escaped/Button.xaml\" />\n  </ResourceDictionary.MergedDictionaries>\n</ResourceDictionary>\n");
-            PlaceAfter(window.EditorArea.CodeEditor, "<Butt");
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, "<Butt");
             Ui.Run(window, AppActions.GoToDeclaration);
             Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the class and its control theme to choose from");
             Ui.Press(window, "DOWN");
@@ -1075,7 +1072,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Color orange = Color.Parse("#E2A33F");
         Assert.NotEqual(orange, Below());
 
-        PlaceAfter(editor, "<StackPanel");
+        Ui.PlaceAfter(editor, "<StackPanel");
         window.KeyTextInput(" Background=\"#E2A33F\"");
         Ui.WaitFor(() => Below() == orange, "the preview drawing the panel's new background once typing paused", TimeSpan.FromSeconds(30));
 
@@ -1137,13 +1134,6 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     /// <summary>The caret's line with a bar where the caret is.</summary>
     internal static string CaretLine(CodeEditor editor) =>
         editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line).Insert(editor.CaretPosition.Column, "|");
-
-    internal static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-    }
 
     /// <summary>The app: Avalonia's template with a view model its window binds through <c>x:DataType</c>, a palette of
     /// brushes in a theme dictionary merged in by App.axaml, and an asset.</summary>

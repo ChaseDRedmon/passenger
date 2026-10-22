@@ -137,11 +137,7 @@ public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
             }
             if (client is not null)
             {
-                Await(Task.Run(async () =>
-                {
-                    await client.DisposeAsync();
-                    return true;
-                }), "the agent going");
+                Gone(client);
             }
             window.Close();
         }

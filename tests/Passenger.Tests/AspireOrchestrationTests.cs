@@ -116,7 +116,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         AspireOrchestrationDialog dialog = Show(window, "Plain");
         Select(dialog, dialog.AppHost, "Host");
         Select(dialog, dialog.ServiceDefaults, "WindowsDefaults");
-        Click(dialog, dialog.Add);
+        Ui.Click(dialog.Add);
         string result = Finished(window);
         Assert.StartsWith("Could not add Aspire orchestration:", result, StringComparison.Ordinal);
         Assert.Contains("ServiceDefaults target framework", result, StringComparison.Ordinal);
@@ -147,7 +147,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         Assert.True(choices.Count(c => Equals(c.Content, service)) == 1,
             $"Expected one {service} service checkbox; offered [{string.Join(", ", choices.Select(c => c.Content))}]. Projects when opening the dialog: {candidates}");
         CheckBox check = Assert.Single(choices, c => Equals(c.Content, service));
-        Click(dialog, check);
+        Ui.Click(check);
         Assert.True(dialog.Add.IsEnabled, "Selecting a service did not enable Add");
         return dialog;
     }
@@ -160,7 +160,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
             Select(dialog, dialog.AppHost, "Host");
             Select(dialog, dialog.ServiceDefaults, "Defaults");
         }
-        Click(dialog, dialog.Add);
+        Ui.Click(dialog.Add);
         return Finished(window);
     }
 
@@ -169,27 +169,17 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         "the orchestration operation to finish", TimeSpan.FromMinutes(10))
         ?? throw new Xunit.Sdk.XunitException("The orchestration dialog was cancelled instead of adding the selected service");
 
-    private static void Select(Window window, ComboBox combo, string name)
+    private static void Select(Window dialog, ComboBox combo, string name)
     {
         int index = combo.ItemsSource!.Cast<string>().ToList().IndexOf(name);
         Assert.True(index >= 0, $"The orchestration dialog does not offer {name}");
-        Click(window, combo);
-        Ui.Press(window, "HOME");
+        Ui.Click(combo);
+        Ui.Press(dialog, "HOME");
         for (int i = 0; i < index; i++)
         {
-            Ui.Press(window, "DOWN");
+            Ui.Press(dialog, "DOWN");
         }
-        Ui.Press(window, "ENTER");
-    }
-
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not in the dialog");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Press(dialog, "ENTER");
     }
 
     private Dictionary<string, byte[]> Snapshot() => Directory.EnumerateFiles(project.Folder, "*", SearchOption.AllDirectories)
@@ -213,15 +203,15 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
             InstallTemplates();
             Put("Directory.Build.props", "<Project><PropertyGroup><AspireUseCliBundle>false</AspireUseCliBundle></PropertyGroup></Project>");
             Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Plain/Plain.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"Defaults/Defaults.csproj\" /><Project Path=\"WindowsDefaults/WindowsDefaults.csproj\" /></Solution>");
-            foreach ((string name, string framework) in new[] { ("Api", "net10.0"), ("Plain", "net8.0") })
+            foreach ((string name, string framework) in new[] { ("Api", TestProjects.Framework), ("Plain", "net8.0") })
             {
                 Put($"{name}/{name}.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>{framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>");
                 Put($"{name}/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar app = builder.Build();\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
             }
-            Put("Host/Host.csproj", """
+            Put("Host/Host.csproj", $"""
                 <Project Sdk="Microsoft.NET.Sdk">
                   <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
-                  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost></PropertyGroup>
+                  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost></PropertyGroup>
                   <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /></ItemGroup>
                 </Project>
                 """);
@@ -251,11 +241,6 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
             ProjectTemplates.Forget();
         }
 
-        private void Put(string name, string text)
-        {
-            string path = PathOf(name);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, text);
-        }
+        private void Put(string name, string text) => TestFolders.Write(Folder, name, text);
     }
 }

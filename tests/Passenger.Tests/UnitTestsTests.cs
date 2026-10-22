@@ -31,7 +31,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         folder = restored.Take("tests-", made =>
         {
             File.WriteAllText(Path.Combine(made, "Sums.Tests.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+                $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
                 "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
                 "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
             File.WriteAllText(Path.Combine(made, "SumTests.cs"),
@@ -152,10 +152,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
         // A right-click on the second test's name offers to run that test, not the one four lines above.
         int name = editor.Document.Snapshot.ToString().IndexOf("Two_and_two_make_five", StringComparison.Ordinal) + 2;
-        Point at = editor.TranslatePoint(editor.PointOf(name) + new Vector(1, editor.LineHeight / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Right);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Right);
-        Ui.Settle();
+        Ui.RightClick(editor, editor.PointOf(name) + new Vector(1, editor.LineHeight / 2));
         Avalonia.Controls.ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("No context menu opened");
         Assert.Contains("Run 'Two_and_two_make_five'", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header as string));
         menu.Close();
@@ -282,7 +279,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.True(window.DockHost.IsShown(ToolWindowIds.Tests), "After Run All the Unit Tests window was no longer in front, so its results had to be shown again");
         // What the run came to, in the status bar, is a link back to its results.
         window.ShowToolWindow(ToolWindowIds.Problems);
-        Click(window, window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
+        Ui.Click(window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
         Assert.True(window.DockHost.IsShown(ToolWindowIds.Tests), $"A click on \"{window.Status}\" in the status bar did not bring the Unit Tests window back");
 
         Write("Broken.cs", "namespace Sums.Tests;\n\npublic static class Broken\n{\n    public static int Count => \"none\";\n}\n");
@@ -313,9 +310,9 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
             }
             many.Append("}\n");
         }
-        Write(solution, "Many.Tests/Many.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "Many.Tests/Many.Tests.csproj", TestProject(TestProjects.Framework));
         Write(solution, "Many.Tests/ManyTests.cs", many.ToString());
-        Write(solution, "Few.Tests/Few.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "Few.Tests/Few.Tests.csproj", TestProject(TestProjects.Framework));
         Write(solution, "Few.Tests/FewTests.cs", "using Xunit;\n\nnamespace Few.Tests;\n\npublic class FewTests\n{\n    [Fact]\n    public void One() { }\n\n    [Fact]\n    public void Two() { }\n}\n");
         Write(solution, "Tests.slnx", "<Solution>\n  <Project Path=\"Many.Tests/Many.Tests.csproj\" />\n  <Project Path=\"Few.Tests/Few.Tests.csproj\" />\n</Solution>\n");
         Restore.Run(Path.Combine(solution, "Tests.slnx"));
@@ -339,11 +336,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Contains("case 7 failed", Text(details), StringComparison.Ordinal);
         int rewrites = 0;
         details.Document.Changed += (_, _) => rewrites++;
-        tree.RaiseEvent(new Avalonia.Input.ContextRequestedEventArgs());
-        Ui.Settle();
-        ContextMenu menu = tree.ContextMenu!;
-        menu.Items.OfType<MenuItem>().First(i => (string?)i.Header == "Run").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
+        Ui.ChooseFromMenu(tree, "Run");
 
         // While the results come in no frame takes long: each result changes its own row and its groups' rows, never
         // every group's sums over again, and the chosen project's failures are written once a batch, not once a result.
@@ -412,7 +405,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     {
         // The frameworks come from a property, as MSBuild evaluates them, not as the project file writes them.
         string solution = NewFolder();
-        Write(solution, "Frameworks.Tests/Frameworks.Tests.csproj", TestProject("net10.0;net11.0"));
+        Write(solution, "Frameworks.Tests/Frameworks.Tests.csproj", TestProject($"{TestProjects.Framework};net11.0"));
         Write(solution, "Frameworks.Tests/RuntimeTests.cs",
             "using Xunit;\n\nnamespace Frameworks.Tests;\n\npublic class RuntimeTests\n{\n    [Fact]\n    public void Runs_on_eleven() => Assert.Equal(11, Environment.Version.Major);\n\n" +
             "    [Fact]\n    public void Runs_anywhere() { }\n}\n");
@@ -425,15 +418,15 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.True(window.Perform(AppActions.RunAllTests));
         Ui.WaitFor(() => !window.Tests.IsBusy, "the run of every test", TimeSpan.FromSeconds(180));
         TestNode project = Assert.Single(window.Tests.Tree.Roots);
-        Assert.Equal(["net10.0", "net11.0"], project.Children.Select(c => c.Name));
+        Assert.Equal([TestProjects.Framework, "net11.0"], project.Children.Select(c => c.Name));
         Assert.All(project.Children, c => Assert.Equal(TestNodeKind.Framework, c.Kind));
-        Assert.Equal(TestState.Failed, Under("net10.0", "Runs_on_eleven").State);
+        Assert.Equal(TestState.Failed, Under(TestProjects.Framework, "Runs_on_eleven").State);
         Assert.Equal(TestState.Passed, Under("net11.0", "Runs_on_eleven").State);
-        Assert.Equal(TestState.Passed, Under("net10.0", "Runs_anywhere").State);
+        Assert.Equal(TestState.Passed, Under(TestProjects.Framework, "Runs_anywhere").State);
         Assert.Equal(TestState.Passed, Under("net11.0", "Runs_anywhere").State);
         Assert.Equal(TestState.Failed, project.State);
         Assert.Equal(TestState.Passed, project.Children[1].State);
-        Assert.Equal(["Frameworks.Tests", "net10.0", "Frameworks.Tests", "RuntimeTests", "Runs_anywhere", "Runs_on_eleven", "net11.0"],
+        Assert.Equal(["Frameworks.Tests", TestProjects.Framework, "Frameworks.Tests", "RuntimeTests", "Runs_anywhere", "Runs_on_eleven", "net11.0"],
             window.Tests.Tree.Rows.Take(7).Select(r => r.Name));
         window.Close();
 
@@ -543,9 +536,9 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     public void Run_unit_tests_on_a_solution_folder_chosen_in_the_explorer_runs_the_tests_of_its_projects_alone()
     {
         string solution = NewFolder();
-        Write(solution, "tests/Fast.Tests/Fast.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "tests/Fast.Tests/Fast.Tests.csproj", TestProject(TestProjects.Framework));
         Write(solution, "tests/Fast.Tests/FastTests.cs", "using Xunit;\n\nnamespace Fast.Tests;\n\npublic class FastTests\n{\n    [Fact]\n    public void Quick() { }\n}\n");
-        Write(solution, "slow/Slow.Tests/Slow.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "slow/Slow.Tests/Slow.Tests.csproj", TestProject(TestProjects.Framework));
         Write(solution, "slow/Slow.Tests/SlowTests.cs", "using Xunit;\n\nnamespace Slow.Tests;\n\npublic class SlowTests\n{\n    [Fact]\n    public void Patient() { }\n}\n");
         Write(solution, "Suite.slnx", "<Solution>\n  <Folder Name=\"/tests/\">\n    <Project Path=\"tests/Fast.Tests/Fast.Tests.csproj\" />\n  </Folder>\n  <Project Path=\"slow/Slow.Tests/Slow.Tests.csproj\" />\n</Solution>\n");
         Restore.Run(Path.Combine(solution, "Suite.slnx"));
@@ -556,12 +549,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
         // The solution folder clicked in the Explorer, which then has the keys, and Run Unit Tests' own keys.
         Passenger.App.Explorer.ExplorerNode folder = window.ExplorerView.Tree.Rows.First(r => r.Kind == Passenger.App.Explorer.NodeKind.SolutionFolder && r.Name == "tests");
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        Control row = rows.ContainerFromItem(folder)!;
-        Point at = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.ClickRow(window, folder);
         Ui.Run(window, AppActions.RunTests);
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Quick")?.State == TestState.Passed, "the solution folder's tests to run", TimeSpan.FromSeconds(180));
         Assert.True(Method(window, "Patient")?.State == TestState.NotRun, "Run Unit Tests on the tests folder ran the tests of a project outside it too");
@@ -572,9 +560,9 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     public void A_solution_never_built_shows_its_xunit_nunit_and_mstest_tests_from_their_code_as_it_opens()
     {
         string solution = NewFolder();
-        Write(solution, "Library/Library.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write(solution, "Library/Library.csproj", TestProjects.Library());
         Write(solution, "Library/Sum.cs", "namespace Library;\n\npublic static class Sum\n{\n    public static int Of(int a, int b) => a + b;\n}\n");
-        Write(solution, "Xunit.Tests/Xunit.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "Xunit.Tests/Xunit.Tests.csproj", TestProject(TestProjects.Framework));
         Write(solution, "Xunit.Tests/SumTests.cs",
             "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests\n{\n    [Fact]\n    public void Adds() { }\n\n    [Theory]\n    [InlineData(1)]\n    [InlineData(2)]\n" +
             "    public void Doubles(int value) { }\n\n    public void Helper() { }\n}\n\npublic abstract class BaseTests\n{\n    [Fact]\n    public void Inherited() { }\n}\n");
@@ -614,7 +602,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
         // Another folder, with no test project: the first folder's tests go, and the window says why there are none.
         string plain = NewFolder();
-        Write(plain, "Library/Library.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write(plain, "Library/Library.csproj", TestProjects.Library());
         window.OpenFolder(plain);
         Ui.Settle();
         Assert.Empty(window.Tests.Tree.Rows);
@@ -726,7 +714,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     public void Group_by_categories_shows_each_test_under_its_xunit_traits_nunit_categories_and_mstest_test_categories()
     {
         string solution = NewFolder();
-        Write(solution, "Xunit.Tests/Xunit.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "Xunit.Tests/Xunit.Tests.csproj", TestProject(TestProjects.Framework));
         Write(solution, "Xunit.Tests/SumTests.cs",
             "using Xunit;\n\nnamespace Sums.Tests;\n\n[Trait(\"Category\", \"Slow\")]\npublic class SumTests\n{\n    [Fact]\n    [Trait(\"Owner\", \"Ann\")]\n    public void Adds() { }\n\n" +
             "    [Fact]\n    public void Subtracts() { }\n}\n\npublic class PlainTests\n{\n    [Fact]\n    public void Plain() { }\n}\n");
@@ -768,7 +756,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
                 "MSTest.Tests", "  Fast", "    Store.Tests.StoreTests", "      Keeps", "  Slow", "    Store.Tests.StoreTests", "      Keeps",
             ],
             Shown(window));
-        Click(window, ToolbarControl<Button>(window, "Group By"));
+        Ui.Click(ToolbarControl<Button>(window, "Group By"));
         MenuItem ticked = Assert.Single(window.BottomPanel.Tests.OpenMenu!.Items.OfType<MenuItem>(), i => i is { ToggleType: MenuItemToggleType.Radio, IsChecked: true });
         Assert.Equal("Project and Categories", ticked.Header);
         window.BottomPanel.Tests.OpenMenu!.Close();
@@ -799,25 +787,25 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
         // Failed alone, with the class it is in closed: the class opens to show the failure, and nothing else.
         window.Tests.Tree.Toggle(window.Tests.Tree.Rows.Single(r => r.Name == "SumTests"));
-        Click(window, Filter(window, "Failed Tests"));
+        Ui.Click(Filter(window, "Failed Tests"));
         Assert.Equal(["Sums.Tests", "  Sums.Tests", "    SumTests", "      Two_and_two_make_five"], Shown(window));
         Assert.Equal(int.Parse(Count(window, "Failed Tests"), System.Globalization.CultureInfo.CurrentCulture), ShownTests(window));
         Assert.Equal([true, false], new[] { "Failed Tests", "All Tests" }.Select(f => Filter(window, f).IsChecked == true));
 
         // With the platform's modifier held, Ignored is added to Failed rather than taking its place.
-        Click(window, Filter(window, "Ignored Tests"), OperatingSystem.IsMacOS() ? Avalonia.Input.RawInputModifiers.Meta : Avalonia.Input.RawInputModifiers.Control);
+        Ui.Click(Filter(window, "Ignored Tests"), modifiers: OperatingSystem.IsMacOS() ? Avalonia.Input.RawInputModifiers.Meta : Avalonia.Input.RawInputModifiers.Control);
         Assert.Equal(["Sums.Tests", "  Sums.Tests", "    SumTests", "      Not_yet", "      Two_and_two_make_five"], Shown(window));
         Assert.Equal(2, ShownTests(window));
 
         // Passed alone shows a theory's passing rows under it, opened.
-        Click(window, Filter(window, "Passed Tests"));
+        Ui.Click(Filter(window, "Passed Tests"));
         Assert.Equal(
             ["Sums.Tests", "  Sums.Tests", "    SumTests", "      Doubles", "        Doubles(value: 1, twice: 2)", "        Doubles(value: 2, twice: 4)", "      Two_and_two_make_four"],
             Shown(window));
         Assert.Equal(int.Parse(Count(window, "Passed Tests"), System.Globalization.CultureInfo.CurrentCulture), ShownTests(window));
 
         // All shows every test again.
-        Click(window, Filter(window, "All Tests"));
+        Ui.Click(Filter(window, "All Tests"));
         Assert.Equal(5, ShownTests(window));
         Assert.Empty(window.Tests.Tree.Outcomes);
         window.Close();
@@ -832,7 +820,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.WaitFor(() => Method(window, "Reads_four") is not null, "the tests read from the code");
 
         // The keys in the tree, Find goes to the window's search, where a word narrows the tree whatever its case.
-        Click(window, tree.ContainerFromItem(window.Tests.Tree.Rows.Single(r => r.Name == "SumTests"))!);
+        Ui.Click(tree.ContainerFromItem(window.Tests.Tree.Rows.Single(r => r.Name == "SumTests"))!);
         Ui.Run(window, AppActions.Find);
         window.KeyTextInput("FOUR");
         Ui.Settle();
@@ -859,12 +847,12 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     {
         string settings = NewFolder();
         string other = NewFolder();
-        Write(other, "Other.Tests/Other.Tests.csproj", TestProject("net10.0"));
+        Write(other, "Other.Tests/Other.Tests.csproj", TestProject(TestProjects.Framework));
         Write(other, "Other.Tests/OtherTests.cs", "using Xunit;\n\nnamespace Other.Tests;\n\npublic class OtherTests\n{\n    [Fact]\n    public void Elsewhere() { }\n}\n");
         MainWindow first = Keeping(settings, folder);
         Ui.WaitFor(() => Method(first, "Doubles") is not null, "the tests read from the code");
         GroupBy(first, "Categories");
-        Click(first, Filter(first, "Tests Not Run"));
+        Ui.Click(Filter(first, "Tests Not Run"));
         first.Close();
 
         // Rider keeps a session's grouping and filters with the solution.
@@ -916,26 +904,11 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     private static int ShownTests(MainWindow window) =>
         window.Tests.Tree.Rows.Count(r => r.Kind == TestNodeKind.Row || r is { Kind: TestNodeKind.Method, HasChildren: false });
 
-    /// <summary>A click where the pointer finds a control.</summary>
-    private static void Click(MainWindow window, Control control, Avalonia.Input.RawInputModifiers modifiers = Avalonia.Input.RawInputModifiers.None)
-    {
-        Assert.True(control.IsEffectivelyVisible, $"{ToolTip.GetTip(control) ?? control.GetType().Name} is hidden");
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left, modifiers);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left, modifiers);
-        Ui.Settle();
-    }
-
     /// <summary>Chooses an item of the toolbar's Group By menu.</summary>
     private static void GroupBy(MainWindow window, string item)
     {
-        Click(window, ToolbarControl<Button>(window, "Group By"));
-        ContextMenu menu = window.BottomPanel.Tests.OpenMenu ?? throw new InvalidOperationException("Group By opened no menu");
-        MenuItem chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"Group By has no {item}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
+        Ui.Click(ToolbarControl<Button>(window, "Group By"));
+        Ui.Choose(window.BottomPanel.Tests.OpenMenu, item);
     }
 
     private string NewFolder()
@@ -956,7 +929,7 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
     /// <summary>A test project of another framework's packages, never restored here.</summary>
     private static string PackagesProject(params string[] packages) =>
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n" +
+        $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n" +
         "    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n" +
         string.Concat(packages.Select(p => $"    <PackageReference Include=\"{p}\" Version=\"*\" />\n")) + "  </ItemGroup>\n</Project>\n";
 

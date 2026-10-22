@@ -27,16 +27,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
 
     public XamlBreakpointsTests(RestoredFolders folders)
     {
-        folder = PathNames.Canonical(folders.Take("xamlbreakpoints-", made =>
-        {
-            foreach (string file in Directory.GetFiles(Debuggees.Source("XamlBreakpointsApp")))
-            {
-                File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
-            }
-            string project = Path.Combine(made, "XamlBreakpointsApp.csproj");
-            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
-            return project;
-        }));
+        folder = PathNames.Canonical(folders.Take("xamlbreakpoints-", made => AvaloniaApp.Debuggee(made, "XamlBreakpointsApp")));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -78,10 +69,10 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal([$"MainWindow.axaml:{top + 1} Width", $"MainWindow.axaml:{save + 1}", $"MainWindow.axaml:{save + 1} Background", $"MainWindow.axaml:{row + 1}", ExceptionBreakpoint.AnyException,
             BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
-        Click(window, Row(breakpoints, $"MainWindow.axaml:{row + 1}"));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, $"MainWindow.axaml:{row + 1}"));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
         window.KeyTextInput("==2");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("==2", store.In(Xaml).Single(b => b.Line == row).HitCondition);
 
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
@@ -191,7 +182,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         PropertyBreakpoint background = Watch(window, "Save", "Background");
         Assert.Equal("Background on Button#Save", background.Location);
         Ui.WaitFor(() => background.Status == BreakpointStatus.Bound, $"the debugger to take the property breakpoint, not to say {background.Message}");
-        Say(window, "paint");
+        Ui.TypeToDebugged(window, "paint");
         DebugStop stop = Stopped(window, "the stop where paint sets Save's Background");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Background = Brushes.Green;"));
         Says(window, "Property Breakpoint Hit: Background on Button#Save is changed (Previous Value: Orange, New Value: Green, its local value)");
@@ -206,13 +197,13 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal([background.Location, ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Avalonia Property Breakpoints");
-        Click(window, Row(breakpoints, background.Location));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, background.Location));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Stop on hits", StringComparison.Ordinal) == true));
         window.KeyTextInput("2");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("2", background.HitCondition);
         Ui.Settle();
-        Say(window, "paint");
+        Ui.TypeToDebugged(window, "paint");
         stop = Stopped(window, "the stop at the second change, by the hit count");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Background = Brushes.Blue;"));
         Resume(window);
@@ -224,13 +215,13 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         PropertyBreakpoint width = Watch(window, "Save", "Width");
         Ui.Run(window, AppActions.ViewBreakpoints);
         breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Click(window, Row(breakpoints, width.Location));
-        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Click(Row(breakpoints, width.Location));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
         window.KeyTextInput("(double)newValue > 150");
-        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
+        Ui.Click(breakpoints.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == "Done" && b.IsEffectivelyVisible));
         Assert.Equal("(double)newValue > 150", width.Condition);
         Ui.Settle();
-        Say(window, "paint");
+        Ui.TypeToDebugged(window, "paint");
         stop = Stopped(window, "the stop where Width goes over 150");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Width = 200;"));
         Assert.DoesNotContain(BreakpointConditions.NotEvaluated(DebugSession.EngineCondition(width)), Console(window), StringComparison.Ordinal);
@@ -238,7 +229,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
 
         // A style, which a class added in code turns on: Delete's change, another control's, does not stop.
         PropertyBreakpoint foreground = Watch(window, "Save", "Foreground");
-        Say(window, "warn");
+        Ui.TypeToDebugged(window, "warn");
         stop = Stopped(window, "the stop where the danger style sets Save's Foreground");
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Classes.Add(\"danger\");"));
         Says(window, $"Property Breakpoint Hit: {foreground.Location} is changed");
@@ -249,7 +240,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
 
         // A binding: the caption's Text, which the view model's caption changes.
         Watch(window, "Caption", "Text");
-        Say(window, "rename");
+        Ui.TypeToDebugged(window, "rename");
         stop = Stopped(window, "the stop where the caption's binding sets its Text");
         AssertAt(stop, Path.Combine(folder, "MainViewModel.cs"), Line(Path.Combine(folder, "MainViewModel.cs"), "PropertyChanged?.Invoke"));
         Says(window, "binding");
@@ -262,14 +253,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         window.Close();
     }
 
-    private MainWindow Opened()
-    {
-        MainWindow window = new() { Width = 1400, Height = 900 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Opened() => Ui.OpenFolder(folder, 1400, 900);
 
     /// <summary>Break When Value Changes from a property's row of a control chosen in the Live Visual Tree: the property
     /// breakpoint it sets, or null when it took the one there away.</summary>
@@ -328,20 +312,6 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         return owner.Children!.First(c => c.Name == name).Value;
     }
 
-    /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
-    private static void Say(MainWindow window, string line)
-    {
-        window.ShowToolWindow(ToolWindowIds.Debug);
-        window.BottomPanel.Debug.ShowTab(console: true);
-        Ui.Settle();
-        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
-        Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(inside, MouseButton.Left);
-        window.MouseUp(inside, MouseButton.Left);
-        window.KeyTextInput(line);
-        Ui.Press(window, "ENTER");
-    }
-
     private static string Console(MainWindow window) => window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
 
     /// <summary>The status bar says something of the stop, once the stop's words are read.</summary>
@@ -350,15 +320,6 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
 
     private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
         breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
-
-    private static void Click(MainWindow window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new InvalidOperationException("The control is not in the window");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>Where (line and column from zero) some text begins in a text as the editor counts lines, at each '\n' alone.</summary>
     private static (int Line, int Column) EditorPlace(string text, string find)

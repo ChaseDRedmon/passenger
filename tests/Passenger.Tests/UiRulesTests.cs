@@ -324,10 +324,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         ToggleButton more = window.DockHost.GetVisualDescendants().OfType<ToggleButton>().First(b => ToolTip.GetTip(b) as string == "More Tool Windows" && b.IsEffectivelyVisible);
         string[] hidden = [.. window.DockHost.GetVisualDescendants().OfType<ToggleButton>().Where(b => b.Tag is string && !b.IsVisible).Select(b => (string)b.Tag!)];
         Assert.NotEmpty(hidden);
-        Point centre = more.TranslatePoint(new Point(more.Bounds.Width / 2, more.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(centre, MouseButton.Left);
-        window.MouseUp(centre, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(more);
         ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(m => m.IsOpen)
             ?? throw new Xunit.Sdk.XunitException("More opened no menu of the tool windows it holds");
         Assert.Equal(hidden.Length, menu.Items.Count);
@@ -459,10 +456,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             Assert.NotEmpty(tools.Overflowing);
             Assert.True(Drawn(tools.More), "The Debug window's toolbar has buttons with no room and no More to reach them");
             string[] cut = [.. tools.Overflowing.Select(b => (string)ToolTip.GetTip(b)!)];
-            Point centre = tools.More.TranslatePoint(new Point(tools.More.Bounds.Width / 2, tools.More.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(centre, MouseButton.Left);
-            window.MouseUp(centre, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(tools.More);
             ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(m => m.IsOpen)
                 ?? throw new Xunit.Sdk.XunitException("More opened no menu of the buttons it holds");
             Assert.Equal(cut, menu.Items.OfType<MenuItem>().Select(i => (string)i.Header!));
@@ -548,7 +542,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             // A project's row: its menu has the most of the Explorer's.
             window.ExplorerView.Reveal(Passenger.Core.PathNames.Canonical(project.PathOf("Hello.csproj")));
             Ui.Settle();
-            window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows)).RaiseEvent(new ContextRequestedEventArgs());
+            window.ExplorerView.Rows().RaiseEvent(new ContextRequestedEventArgs());
             Ui.Settle();
             ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new Xunit.Sdk.XunitException("No menu opened on the project's row");
             foreach (MenuItem item in Items(menu.Items.OfType<MenuItem>()))
@@ -639,8 +633,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                     Assert.True(said.Focusable && said.Cursor?.ToString() == "Hand" && Colour(words) == Brush(window, "Passenger.Link") && Underlined(words),
                         $"\"{window.Status}\", which goes to IDE Internal Errors, is drawn in {Colour(words)} {(Underlined(words) ? "underlined" : "not underlined")} under the pointer "
                         + $"with the cursor {said.Cursor}, {(said.Focusable ? "" : "out of the keys' reach, ")}not a link in the link's colour ({Brush(window, "Passenger.Link")}) underlined, with the hand");
-                    said.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-                    Ui.Settle();
+                    Ui.Click(said);
                     Assert.True(window.Popup is ErrorsPopup, $"A click on \"{window.Status}\" showed {window.Popup?.GetType().Name ?? "nothing"}, not IDE Internal Errors");
                     Ui.Press(window, "ESCAPE");
                     window.MouseMove(new Point(1, 1));
@@ -1380,10 +1373,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
     private static void Current(MainWindow window, string widget, string current, string what)
     {
         Button button = Named<Button>(window, widget);
-        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(button);
         Ui.WaitFor(() => window.OpenContextMenu is not null, what);
         ContextMenu menu = window.OpenContextMenu!;
         MenuItem[] items = [.. menu.Items.OfType<MenuItem>()];
@@ -1482,7 +1472,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             : base("ui-rules-")
         {
             File.WriteAllText(PathOf("Hello.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console());
             File.WriteAllText(PathOf("Program.cs"),
                 string.Concat(Enumerable.Range(1, 120).Select(i => $"// Line {i} of a file long enough to scroll, and wide enough to scroll sideways too: {new string('x', 160)}\n")));
             File.WriteAllText(PathOf("Notes.txt"), "one\ntwo\n");

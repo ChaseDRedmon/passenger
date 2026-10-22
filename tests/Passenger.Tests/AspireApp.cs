@@ -94,7 +94,7 @@ public sealed class AspireApp : SharedProject
     /// <summary>Generates the pinned upstream starter, without restore or changes to the person's template hive.</summary>
     public static void Create(string folder, string name)
     {
-        ChildResult made = Run(["new", "aspire-starter", "--output", folder, "--name", name, "--framework", "net10.0",
+        ChildResult made = Run(["new", "aspire-starter", "--output", folder, "--name", name, "--framework", TestProjects.Framework,
             "--use-redis-cache", "false", "--skipRestore", "--no-update-check", "--debug:custom-hive", Hive.Value], Path.GetDirectoryName(Hive.Value));
         Assert.True(made.Succeeded, $"The official Aspire starter did not generate:\n{made.Output}{made.Error}");
         AvaloniaApp.UseFeed(folder);

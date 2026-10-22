@@ -37,7 +37,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             "<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"local\" value=\"feed\" />\n  </packageSources>\n"
             + "  <config>\n    <add key=\"globalPackagesFolder\" value=\"packages\" />\n  </config>\n</configuration>\n");
         string lib = Path.Combine(library, "Lib.csproj");
-        File.WriteAllText(lib, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(lib, TestProjects.Library());
         // dotnet add package's restore graph, held once the test puts "hold" there until it puts "go" (ten minutes at most).
         File.WriteAllText(Path.Combine(library, "Directory.Build.targets"), """
             <Project>
@@ -95,11 +95,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         finally
         {
             File.WriteAllText(Path.Combine(library, "go"), string.Empty);
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }
@@ -134,11 +130,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             }
             finally
             {
-                Await(Task.Run(async () =>
-                {
-                    await client.DisposeAsync();
-                    return true;
-                }), "the agent going");
+                Gone(client);
                 window.Close();
             }
         }
@@ -159,24 +151,20 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             Task<CallToolResult> misspelt = Task.Run(() => Result(client, "ide_action", new() { ["action"] = "app.biuld" }));
             Press(Question(window, "the question for the agent's action"), "Allow");
             CallToolResult unknown = Await(misspelt, "the misspelt action");
-            string said = string.Concat(unknown.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            string said = Text(unknown);
             Assert.True(unknown.IsError == true, $"An action no action has was answered as run: {said}");
             Assert.Contains("No action is called app.biuld", said, StringComparison.Ordinal);
 
             // Commit, in a folder in no repository, says that is why; the Commit window stays as it was.
             CallToolResult commit = Await(Task.Run(() => Result(client, "ide_action", new() { ["action"] = AppActions.Commit })), "the commit with no repository");
-            said = string.Concat(commit.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            said = Text(commit);
             Assert.True(commit.IsError == true, $"Commit in a folder with no repository was answered as run: {said}");
             Assert.Contains("not in a Git repository", said, StringComparison.Ordinal);
             Assert.False(window.DockHost.IsShown(ToolWindowIds.Commit), "Commit, refused for want of a repository, opened the Commit window anyway");
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }
@@ -221,11 +209,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             window.Perform(AppActions.Stop);
             Processes.Kill(step);
             Ui.PumpUntil(() => !window.IsBuilding, "the build to stop", TimeSpan.FromMinutes(1));
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }
@@ -242,7 +226,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             Task<CallToolResult> asking = Task.Run(() => Result(client, "ide_action", new() { ["action"] = "tests.fault" }));
             Press(Question(window, "the question for the agent's action"), "Allow");
             CallToolResult faulted = Await(asking, "the action that fails");
-            string said = string.Concat(faulted.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            string said = Text(faulted);
             Assert.True(faulted.IsError == true && said.Contains("NullReferenceException: The fault's own words", StringComparison.Ordinal),
                 $"An agent's call that met a fault of the IDE's was answered without it: {said}");
             Assert.True(IdeErrors.Errors.Any(e => e.Kind == "NullReferenceException" && e.Message == "The fault's own words"),
@@ -253,11 +237,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }
@@ -399,11 +379,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
             WaitFor(() => window.Runner.IsRunning || window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the run allowed before");
             Assert.Empty(window.OwnedWindows.OfType<ConfirmDialog>());
             WaitFor(() => window.AgentStatus == "Agent: Run a configuration", "the second run in the status bar");
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             WaitFor(() => window.AgentStatus is null, "the window to stop waiting on the run of the agent that went");
             WaitFor(() => again.IsCompleted, "the call of the agent that went");
             Assert.True(again.Exception is not null || again.IsCanceled, "A call was answered after its agent went");
@@ -470,11 +446,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }
@@ -555,11 +527,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }
@@ -627,11 +595,7 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
             window.Close();
         }
     }

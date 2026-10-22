@@ -382,11 +382,11 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
 
             """;
 
-        private const string Project = """
+        private const string Project = $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>{TestProjects.Framework}</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
                 <AssemblyName>Turns</AssemblyName>
               </PropertyGroup>

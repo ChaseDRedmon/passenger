@@ -37,10 +37,9 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     /// test that needs none (one of its own, or an empty folder) restores none.</summary>
     private string Folder => taken ??= folders.Take("build-", made =>
     {
-        Write(made, "Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write(made, "src/Hello/Hello.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write(made, "src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
+        TestFolders.Write(made, "Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
+        TestFolders.Write(made, "src/Hello/Hello.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+        TestFolders.Write(made, "src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
         return Path.Combine(made, "Sample.slnx");
     });
 
@@ -81,10 +80,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         window.ShowToolWindow(ToolWindowIds.Build);
         problems.Shown = ProblemsTab.File;
         Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
-        Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(said);
         Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Build && problems.Selected == problem,
             $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab, {problems.Selected?.Code ?? "nothing"} chosen" : "nothing")}, "
             + "not the build's error in Problems' Build");
@@ -116,7 +112,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     {
         // A project copied as Finder and Explorer name a copy.
         Write("Shop (copy)/Shop.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         Write("Shop (copy)/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
@@ -138,7 +134,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         // As Avalonia's XAML compiler reports a file it cannot read, its stack trace a line each, and NuGet a downgrade
         // with its dependency chains: MSBuild writes every line of such a message as a line of its own.
         Write("src/Hello/Hello.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
             "  <Target Name=\"Unreadable\" BeforeTargets=\"Build\">\n" +
             "    <Warning File=\"Program.cs\" Code=\"NU1608\" Text=\"Detected package version outside of dependency constraint.%0A Hello -&gt; A -&gt; X (&gt;= 2.0)%0A Hello -&gt; X (&gt;= 1.0)\" />\n" +
             "    <Error File=\"Views/Main.axaml\" Code=\"AVLN1001\" Text=\"File doesn't contain valid XAML: 'Hello' is an unexpected token.%0A   at System.Xml.XmlTextReaderImpl.Throw(Exception e)%0A   at System.Xml.XmlTextReaderImpl.ParseAttributes()\" />\n" +
@@ -259,9 +255,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             window.Perform(AppActions.RunProgram);
             Ui.WaitFor(() => Output(window).Contains("Name? ", StringComparison.Ordinal), "the program to ask", TimeSpan.FromMinutes(2));
             Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
-            Point inConsole = run.Editor.TranslatePoint(new Point(run.Editor.Bounds.Width / 2, run.Editor.Bounds.Height / 2), window)!.Value;
-            window.MouseDown(inConsole, Avalonia.Input.MouseButton.Left);
-            window.MouseUp(inConsole, Avalonia.Input.MouseButton.Left);
+            Ui.Click(run.Editor, settle: false);
             window.KeyTextInput("Adx");
             Ui.Press(window, "BACK_SPACE");
             window.KeyTextInput("a");
@@ -349,10 +343,10 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     public void The_projects_chosen_in_the_explorer_build_rebuild_and_clean_on_their_own()
     {
         Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Tools/Tools.csproj", TestProjects.Library());
         Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => \"none\";\n}\n");
-        string hello = Path.Combine(Folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll");
-        string tools = Path.Combine(Folder, "src", "Tools", "bin", "Debug", "net10.0", "Tools.dll");
+        string hello = Path.Combine(Folder, "src", "Hello", "bin", "Debug", TestProjects.Framework, "Hello.dll");
+        string tools = Path.Combine(Folder, "src", "Tools", "bin", "Debug", TestProjects.Framework, "Tools.dll");
         Restore.Run(Path.Combine(Folder, "Sample.slnx"));
         MainWindow window = Open();
         ExplorerTree tree = window.ExplorerView.Tree;
@@ -447,7 +441,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             _ = Processes.WrittenId([.. projects.Select(p => Path.Combine(Folder, "src", p, "step.pid"))], "a project's step to start");
             // PowerShell on a loaded Windows runner can take more than a second to write its first line. Pumped, not settled:
             // the build, which holds background work until it ends, is still running.
-            Ui.PumpUntil(() => projects.Any(p => File.Exists(Path.Combine(Folder, "src", p, "bin", "Debug", "net10.0", "written.txt"))),
+            Ui.PumpUntil(() => projects.Any(p => File.Exists(Path.Combine(Folder, "src", p, "bin", "Debug", TestProjects.Framework, "written.txt"))),
                 "a project's step to write into its output folder", TimeSpan.FromSeconds(60));
             steps.AddRange(projects.Select(p => Processes.ReadId(Path.Combine(Folder, "src", p, "step.pid"))).Where(id => id > 0));
             window.Perform(AppActions.Stop);
@@ -459,7 +453,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
                 Assert.True(Processes.Gone(step), $"After Stop, the build's step {Processes.Describe(step)} went on running: MSBuild ran it in a process that Stop did not end");
             }
             Assert.True(Processes.Gone(command), "After Stop, the build's dotnet command went on running");
-            string[] written = [.. projects.Select(p => Path.Combine(Folder, "src", p, "bin", "Debug", "net10.0", "written.txt")).Where(File.Exists)];
+            string[] written = [.. projects.Select(p => Path.Combine(Folder, "src", p, "bin", "Debug", TestProjects.Framework, "written.txt")).Where(File.Exists)];
             Assert.NotEmpty(written);
             long[] lengths = [.. written.Select(f => new FileInfo(f).Length)];
             Ui.Hold(TimeSpan.FromSeconds(2), "long enough for a build still running to write to its output folder again");
@@ -593,7 +587,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         {
             TestFolders.Prepare(() =>
             {
-                File.WriteAllText(Path.Combine(app, "Overlap.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
+                File.WriteAllText(Path.Combine(app, "Overlap.csproj"), $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n"
                     + $"  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Avalonia\" Version=\"{AvaloniaApp.Version}\" />\n"
                     + "    <AvaloniaResource Include=\"Assets/**\" />\n  </ItemGroup>\n</Project>\n");
                 Directory.CreateDirectory(Path.Combine(app, "Assets"));
@@ -654,7 +648,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Passenger.Core.ChildResult built = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(
             Passenger.Core.ChildProcesses.DotnetCommand(["build", Path.Combine(project, "Hello.csproj"), "-nologo"]), limit: Restore.Limit)).GetAwaiter().GetResult();
         Assert.True(built.Succeeded, $"The program did not build before the test:\n{built.Output}{built.Error}");
-        string apphost = Path.Combine(project, "obj", "Debug", "net10.0", OperatingSystem.IsWindows() ? "apphost.exe" : "apphost");
+        string apphost = Path.Combine(project, "obj", "Debug", TestProjects.Framework, OperatingSystem.IsWindows() ? "apphost.exe" : "apphost");
         Assert.True(File.Exists(apphost), $"The build made no apphost at {apphost}");
         File.Delete(apphost);
         MainWindow window = Open();
@@ -700,14 +694,14 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     public void A_project_whose_framework_the_repository_sets_shows_it_beside_its_name_and_unloaded_is_dimmed_and_leaves_the_run_configurations_until_reloaded()
     {
         // As Passenger's own projects are: the framework is in Directory.Build.props, and the project names none.
-        Write("Directory.Build.props", "<Project>\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Directory.Build.props", $"<Project>\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
         Write("src/Hello/Hello.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
         MainWindow window = Open();
         ExplorerTree tree = window.ExplorerView.Tree;
         tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
         ExplorerNode loaded = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello");
-        Assert.Equal("net10.0", loaded.Detail);
+        Assert.Equal(TestProjects.Framework, loaded.Detail);
         string hello = loaded.Path!;
         Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
 
@@ -722,7 +716,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 
         window.SetUnloaded(hello, unloaded: false);
         Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
-        Assert.Equal("net10.0", Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
+        Assert.Equal(TestProjects.Framework, Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
         window.Close();
     }
 
@@ -739,15 +733,11 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         run.Append("first line\nsecond line\n");
         Ui.Settle();
         // Below the first line's top, which is the splitter's to grab.
-        Avalonia.Point inText = run.Editor.TranslatePoint(run.Editor.PointOf(14) + new Avalonia.Vector(1, run.Editor.LineHeight / 2), window)!.Value;
-        window.MouseDown(inText, Avalonia.Input.MouseButton.Right);
-        window.MouseUp(inText, Avalonia.Input.MouseButton.Right);
-        Ui.Settle();
+        Ui.RightClick(run.Editor, run.Editor.PointOf(14) + new Avalonia.Vector(1, run.Editor.LineHeight / 2));
         Avalonia.Controls.ContextMenu menu = Assert.IsType<Avalonia.Controls.ContextMenu>(run.Menu);
         Assert.Equal(["Copy", "Select All", "Clear All"], menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => (string?)i.Header));
         Assert.False(menu.Items.OfType<Avalonia.Controls.MenuItem>().First().IsEnabled, "Copy is offered with nothing chosen");
-        menu.Items.OfType<Avalonia.Controls.MenuItem>().Last().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
-        Ui.Settle();
+        Ui.Choose(menu, "Clear All");
         Assert.Equal(string.Empty, run.Document.Snapshot.ToString());
         menu.Close();
         window.Close();
@@ -764,7 +754,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         window.Perform(AppActions.Build);
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
         Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
-        Assert.True(File.Exists(Path.Combine(Folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll")), "Build did not build the folder's project");
+        Assert.True(File.Exists(Path.Combine(Folder, "src", "Hello", "bin", "Debug", TestProjects.Framework, "Hello.dll")), "Build did not build the folder's project");
         // Run's shortcut runs it, its output and how it ended in the Run window.
         string output = RunToEnd(window);
         Assert.Contains("Hello from the run", output, StringComparison.Ordinal);
@@ -777,7 +767,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     {
         // As dotnet new web writes it: the Web SDK makes it an executable, the project file never says so.
         Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
-        Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Site/Site.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
         Write("src/Site/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.Urls.Add(\"http://127.0.0.1:0\");\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
         Restore.Run(Path.Combine(Folder, "src", "Site"));
         MainWindow window = Open();
@@ -931,7 +921,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         using HeldPort browse = new();
         using HeldPort quiet = new();
         Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
-        Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Site/Site.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
         // Started, it listens only once the test lets it, to tell opening once it listens from opening once it started.
         string listen = Path.Combine(Folder, "listen");
         Write("src/Site/Program.cs", $"Console.WriteLine(\"Warming up\");\nwhile (!File.Exists(@\"{listen}\"))\n{{\n    Thread.Sleep(20);\n}}\n"
@@ -1055,7 +1045,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             // Rider's Rerun is there while the program runs: it stops it and runs it again, the way to restart after an edit.
             Button rerun = window.BottomPanel.Run.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Rerun");
             Assert.True(rerun.IsEffectivelyEnabled, "The Run window's Rerun is greyed while its program runs");
-            rerun.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Ui.Click(rerun, settle: false);
             Ui.WaitFor(() => Runs(runs).Length == 2, "the program to run again", TimeSpan.FromMinutes(2));
             Assert.True(Processes.Gone(first), $"Rerun left the first run going: {Processes.Describe(first)}");
             Assert.True(window.IsRunning, "The program Rerun started again is not running");
@@ -1080,11 +1070,11 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     public void A_build_still_running_when_the_window_closes_ends_with_it()
     {
         // A step of the build that would run for ten minutes, as a slow tool or a hung test would: its process names itself.
-        Write("src/Hello/Hello.csproj", """
+        Write("src/Hello/Hello.csproj", $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>{TestProjects.Framework}</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
               </PropertyGroup>
               <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
@@ -1138,31 +1128,17 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         return Output(window);
     }
 
-    private MainWindow Open()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(Folder);
-        Ui.Settle();
-        return window;
-    }
+    private MainWindow Open() => Ui.OpenFolder(Folder);
 
     /// <summary>The solution with a second project, a library, which builds at the same time as the first.</summary>
     private void WriteTwoProjects()
     {
         Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Tools/Tools.csproj", TestProjects.Library());
         Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => 3;\n}\n");
     }
 
-    private void Write(string relative, string text) => Write(Folder, relative, text);
-
-    private static void Write(string folder, string relative, string text)
-    {
-        string path = Path.Combine(folder, relative);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
-    }
+    private void Write(string relative, string text) => TestFolders.Write(Folder, relative, text);
 
     /// <summary>MSBuild of a test's own, for what the IDE starts while it lasts (the IDE passes its environment on): a handshake
     /// salt no other build has, so no server or node another left is used and the test's builds start their own, as on a

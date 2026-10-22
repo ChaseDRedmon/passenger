@@ -49,7 +49,7 @@ public sealed class HeadlessTestsFolder : IDisposable
 
     /// <summary>xunit v3 on the platform alone, or on VSTest (no platform application, VSTest's SDK and xunit's adapter).</summary>
     private static string Project(string xunit, string avalonia, bool vsTest) =>
-        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
+        $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
         "    <ImplicitUsings>enable</ImplicitUsings>\n" + (vsTest ? "    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>\n" : string.Empty) +
         "  </PropertyGroup>\n  <ItemGroup>\n" + $"    <PackageReference Include=\"xunit.v3\" Version=\"{xunit}\" />\n" + avalonia +
         (vsTest ? $"    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"{AvaloniaApp.Metadata("TestSdkVersion")}\" />\n"
@@ -260,7 +260,7 @@ public sealed class TestFramesTests(HeadlessTestsFolder project) : IClassFixture
         Ui.Settle();
 
         // A click on the thumbnail opens the frame at its size: one picture pixel a unit.
-        Click(window, Assert.Single(Thumbnails(tests)));
+        Ui.Click(Assert.Single(Thumbnails(tests)));
         FrameViewer viewer = Assert.Single(window.OwnedWindows.OfType<FrameViewer>());
         Assert.Equal("Boxes — The_box_is_where_it_was_put", viewer.Title);
         Assert.Equal(new Size(400, 300), viewer.DrawnSize);
@@ -317,14 +317,6 @@ public sealed class TestFramesTests(HeadlessTestsFolder project) : IClassFixture
 
     private static string Zoom(FrameViewer viewer) =>
         viewer.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).First(t => t?.EndsWith('%') == true)!;
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     /// <summary>A picture's colour at a pixel.</summary>
     private static Color Pixel(Bitmap picture, int x, int y)

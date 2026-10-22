@@ -56,7 +56,7 @@ public sealed class FolderWatchTests : IDisposable
         Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Name is "bin" or "obj");
 
         Write("obj/project.assets.json", "{}\n");
-        Write("bin/Debug/net10.0/App.dll", "");
+        Write($"bin/Debug/{TestProjects.Framework}/App.dll", "");
         Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Count(r => r.Name is "bin" or "obj" && r.IsDimmed) == 2,
             $"the build's bin and obj, dimmed, in the Explorer (it shows {string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))})");
 
@@ -192,7 +192,7 @@ public sealed class FolderWatchTests : IDisposable
         ConfirmDialog dialog = window.OwnedWindows.OfType<ConfirmDialog>().Single();
         Avalonia.Controls.Button load = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog)
             .OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Load File System Changes");
-        load.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Click(load, settle: false);
         Ui.WaitFor(() => Text(window) == "class One { int disk; }\n", "the disk's text in the editor");
         Assert.False(window.EditorArea.Active!.IsModified);
         window.Close();
@@ -541,7 +541,7 @@ public sealed class FolderWatchTests : IDisposable
         // As dotnet sln migrate leaves a folder, with a project added to the .slnx since.
         Write("App/App.csproj", Project);
         Write("App/Program.cs", "System.Console.WriteLine(\"app\");\n");
-        Write("Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Extra/Extra.csproj", TestProjects.Library());
         Write("Extra/Helper.cs", "public static class Helper\n{\n    public static string Name => \"extra\";\n}\n");
         Write("Extra/Use.cs", "public static class Use\n{\n    public static int Count()\n    {\n        int count = Helper.Name;\n        return count;\n    }\n}\n");
         Write("Foo.sln", ClassicSolution);
@@ -638,7 +638,7 @@ public sealed class FolderWatchTests : IDisposable
 
         """;
 
-    private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+    private static readonly string Project = TestProjects.Console();
 
     private void Write(string relative, string text)
     {

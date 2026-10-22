@@ -22,7 +22,6 @@ public sealed class McpContainerDebuggingTests : McpRig
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
         DeleteAtEnd(shop);
-        string Started(string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));
         await using McpClient client = await Start(["--mcp", shop]);
         foreach (string app in (string[])["Web", "Api"])
         {
@@ -47,11 +46,11 @@ public sealed class McpContainerDebuggingTests : McpRig
                     TimeSpan.FromMinutes(1), test), $"{service} did not stop in Main: {paused}");
                 await Call(client, "debug_continue", new() { ["session"] = service, ["waitSeconds"] = 2 });
             }
-            string before = await Task.Run(() => Started("web"), test);
+            string before = await Task.Run(() => ContainerRunsTests.Started(project, "web"), test);
 
             // Restart through the run: web held again and attached again, so Main's breakpoint stops it once more.
             Assert.Equal($"{project}/web: restart done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/web", ["action"] = "restart" })));
-            Assert.NotEqual(before, await Task.Run(() => Started("web"), test));
+            Assert.NotEqual(before, await Task.Run(() => ContainerRunsTests.Started(project, "web"), test));
             JsonElement again = default;
             Assert.True(await Waiting.UntilAsync(async () => (again = await Call(client, "debug_state", new() { ["session"] = "web" })).GetProperty("state").GetString() == "paused",
                 TimeSpan.FromMinutes(1), test), $"web, restarted through the run, did not stop in Main again: {again}");
@@ -69,7 +68,7 @@ public sealed class McpContainerDebuggingTests : McpRig
                 TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
 
             // A program in a container Passenger did not start: listed by its container, attached to there.
-            string output = Path.Combine(shop, "Web", "bin", "Debug", "net10.0");
+            string output = Path.Combine(shop, "Web", "bin", "Debug", TestProjects.Framework);
             attached = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}agentattach";
             Docker.Run("run", "-d", "--name", attached, "--label", Docker.RunLabel, "-v", $"{output}:/app:ro", "mcr.microsoft.com/dotnet/aspnet:10.0", "dotnet", "/app/Web.dll");
             JsonElement listed = default;

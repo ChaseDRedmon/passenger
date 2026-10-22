@@ -63,11 +63,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
         }
         Process agents = LastPassenger();
         WaitFor(() => agents.HasExited, "the agent's Passenger to end");
@@ -156,11 +152,7 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         finally
         {
             window.Close();
-            Await(Task.Run(async () =>
-            {
-                await client.DisposeAsync();
-                return true;
-            }), "the agent going");
+            Gone(client);
         }
     }
 
@@ -172,11 +164,11 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
     public async Task A_Passenger_killed_while_it_loads_runs_profiles_debugs_and_builds_a_project_leaves_none_of_it_running()
     {
         Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{Folder}\", args[0] + \".pid\"), Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
-        Write("Sum.csproj", """
+        Write("Sum.csproj", $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>{TestProjects.Framework}</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
               </PropertyGroup>
               <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('linger')">
@@ -265,10 +257,10 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         Write("two/Two.slnx", "<Solution>\n  <Project Path=\"A/A.csproj\" />\n  <Project Path=\"B/B.csproj\" />\n</Solution>\n");
         foreach (string project in new[] { "two/A/A.csproj", "two/B/B.csproj" })
         {
-            Write(project, """
+            Write(project, $"""
                 <Project Sdk="Microsoft.NET.Sdk">
                   <PropertyGroup>
-                    <TargetFramework>net10.0</TargetFramework>
+                    <TargetFramework>{TestProjects.Framework}</TargetFramework>
                   </PropertyGroup>
                   <Target Name="Wait" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
                     <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; step.pid; sleep 3" />

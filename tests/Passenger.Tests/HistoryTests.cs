@@ -43,7 +43,7 @@ public sealed class HistoryTests : IDisposable
         MainWindow window = Open("src/Store.cs");
 
         // From the editor's menu, as Rider's Git submenu has it.
-        ChooseFromEditorMenu(window, "Git", "Show History");
+        Ui.ChooseFromEditorMenu(window, "Git", "Show History");
         GitLogView history = window.GitWindow.Shown;
         Ui.Landed(() => history.Rows.Count == 4, "the four commits that changed the file, under either name");
         Assert.Equal(["Twice", "Store, not shop", "Long count", "First"], history.Rows.Select(r => r.Commit.Subject));
@@ -58,7 +58,7 @@ public sealed class HistoryTests : IDisposable
         Assert.Equal((Full("src/Store.cs"), ChangeKind.Renamed, Full("src/Shop.cs")), (history.Files[0].Path, history.Files[0].Kind, history.Files[0].From));
 
         // A double-click on a commit shows what it did to the file, under its old name too.
-        DoubleClick(window, history, "Long count");
+        DoubleClick(history, "Long count");
         Ui.Landed(() => window.OwnedWindows.OfType<DiffWindow>().Any(), "the commit's diff of the file");
         DiffWindow diff = window.OwnedWindows.OfType<DiffWindow>().Single();
         Assert.Equal(Shop, diff.View.Left.Document.Snapshot.ToString());
@@ -93,8 +93,7 @@ public sealed class HistoryTests : IDisposable
         MainWindow window = Open(null);
 
         ExplorerNode src = window.ExplorerView.Tree.Rows.First(r => r.Name == "src");
-        RightClick(window, src);
-        ChooseFromExplorerMenu(window, "Git", "Show History");
+        Ui.ChooseFromRowMenu(window, src, "Git", "Show History");
         GitLogView history = window.GitWindow.Shown;
         Ui.Landed(() => history.Rows.Count == 3, "the three commits that touched src");
         Assert.Equal(["Both", "B", "First"], history.Rows.Select(r => r.Commit.Subject));
@@ -112,7 +111,7 @@ public sealed class HistoryTests : IDisposable
         ExplorerNode docs = window.ExplorerView.Tree.Rows.First(r => r.Name == "docs");
         window.ExplorerView.Tree.Expand(docs);
         Ui.Settle();
-        RightClick(window, window.ExplorerView.Tree.Rows.First(r => r.Name == "Read.md"));
+        Ui.RightClick(Ui.Row(window.ExplorerView, window.ExplorerView.Tree.Rows.First(r => r.Name == "Read.md")));
         MenuItem git = window.ExplorerView.OpenMenu!.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "Git");
         Assert.Equal(["Compare with Revision…", "Compare with Branch or Tag…", "Show History"], git.Items.OfType<MenuItem>().Select(i => i.Header as string));
         window.ExplorerView.OpenMenu.Close();
@@ -144,7 +143,7 @@ public sealed class HistoryTests : IDisposable
         {
             Ui.Press(window, "shift+DOWN");
         }
-        ChooseFromEditorMenu(window, "Git", "Show History for Selection…");
+        Ui.ChooseFromEditorMenu(window, "Git", "Show History for Selection…");
         GitLogView history = window.GitWindow.Shown;
         Ui.Landed(() => history.Rows.Count > 0, "the commits that changed the lines");
         Assert.Equal(["Line 6", "Line 5", "First"], history.Rows.Select(r => r.Commit.Subject));
@@ -242,58 +241,11 @@ public sealed class HistoryTests : IDisposable
         return (change.Path, change.Kind);
     }
 
-    /// <summary>Opens the editor's menu at the caret and chooses an item of a submenu, as clicks on them would.</summary>
-    private static void ChooseFromEditorMenu(MainWindow window, string submenu, string item)
-    {
-        window.EditorArea.CodeEditor.RequestContextMenu();
-        Ui.Settle();
-        ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("The editor's menu did not open");
-        Choose(menu, submenu, item);
-    }
-
-    private static void ChooseFromExplorerMenu(MainWindow window, string submenu, string item) =>
-        Choose(window.ExplorerView.OpenMenu ?? throw new InvalidOperationException("No menu opened on the row"), submenu, item);
-
-    private static void Choose(ContextMenu menu, string submenu, string item)
-    {
-        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
-            ?? throw new InvalidOperationException($"The menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem chosen = parent.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"{submenu} has no {item}: [{string.Join(", ", parent.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        Assert.True(chosen.IsEnabled, $"{submenu} > {item} is disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
-
-    private static void RightClick(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        Point at = Centre(window, rows, row);
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-    }
-
     /// <summary>Double-clicks a commit of a history, as a person opens one.</summary>
-    private static void DoubleClick(MainWindow window, GitLogView history, string subject)
+    private static void DoubleClick(GitLogView history, string subject)
     {
         ListBox commits = history.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, history.Rows));
-        Point at = Centre(window, commits, history.Rows.First(r => r.Commit.Subject == subject));
-        for (int i = 0; i < 2; i++)
-        {
-            window.MouseDown(at, MouseButton.Left);
-            window.MouseUp(at, MouseButton.Left);
-        }
-        Ui.Settle();
-    }
-
-    private static Point Centre(MainWindow window, ListBox list, object row)
-    {
-        list.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = list.ContainerFromItem(row) ?? throw new InvalidOperationException($"The list does not show {row}");
-        return item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
+        Ui.DoubleClick(Ui.Row(commits, history.Rows.First(r => r.Commit.Subject == subject)));
     }
 
     private static string Joined(IEnumerable<string> lines) => string.Concat(lines.Select(l => l + "\n"));

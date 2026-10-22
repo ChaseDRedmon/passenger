@@ -110,15 +110,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
     [AvaloniaFact]
     public void Canceling_an_agents_Aspire_start_ends_the_starting_process_and_its_execution_listener()
     {
-        Write("Sum.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
-                <ImplicitUsings>enable</ImplicitUsings>
-              </PropertyGroup>
-            </Project>
-            """);
+        Write("Sum.csproj", TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         string pidFile = Path.Combine(Folder, "aspire-starting.pid");
         string endpointFile = Path.Combine(Folder, "aspire-starting.endpoint");
         Write("Program.cs", $"File.WriteAllText({JsonSerializer.Serialize(endpointFile)}, Environment.GetEnvironmentVariable(\"DEBUG_SESSION_PORT\"));\nFile.WriteAllText({JsonSerializer.Serialize(pidFile)}, Environment.ProcessId.ToString());\nConsole.WriteLine(\"starting\");\nawait Task.Delay(Timeout.Infinite);\n");
@@ -139,10 +131,8 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             Task<CallToolResult> starting = Task.Run(() => CallGivingUp(client, "run",
                 new() { ["configuration"] = configuration }, giveUp.Token));
             Window permission = Question(window, "permission for the Aspire startup");
-            Button allow = permission.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Allow"));
-            Point at = allow.TranslatePoint(new Point(allow.Bounds.Width / 2, allow.Bounds.Height / 2), permission)!.Value;
-            permission.MouseDown(at, MouseButton.Left);
-            permission.MouseUp(at, MouseButton.Left);
+            // Not settled: the start the answer lets go holds background work until it is given up.
+            Ui.Click(permission.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Allow")), settle: false);
             Ui.PumpUntil(() => File.Exists(pidFile) || starting.IsCompleted, "the starting AppHost process", TimeSpan.FromMinutes(5));
             Assert.True(File.Exists(pidFile), $"The AppHost process did not start: {(starting.IsCompletedSuccessfully ? Text(starting.Result) : window.Status)}{Said()}");
             int processId = Processes.WrittenId(pidFile, "the starting AppHost PID");

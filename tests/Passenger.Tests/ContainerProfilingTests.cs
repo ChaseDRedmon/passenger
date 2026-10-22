@@ -87,9 +87,9 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
 
             // Compared on the newer, as a snapshot of this machine's is: the first's Keepsakes all survived, moved or not,
             // and those kept since are new.
-            Click(memory, "Compare with…");
+            Ui.ClickButton(memory, "Compare with…");
             MenuItem older = Assert.Single(memory.CompareMenu!.Items.OfType<MenuItem>());
-            older.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Ui.Click(older, settle: false);
             memory.CompareMenu.Hide();
             Ui.WaitFor(() => memory.Comparison is not null, "the comparison of the container's snapshots");
             Assert.True(memory.Comparison!.Inexact is null, $"The container's snapshots were compared inexactly: {memory.Comparison.Inexact}");
@@ -99,7 +99,7 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
 
             // A type's objects open to the static that keeps them, read from the graph the container sent.
             memory.Choose(kept);
-            Click(memory, "Open New Objects");
+            Ui.ClickButton(memory, "Open New Objects");
             Ui.WaitFor(() => memory.Set is not null, "the new Keepsakes");
             Assert.Equal(kept.NewObjects, memory.ObjectRows.Count);
             Assert.Same(second, memory.Set!.Snapshot);
@@ -233,19 +233,11 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
     /// <summary>Get Memory Snapshot, as its button takes one: the snapshot numbered so, or the test fails with why there is none.</summary>
     private static MemorySnapshot MemorySnapshot(MainWindow window, int number)
     {
-        Click(window.ProfilerView, "Get Memory Snapshot");
+        Ui.ClickButton(window.ProfilerView, "Get Memory Snapshot");
         Ui.WaitFor(() => window.ProfilerView.Memory?.Number == number || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
             $"memory snapshot #{number} of the program in the container", TimeSpan.FromMinutes(2));
         Assert.True(window.ProfilerView.Memory?.Number == number, window.Status);
         return window.ProfilerView.Memory!;
-    }
-
-    private static void Click(Avalonia.Visual within, string label)
-    {
-        Control found = within.GetVisualDescendants().OfType<Control>()
-            .First(c => c is Button { Content: string text } && text == label || c is ToggleButton { Content: string tab } && tab == label);
-        found.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
     }
 
     /// <summary>The program the tests profile, built here in Debug for .NET 10 and copied into an image of .NET's runtime:
@@ -303,11 +295,11 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
 
             """;
 
-        private const string Project = """
+        private const string Project = $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>{TestProjects.Framework}</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
                 <AssemblyName>Spins</AssemblyName>
               </PropertyGroup>

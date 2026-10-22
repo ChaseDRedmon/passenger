@@ -64,7 +64,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Assert.Equal([Shortcut.Parse($"{Cmd} P").Display()], dialog.ShortcutsShown(AppActions.GoToFile));
             Assert.Equal([Shortcut.Parse($"{Cmd} BACK_SLASH").Display()], dialog.ShortcutsShown(AppActions.SplitRight));
             Assert.False(dialog.ShowsChanged(AppActions.SplitRight), "Split Right, the person's in Visual Studio's keymap alone, is shown changed in VS Code's");
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
             Assert.Equal(KeymapPreset.VSCode, window.Settings.Keymap);
 
             VSCodeKeysWork(window);
@@ -115,9 +115,9 @@ public sealed class KeymapChoiceTests : IDisposable
             KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitDown);
             Ui.Press(keys, $"{Cmd} P");
             Assert.Equal([$"{goToFile} in Main Menu | Navigate"], keys.Conflicts);
-            Click(keys, keys.OkButton);
+            Ui.Click(keys.OkButton);
             ConfirmDialog warning = Asked(dialog);
-            Click(warning, Button(warning, "Remove"));
+            Ui.Click(Button(warning, "Remove"));
             Ui.WaitFor(() => !warning.IsVisible, "the warning to close");
             Assert.Equal([vsCodes], dialog.ShortcutsShown(AppActions.SplitDown));
             Assert.Empty(dialog.ShortcutsShown(AppActions.GoToFile));
@@ -136,7 +136,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Assert.Equal([vsCodes], dialog.ShortcutsShown(AppActions.GoToFile));
             Assert.Empty(dialog.ShortcutsShown(AppActions.SplitDown));
             Assert.False(dialog.ShowsChanged(AppActions.GoToFile), "Go to File, reset, is still shown as changed");
-            Click(dialog, Button(dialog, "OK"));
+            Ui.Click(Button(dialog, "OK"));
 
             Assert.Empty(window.Settings.Shortcuts);
             window.EditorArea.CodeEditor.Focus();
@@ -244,10 +244,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Ui.Settle();
             Window floating = Assert.Single(window.OwnedWindows);
             TextBox search = window.BottomPanel.Tests.GetVisualDescendants().OfType<TextBox>().Single(b => b.Classes.Contains("search"));
-            Point at = search.TranslatePoint(new Point(search.Bounds.Width / 2, search.Bounds.Height / 2), floating)!.Value;
-            floating.MouseDown(at, MouseButton.Left);
-            floating.MouseUp(at, MouseButton.Left);
-            Ui.Settle();
+            Ui.Click(search);
             Assert.True(search.IsKeyboardFocusWithin, "A click on the floating Unit Tests window's search box left the keys elsewhere");
             floating.KeyTextInput("Onex");
             Ui.Press(floating, "BACK_SPACE");
@@ -415,12 +412,12 @@ public sealed class KeymapChoiceTests : IDisposable
     /// <summary>A keymap chosen in the drop-down at the Keymap page's top, by a click on it and one on its name.</summary>
     private static void Choose(SettingsDialog dialog, string keymap)
     {
-        Click(dialog, dialog.KeymapChoice);
+        Ui.Click(dialog.KeymapChoice);
         Ui.WaitFor(() => dialog.KeymapChoice.IsDropDownOpen, "the keymaps' list to open");
         Ui.Settle();
         ComboBoxItem item = dialog.KeymapChoice.GetVisualDescendants().OfType<Avalonia.Controls.Primitives.Popup>().First().Child!
             .GetVisualDescendants().OfType<ComboBoxItem>().First(i => i.Content as string == keymap);
-        Click(dialog, item);
+        Ui.Click(item);
         Ui.WaitFor(() => !dialog.KeymapChoice.IsDropDownOpen, "the keymaps' list to close");
         Assert.Equal(keymap, dialog.KeymapChoice.SelectedItem);
     }
@@ -443,18 +440,6 @@ public sealed class KeymapChoiceTests : IDisposable
 
     private static Button Button(Window window, string content) =>
         window.GetVisualDescendants().OfType<Button>().First(b => b.Content as string == content);
-
-    /// <summary>A click on a control, at its middle, as a person's mouse makes it.</summary>
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        TopLevel top = TopLevel.GetTopLevel(control) ?? window;
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), top)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not shown");
-        top.MouseDown(at, MouseButton.Left);
-        top.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private static JsonNode? Read(string file)
     {

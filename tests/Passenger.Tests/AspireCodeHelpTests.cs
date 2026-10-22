@@ -25,14 +25,14 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     public void AddProject_navigates_to_the_real_project_but_a_resource_identifier_to_its_declaration()
     {
         MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
-        PlaceAfter(window, "AddProject<Projects.Ap");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "AddProject<Projects.Ap");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.WaitFor(() => window.EditorArea.Active?.Name == "Api.csproj", "AddProject to open Api.csproj, not generated metadata");
         Assert.True(PathNames.Same(PathNames.Canonical(project.PathOf("Api/Api.csproj")), window.EditorArea.Active!.Path));
 
         window.OpenFile(project.PathOf("Host/Program.cs"));
         Ui.Settle();
-        PlaceAfter(window, "WithReference(connec");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "WithReference(connec");
         Ui.Run(window, AppActions.GoToDeclaration);
         Ui.Settle();
         Assert.Equal("Program.cs", window.EditorArea.Active!.Name);
@@ -49,7 +49,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
         window.Confirm = (_, _, _) => Task.FromResult(true);
         WaitForMissing(window, "api", "db");
-        PlaceAfter(window, "GetConnectionString(\"d");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"d");
         Ui.Run(window, AppActions.QuickFix);
         Choose(window, "Add WithReference(db) to api");
         Ui.WaitFor(() => File.ReadAllText(project.PathOf("Host/Program.cs")).Contains("api.WithReference(db);", StringComparison.Ordinal),
@@ -72,7 +72,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     {
         MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
         WaitForMissing(window, "api", "db");
-        PlaceAfter(window, "GetConnectionString(\"");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "GetConnectionString(\"");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("connected"), "the connected database name to be offered");
         Assert.DoesNotContain("db", window.Assist.CompletionLabels);
@@ -86,7 +86,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
     {
         MainWindow window = project.Open(project.PathOf("Worker/Program.cs"));
         WaitForMissing(window, "worker", "api");
-        PlaceAfter(window, "https+http://ap");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "https+http://ap");
         Ui.Run(window, AppActions.QuickFix);
         Ui.WaitFor(() => window.Assist.Offered.Contains("Add WithReference(api) to worker"), "the service-discovery reference fix");
         string changed = File.ReadAllText(project.PathOf("Host/Program.cs")).Replace("builder.Build().Run();",
@@ -185,18 +185,6 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             && m.Message.Contains($"'{service}' does not reference '{resource}'", StringComparison.Ordinal));
     }
 
-    private static void PlaceAfter(MainWindow window, string text)
-    {
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the editor");
-        TextPosition position = editor.Document.Snapshot.GetPosition(at + text.Length);
-        Ui.Run(window, AppActions.GoToLine);
-        Ui.Press(window, "control A");
-        window.KeyTextInput($"{position.Line + 1}:{position.Column + 1}");
-        Ui.Press(window, "ENTER");
-    }
-
     private static void Choose(MainWindow window, string label)
     {
         Ui.WaitFor(() => window.Assist.Offered.Contains(label), $"the native '{label}' action");
@@ -225,16 +213,16 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /></Solution>");
             foreach (string name in new[] { "Api", "Worker" })
             {
-                Put($"{name}/{name}.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>");
+                Put($"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
             }
             Put("Api/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n");
             Put("Worker/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n");
             foreach (string name in new[] { "Host", "OtherHost" })
             {
-                Put($"{name}/{name}.csproj", """
+                Put($"{name}/{name}.csproj", $"""
                     <Project Sdk="Microsoft.NET.Sdk">
                       <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
-                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle></PropertyGroup>
+                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle></PropertyGroup>
                       <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
                     </Project>
                     """);
@@ -246,11 +234,6 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             Prepare();
         }
 
-        private void Put(string name, string text)
-        {
-            string path = PathOf(name);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, text);
-        }
+        private void Put(string name, string text) => TestFolders.Write(Folder, name, text);
     }
 }

@@ -43,7 +43,7 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     public RefactoringDialogsTests(RestoredFolders folders) => folder = PathNames.Canonical(folders.Take("refactorings-", made =>
     {
         string project = PathNames.Canonical(made);
-        File.WriteAllText(Path.Combine(project, "Shop.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(project, "Shop.csproj"), TestProjects.Library("<Nullable>enable</Nullable>"));
         (string Name, string Text)[] files = [("Calc.cs", Calc), ("Till.cs", Till), ("Order.cs", Order), ("OrderBook.cs", OrderBook),
             ("Report.cs", Report), ("Shapes.cs", Shapes), ("Animal.cs", Animal), ("Dog.cs", Dog), ("Cat.cs", Cat)];
         foreach ((string name, string text) in files)
@@ -60,25 +60,25 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     {
         MainWindow window = Open("Calc.cs");
         List<(string Title, string Text)> asked = Answer(window);
-        PlaceAfter(window, "int Sca");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "int Sca");
         Ui.Run(window, AppActions.ChangeSignature);
         ChangeSignatureDialog dialog = Shown<ChangeSignatureDialog>(window, "Change Signature");
         Assert.Equal("public static int Scale(int value, int factor, int unused)", dialog.Preview);
         Assert.Equal(["value", "factor", "unused"], dialog.Parameters.Select(p => p.NameBox.Text));
 
         // unused goes, factor moves before value, and a new offset is passed 0 by every call.
-        Click(dialog, dialog.Parameters[2].NameBox);
-        Click(dialog, dialog.RemoveButton);
-        Click(dialog, dialog.Parameters[1].TypeBox);
-        Click(dialog, dialog.UpButton);
+        Ui.Click(dialog.Parameters[2].NameBox);
+        Ui.Click(dialog.RemoveButton);
+        Ui.Click(dialog.Parameters[1].TypeBox);
+        Ui.Click(dialog.UpButton);
         Assert.Equal(["factor", "value"], dialog.Parameters.Select(p => p.NameBox.Text));
-        Click(dialog, dialog.Parameters[1].NameBox);
-        Click(dialog, dialog.AddButton);
+        Ui.Click(dialog.Parameters[1].NameBox);
+        Ui.Click(dialog.AddButton);
         dialog.KeyTextInput("int");
         Ui.Settle();
-        Click(dialog, dialog.Parameters[2].NameBox);
+        Ui.Click(dialog.Parameters[2].NameBox);
         dialog.KeyTextInput("offset");
-        Click(dialog, dialog.Parameters[2].DefaultBox);
+        Ui.Click(dialog.Parameters[2].DefaultBox);
         dialog.KeyTextInput("0");
         Ui.Settle();
         Assert.Equal("public static int Scale(int factor, int value, int offset)", dialog.Preview);
@@ -107,14 +107,14 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     {
         MainWindow window = Open("Order.cs");
         List<(string Title, string Text)> asked = Answer(window);
-        PlaceAfter(window, "class Ord");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ord");
         // Rider gives it no keys: it is Refactor, Extract Interface... in the menu.
         Assert.True(window.RunFromMenu(AppActions.ExtractInterface), window.Status);
         ExtractInterfaceDialog dialog = Shown<ExtractInterfaceDialog>(window, "Extract Interface");
         Assert.Equal("IOrder", dialog.NameBox.Text);
         Assert.Equal("IOrder.cs", dialog.FileBox.Text);
         Assert.Equal(["Total: int", "Add(int): void", "Describe(): string"], dialog.Members.Select(m => m.Text));
-        Click(dialog, dialog.Members[2].Box);
+        Ui.Click(dialog.Members[2].Box);
         Assert.False(dialog.Members[2].Box.IsChecked, "A click did not leave Describe out of the interface");
         Next(dialog);
 
@@ -141,7 +141,7 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     {
         MainWindow window = Open("Shapes.cs");
         List<(string Title, string Text)> asked = Answer(window);
-        PlaceAfter(window, "class Circ");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Circ");
         Ui.Run(window, AppActions.Move);
         Assert.Equal(["Move to Another File…", "Move to Namespace…"], window.Assist.Offered);
         Ui.Press(window, "ENTER");
@@ -170,7 +170,7 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     {
         MainWindow window = Open("Order.cs");
         List<(string Title, string Text)> asked = Answer(window);
-        PlaceAfter(window, "class Ord");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Ord");
         Ui.Run(window, AppActions.Move);
         Ui.Press(window, "DOWN");
         Ui.Press(window, "ENTER");
@@ -202,15 +202,15 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     {
         MainWindow window = Open("Dog.cs");
         List<(string Title, string Text)> asked = Answer(window);
-        PlaceAfter(window, "class Do");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Do");
         // Rider gives it no keys: it is Refactor, Pull Members Up... in the menu.
         Assert.True(window.RunFromMenu(AppActions.PullMembersUp), window.Status);
         MembersMoveDialog dialog = Shown<MembersMoveDialog>(window, "Pull Members Up");
         Assert.Equal("Animal", dialog.BaseBox.SelectedItem);
         Assert.Equal(["Legs: int", "Describe(): string"], dialog.Members.Select(m => m.Text));
         Assert.False(dialog.NextButton.IsEnabled, "Next is offered with no member chosen");
-        Click(dialog, dialog.Members[0].Moved);
-        Click(dialog, dialog.Members[1].Moved);
+        Ui.Click(dialog.Members[0].Moved);
+        Ui.Click(dialog.Members[1].Moved);
         Next(dialog);
 
         Assert.Equal("using System.Text;\n\nnamespace Shop;\n\npublic class Dog : Animal\n{\n}\n", window.EditorArea.Active?.Text.Snapshot.ToString());
@@ -233,14 +233,14 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     {
         MainWindow window = Open("Animal.cs");
         List<(string Title, string Text)> asked = Answer(window);
-        PlaceAfter(window, "class Anim");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "class Anim");
         Assert.True(window.RunFromMenu(AppActions.PushMembersDown), window.Status);
         MembersMoveDialog dialog = Shown<MembersMoveDialog>(window, "Push Members Down");
         Assert.Equal(["Cat", "Dog"], dialog.Inheritors.Select(i => i.Text).Order(StringComparer.Ordinal));
         Assert.All(dialog.Inheritors, i => Assert.True(i.Box.IsChecked, $"{i.Text} is not chosen at first"));
         Assert.Equal(["Name: string", "Sound(): string"], dialog.Members.Select(m => m.Text));
-        Click(dialog, dialog.Members[1].Moved);
-        Click(dialog, dialog.Members[1].Abstract);
+        Ui.Click(dialog.Members[1].Moved);
+        Ui.Click(dialog.Members[1].Abstract);
         Next(dialog);
 
         Assert.Equal("namespace Shop;\n\npublic abstract class Animal\n{\n    public string Name = \"\";\n\n    public abstract string Sound();\n}\n", window.EditorArea.Active?.Text.Snapshot.ToString());
@@ -283,7 +283,7 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     private static void Next(RefactoringDialog dialog)
     {
         Assert.True(dialog.NextButton.IsEnabled, $"Next is disabled: {dialog.Problem}");
-        Click(dialog, dialog.NextButton);
+        Ui.Click(dialog.NextButton);
         Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem.Length > 0, "the refactoring to be made");
         Assert.False(dialog.IsVisible, $"The dialog stayed open: {dialog.Problem}");
     }
@@ -295,26 +295,6 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", folder, "--no-restore", "-nologo", "-v:q"]), limit: TimeSpan.FromMinutes(3)),
             "the project to build", TimeSpan.FromMinutes(4));
         Assert.True(built.Succeeded, $"The project does not build after {after}:\n{built.Output}{built.Error}");
-    }
-
-    private static void PlaceAfter(MainWindow window, string text)
-    {
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-        editor.Focus();
-    }
-
-    /// <summary>A click on a control of a window, at its middle, as a person's mouse makes it.</summary>
-    private static void Click(Window window, Control control)
-    {
-        Ui.Settle();
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
-            ?? throw new Xunit.Sdk.XunitException($"{control} is not in the dialog");
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
     }
 
     /// <summary>Agrees to every question the window asks, keeping each one's title and text in order.</summary>

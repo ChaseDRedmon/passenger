@@ -49,8 +49,7 @@ public sealed class FindTests : IDisposable
         Ui.Settle();
         FindBar bar = window.EditorArea.FindBar;
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "sum";
-        bar.FindControl<Button>("ReplaceAllButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.Equal("sum + sum * sum", editor.Document.Snapshot.ToString());
         editor.TryExecute(EditorActions.Undo);
         Assert.Equal("total + total * total", editor.Document.Snapshot.ToString());
@@ -74,8 +73,7 @@ public sealed class FindTests : IDisposable
         bar.FindControl<TextBox>("Query")!.Text = @"\s+$";
         bar.FindControl<TextBox>("ReplaceWith")!.Text = string.Empty;
         Ui.Settle();
-        bar.FindControl<Button>("ReplaceAllButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         window.Perform(AppActions.Save);
         Assert.Equal("int foo\r\nfoo bar\r\nbar foo\r\nend", File.ReadAllText(Path.Combine(folder, "Notes.txt")));
         window.Close();
@@ -93,12 +91,12 @@ public sealed class FindTests : IDisposable
         Assert.Equal("1/2", bar.CountText);
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "$1_";
 
-        Click(bar, "ReplaceButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceButton")!);
         Assert.True(editor.Document.Snapshot.ToString() == "foo_(1); bar (2); baz(3);",
             $"Replace wrote '{editor.Document.Snapshot}': the group was not filled in from the match its lookahead found");
         editor.TryExecute(EditorActions.Undo);
 
-        Click(bar, "ReplaceAllButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.True(editor.Document.Snapshot.ToString() == "foo_(1); bar (2); baz_(3);",
             $"Replace All wrote '{editor.Document.Snapshot}': the groups were not filled in from the matches their lookahead found");
         window.Close();
@@ -116,7 +114,7 @@ public sealed class FindTests : IDisposable
         Ui.Settle();
         Assert.True(bar.CountText == "1/2", $"The count says {bar.CountText}: cat|dog found a word's part (catalog, hotdog) as a whole word");
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "pet";
-        Click(bar, "ReplaceAllButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.Equal("catalog pet hotdog pet", editor.Document.Snapshot.ToString());
 
         // A stray ')' is the person's regex not reading, never a close of the group Words puts it in.
@@ -143,20 +141,14 @@ public sealed class FindTests : IDisposable
 
         // Replace puts the prefix at the line's start and goes on to the next line's.
         bar.FindControl<TextBox>("ReplaceWith")!.Text = "// ";
-        Click(bar, "ReplaceButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceButton")!);
         Assert.Equal("one\n// \ntwo\n", editor.Document.Snapshot.ToString());
         Assert.Equal(new Selection(8, 8), editor.Selections.Primary);
         editor.TryExecute(EditorActions.Undo);
 
-        Click(bar, "ReplaceAllButton");
+        Ui.Click(bar.FindControl<Button>("ReplaceAllButton")!);
         Assert.Equal("// one\n// \n// two\n", editor.Document.Snapshot.ToString());
         window.Close();
-    }
-
-    private static void Click(FindBar bar, string button)
-    {
-        bar.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
     }
 
     private (MainWindow Window, CodeEditor Editor) Open(string text)

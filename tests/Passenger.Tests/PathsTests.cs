@@ -43,7 +43,7 @@ public sealed class PathsTests : IDisposable
         string repository = Path.Combine(root, "Shop Repository");
         Write(repository, ".gitignore", "bin/\nobj/\n");
         Write(repository, "Shop.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         string program = Write(repository, "Program.cs", "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine(total);\n");
         TestGit.Init(repository);
         File.WriteAllText(program, "int total = 10;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine(total);\n");
@@ -103,12 +103,12 @@ public sealed class PathsTests : IDisposable
         // The solution has the project's folder in lower case, which builds alike where case is ignored.
         Write(folder, "Store.slnx", "<Solution>\n  <Project Path=\"src/shop/Shop.csproj\" />\n</Solution>\n");
         Write(folder, "src/Shop/Shop.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
         string program = Write(folder, "src/Shop/Program.cs", "Console.WriteLine(\"Shop\");\n");
         string models = Path.Combine(folder, "src", "Shop", "Models");
         Directory.CreateDirectory(models);
         Restore.Run(Path.Combine(folder, "Store.slnx"));
-        MainWindow window = Open(folder);
+        MainWindow window = Ui.OpenFolder(folder);
         window.OpenFile(program);
         Ui.Settle();
 
@@ -119,7 +119,7 @@ public sealed class PathsTests : IDisposable
         window.Perform(AppActions.BuildSelected);
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
         Assert.True(window.Status == "Build succeeded", $"The build did not succeed: {Ui.Said(window)}");
-        Assert.True(File.Exists(Path.Combine(folder, "src", "Shop", "bin", "Debug", "net10.0", "Shop.dll")), "Build Selected Projects did not build the open file's project");
+        Assert.True(File.Exists(Path.Combine(folder, "src", "Shop", "bin", "Debug", TestProjects.Framework, "Shop.dll")), "Build Selected Projects did not build the open file's project");
 
         // New Class in a folder of it: the project's namespace, then the folder's.
         Assert.Null(window.CreateClass(models, "Order"));
@@ -133,7 +133,7 @@ public sealed class PathsTests : IDisposable
         string app = Path.Combine(root, "app");
         string inside = Write(app, "Inside.cs", "class Inside { }\n");
         string outside = Write(Path.Combine(root, "app2"), "Outside.cs", "class Outside { }\n");
-        MainWindow window = Open(app);
+        MainWindow window = Ui.OpenFolder(app);
         window.OpenFile(outside);
         window.OpenFile(inside);
         Ui.Settle();
@@ -144,15 +144,6 @@ public sealed class PathsTests : IDisposable
         Assert.Equal(Path.Combine(root, "app2"), Assert.Single(recent.Rows, r => r.Name == "Outside.cs").Where);
         Assert.Null(window.ExplorerView.Tree.Reveal(outside));
         window.Close();
-    }
-
-    private static MainWindow Open(string folder)
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        Ui.Settle();
-        return window;
     }
 
     /// <summary>Another spelling of an existing folder's path: all in lower case, or with Windows' 8.3 short names (through

@@ -134,8 +134,7 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
         finally
         {
             Gone(client);
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => Docker.NoneLeft(project), "Stop to take web down", TimeSpan.FromMinutes(2));
+            Docker.Stopped(window, project, "Stop to take web down");
             window.Close();
         }
     }

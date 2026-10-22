@@ -75,7 +75,7 @@ public sealed class LocalHistoryTests : IDisposable
         SaveThree(window);
 
         // From the editor's menu, Local History, as Rider's has it.
-        ChooseFromEditorMenu(window, "Local History", "Show History…");
+        Ui.ChooseFromEditorMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 3, "the three saves");
         history.Select(history.Rows[^1]);
@@ -98,7 +98,7 @@ public sealed class LocalHistoryTests : IDisposable
         MainWindow window = Open("Notes.cs");
         Save(window, 17, 3, "changed ");
         Save(window, 18, 3, "changed ");
-        ChooseFromEditorMenu(window, "Local History", "Show History…");
+        Ui.ChooseFromEditorMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 2, "the two saves");
         // Maximized, the window has room for the whole file; the older version's diff opens in that room.
@@ -219,7 +219,7 @@ public sealed class LocalHistoryTests : IDisposable
         Write("Shop.cs", Original);
         MainWindow window = Open("Shop.cs");
         Save(window, 2, 4, "long ");
-        ChooseFromEditorMenu(window, "Local History", "Put Label…");
+        Ui.ChooseFromEditorMenu(window, "Local History", "Put Label…");
         Assert.IsType<NamePopup>(window.Popup);
         window.KeyTextInput("Before cleanup");
         Ui.Press(window, "ENTER");
@@ -275,13 +275,11 @@ public sealed class LocalHistoryTests : IDisposable
 
         // Deleted from the Explorer, as a person deletes it.
         window.Confirm = (_, _, _) => Task.FromResult(true);
-        RightClick(window, Show(window, b));
-        ChooseFromMenu(window, "Edit", "Delete…");
+        Ui.ChooseFromRowMenu(window, Show(window, b), "Edit", "Delete…");
         Ui.WaitFor(() => !File.Exists(b), "B.cs deleted");
 
         // The folder's history from its row: its files' changes only, the newest first.
-        RightClick(window, Show(window, Path.Combine(folder, "src")));
-        ChooseFromMenu(window, "Local History", "Show History…");
+        Ui.ChooseFromRowMenu(window, Show(window, Path.Combine(folder, "src")), "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Assert.Equal("src", window.LocalHistoryWindow.Titles.Single());
         Ui.Landed(() => history.Rows.Count == 3, "A.cs's save, B.cs's save and B.cs's deletion");
@@ -305,14 +303,13 @@ public sealed class LocalHistoryTests : IDisposable
     [AvaloniaFact]
     public void A_files_history_follows_it_through_a_rename_in_the_solution_view()
     {
-        Write("Shop/Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Shop/Shop.csproj", TestProjects.Library());
         Write("Shop.slnx", "<Solution>\n  <Project Path=\"Shop/Shop.csproj\" />\n</Solution>\n");
         string order = Write("Shop/Order.cs", Original);
         MainWindow window = Open("Shop/Order.cs");
         Save(window, 2, 4, "long ");
 
-        RightClick(window, Show(window, order));
-        ChooseFromMenu(window, "Edit", "Rename…");
+        Ui.ChooseFromRowMenu(window, Show(window, order), "Edit", "Rename…");
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Purchase.cs");
@@ -322,8 +319,7 @@ public sealed class LocalHistoryTests : IDisposable
         Assert.True(File.Exists(purchase));
         Save(window, 6, 8, "count++; ");
 
-        RightClick(window, Show(window, purchase));
-        ChooseFromMenu(window, "Local History", "Show History…");
+        Ui.ChooseFromRowMenu(window, Show(window, purchase), "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 3, "the saves under both names and the rename between them");
         Assert.Equal(["Change", "Rename Order.cs to Purchase.cs", "Change"], history.Rows.Select(r => r.Title));
@@ -356,16 +352,12 @@ public sealed class LocalHistoryTests : IDisposable
 
         // Undo from the Solution view, where the edit is the last change: the file holds what it held.
         window.Confirm = (_, _, _) => Task.FromResult(true);
-        Point at = Centre(window, Show(window, notes));
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
+        Ui.ClickRow(window, Show(window, notes));
         Ui.Run(window, EditorActions.Undo);
         Assert.True(File.ReadAllText(notes) == Original, $"Undo left the file made anew as '{File.ReadAllText(notes)}', not as it was: {window.Status}");
 
         // Its first version is what it held before the edit made it anew.
-        RightClick(window, Show(window, notes));
-        ChooseFromMenu(window, "Local History", "Show History…");
+        Ui.ChooseFromRowMenu(window, Show(window, notes), "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count > 1, "the file's versions");
         history.Select(history.Rows[^1]);
@@ -498,39 +490,6 @@ public sealed class LocalHistoryTests : IDisposable
         return window.LocalHistoryWindow.Shown ?? throw new InvalidOperationException($"{item} showed no history: {window.Status}");
     }
 
-    /// <summary>Opens the editor's menu at the caret and chooses an item of a submenu, as clicks on them would.</summary>
-    private static void ChooseFromEditorMenu(MainWindow window, string submenu, string item)
-    {
-        window.EditorArea.CodeEditor.RequestContextMenu();
-        Ui.Settle();
-        ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("The editor's menu did not open");
-        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
-            ?? throw new InvalidOperationException($"The menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        Click(menu, parent.Items.OfType<MenuItem>(), item, submenu);
-    }
-
-    private static void ChooseFromMenu(MainWindow window, string? submenu, string item)
-    {
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException("No menu opened on the row");
-        IEnumerable<MenuItem> items = menu.Items.OfType<MenuItem>();
-        if (submenu is not null)
-        {
-            items = (items.FirstOrDefault(i => (string?)i.Header == submenu)
-                ?? throw new InvalidOperationException($"The row's menu has no {submenu}: [{string.Join(", ", items.Select(i => i.Header))}]")).Items.OfType<MenuItem>();
-        }
-        Click(menu, items, item, submenu ?? "The row's menu");
-    }
-
-    private static void Click(ContextMenu menu, IEnumerable<MenuItem> items, string item, string where)
-    {
-        MenuItem chosen = items.FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"{where} has no {item}: [{string.Join(", ", items.Select(i => i.Header))}]");
-        Assert.True(chosen.IsEnabled, $"{where}, {item} is disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
-
     /// <summary>Opens the Explorer's folders down to a file or folder, as a person does to get to it, and gives its row.</summary>
     private static ExplorerNode Show(MainWindow window, string path)
     {
@@ -538,24 +497,6 @@ public sealed class LocalHistoryTests : IDisposable
         Ui.Settle();
         return window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == PathNames.Canonical(path))
             ?? throw new InvalidOperationException($"The Explorer does not show {path}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
-    }
-
-    private static void RightClick(MainWindow window, ExplorerNode row)
-    {
-        Point at = Centre(window, row);
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-    }
-
-    /// <summary>Where a row of the Explorer is in the window, scrolled into view.</summary>
-    private static Point Centre(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-        return item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
     }
 
     private static string Text(MainWindow window) => window.EditorArea.Active!.Text.Snapshot.ToString();

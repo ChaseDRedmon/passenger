@@ -122,3 +122,9 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   17.6 ms in 8,000 methods against 6.1 ms in 1,000 (the bound 17.2). It passed three runs alone straight after, with
   the load average near 10. Neither: **the machine's load**, not changed; the bound measures the UI thread's work, which
   the time scale rightly leaves alone.
+- `McpAttachTests`' call nobody answers, the Mac's full run on lead-373 (d5ca7904) with the load average near 35 from
+  two agents' builds and tests: the first `workspace` call through `--mcp-attach` had no answer in 60 s, where the
+  window's limit closes its admission question at 5 s; the question had shown. It passed three runs alone straight
+  after, the load still 25–37. Not explained: the message tailed only the test's own state, which an attached window
+  never writes; it now tails the run's passenger.log and mcp.log too (the test turns protocol traces on), so a repeat says
+  where the call waited.

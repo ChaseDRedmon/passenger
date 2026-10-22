@@ -41,7 +41,7 @@ public sealed class McpContainerProfileTests : McpRig
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), TestContext.Current.CancellationToken);
         (string shop, string project) = ContainerRunProfilingTests.Shop("agent");
         // Whichever service it launches spins.
-        ContainerRunsTests.Write(shop, "Api/Program.cs", ContainerRunProfilingTests.Spinning);
+        TestFolders.Write(shop, "Api/Program.cs", ContainerRunProfilingTests.Spinning);
         DeleteAtEnd(shop);
         await using McpClient client = await Start(["--mcp", shop]);
         try

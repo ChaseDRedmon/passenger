@@ -67,7 +67,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
     {
         MainWindow window = app.Open("Components/Pages/Home.razor");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<PageTitle>Home</PageTitle>\n");
+        Ui.PlaceAfter(editor, "<PageTitle>Home</PageTitle>\n");
         window.KeyTextInput("<");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Greeting"), "the app's own component among what a '<' offers");
         Assert.Contains("div", window.Assist.CompletionLabels);
@@ -91,7 +91,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         Assert.Equal(new TextPosition(3, "<Greeting Times=\"".Length), editor.CaretPosition);
 
         window.KeyTextInput("2");
-        PlaceAfter(editor, "Times=\"2\"");
+        Ui.PlaceAfter(editor, "Times=\"2\"");
         window.KeyTextInput(" @");
         Ui.Settle();
         window.KeyTextInput("ke");
@@ -103,7 +103,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.OpenFile(app.PathOf("Components/Pages/Counter.razor"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "currentCount++;");
+        Ui.PlaceAfter(editor, "currentCount++;");
         window.KeyTextInput(" c");
         Ui.Settle();
         window.KeyTextInput("urr");
@@ -122,7 +122,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         Ui.WaitFor(() => window.Assist.HoverText is not null, "the hover card on the component's tag");
         Assert.Contains("Shop.Components.Greeting", window.Assist.HoverText, StringComparison.Ordinal);
 
-        PlaceAfter(editor, "<Gree");
+        Ui.PlaceAfter(editor, "<Gree");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.Settle();
         Assert.Equal("Greeting.razor", window.EditorArea.Active?.Name);
@@ -137,7 +137,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.OpenFile(app.PathOf("Components/Greeting.razor"));
         Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "public string Na");
+        Ui.PlaceAfter(editor, "public string Na");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.Renaming == "Name", "the rename box on the parameter");
         window.KeyTextInput("Person");
@@ -176,7 +176,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         Assert.Equal("Cont", editor.Document.Snapshot.GetText(error.Range.Start, error.Range.Length));
         Assert.StartsWith("CS1061:", error.Message, StringComparison.Ordinal);
 
-        PlaceAfter(editor, "<h1>@Model.");
+        Ui.PlaceAfter(editor, "<h1>@Model.");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Count"), "the model's members after @Model.");
         Assert.Contains("Greeting", window.Assist.CompletionLabels);
@@ -204,7 +204,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         editor.ApplyEdits([new TextEdit(used, "clciks".Length, "clicks")]);
         Ui.WaitFor(() => !document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle to go once the field's name is put right");
 
-        PlaceAfter(editor, "<p>Clicks: @clicks</p>\n");
+        Ui.PlaceAfter(editor, "<p>Clicks: @clicks</p>\n");
         window.KeyTextInput("<p>@");
         Ui.Settle();
         window.KeyTextInput("cli");
@@ -221,7 +221,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.OpenFile(app.PathOf("Components/Pages/Home.razor"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "<Greeting Name=\"Ada\" />\n");
+        Ui.PlaceAfter(editor, "<Greeting Name=\"Ada\" />\n");
         window.KeyTextInput("<Tally ");
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Start"), "the code-behind's [Parameter] among the component's attributes");
@@ -234,7 +234,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         MainWindow window = app.Open("Components/Pages/Tally.razor");
         CodeEditor editor = window.EditorArea.CodeEditor;
         Ui.WaitFor(() => KindOf(editor, "AddClick") == TokenKind.Method, "the server's colours on the markup");
-        PlaceAfter(editor, "@onclick=\"AddC");
+        Ui.PlaceAfter(editor, "@onclick=\"AddC");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the method");
         Assert.Equal(new TextPosition(11, "    private void ".Length), window.EditorArea.CodeEditor.CaretPosition);
@@ -242,7 +242,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         // And from the markup's C# expression to the field.
         window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, "@cli");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "@cli");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the field");
         Assert.Equal(new TextPosition(9, "    private int ".Length), window.EditorArea.CodeEditor.CaretPosition);
@@ -259,7 +259,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.OpenFile(app.PathOf("Components/Pages/Tally.razor.cs"));
         Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "private int cli");
+        Ui.PlaceAfter(editor, "private int cli");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.Renaming == "clicks", "the rename box on the field");
         window.KeyTextInput("taps");
@@ -271,7 +271,7 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
         window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
         Ui.Settle();
         OpenDocument code = window.EditorArea.Documents.First(d => d.Name == "Tally.razor.cs");
-        PlaceAfter(window.EditorArea.CodeEditor, "@onclick=\"AddC");
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, "@onclick=\"AddC");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.Renaming == "AddClick", "the rename box on the method in the markup");
         window.KeyTextInput("Tap");
@@ -280,13 +280,6 @@ public sealed class RazorTests : IClassFixture<BlazorShop>
             "the code-behind to declare the method by the name given in the markup");
         Assert.Contains("@onclick=\"Tap\"", markup.Text.Snapshot.ToString(), StringComparison.Ordinal);
         window.Close();
-    }
-
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
     /// <summary>The one kind a stretch of the text is coloured as, its spaces aside; null when its parts differ.</summary>
@@ -430,7 +423,7 @@ internal static class BlazorApp
     public static void Create(string folder)
     {
         ChildResult made = Task.Run(() => ChildProcesses.RunAsync(
-            ChildProcesses.DotnetCommand(["new", "blazor", "--output", folder, "--name", "Shop", "--framework", "net10.0", "--no-https", "--no-restore"]),
+            ChildProcesses.DotnetCommand(["new", "blazor", "--output", folder, "--name", "Shop", "--framework", TestProjects.Framework, "--no-https", "--no-restore"]),
             limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
         Assert.True(made.Succeeded, $"dotnet new blazor did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
     }

@@ -62,14 +62,26 @@ internal static class AvaloniaApp
     {
         string packages = string.Concat(new[] { "Avalonia", "Avalonia.Themes.Fluent", "Avalonia.Fonts.Inter", "Avalonia.Headless", "Avalonia.HarfBuzz", "Avalonia.Skia" }
             .Select(p => $"    <PackageReference Include=\"{p}\" Version=\"{Version}\" />\n"));
-        return "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
-            + "    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n" + packages + "  </ItemGroup>\n</Project>\n";
+        return TestProjects.Console("<Nullable>enable</Nullable>", "<ImplicitUsings>enable</ImplicitUsings>").With($"  <ItemGroup>\n{packages}  </ItemGroup>\n");
+    }
+
+    /// <summary>A headless app of tests/Debuggees copied into a folder, its project written (<see cref="HeadlessProject"/>):
+    /// the project's path, for its restore.</summary>
+    public static string Debuggee(string folder, string app)
+    {
+        foreach (string file in Directory.GetFiles(Passenger.Tests.Debugging.Helpers.Debuggees.Source(app)))
+        {
+            File.Copy(file, Path.Combine(folder, Path.GetFileName(file)));
+        }
+        string project = Path.Combine(folder, $"{app}.csproj");
+        File.WriteAllText(project, HeadlessProject());
+        return project;
     }
 
     /// <summary>Makes the app in a folder, its project and namespace named <paramref name="name"/>, without restoring it.</summary>
     public static void Create(string folder, string name)
     {
-        ChildResult made = Run(["new", "avalonia.app", "--output", folder, "--name", name, "--framework", "net10.0", "--avalonia-version", Version,
+        ChildResult made = Run(["new", "avalonia.app", "--output", folder, "--name", name, "--framework", TestProjects.Framework, "--avalonia-version", Version,
             "--no-restore", "--no-update-check", "--debug:custom-hive", Hive.Value], null);
         Assert.True(made.Succeeded, $"dotnet new avalonia.app did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
         string project = Path.Combine(folder, name + ".csproj");

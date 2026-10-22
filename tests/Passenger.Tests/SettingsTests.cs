@@ -137,7 +137,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(["Always", "Only if errors or warnings received", "Only if errors received", "Never"], results.Items.Cast<string>());
         Assert.Equal("Only if errors received", results.SelectedItem);
 
-        Click(dialog, explicitly);
+        Ui.Click(explicitly);
         Assert.False(explicitly.IsChecked, "A click did not clear the explicit build's option");
         Assert.False(implicitly.IsEnabled, "The implicit build's option could still be changed with the explicit build's off, which Rider greys");
         results.SelectedIndex = 3;
@@ -195,14 +195,6 @@ public sealed class SettingsTests : IDisposable
     /// <summary>What edits an option, beside its label in the page shown.</summary>
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private MainWindow Open()
     {

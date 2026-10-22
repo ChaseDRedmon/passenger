@@ -180,14 +180,14 @@ public sealed class FilePropertiesTests : IDisposable
         Answer(window, "Price.cs: Reload or Convert to ISO-8859-1", "Convert");
         ConfirmDialog warning = Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>());
         Assert.Equal("Incompatible Encoding: ISO-8859-1", warning.Title);
-        Press(warning, "Cancel");
+        Ui.ClickButton(warning, "Cancel");
         Assert.Equal("// 5 € → 🚀\n", File.ReadAllText(path));
         Assert.Equal("UTF-8", Shown(window, "EncodingText"));
 
         Click(window, "EncodingButton");
         Choose(window, "ISO-8859-1");
         Answer(window, "Price.cs: Reload or Convert to ISO-8859-1", "Convert");
-        Press(Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>()), "Convert Anyway");
+        Ui.ClickButton(Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>()), "Convert Anyway");
         Assert.Equal(Encoding.Latin1.GetBytes("// 5 ? ? ?\n"), File.ReadAllBytes(path));
         Assert.Equal("// 5 ? ? ?\n", Text(window));
         Assert.Equal("ISO-8859-1", Shown(window, "EncodingText"));
@@ -256,12 +256,7 @@ public sealed class FilePropertiesTests : IDisposable
     /// <summary>A click on a status bar widget, where the pointer finds it.</summary>
     internal static void Click(MainWindow window, string name)
     {
-        Button widget = window.FindControl<Button>(name)!;
-        Assert.True(widget.IsVisible, $"The status bar's {name} is hidden");
-        Point at = widget.TranslatePoint(new Point(widget.Bounds.Width / 2, widget.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
+        Ui.Click(window.FindControl<Button>(name)!);
         Assert.True(window.OpenContextMenu is not null, $"A click on the status bar's {name} opened no menu");
     }
 
@@ -274,12 +269,14 @@ public sealed class FilePropertiesTests : IDisposable
     {
         ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("No menu is open");
         IEnumerable<MenuItem> items = menu.Items.OfType<MenuItem>();
-        MenuItem chosen = items.Concat(items.SelectMany(i => i.Items.OfType<MenuItem>())).FirstOrDefault(i => (string?)i.Header == item)
+        if (items.Any(i => (string?)i.Header == item))
+        {
+            Ui.Choose(menu, item);
+            return;
+        }
+        MenuItem more = items.FirstOrDefault(m => m.Items.OfType<MenuItem>().Any(i => (string?)i.Header == item))
             ?? throw new InvalidOperationException($"The menu has no {item}: [{string.Join(", ", Items(menu))}]");
-        Assert.True(chosen.IsEnabled, $"{item} is disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
+        Ui.Choose(menu, (string)more.Header!, item);
     }
 
     /// <summary>Answers Rider's Reload or Convert question, failing unless it was asked as named.</summary>
@@ -288,14 +285,7 @@ public sealed class FilePropertiesTests : IDisposable
         Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), $"the question '{title}'");
         ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
         Assert.Equal(title, asked.Title);
-        Press(asked, button);
-    }
-
-    private static void Press(Window dialog, string button)
-    {
-        Button pressed = dialog.GetVisualDescendants().OfType<Button>().First(b => (string?)b.Content == button);
-        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-        Ui.Settle();
+        Ui.ClickButton(asked, button);
     }
 
     internal static string? Shown(MainWindow window, string name) => window.FindControl<TextBlock>(name)!.Text;

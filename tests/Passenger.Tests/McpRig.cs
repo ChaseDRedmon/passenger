@@ -45,7 +45,7 @@ public abstract class McpRig : IDisposable
         .Take("mcp-", project =>
         {
             File.WriteAllText(Path.Combine(project, "Sum.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+                TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
             File.WriteAllText(Path.Combine(project, "Program.cs"),
                 "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
             File.WriteAllText(Path.Combine(project, "Helper.cs"),
@@ -288,9 +288,7 @@ public abstract class McpRig : IDisposable
 
     protected static void Press(Avalonia.Controls.Window dialog, string button)
     {
-        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button)
-            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.Settle();
+        Ui.Click(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button));
     }
 
     /// <summary>A tool's answer, read as the JSON it is; a tool's error fails the test with its words and
@@ -298,7 +296,7 @@ public abstract class McpRig : IDisposable
     protected async Task<JsonElement> Call(McpClient client, string tool, Dictionary<string, object?>? arguments = null)
     {
         CallToolResult result = await Result(client, tool, arguments);
-        string text = string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
+        string text = Text(result);
         if (result.IsError == true)
         {
             Assert.Fail($"{tool} failed: {text}{Said()}");
@@ -418,6 +416,9 @@ public abstract class McpRig : IDisposable
         string[] written = Errors();
         return $"\nPassenger's standard error:{(written.Length == 0 ? " nothing" : "\n  " + string.Join("\n  ", written.TakeLast(40)))}"
             + Tail("Passenger's log", Path.Combine(OwnState, "logs", "passenger.log"), 20)
+            // An attached agent's window and proxy keep the run's own state, not the test's.
+            + Tail("The run's Passenger log", Path.Combine(TestRun.Settings, "logs", "passenger.log"), 20)
+            + Tail("The run's MCP log", Path.Combine(TestRun.Settings, "logs", "mcp.log"), 30)
             + Tail("The debugger engine's log", EngineLog, 30);
 
         static string Tail(string name, string path, int lines)

@@ -90,7 +90,7 @@ public sealed class PackagesTests : IDisposable
         Ui.Landed(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
 
         Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window lists no Lib project to install the package in");
-        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(install, settle: false);
         Ui.Landed(() => !nuget.IsBusy && Version(window) is not null, "the package installed in Lib");
         Assert.Equal("1.1.0", Version(window));
         Assert.Contains("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
@@ -192,7 +192,7 @@ public sealed class PackagesTests : IDisposable
         searched = nuget.RefreshAsync();
         Ui.Landed(() => searched.IsCompleted && nuget.Selected?.Id == "Passenger.Other" && nuget.Versions.Count == 1, "Passenger.Other and its version");
         Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window offers no Install on Lib's line");
-        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Click(install, settle: false);
         Ui.Landed(() => !nuget.IsBusy && ShownVersion(nuget, "Lib") == "2.0.0", "Passenger.Other installed in Lib at 2.0.0");
         System.Xml.Linq.XElement? central = System.Xml.Linq.XDocument.Load(props).Descendants("PackageVersion").SingleOrDefault(e => (string?)e.Attribute("Include") == "Passenger.Other");
         Assert.True((string?)central?.Attribute("Version") == "2.0.0", $"The install did not put Passenger.Other's version in Directory.Packages.props:\n{File.ReadAllText(props)}");

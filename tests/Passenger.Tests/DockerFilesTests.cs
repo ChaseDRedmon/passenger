@@ -43,11 +43,11 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             Assert.Equal("Dockerfile", document.Language.Name);
 
             // A FROM's image goes to its registry's page; a stage it names, to the stage.
-            PlaceAfter(editor, "FROM mcr.microsoft.com/dotnet/asp");
+            Ui.PlaceAfter(editor, "FROM mcr.microsoft.com/dotnet/asp");
             Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
             Ui.WaitFor(() => window.Browsed.Count > 0, "the aspnet image's page opened");
             Assert.Equal("https://mcr.microsoft.com/artifact/mar/dotnet/aspnet", window.Browsed[^1].AbsoluteUri);
-            PlaceAfter(editor, "FROM ba");
+            Ui.PlaceAfter(editor, "FROM ba");
             Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
             Ui.WaitFor(() => editor.CaretPosition == new TextPosition(0, 45), $"the caret at the base stage's name, not {editor.CaretPosition}");
             Assert.Single(window.Browsed);
@@ -86,7 +86,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             CodeEditor editor = window.EditorArea.CodeEditor;
             Assert.True(window.Settings.DockerHubTags, "Complete image tags from Docker Hub is off in a fresh Passenger");
             editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, "FROM postgres:1\n" + Shop.OpsDockerfile)]);
-            PlaceAfter(editor, "FROM postgres:1");
+            Ui.PlaceAfter(editor, "FROM postgres:1");
             Ui.Run(window, AppActions.Complete);
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("17-alpine"), $"postgres's tags from Docker Hub (asked: {string.Join(", ", hub.Asked)})");
             Assert.Equal(["16", "17", "17-alpine"], window.Assist.CompletionLabels.Order(StringComparer.Ordinal));
@@ -100,7 +100,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             Assert.Equal([HubTags], dialog.Shown);
             CheckBox asks = Editor<CheckBox>(dialog, HubTags);
             Assert.True(asks.IsChecked == true, "Settings shows Complete image tags from Docker Hub off while it is on");
-            Click(dialog, asks);
+            Ui.Click(asks);
             dialog.Ok();
             Ui.Settle();
             Assert.False(window.Settings.DockerHubTags, "Clearing Complete image tags from Docker Hub left it on");
@@ -110,7 +110,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             TypeEach(window, "WORK");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Any(l => l.StartsWith("WORKDIR", StringComparison.Ordinal)), "the Dockerfile server started again answering");
             Ui.Press(window, "ESCAPE");
-            PlaceAfter(editor, "FROM postgres:1");
+            Ui.PlaceAfter(editor, "FROM postgres:1");
             Ui.Run(window, AppActions.Complete);
             Ui.Settle();
             Assert.True(window.Assist.CompletionLabels.Count == 0,
@@ -204,7 +204,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
-            PlaceAfter(editor, "    image: postgres:17");
+            Ui.PlaceAfter(editor, "    image: postgres:17");
             Ui.Press(window, "ENTER");
             TypeEach(window, "heal");
             Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("healthcheck"), "the Compose schema's keys of a service as one is typed");
@@ -413,8 +413,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         try
         {
             AwaitEvaluated(window);
-            RightClick(window, Row(window, NodeKind.Project, "Api"));
-            ChooseFromMenu(window, "Add", "Docker Support…");
+            Ui.ChooseFromRowMenu(window, Row(window, NodeKind.Project, "Api"), "Add", "Docker Support…");
             DockerSupportDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<DockerSupportDialog>()));
             Assert.Equal(DockerSupportKind.Dockerfile, dialog.Chosen);
             dialog.Accept();
@@ -436,7 +435,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             List<string> asked = Answer(window);
             window.ExplorerView.Reveal(app.PathOf("Api/Api.csproj"));
             Ui.Settle();
-            Choose(window, Row(window, NodeKind.Project, "Api"));
+            Ui.ClickRow(window, Row(window, NodeKind.Project, "Api"));
             Ui.Run(window, EditorActions.Undo);
             Assert.Equal(["Undo"], asked);
             Assert.False(File.Exists(dockerfile), $"Undo left the Dockerfile: {window.Status}");
@@ -457,8 +456,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         {
             AwaitEvaluated(window);
             string worker = app.PathOf("Worker/Worker.csproj");
-            RightClick(window, Row(window, NodeKind.Project, "Worker"));
-            ChooseFromMenu(window, "Add", "Docker Support…");
+            Ui.ChooseFromRowMenu(window, Row(window, NodeKind.Project, "Worker"), "Add", "Docker Support…");
             DockerSupportDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<DockerSupportDialog>()));
             dialog.Chosen = DockerSupportKind.Sdk;
             dialog.Accept();
@@ -488,8 +486,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         try
         {
             AwaitEvaluated(window);
-            RightClick(window, Row(window, NodeKind.Solution, "Shop"));
-            ChooseFromMenu(window, "Add", "Docker Compose…");
+            Ui.ChooseFromRowMenu(window, Row(window, NodeKind.Solution, "Shop"), "Add", "Docker Compose…");
             DockerComposeDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<DockerComposeDialog>()));
             Assert.Equal([("Api", "no Dockerfile: Docker Support adds one"), ("Worker", "no Dockerfile: Docker Support adds one")],
                 dialog.Projects.Select(p => (p.Name, p.Detail)));
@@ -507,7 +504,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
 
             // Undo takes the compose file, the Dockerfile and the solution's entry back.
             List<string> asked = Answer(window);
-            Choose(window, Row(window, NodeKind.Solution, "Shop"));
+            Ui.ClickRow(window, Row(window, NodeKind.Solution, "Shop"));
             Ui.Run(window, EditorActions.Undo);
             Assert.Equal(["Undo"], asked);
             Assert.False(File.Exists(compose), $"Undo left compose.yaml: {window.Status}");
@@ -718,11 +715,11 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
     [AvaloniaFact]
     public void Add_docker_support_gives_a_project_that_asp_net_core_reaches_through_a_reference_or_a_package_the_aspnet_image()
     {
-        const string Console = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n";
+        const string Console = $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n";
         string folder = Fresh("docker-aspnet-",
             ("Kit.slnx", "<Solution>\n  <Project Path=\"ByPackage/ByPackage.csproj\" />\n  <Project Path=\"ByReference/ByReference.csproj\" />\n  <Project Path=\"Kit/Kit.csproj\" />\n</Solution>\n"),
             ("nuget.config", "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"kit\" value=\"./feed\" />\n  </packageSources>\n</configuration>\n"),
-            ("Kit/Kit.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <PackageId>Shop.Kit</PackageId>\n"
+            ("Kit/Kit.csproj", $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n    <PackageId>Shop.Kit</PackageId>\n"
                 + "    <Version>1.0.0</Version>\n  </PropertyGroup>\n  <ItemGroup>\n    <FrameworkReference Include=\"Microsoft.AspNetCore.App\" />\n  </ItemGroup>\n</Project>\n"),
             ("Kit/Kit.cs", "namespace Kit;\n\npublic static class Pages\n{\n}\n"),
             ("ByReference/ByReference.csproj", Console + "  <ItemGroup>\n    <ProjectReference Include=\"..\\Kit\\Kit.csproj\" />\n  </ItemGroup>\n</Project>\n"),
@@ -799,7 +796,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         }
     }
 
-    private const string WebProject = "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+    private static readonly string WebProject = TestProjects.Web();
 
     private const string WebProgram = "var app = WebApplication.Create(args);\napp.Run();\n";
 
@@ -826,7 +823,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
     {
         List<(string, string)> files =
         [
-            ("Tiny.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n"),
+            ("Tiny.csproj", TestProjects.Console()),
             ("Program.cs", "System.Console.WriteLine(\"Tiny\");\n"),
             ("NuGet.config", "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <packageSources>\n    <clear />\n  </packageSources>\n</configuration>\n"),
         ];
@@ -855,7 +852,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
     {
         window.OpenFile(file);
         Ui.Settle();
-        PlaceAfter(window.EditorArea.CodeEditor, after);
+        Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
     }
 
@@ -878,23 +875,8 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         }
     }
 
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
-    }
-
     private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
         ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
-
-    private static void Click(Window window, Control control)
-    {
-        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
 
     private static List<string> Answer(MainWindow window)
     {
@@ -910,45 +892,6 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
     private static ExplorerNode Row(MainWindow window, NodeKind kind, string name) =>
         window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Kind == kind && r.Name == name)
         ?? throw new InvalidOperationException($"The Explorer shows no {kind} {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
-
-    private static Control Container(MainWindow window, ExplorerNode row)
-    {
-        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
-        rows.ScrollIntoView(row);
-        Ui.Settle();
-        return rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
-    }
-
-    private static void RightClick(MainWindow window, ExplorerNode row)
-    {
-        Control item = Container(window, row);
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Right);
-        window.MouseUp(at, MouseButton.Right);
-        Ui.Settle();
-    }
-
-    private static void Choose(MainWindow window, ExplorerNode row)
-    {
-        Control item = Container(window, row);
-        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
-    /// <summary>Chooses an item of a submenu of the Explorer's open menu, as clicks on them would.</summary>
-    private static void ChooseFromMenu(MainWindow window, string submenu, string item)
-    {
-        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException("No menu opened on the row");
-        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
-            ?? throw new InvalidOperationException($"The row's menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem chosen = parent.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
-            ?? throw new InvalidOperationException($"{submenu} has no {item}: [{string.Join(", ", parent.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
 
     /// <summary>Docker Hub on a loopback port of its own, each request under its host's name as the Dockerfile server's
     /// preload sends it there: a token from auth.docker.io, and postgres's tags from registry-1.docker.io for that token;
@@ -1060,15 +1003,15 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
     {
         public const string Solution = "<Solution>\r\n  <Project Path=\"Api/Api.csproj\" />\r\n  <Project Path=\"Lib/Lib.csproj\" />\r\n  <Project Path=\"Worker/Worker.csproj\" />\r\n</Solution>\r\n";
 
-        public const string Api = "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\r\n\r\n  <PropertyGroup>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n  </PropertyGroup>\r\n\r\n"
+        public const string Api = $"<Project Sdk=\"Microsoft.NET.Sdk.Web\">\r\n\r\n  <PropertyGroup>\r\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\r\n  </PropertyGroup>\r\n\r\n"
             + "  <ItemGroup>\r\n    <PackageReference Include=\"Npgsql\" Version=\"9.0.3\" />\r\n    <ProjectReference Include=\"..\\Lib\\Lib.csproj\" />\r\n  </ItemGroup>\r\n\r\n</Project>\r\n";
 
         /// <summary>A worker whose image's name was once set, now commented out.</summary>
         public const string Worker = "<Project Sdk=\"Microsoft.NET.Sdk\">\r\n\r\n  <PropertyGroup>\r\n    <OutputType>Exe</OutputType>\r\n"
-            + "    <!-- <ContainerRepository>shop-worker</ContainerRepository> -->\r\n    <TargetFramework>net10.0</TargetFramework>\r\n"
+            + $"    <!-- <ContainerRepository>shop-worker</ContainerRepository> -->\r\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\r\n"
             + "    <Nullable>enable</Nullable>\r\n  </PropertyGroup>\r\n\r\n</Project>\r\n";
 
-        public const string Lib = "<Project Sdk=\"Microsoft.NET.Sdk\">\r\n\r\n  <PropertyGroup>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n  </PropertyGroup>\r\n\r\n</Project>\r\n";
+        public const string Lib = $"<Project Sdk=\"Microsoft.NET.Sdk\">\r\n\r\n  <PropertyGroup>\r\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\r\n  </PropertyGroup>\r\n\r\n</Project>\r\n";
 
         public const string LaunchSettings = "{\n  \"profiles\": {\n    \"http\": {\n      \"commandName\": \"Project\",\n      \"applicationUrl\": \"http://localhost:5080\"\n    },\n"
             + "    \"https\": {\n      \"commandName\": \"Project\",\n      \"applicationUrl\": \"https://localhost:7080;http://localhost:5080\"\n    }\n  }\n}\n";

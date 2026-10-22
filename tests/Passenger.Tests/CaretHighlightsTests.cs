@@ -35,7 +35,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
         MainWindow window = project.Open("Totals.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         // A click in the local's declaration, which gives it its value.
-        Click(window, editor, Totals.IndexOf("total = 0", StringComparison.Ordinal) + 2);
+        Ui.Click(editor, editor.PointOf(Totals.IndexOf("total = 0", StringComparison.Ordinal) + 2) + new Point(1, editor.LineHeight / 2));
         Ui.Settle();
 
         Assert.Equal(["total", "total", "total"], editor.UsageHighlights.Select(u => TextOf(editor, u.Range)));
@@ -64,7 +64,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
         MainWindow window = project.Open("Totals.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.Focus();
-        Click(window, editor, Totals.IndexOf("return total", StringComparison.Ordinal) + "return to".Length);
+        Ui.Click(editor, editor.PointOf(Totals.IndexOf("return total", StringComparison.Ordinal) + "return to".Length) + new Point(1, editor.LineHeight / 2));
         Ui.Settle();
         Assert.Equal(3, editor.UsageHighlights.Count);
 
@@ -80,7 +80,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
         Assert.Empty(editor.UsageHighlights);
 
         // The loop's variable: its declaration is a write, its two uses reads.
-        Click(window, editor, Totals.IndexOf("value * (", StringComparison.Ordinal) + 1);
+        Ui.Click(editor, editor.PointOf(Totals.IndexOf("value * (", StringComparison.Ordinal) + 1) + new Point(1, editor.LineHeight / 2));
         Ui.Settle();
         Assert.Equal(["value", "value", "value"], editor.UsageHighlights.Select(u => TextOf(editor, u.Range)));
         Assert.Equal([true, false, false], editor.UsageHighlights.Select(u => u.IsWrite));
@@ -93,7 +93,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
         MainWindow window = project.Open("Totals.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.Focus();
-        Click(window, editor, Totals.IndexOf("return total", StringComparison.Ordinal) + "return to".Length);
+        Ui.Click(editor, editor.PointOf(Totals.IndexOf("return total", StringComparison.Ordinal) + "return to".Length) + new Point(1, editor.LineHeight / 2));
         Ui.Settle();
         Assert.Equal(3, editor.UsageHighlights.Count);
 
@@ -124,7 +124,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
         MainWindow window = project.Open("Totals.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.Focus();
-        Click(window, editor, Totals.IndexOf("total +=", StringComparison.Ordinal) + 1);
+        Ui.Click(editor, editor.PointOf(Totals.IndexOf("total +=", StringComparison.Ordinal) + 1) + new Point(1, editor.LineHeight / 2));
         Ui.Run(window, AppActions.HighlightUsages);
         Ui.Settle();
         Assert.True(editor.UsagesKept, "Highlight Usages in File did not keep the uses");
@@ -222,15 +222,6 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
 
     private static string TextOf(CodeEditor editor, TextRange range) => editor.Document.Snapshot.GetText(range);
 
-    /// <summary>A click in the text at an offset, as a person puts the caret there.</summary>
-    private static void Click(MainWindow window, CodeEditor editor, int offset)
-    {
-        Point at = editor.TranslatePoint(editor.PointOf(offset) + new Point(1, editor.LineHeight / 2), window)!.Value;
-        window.MouseDown(at, MouseButton.Left);
-        window.MouseUp(at, MouseButton.Left);
-        Ui.Settle();
-    }
-
     /// <summary>A point inside the box drawn behind the character at an offset: at its top, above the glyph, and at its
     /// right, clear of a caret before it.</summary>
     private static Point InBox(MainWindow window, CodeEditor editor, int offset) =>
@@ -248,7 +239,7 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
             : base("caret-highlights-")
         {
             File.WriteAllText(PathOf("Sample.csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Library</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+                $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Library</OutputType>\n    <TargetFramework>{TestProjects.Framework}</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Totals.cs"), Totals);
             File.WriteAllText(PathOf("Braces.cs"), Braces);
             Prepare();

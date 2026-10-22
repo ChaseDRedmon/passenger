@@ -38,7 +38,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
             "the status bar to name the TypeScript the script is read by");
         Assert.EndsWith("(Passenger's)", window.LanguageShown, StringComparison.Ordinal);
 
-        PlaceAfter(editor, "console.log(message);");
+        Ui.PlaceAfter(editor, "console.log(message);");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("console");
         window.KeyTextInput(".");
@@ -54,7 +54,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Assert.StartsWith("TS1109: Expression expected", error.Message, StringComparison.Ordinal);
         Assert.Equal(";", editor.Document.Snapshot.GetText(error.Range.Start, Math.Max(1, error.Range.Length)));
 
-        PlaceAfter(editor, "const message = gre");
+        Ui.PlaceAfter(editor, "const message = gre");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => editor.CaretPosition.Line == 1, "the caret at the function's declaration");
         Assert.Equal(new TextPosition(1, "function ".Length), editor.CaretPosition);
@@ -84,7 +84,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Assert.Equal("label", editor.Document.Snapshot.GetText(error.Range.Start, error.Range.Length));
         Assert.StartsWith("TS2322: Type 'number' is not assignable to type 'string'", error.Message, StringComparison.Ordinal);
 
-        PlaceAfter(editor, "console.log(label);");
+        Ui.PlaceAfter(editor, "console.log(label);");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("sum");
         window.KeyTextInput(".");
@@ -93,7 +93,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "toFixed", "the list narrowed to toFixed");
         Ui.Press(window, "ESCAPE");
 
-        PlaceAfter(editor, "const sum: number = tot");
+        Ui.PlaceAfter(editor, "const sum: number = tot");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => window.EditorArea.Active == items, "items.ts opened at the function cart.ts imports");
         Assert.Equal(new TextPosition(5, "export function ".Length), window.EditorArea.CodeEditor.CaretPosition);
@@ -113,7 +113,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Ui.WaitFor(() => shown.Document.Snapshot.ToString().Contains("export const spaced = sumOf([]);", StringComparison.Ordinal),
             "the statement laid out by TypeScript's formatter");
 
-        PlaceAfter(shown, "export function sumO");
+        Ui.PlaceAfter(shown, "export function sumO");
         Ui.Run(window, AppActions.FindUsages);
         Passenger.App.ToolWindows.FindView find = window.Find;
         Ui.WaitFor(() => find.Rows.Count(r => r.Usage is not null) >= 4, "the function's usages, in both files, in the Find window");
@@ -134,7 +134,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Assert.Equal([1, 6], document.ColourMarks.Select(m => m.Line));
         Assert.Equal(Avalonia.Media.Color.FromRgb(0x1b, 0x6e, 0xc2), document.ColourMarks[0].Colour);
 
-        PlaceAfter(editor, "background-color: #ffffff;");
+        Ui.PlaceAfter(editor, "background-color: #ffffff;");
         Ui.Press(window, "ENTER");
         TypeEach(window, "bord");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("border-radius"), "CSS's properties as one is typed");
@@ -160,14 +160,14 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         window.KeyTextInput(";");
         Assert.Equal("    display:flex;", editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line));
 
-        PlaceAfter(editor, "border-radius: 4px;");
+        Ui.PlaceAfter(editor, "border-radius: 4px;");
         editor.ApplyEdits([new TextEdit(editor.Selections.Primary.Caret, 0, "\n    colr: red;")]);
         Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Warning), "the warning under the property CSS has not");
         Marker warning = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Warning);
         Assert.Equal("colr", editor.Document.Snapshot.GetText(warning.Range.Start, warning.Range.Length));
         Assert.Contains("Unknown property: 'colr'", warning.Message, StringComparison.Ordinal);
 
-        PlaceAfter(editor, "color: var(--acc");
+        Ui.PlaceAfter(editor, "color: var(--acc");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => editor.CaretPosition.Line == 1, "the caret at the custom property's declaration");
         Assert.Equal(new TextPosition(1, 4), editor.CaretPosition);
@@ -200,7 +200,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Assert.Equal("\"yes\"", editor.Document.Snapshot.GetText(warning.Range.Start, warning.Range.Length));
         Assert.Contains("Incorrect type. Expected \"boolean\"", warning.Message, StringComparison.Ordinal);
 
-        PlaceAfter(editor, "\"version\": \"1.0.0\",");
+        Ui.PlaceAfter(editor, "\"version\": \"1.0.0\",");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("\"");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("description"), "package.json's properties, from its schema");
@@ -209,14 +209,14 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Ui.Press(window, "ENTER");
         Assert.StartsWith("  \"description\": \"", editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line), StringComparison.Ordinal);
 
-        PlaceAfter(editor, "\"left-p");
+        Ui.PlaceAfter(editor, "\"left-p");
         Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
         Ui.WaitFor(() => window.EditorArea.Active?.Path == app.Named("node_modules/left-pad/package.json"), "the installed package's own package.json");
 
         window.OpenFile(app.PathOf("package.json"));
         Ui.Settle();
         editor = window.EditorArea.CodeEditor;
-        PlaceAfter(editor, "\"bui");
+        Ui.PlaceAfter(editor, "\"bui");
         Ui.Run(window, AppActions.Rename);
         Ui.WaitFor(() => window.Assist.Renaming == "build", "the rename box on the script's name");
         // As typed, a letter outside ASCII and a + included, both of which a JSON serializer's default encoder escapes.
@@ -238,7 +238,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
 
-        PlaceAfter(editor, "color: #1b6ec2;");
+        Ui.PlaceAfter(editor, "color: #1b6ec2;");
         Ui.Press(window, "ENTER");
         TypeEach(window, "bord");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("border-radius"), "CSS's properties in the component's <style>");
@@ -263,7 +263,7 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("    yell(\"hi\");", StringComparison.Ordinal), "the call renamed with the function");
         Assert.Contains("function yell(text)", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
 
-        PlaceAfter(editor, "        return text");
+        Ui.PlaceAfter(editor, "        return text");
         window.KeyTextInput(".");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("toUpperCase"), "a string's members in the component's <script>");
         window.Close();
@@ -347,13 +347,6 @@ public sealed class WebLanguagesTests : IClassFixture<BlazorShop>
         {
             window.KeyTextInput(c.ToString());
         }
-    }
-
-    private static void PlaceAfter(CodeEditor editor, string text)
-    {
-        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
-        Assert.True(at >= 0, $"'{text}' is not in the file");
-        editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
     /// <summary>The one kind a stretch of the text is coloured as, its spaces aside; null when its parts differ.</summary>

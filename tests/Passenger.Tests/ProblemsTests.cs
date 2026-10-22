@@ -16,7 +16,7 @@ public sealed class ProblemsTests : IDisposable
 
     public ProblemsTests()
     {
-        Write("Sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Sample.csproj", TestProjects.Console());
         Write("Program.cs", "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
         Write("Helper.cs", "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
         Write("Caller.cs", "static class Caller\n{\n    public static int Four() => Helper.Twice(2);\n}\n");
@@ -67,12 +67,12 @@ public sealed class ProblemsTests : IDisposable
         ListedAsAfresh(problems, "once the open file had an error");
 
         // A problem's menu copies its message.
-        window.Perform(AppActions.ShowProblems);
+        window.ShowToolWindow(ToolWindowIds.Problems);
         problems.Shown = ProblemsTab.File;
         Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
         ProblemRow chosen = problems.Rows.First(r => r.Problem is { Severity: ProblemSeverity.Error });
-        rows.SelectedItem = chosen;
-        Ui.ChooseFromMenu(rows, "Copy Message");
+        Ui.RightClick(Ui.Row(rows, chosen));
+        Ui.Choose(rows.ContextMenu, "Copy Message");
         Ui.WaitFor(() => Ui.Clipboard(window) == chosen.Problem!.Message, "the message on the clipboard");
 
         // The open file mended: its rows leave the Solution tab, the caller's staying.
@@ -330,7 +330,7 @@ public sealed class ProblemsTests : IDisposable
         OutputView console = window.BottomPanel.Build;
         console.Flush();
         string message = console.Document.Snapshot.ToString().Split('\n').First(l => l.Contains("Separated.cs(8,24): error CS0029", StringComparison.Ordinal));
-        ClickLink(window, console, message);
+        Ui.ClickLink(console, message);
         Assert.Equal(separated, window.EditorArea.Active?.Path);
         Assert.True(editor.CaretPosition == new TextPosition(3, 23), $"The Build window's link went to {editor.CaretPosition.Line + 1}:{editor.CaretPosition.Column + 1}, not 4:24");
 
@@ -364,23 +364,6 @@ public sealed class ProblemsTests : IDisposable
         Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
         rows.SelectedItem = problems.Rows.First(r => r.Problem?.Path == path);
         Ui.ChooseFromMenu(rows, "Go to");
-    }
-
-    /// <summary>A click on a console line's link to a file, at its first character, as a person clicks it.</summary>
-    internal static void ClickLink(MainWindow window, OutputView console, string line)
-    {
-        Passenger.Editor.CodeEditor editor = console.Editor;
-        Passenger.App.ToolWindows.FoundLink link = console.Links.In(line).Single(l => l.Target is FileLink);
-        int offset = editor.Document.Snapshot.ToString().IndexOf(line, StringComparison.Ordinal) + link.Start;
-        editor.GoTo(editor.Document.Snapshot.GetPosition(offset));
-        Ui.Settle();
-        Point at = editor.TranslatePoint(editor.PointOf(offset) + new Vector(2, editor.LineHeight / 2), window)!.Value;
-        window.MouseMove(at);
-        Ui.Settle();
-        Assert.True(editor.HoveredLink is { Target: FileLink }, $"The pointer rests on the message's place but nothing is underlined:\n{line}");
-        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
-        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.Settle();
     }
 
     private void Write(string name, string text) => File.WriteAllText(Path.Combine(folder, name), text);
