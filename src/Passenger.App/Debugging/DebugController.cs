@@ -76,7 +76,7 @@ public sealed class DebugController : IDisposable
 
     /// <summary>Clears the last stop's frames and values a moment after the program goes on, as Rider's views do: a step
     /// that stops again at once replaces them without the panes going blank between.</summary>
-    private readonly DispatcherTimer clearing = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    private readonly Debounce clearing;
 
     /// <summary>Takes this debugger's handlers off the Debug window, which the next session's debugger has from then.</summary>
     private readonly Action letGo;
@@ -90,15 +90,15 @@ public sealed class DebugController : IDisposable
         this.view = view;
         // The window's Debug tabs are this folder's from now: the last folder's, ended or ending, are let go.
         view.ForgetSessions();
-        clearing.Tick += (_, _) =>
+        clearing = new Debounce(TimeSpan.FromMilliseconds(100), () =>
         {
-            clearing.Stop();
             if (Session is not { State: DebugState.Paused })
             {
                 view.ShowFrames([], null, [], null);
                 view.Tree.Show([]);
             }
-        };
+            return Task.CompletedTask;
+        });
         Breakpoints.Changed += (_, path) => UpdateMarks(path);
         Breakpoints.ExceptionsChanged += (_, _) => view.ShowMuted(Breakpoints.Muted);
         EventHandler<string> asked = (_, action) => ActionRequested?.Invoke(this, action);
@@ -1488,7 +1488,7 @@ public sealed class DebugController : IDisposable
                 bindingFrame = null;
                 UpdateAllMarks();
                 ClearInlineValues();
-                clearing.Start();
+                clearing.Restart();
                 if (say)
                 {
                     Message?.Invoke(this, Told(tab));
