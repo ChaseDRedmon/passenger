@@ -245,7 +245,7 @@ public sealed class ProfilerCommands
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
             using (BackgroundWork.Scope())
             {
-                running = await ProfilingSession.StartAsync(target, SnapshotFolder,
+                running = await ProfilingSession.StartAsync(target, SnapshotFolder, SocketFolders.Own(State.StateStore.DefaultRoot),
                     (reader, error, lines) => console.PumpAsync(reader, error ? ConsoleStream.Error : ConsoleStream.Output, lines: lines), stop.Token);
             }
             starting = null;

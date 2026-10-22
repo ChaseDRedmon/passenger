@@ -130,7 +130,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`realpath`, or `GetFinalPathNameByHandle` on Windows), answers `IsUnder` for every "is this inside that folder", and
   `FoldersUnder` is every walk of a project's folders (the XAML core's, and the project host's stamps, which compiles
   PathNames.cs in): each folder once by its canonical path whatever links reach it, none a link goes up to, as MSBuild's
-  globs walk them.
+  globs walk them. `SocketFolders` is where every Unix socket Passenger makes goes (Mcp below), and a socket made catches
+  `ArgumentException`, a path too long for one, as it catches `SocketException`.
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order; a change's `Edits` is a `SortedEdits`, so
   `TextEditing.MapOffset`/`MapRange`/`MapThrough` carry an offset through a key's edits by halving: pass `e.Edits` as
@@ -802,7 +803,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   DevTools from what it made before Passenger restores; every `dotnet new` goes through `ProjectTemplates.New` or
   `NewCommand`, which add the IDE's `Hive` (`--debug:custom-hive`) when set.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
-  its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
+  its own (off Windows a socket in Passenger's socket folder, `SocketFolders`, as `PID-….profiler`) and streams EventPipe
+  to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action, which holds its
   folder from its first moment to the hand-over (`launching`), so Profile and Attach Profiler are refused while a start
   waits for its program. Every session
@@ -1123,10 +1125,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   console, and `profile` takes `attach` (and `container`, a container's program). The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
-  agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`: in the user's own temporary
+  agent joins, its server answering before the IDE is up and each call waiting for it), a window's own socket in the state's socket folder (`McpHost.SocketFolder`, `Core/SocketFolders`, the one
+  folder of every Unix socket Passenger makes, an inspected app's and a profiled program's port too: in the user's own temporary
   folder, macOS's by `confstr` whatever TMPDIR an agent has, else XDG_RUNTIME_DIR or /tmp, named by a hash of the user and
   the state folder, mode 0700 and used only once its mode is the user's to set, so a socket's path stays within macOS's
-  104 bytes whatever PASSENGER_SETTINGS is, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
+  104 bytes whatever TMPDIR or PASSENGER_SETTINGS is, each socket named for its process first and only a window's ending
+  in .sock, and `TestRun` removes the run's) (`AgentSocket`, open from the window's start but for
   `--no-mcp` and a screenshot without `--agent`), and `--mcp-attach [PID] [FOLDER]` (`McpProxy`: the agent's server for
   its whole session, answering initialize and tools/list from `McpHost.ToolMethods` and joining, at a tool call, only a
   window whose folder holds FOLDER or the agent's working folder; with none it asks the running Passenger to open it
@@ -1391,7 +1395,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   implementation assemblies (the reference ones leave out [PrivateApi]
   value-store diagnostics) and runs in a load context of its own that takes the app's Avalonia whatever its 12.x; it
   never touches `Dispatcher.UIThread` before the app makes it, and answers on the app's UI thread over a Unix socket in
-  the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
+  Passenger's socket folder (`Core/SocketFolders`, as `PID-N.inspector`; one that cannot be made, a path past a socket's
+  104 bytes included, is logged and the app launched uninspected rather than its launch failed). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
   default 64. Its wire's types are made ready as it connects, before the app's Main
   (`Connection.Configure`): System.Text.Json readies a type on first use under one lock for all of a context's types,
   which a thread the debugger stopped can hold from an evaluation at the stop (the binding values), which then waits on

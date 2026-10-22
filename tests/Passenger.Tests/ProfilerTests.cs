@@ -731,10 +731,13 @@ public sealed class ProfilerTests : IDisposable
         Ui.Press(window, "ENTER");
     }
 
-    /// <summary>The diagnostic ports this process's profiler is listening at: a socket in /tmp each, or a named pipe on Windows.</summary>
+    /// <summary>The diagnostic ports this process's profiler is listening at: a socket in the run's socket folder each, or a
+    /// named pipe on Windows.</summary>
     private static IReadOnlyList<string> Ports() => OperatingSystem.IsWindows()
         ? [.. Directory.GetFiles(@"\\.\pipe\").Where(p => Path.GetFileName(p).StartsWith($"passenger-profile-{Environment.ProcessId}-", StringComparison.Ordinal)).Order(StringComparer.Ordinal)]
-        : [.. Directory.GetFiles(Directory.Exists("/tmp") ? "/tmp" : Path.GetTempPath(), $"pp-{Environment.ProcessId}-*.sock").Order(StringComparer.Ordinal)];
+        : Directory.Exists(Passenger.App.Mcp.McpHost.SocketFolder)
+            ? [.. Directory.GetFiles(Passenger.App.Mcp.McpHost.SocketFolder, $"{Environment.ProcessId}-*.profiler").Order(StringComparer.Ordinal)]
+            : [];
 
     private static CallNode? Find(IEnumerable<CallNode> nodes, Func<CallNode, bool> match)
     {

@@ -99,6 +99,34 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
+    /// <summary>An app run while the temporary folder's path is longer than a Unix socket's address holds (an agent's TMPDIR
+    /// can be) gets its inspector all the same, in Passenger's own socket folder: a socket there had failed Run, Debug and
+    /// Profile of every Avalonia or WPF app with an IDE error. macOS and Linux read TMPDIR; Windows reads TMP, so there the
+    /// run is as any other.</summary>
+    [AvaloniaFact]
+    public void A_running_app_is_inspected_under_a_temporary_folder_too_long_for_a_socket()
+    {
+        string temp = Path.Combine(TestFolders.Create("long-temp-"), new string('t', 60), new string('u', 60));
+        Directory.CreateDirectory(temp);
+        MainWindow window = Opened();
+        string? was = Environment.GetEnvironmentVariable("TMPDIR");
+        try
+        {
+            Environment.SetEnvironmentVariable("TMPDIR", temp);
+            Assert.True(OperatingSystem.IsWindows() || Path.GetTempPath().Length > 104, $"The temporary folder {Path.GetTempPath()} was to be too long for a socket");
+            Ui.Launched(window, window.RunAsync(), "the app to build and start", TimeSpan.FromMinutes(4));
+            Ui.WaitFor(() => window.Session.RunApp is { State: LiveAppState.Connected }, $"the app's inspector to say hello ({window.Status})", TimeSpan.FromMinutes(2));
+            Assert.Contains("TextBlock#Caption.Text to Nmae", WaitForLine(window.BottomPanel.Run, "the Run window to say the caption's binding failed"), StringComparison.Ordinal);
+            Assert.True(window.Session.RunApp!.SocketPath.Length <= 104, $"The inspector's socket {window.Session.RunApp.SocketPath} is longer than macOS allows");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TMPDIR", was);
+        }
+        Stop(window);
+        window.Close();
+    }
+
     /// <summary>Avalonia's XAML compiler counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028
     /// or U+2029, so below a lone '\r' in the window's tag and a comment holding all four before the caption on the caption's
     /// own line, the place the app reports runs two lines ahead of the editor's and its column starts after the comment's:

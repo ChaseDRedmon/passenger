@@ -6,6 +6,7 @@ using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json;
 using Passenger.App.Run;
+using Passenger.App.State;
 using Passenger.Core;
 using Passenger.Inspector;
 
@@ -261,22 +262,25 @@ public sealed class LiveApp : IDisposable
         return windows;
     }
 
-    /// <summary>A socket of its own in the temp folder for one app's inspector to connect to, or null, logged, when it cannot.</summary>
+    /// <summary>A socket of its own in Passenger's socket folder for one app's inspector to connect to, or null when it cannot
+    /// be made, which the IDE's errors say, the app then launched as it is.</summary>
     private static (string Socket, Socket Listener)? Listen(string name)
     {
-        string socket = Path.Combine(Path.GetTempPath(), $"passenger-{Environment.ProcessId}-{Interlocked.Increment(ref made)}.sock");
-        // Only a dead Passenger that had this process's number leaves one by this name.
-        File.Delete(socket);
+        string socket = $"{Environment.ProcessId}-{Interlocked.Increment(ref made)}.inspector";
         Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         try
         {
+            socket = Path.Combine(SocketFolders.Own(StateStore.DefaultRoot), socket);
+            // Only a dead Passenger that had this process's number leaves one by this name.
+            File.Delete(socket);
             listener.Bind(new UnixDomainSocketEndPoint(socket));
             listener.Listen(1);
         }
-        catch (SocketException error)
+        // ArgumentException: a path past what a Unix socket's address holds (104 bytes on macOS).
+        catch (Exception error) when (error is SocketException or IOException or UnauthorizedAccessException or ArgumentException)
         {
             listener.Dispose();
-            IdeErrors.Write($"The Live Visual Tree could not listen for {name} at {socket}: {error.Message}");
+            IdeErrors.Write($"The Live Visual Tree could not listen for {name} at {socket}, so it runs uninspected: {error.Message}");
             return null;
         }
         return (socket, listener);

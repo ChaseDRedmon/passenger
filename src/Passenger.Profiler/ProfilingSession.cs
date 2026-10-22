@@ -98,11 +98,13 @@ public sealed class ProfilingSession : IAsyncDisposable
         new EventPipeProvider(UiFrames.Provider, EventLevel.Informational),
     ];
 
-    /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>; the program's output and
-    /// errors are read by <paramref name="pump"/>, its caller's console's, each to its end. A start that fails, for
+    /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>, and off Windows the port's
+    /// socket into <paramref name="sockets"/> (Passenger's socket folder, <see cref="SocketFolders"/>); the program's output
+    /// and errors are read by <paramref name="pump"/>, its caller's console's, each to its end. A start that fails, for
     /// whatever reason, is a <see cref="ProfilingException"/> saying why, with the program ended and the port's listener
     /// gone, its socket too.</summary>
-    public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, ProgramPump pump, CancellationToken cancellation = default)
+    public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, string sockets, ProgramPump pump,
+        CancellationToken cancellation = default)
     {
         if (!Directory.Exists(target.WorkingDirectory))
         {
@@ -122,10 +124,10 @@ public sealed class ProfilingSession : IAsyncDisposable
         {
             throw new ProfilingException($"Could not profile {target.Name}: no snapshot can be written in {folder}: {error.Message}", error);
         }
-        // A Unix socket's path has room for about a hundred bytes, so the port lives in the shortest temporary folder.
+        // Named for this process first, so a later Passenger takes away one a crash left; never .sock, which agents look for.
         string port = OperatingSystem.IsWindows()
             ? $"passenger-profile-{Environment.ProcessId}-{Guid.NewGuid():N}"
-            : Path.Combine(Directory.Exists("/tmp") ? "/tmp" : Path.GetTempPath(), $"pp-{Environment.ProcessId}-{Guid.NewGuid().ToString("N")[..8]}.sock");
+            : Path.Combine(sockets, $"{Environment.ProcessId}-{Guid.NewGuid().ToString("N")[..8]}.profiler");
         using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         limit.CancelAfter(TimeSpan.FromSeconds(30));
         Task<DiagnosticsClientConnector?> connecting = DiagnosticsClientConnector.FromDiagnosticPort(port, limit.Token)!;
@@ -174,7 +176,8 @@ public sealed class ProfilingSession : IAsyncDisposable
         catch (OperationCanceledException)
         {
         }
-        catch (Exception error) when (error is IOException or SocketException or DiagnosticsClientException or UnauthorizedAccessException)
+        // ArgumentException: a port's path past what a Unix socket's address holds (104 bytes on macOS).
+        catch (Exception error) when (error is IOException or SocketException or DiagnosticsClientException or UnauthorizedAccessException or ArgumentException)
         {
             await FailAsync();
             throw new ProfilingException($"The profiler could not listen for {target.Name}: {error.Message}", error);
@@ -443,7 +446,8 @@ public sealed class ProfilingSession : IAsyncDisposable
                 await late.DisposeAsync();
             }
         }
-        catch (Exception error) when (error is OperationCanceledException or IOException or SocketException or DiagnosticsClientException or ObjectDisposedException)
+        catch (Exception error) when (error is OperationCanceledException or IOException or SocketException or DiagnosticsClientException or ObjectDisposedException
+            or ArgumentException)
         {
             // What failed was the listening itself: there is nothing more of it to end.
         }
