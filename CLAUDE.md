@@ -767,29 +767,38 @@ window or takes the focus; it shows everything but the system's own window chrom
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
-- `src/Passenger.App/Aspire`: an AppHost and its project resources, owned by `AspireController` for the
-  folder. AppHosts are found by evaluated `IsAspireHost`; file-based hosts use `PathNames.FoldersUnder`.
-  Each launch keeps its authenticated resource-service endpoint, rather than discovering its own process
-  through repeated CLI snapshots. `AspireInteractions` follows native resource and console streams;
-  `AspireTelemetry` reads the dashboard's bounded log/span HTTP streams and assembles traces by identity.
-  Display subscriptions stop when the pane is hidden; interaction prompts keep their AppHost connection.
-  Public snapshots mask environment values and sensitive properties. Browser links go through `Browse`.
-  `AspireExecutionServer` is the loopback DCP execution endpoint. Its bounded HTTP/1.1 transport
-  (`AspireExecutionConnection`) serves one ordinary request per connection and upgrades notifications to
-  BCL WebSockets. Authentication precedes admission, each orchestrator has its own hashed bearer token,
-  and a disconnected pending create cancels independently of its notification connection. Headers,
-  bodies and writes have ten-second deadlines; callbacks retain their own launch cancellation.
-  Services use the folder's one native `DebugController`: debug tabs share breakpoints, while Run with
-  Hot Reload attaches quietly to held processes through Edit and Continue, not one `dotnet watch` per
-  service. A rude edit and Rerun restart only affected services. Startup profiling holds the chosen
-  process until recording begins; shutdown reads its rundown before ending that owned process.
-  Edit Configurations and the `AddProject` gutter actions read the same semantic resource locations from
-  `AspireRunResources`; stale source fingerprints produce no gutter action. Resource buttons are
-  registered actions, including the merged log's native Find. Agent run/debug/attach/profile/stop use
-  resource targeting; telemetry shares one tool instead of a separate family of Aspire controls.
-  `AspireApp` generates pinned official starters from the restored local package feed. Tests do not
-  install a CLI or restore from a public feed; unavailable CLI/engine prerequisites are skipped with
-  their reason. Runtime protocol compatibility is not an exact CLI patch-version requirement.
+- `src/Passenger.App/Aspire` (#338): Aspire's AppHosts run with Passenger as their IDE. `AspireController`
+  (`ProjectSession.Aspire`) owns the folder's AppHosts and the project resources their orchestrator asks the IDE to start,
+  through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
+  bearer token, kept hashed and compared in constant time and checked before anything is admitted, one ordinary request a
+  connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
+  WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
+  `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
+  single-file `apphost.cs` (`AspireAppHosts.DiscoverFiles` over `PathNames.FoldersUnder`, no hidden or linked folder
+  entered), each a run configuration (`RunConfiguration.Aspire`, `LinkedAppHosts`). `AspireInteractions` is one
+  authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`): its resources,
+  their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`), the display's streams followed only
+  while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
+  dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
+  JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
+  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`) shows the resources as a tree, their consoles merged with
+  Find, their logs and traces; its buttons are registered actions (`MainWindow.AspireActions.cs`), its links open through
+  `Browse`, and a resource's Details leave out every environment value (`ContainerSecrets` masks the rest). A resource is
+  debugged in a Debug tab of the folder's one `DebugController` (`StartAdditionalAsync`, `AttachAdditionalAsync`, a tab's
+  own `RestartFor`), Run with Hot Reload attaches quietly to each service held at its start (`AttachForHotReloadAsync`),
+  and an edit Hot Reload cannot apply restarts only the resources whose project holds it (`RestartResourcesAsync`);
+  Profile holds the chosen service at its start until recording begins (`ProfileAspireAsync`, `AspireServiceDialog`
+  when several run). Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
+  `AspireOrchestration`, `AspireOrchestrationDialog`) adds an AppHost and ServiceDefaults from Aspire's templates and
+  references them, prepared under the state's `aspire-staging/` before any file is written, as one command of global
+  undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
+  reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
+  it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix worked out again
+  as it is applied (`AspireReferenceFix`), resource names complete, `AddProject` goes to its project
+  (`AspireProjectDeclaration`), and Edit Configurations and the gutter's `AddProject` icons read the same resources
+  (`AspireRunResources`). An agent's `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a
+  resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each
+  resource's target, and `aspire_telemetry` reads their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -1866,7 +1875,16 @@ dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' age
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
-run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
+run up, each leaving no container of the project. Aspire's tests (#338): `AspireTests` (Alone), `AspireExternalDataTests`
+and `McpAspireTests`' tests of a real AppHost run the `aspire` CLI, which keeps its state in the person's own ~/.aspire,
+so they skip, saying why (`AspireApp.CliSkipped`), until the tests give it a home of their own; `AspireApp` makes two of
+Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
+`AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`: the test project's restore puts the
+AppHost's graph in the package cache), while `AspireOrchestrationTests` skip until their solution's net8.0 graph does;
+`McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
+its execution listener; `AspireExecutionServerTests`, `AspireTelemetryTests` and `AspireClientTests` speak to the
+execution server, a stand-in dashboard and a stand-in CLI (a shell script, so skipped on Windows) on loopback, and
+`AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
