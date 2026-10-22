@@ -1,12 +1,38 @@
 namespace Passenger.Text;
 
-/// <summary>How well a typed query names a file, the way Rider's Go to File ranks: the file's own
-/// name (exact, then prefix, then CamelHumps initials like "CE" for CodeEditor, then anywhere in it,
-/// then its letters close together and in order), or its path when the query has a slash. Higher is
-/// better; null is no match. A name is read where it is in its path, nothing copied, since Go to File
-/// asks this of every file in the folder for every key.</summary>
+/// <summary>Ranks file paths and completion labels, including CamelHumps initials like "CE" for CodeEditor.
+/// Score ranks a file's name (exact, prefix, CamelHumps, substring, then letters close together and in order),
+/// or its path when the query has a slash. Names are read in place because Go to File scores every file on every key.
+/// ScoreLabel ranks completion labels whole. Higher is better; null is no match.</summary>
 public static class FuzzyMatch
 {
+    /// <summary>Ranks a completion label whole: case-sensitive prefix, other prefix, CamelHumps, then substring.
+    /// A shorter label wins within each band; null means no match.</summary>
+    public static int? ScoreLabel(string query, string label)
+    {
+        if (query.Length == 0)
+        {
+            return 0;
+        }
+        if (label.StartsWith(query, StringComparison.Ordinal))
+        {
+            return 4000 - label.Length;
+        }
+        if (label.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 3000 - label.Length;
+        }
+        if (Humps(query, label))
+        {
+            return 2000 - label.Length;
+        }
+        if (query.Length >= 2 && label.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1000 - label.Length;
+        }
+        return null;
+    }
+
     public static int? Score(string query, string relativePath)
     {
         if (query.Length == 0)

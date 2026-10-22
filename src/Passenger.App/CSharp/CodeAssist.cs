@@ -677,7 +677,7 @@ public sealed partial class CodeAssist
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
         List<CompletionRow> rows = open.Items
-            .Select(item => (item, score: Score(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
+            .Select(item => (item, score: FuzzyMatch.ScoreLabel(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
             .Where(x => x.score is not null)
             .OrderByDescending(x => x.score / alike)
             .ThenByDescending(x => x.item.Preselect == true)
@@ -2314,31 +2314,6 @@ public sealed partial class CodeAssist
             }
         }
         return identifier;
-    }
-
-    private static int? Score(string typed, string text)
-    {
-        if (typed.Length == 0)
-        {
-            return 0;
-        }
-        if (text.StartsWith(typed, StringComparison.Ordinal))
-        {
-            return 4000 - text.Length;
-        }
-        if (text.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
-        {
-            return 3000 - text.Length;
-        }
-        if (FuzzyMatch.Score(typed, text) is { } fuzzy && fuzzy >= 850)
-        {
-            return 2000 - text.Length;
-        }
-        if (typed.Length >= 2 && text.Contains(typed, StringComparison.OrdinalIgnoreCase))
-        {
-            return 1000 - text.Length;
-        }
-        return null;
     }
 
     /// <summary>A XAML colour's row badged with the colour itself, as Rider shows a colour in its list.</summary>
