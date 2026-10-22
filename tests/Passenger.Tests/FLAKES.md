@@ -10,6 +10,32 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-22
 
+- `AspireCodeHelpTests`, every test, five of some twenty class starts on the Mac while fixing the three below, loaded or
+  alone: "Class fixture type … threw in its constructor … The file '…/Worker/obj/Worker.csproj.nuget.g.props' already
+  exists". Its AppHosts' references name Api and Worker by their real paths (/private/var/folders), the solution, restored
+  through the temporary folder's link, by /var/folders, so dotnet restore restored each twice at once. Neither: **the
+  test's restore**, fixed in 8dad2ce9 (restored by the folder's real path). AspireApp's starter, an AppHost too, is still
+  restored through the link and has not yet failed so.
+- `AspireCodeHelpTests`' connection warning's fix, the Mac's full run through `just test` at 1dfdfb92 (first phase, three
+  processes side by side), as once before in a loaded batch: "Waited 135 s for the native fix to add the missing AppHost
+  edge". The window refused the chosen fix ("source changed; request the fix again") whenever the Aspire graph's version
+  had moved since it was offered, and every `workspace/diagnostic/refresh` moves it, which the server sends for any change
+  in the solution; under load one landed while the fix was offered. Another file changed while it is offered failed it
+  every time. **Race in the IDE**, fixed in 84d6688a (the server works the edge out again as it is chosen, so only the
+  service's own text changing refuses it; the test now changes another file while the fix is offered).
+- `TestingPlatformTests`' Stop as a debugged run's test host starts, the same run (its Alone phase): "Tests passed: 0,
+  failed: 0 of 0 in 1.2 s, stopped" where it expected "The tests could not run: Debugging Tests was stopped as it
+  started". No race: every run since 2eb347b4 failed it, which gave the debugger's start of a test host the run's own
+  cancellation, so Stop, cancelling the run before it stops the debugger, ends the run as stopped, as at any other moment
+  of a run; the debugger's own word then landed after the run's in the status bar. **The test** (its words from before)
+  and **a race in the IDE** (the order of the two words), fixed in 96f975ef (a start given up ends before its caller
+  hears so).
+- `ExplorerFilesTests`' delete the Trash refuses, the same run (first phase): "Waited 135 s for Notes.txt deleted and its
+  tab closed". The test clicked Notes.txt's row again to give the Explorer the keys back after typing; when the steps
+  between took less than Avalonia's double-click time, as they did on the loaded machine (one run in two under twelve
+  busy loops; it passed alone), the click was a double click (its ClickCount 2), which opened the file and gave the editor
+  the keys, so Backspace deleted a character there. **The test**, fixed in 5442629c (Cmd+1, Focus Explorer, gives the keys
+  back).
 - `ContainerRunDebuggingTests`' Hot Reload of a paused service, the Mac's 24-minute run of the container, MCP, profiler
   and debug-session classes: "The file should have '"web 1"' to replace" with Program.cs's text, the editor gone to web's
   stop just after the test had opened Message.cs. The window shows a stop once the debugger has answered its threads and
