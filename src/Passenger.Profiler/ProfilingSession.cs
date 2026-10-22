@@ -250,8 +250,8 @@ public sealed class ProfilingSession : IAsyncDisposable
 
     /// <summary>Profiles a .NET program already running, from now until <see cref="StopAsync"/> or its end, at the diagnostic
     /// port its runtime opens for itself: one being debugged, say, whose Avalonia frames its inspector records while the
-    /// session lasts. Nothing is started and the program is left as it was. A program gone, or with no port to reach, is a
-    /// <see cref="ProfilingException"/> saying why.</summary>
+    /// session lasts. Nothing is started and the program is left as it was. A program gone, with no port to reach, or whose
+    /// snapshot cannot be written, is a <see cref="ProfilingException"/> saying why, the program left recording nothing.</summary>
     public static async Task<ProfilingSession> AttachAsync(int processId, string name, string folder, CancellationToken cancellation = default)
     {
         Process process;
@@ -273,18 +273,29 @@ public sealed class ProfilingSession : IAsyncDisposable
             process.Dispose();
             throw new ProfilingException($"Could not profile {name}: no snapshot can be written in {folder}: {error.Message}", error);
         }
-        EventPipeSession session;
+        // As a start's: the session goes with any failure, or the program goes on recording for no one.
+        EventPipeSession? session = null;
         try
         {
             session = await new DiagnosticsClient(processId).StartEventPipeSessionAsync(Providers, requestRundown: true, circularBufferMB: 512, cancellation);
+            return new ProfilingSession(process, null, session, Copy(session, trace), Task.CompletedTask, trace, null);
         }
         catch (Exception error) when (error is DiagnosticsClientException or IOException or UnauthorizedAccessException or SocketException or TimeoutException)
         {
             bool gone = process.HasExited;
+            bool reached = session is not null;
+            session?.Dispose();
             process.Dispose();
-            throw new ProfilingException(gone ? $"Could not profile {name}: it has ended" : $"The profiler could not reach {name}: {error.Message}", error);
+            throw new ProfilingException(gone ? $"Could not profile {name}: it has ended"
+                : reached ? $"Could not profile {name}: no snapshot can be written in {folder}: {error.Message}"
+                : $"The profiler could not reach {name}: {error.Message}", error);
         }
-        return new ProfilingSession(process, null, session, Copy(session, trace), Task.CompletedTask, trace, null);
+        catch
+        {
+            session?.Dispose();
+            process.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Profiles a .NET program running elsewhere (in a container) from now, as <see cref="AttachAsync(int, string,

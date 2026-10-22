@@ -490,6 +490,53 @@ public sealed class ProfilerTests : IDisposable
         }
     }
 
+    /// <summary>Attach Profiler where its snapshot cannot be written says so and leaves the program as it was, running and
+    /// recorded by nothing: the recording it began there ended, which the program's frames provider hears as turned off.
+    /// The snapshot's file failed only once the recording had begun, which was left going on in the program.</summary>
+    [AvaloniaFact]
+    public void Attach_Profiler_that_cannot_write_its_snapshot_says_why_and_leaves_the_program_running_unrecorded()
+    {
+        string project = Project("Unwritten", """
+            using System.Diagnostics.Tracing;
+            using Frames frames = new();
+            Console.WriteLine("ready");
+            while (Console.ReadLine() is not null) { frames.Tick(); }
+            sealed class Frames : EventSource
+            {
+                public Frames() : base("Passenger-Avalonia") { }
+                [Event(1)] public void Tick() => WriteEvent(1);
+                protected override void OnEventCommand(EventCommandEventArgs command) => Console.WriteLine($"frames {command.Command}");
+            }
+            """);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "the program", TimeSpan.FromMinutes(3));
+            Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
+            Ui.WaitFor(() => Shows(run, "ready"), "the program to start");
+            // A folder in the place of each name the snapshot could take for the next while: the recording begins, its file cannot.
+            DateTime now = DateTime.Now;
+            for (int second = -1; second <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; second++)
+            {
+                string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+                Directory.CreateDirectory(Path.Combine(window.SnapshotFolder, $"Unwritten-{stamp}.nettrace"));
+            }
+            string? refused = Ui.Await(window.AttachProfilerAsync(), "Attach Profiler's answer");
+            Assert.StartsWith("Could not profile Unwritten: no snapshot can be written in ", refused, StringComparison.Ordinal);
+            Assert.Null(window.Profiling);
+            Assert.True(window.Runner.IsRunning, "Attach Profiler ended the program it could not record");
+            Ui.WaitFor(() => Shows(run, "frames Enable") && Shows(run, "frames Disable"), "the recording begun in the program to end");
+        }
+        finally
+        {
+            Ui.Run(window, AppActions.Stop);
+            window.Close();
+        }
+    }
+
     /// <summary>Attach Profiler profiles the program the person runs wherever Run started it: one in a tab of the terminal,
     /// and under Hot Reload the app dotnet watch started, never dotnet watch's own process, whose threads it took for the
     /// app's.</summary>
