@@ -403,7 +403,14 @@ public sealed class ContainerEngine
             try
             {
                 ChildResult said = await RunAsync(["info", "--format", "json"], AskLimit);
-                if (!said.Succeeded || JsonLines(said.Output).FirstOrDefault() is not { ValueKind: JsonValueKind.Object } info)
+                if (!said.Succeeded)
+                {
+                    return (false, null, true);
+                }
+                // Podman's own writes it over many lines.
+                using JsonDocument read = JsonDocument.Parse(said.Output);
+                JsonElement info = read.RootElement;
+                if (info.ValueKind != JsonValueKind.Object)
                 {
                     return (false, null, true);
                 }
