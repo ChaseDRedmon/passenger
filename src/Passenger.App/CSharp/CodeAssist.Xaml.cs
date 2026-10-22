@@ -556,7 +556,7 @@ public sealed partial class CodeAssist
             }
             else if (choice?.Value is EditorFix chosen && document is not null)
             {
-                ApplyOwnFix(document, chosen);
+                return ApplyOwnFix(document, chosen);
             }
             else if (choice?.Value is XamlRefactoring refactoring && editors.Active == document)
             {

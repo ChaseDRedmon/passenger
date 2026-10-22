@@ -28,7 +28,7 @@ public static class ContainerProcesses
             return [];
         }
         IReadOnlyList<JsonElement> running = await engine.JsonLinesAsync(["ps", "--format", "json"], cancel);
-        string[] ids = [.. running.Select(c => ContainerEngine.Text(c, "ID")).OfType<string>()];
+        string[] ids = [.. running.Select(ContainerInfo.IdOf).OfType<string>()];
         if (ids.Length == 0)
         {
             return [];

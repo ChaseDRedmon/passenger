@@ -18,8 +18,9 @@ namespace Passenger.Tests;
 
 /// <summary>Several programs debugged at once from one window, as a person does it: two programs that share a source file,
 /// each debugged with Alt+F5 in a tab of its own in the Debug window, a breakpoint in the shared file stopping each, the
-/// keys acting on the tab chosen while the other stays as it was, and Stop and Stop All ending one or every one. Debugged,
-/// so run alone.</summary>
+/// keys acting on the tab chosen while the other stays as it was, and Stop and Stop All ending one or every one. Only the
+/// windows whose tests apply an edit through Hot Reload, which the server works out, take up the class's warm C# language
+/// server. Debugged, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
 {
@@ -37,7 +38,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void Two_programs_debugged_at_once_each_stop_in_the_file_they_share_and_step_stop_and_stop_all_act_on_the_tab_chosen()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         try
         {
             CodeEditor editor = window.EditorArea.CodeEditor;
@@ -121,7 +122,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void Additional_launches_with_the_same_name_keep_separate_native_tabs_and_capture_output_from_the_start()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         try
         {
             Passenger.App.Run.LaunchPlan plan = LoopingPlan("Same name");
@@ -168,7 +169,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [InlineData(true)]
     public void Canceling_an_additional_start_before_or_during_adapter_start_cannot_stop_its_same_name_sibling(bool duringAdapterStart)
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         using CancellationTokenSource cancel = new();
         try
         {
@@ -234,7 +235,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void A_session_whose_program_is_elsewhere_never_ends_a_process_here_by_its_programs_id()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         List<int> started = [];
         try
         {
@@ -427,7 +428,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void A_failed_start_ends_the_output_it_followed_and_a_place_that_stopped_is_said_as_the_programs_end()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         List<int> followers = [];
         EventHandler<ChildStart> started = (_, child) =>
         {
@@ -489,7 +490,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     [AvaloniaFact]
     public void Output_followed_from_outside_shows_its_last_line_ended_by_a_carriage_return_once_it_ends()
     {
-        MainWindow window = pair.Open(Counter);
+        MainWindow window = pair.Open(Counter, languageServer: false);
         Process? looping = null;
         try
         {

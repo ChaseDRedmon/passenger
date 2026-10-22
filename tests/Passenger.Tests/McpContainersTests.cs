@@ -23,13 +23,13 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         string name = Docker.Container("agent", "echo agent-hello; trap 'exit 0' TERM; while true; do sleep 1; done");
-        await using McpClient client = await Start(["--mcp", Folder]);
+        await using McpClient client = await Start(["--mcp", Folder], languageServer: false);
 
         JsonElement listed = await Call(client, "containers");
         Assert.Equal("Ready", listed.GetProperty("status").GetString());
         JsonElement mine = listed.GetProperty("containers").EnumerateArray().Single(c => c.GetProperty("name").GetString() == name);
         Assert.Equal("running", mine.GetProperty("state").GetString());
-        Assert.Equal(Docker.Image, mine.GetProperty("image").GetString());
+        Assert.Equal(Docker.Image, Docker.Short(mine.GetProperty("image").GetString()!));
 
         Assert.Contains("agent-hello", Text(await Call(client, "container_logs", new() { ["container"] = name })), StringComparison.Ordinal);
 
@@ -50,7 +50,7 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
         string project = $"ptest{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}agentrun";
         File.WriteAllText(Path.Combine(compose, "compose.yaml"), $"name: {project}\nservices:\n  ticker:\n    image: {Docker.Image}\n"
             + "    command: [\"sh\", \"-c\", \"echo ticker-up; trap 'exit 0' TERM; while true; do sleep 1; done\"]\n");
-        await using McpClient client = await Start(["--mcp", compose]);
+        await using McpClient client = await Start(["--mcp", compose], languageServer: false);
 
         JsonElement ran = await Call(client, "run", new() { ["configuration"] = "Compose: compose.yaml" });
         Assert.True(ran.GetProperty("stillRunning").GetBoolean(), $"The run did not go on: {ran}");
@@ -194,7 +194,7 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
         string left = Docker.Container("left", "sleep 600", state, machine, gone);
         string living = Docker.Container("living", "sleep 600", labels);
         string elsewhere = Docker.Container("elsewhere", "sleep 600", state, $"{ContainerLabels.Machine}=0123456789abcdef", gone);
-        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings })), "Passenger starting");
+        McpClient client = Await(Task.Run(() => Start(["--mcp", Folder], environment: new() { ["PASSENGER_SETTINGS"] = TestRun.Settings }, languageServer: false)), "Passenger starting");
         try
         {
             Ui.WaitFor(() => Docker.State(left) is null, $"{left}, labelled with this state and a process that is gone, removed as Passenger started",

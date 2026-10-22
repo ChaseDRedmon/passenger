@@ -28,6 +28,11 @@ public sealed record EditorFix(string Title, string Detail, TextRange Range, str
     /// <summary>Where the caret goes in <see cref="Text"/> once it is made: its end when none is given.</summary>
     public int? Caret { get; init; }
 
+    /// <summary>A fix made in another file than the one shown (an AppHost's WithReference, for its service's warning), in
+    /// place of <see cref="Text"/>'s edit: made as it is chosen, given <see cref="Range"/> as it then stands and an agent's
+    /// call's patience, and saying what it came to.</summary>
+    public Func<TextRange, Patience?, Task<RefactorOutcome>>? Elsewhere { get; init; }
+
     /// <summary>The fix to make on a text now, worked out again where it can be; null when it no longer fits.</summary>
     public EditorFix? On(TextSnapshot text) => Again is null ? this : Again(text);
 }
@@ -594,14 +599,15 @@ public sealed partial class CodeAssist
         completing?.Cancel();
         CancellationTokenSource cancel = new();
         completing = cancel;
-        int caret = Editor.Selections.Primary.Caret;
-        TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
-            if (await StartAspireCompletion(lsp, caret, cancel.Token))
+            // An AppHost's or a service's resource names where one is typed; any other file's list is the server's alone.
+            if (await StartAspireCompletion(lsp, cancel.Token))
             {
                 return;
             }
+            int caret = Editor.Selections.Primary.Caret;
+            TextSnapshot asked = Editor.Document.Snapshot;
             Web.WebDocument? web = WebCurrent;
             // A compose file's own names where one is typed, merged with the server's by label, ahead of them.
             (int Start, IReadOnlyList<CompletionItem> Items)? named = web is not null ? await ComposeCompletionAsync(web, lsp, asked, caret) : null;
@@ -1324,8 +1330,9 @@ public sealed partial class CodeAssist
     internal IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
 
     /// <summary>One of Passenger's own fixes made in the file shown, as one undoable edit: worked out again on its text as it
-    /// stands (<see cref="EditorFix.On"/>), and refused, said in the status bar, when the text no longer has what it fixes.</summary>
-    private void ApplyOwnFix(OpenDocument document, EditorFix fix)
+    /// stands (<see cref="EditorFix.On"/>), and refused, said in the status bar, when the text no longer has what it fixes;
+    /// one made in another file (<see cref="EditorFix.Elsewhere"/>) is that file's command, said as it lands.</summary>
+    private async Task ApplyOwnFix(OpenDocument document, EditorFix fix)
     {
         if (editors.Active != document)
         {
@@ -1334,6 +1341,12 @@ public sealed partial class CodeAssist
         if (fix.On(document.Text.Snapshot) is not { } now)
         {
             Message?.Invoke(this, $"{fix.Title} was not applied: the file changed, so it no longer fits");
+            return;
+        }
+        if (now.Elsewhere is { } elsewhere)
+        {
+            RefactorOutcome outcome = await elsewhere(now.Range, null);
+            Message?.Invoke(this, outcome.Problem ?? outcome.Said);
             return;
         }
         Editor.ApplyEdits([new TextEdit(now.Range.Start, now.Range.Length, now.Text)], SelectionSet.Single(now.Range.Start + (now.Caret ?? now.Text.Length)));
@@ -1364,10 +1377,6 @@ public sealed partial class CodeAssist
                 .ToList();
             try
             {
-                if (only is null && own.Count == 0 && await ShowAspireFixes(document, lsp, primary.Caret, title))
-                {
-                    return;
-                }
                 // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
                 linted = only is null ? await LintFixes(document, primary.Caret) : [];
                 actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
@@ -1397,8 +1406,7 @@ public sealed partial class CodeAssist
             switch (choice?.Value)
             {
                 case EditorFix fix:
-                    ApplyOwnFix(document, fix);
-                    return Task.CompletedTask;
+                    return ApplyOwnFix(document, fix);
                 case EslintFix fix:
                     return RunLintFix(document, fix);
                 case CodeAction chosen:

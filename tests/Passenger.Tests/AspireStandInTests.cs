@@ -19,6 +19,44 @@ namespace Passenger.Tests;
 /// so these run on every system.</summary>
 public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<StandInAppHost>
 {
+    /// <summary>A single-file AppHost has its run configuration as the folder opens, found among the files of the folder's one
+    /// walk, and as the folder watcher sees one come, a C# file gain the AppHost SDK's line, or one go; never one under a hidden
+    /// folder, which a walk for what projects build passes over.</summary>
+    [AvaloniaFact]
+    public void Single_file_AppHosts_are_found_as_the_folder_opens_and_followed_as_files_come_change_and_go()
+    {
+        project.Reset();
+        string sdk = $"#:sdk Aspire.AppHost.Sdk@{AspireApp.TemplatesVersion}\nvar builder = DistributedApplication.CreateBuilder(args);\nbuilder.Build().Run();\n";
+        TestFolders.Write(project.Folder, "Loose/apphost.cs", sdk);
+        TestFolders.Write(project.Folder, ".hidden/apphost.cs", sdk);
+        TestFolders.Write(project.Folder, "Later/Notes.cs", "System.Console.WriteLine(\"Not an AppHost yet\");\n");
+        string loose = PathNames.Canonical(project.PathOf("Loose/apphost.cs"));
+        string notes = PathNames.Canonical(project.PathOf("Later/Notes.cs"));
+        MainWindow window = project.Open(null, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => Found(window, loose), "the single-file AppHost there as the folder opened");
+            Assert.DoesNotContain(window.Configurations, c => c.Project.Contains($"{Path.DirectorySeparatorChar}.hidden{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+            Assert.False(Found(window, notes), "A C# file without the AppHost SDK's line was taken for a single-file AppHost");
+
+            TestFolders.Write(project.Folder, "Came/apphost.cs", sdk);
+            string came = PathNames.Canonical(project.PathOf("Came/apphost.cs"));
+            Ui.WaitFor(() => Found(window, came), "a single-file AppHost made after the folder opened");
+            File.WriteAllText(notes, sdk);
+            Ui.WaitFor(() => Found(window, notes), "a C# file that gained the AppHost SDK's line");
+            File.Delete(loose);
+            Ui.WaitFor(() => !Found(window, loose), "a deleted single-file AppHost's configuration to go");
+            Assert.True(Found(window, came) && Found(window, notes), "The single-file AppHosts still there lost their configurations as another went");
+            Assert.DoesNotContain(window.Configurations, c => c.Project.Contains($"{Path.DirectorySeparatorChar}.hidden{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static bool Found(MainWindow window, string file) => window.Configurations.Any(c => c.Aspire && PathNames.Same(c.Project, file));
+    }
+
     [AvaloniaFact]
     public void The_console_drops_overlapping_lines_follows_a_new_generation_links_its_lines_and_ends_its_streams_when_hidden()
     {

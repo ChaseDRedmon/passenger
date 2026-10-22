@@ -14,8 +14,8 @@ namespace Passenger.Tests;
 
 /// <summary>A file is one file however its path is spelled. A repository opened by a lower-case path where case is ignored
 /// (on Windows also by its 8.3 short names, elsewhere through a link) shows its changed file coloured, diffs the open file
-/// itself, commits it and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names.
-/// Debugged, so run alone; the paths a project's and a folder's names spell are ProjectPathsTests'.</summary>
+/// itself, commits it and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names (its
+/// window starts no C# language server, which none of that asks). Debugged, so run alone; the paths a project's and a folder's names spell are ProjectPathsTests'.</summary>
 [Collection(Alone.Name)]
 public sealed class PathsTests : IDisposable
 {
@@ -48,7 +48,7 @@ public sealed class PathsTests : IDisposable
         File.WriteAllText(program, "int total = 10;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine(total);\n");
         Restore.Run(repository);
 
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         string spelled = Spelled(repository, spelling);
         window.OpenFolder(spelled);

@@ -83,7 +83,7 @@ public sealed class ContainerConfigurationsTests
             """);
         string settings = TestFolders.Create("settings-");
         string named = PathNames.Canonical(Path.Combine(folder, "docker", "App.Dockerfile"));
-        MainWindow first = Open(folder, settings);
+        MainWindow first = Open(folder, settings, languageServer: true);
         Assert.Equal(named, Dockerfile(first, "App: Dockerfile"));
         Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Side", "Dockerfile")), Dockerfile(first, "Side: Dockerfile"));
         // The language server's restore of each project, never restored, is among what its evaluation reads: kept once it lands.
@@ -283,9 +283,14 @@ public sealed class ContainerConfigurationsTests
         return folder;
     }
 
-    private static MainWindow Open(string folder, string? settings)
+    /// <summary>A window on the solution once every project is evaluated, with no C# language server, which the run
+    /// configurations, the MSBuild host's evaluations, ask nothing of, unless the test reads what its restore writes
+    /// (<paramref name="languageServer"/>).</summary>
+    private static MainWindow Open(string folder, string? settings, bool languageServer = false)
     {
-        MainWindow window = settings is null ? new() { Width = 1200, Height = 800 } : new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = settings is null
+            ? new() { Width = 1200, Height = 800, StartsLanguageServer = languageServer }
+            : new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = languageServer };
         window.Show();
         if (settings is not null)
         {

@@ -3,12 +3,10 @@ using Passenger.Core;
 
 namespace Passenger.App.Aspire;
 
-/// <summary>Finds single-file AppHosts without treating their C# source as an MSBuild project.</summary>
+/// <summary>Tells single-file AppHosts by their head, without treating their C# source as an MSBuild project; the folder's are
+/// found among the files of its one walk (<see cref="AspireFiles"/>).</summary>
 public static class AspireAppHosts
 {
-    private const int FolderLimit = 5_000;
-    private const int AppHostLimit = 200;
-
     internal static string? SingleFileWhyNot(string path, IEnumerable<string> projectPaths)
     {
         if (!Path.GetFileName(path).Equals("apphost.cs", StringComparison.OrdinalIgnoreCase))
@@ -19,41 +17,6 @@ public static class AspireAppHosts
         return projectPaths.Any(project => Path.GetExtension(project).Equals(".csproj", StringComparison.OrdinalIgnoreCase)
             && Path.GetDirectoryName(project) is { } projectFolder && folder is not null && PathNames.Same(folder, projectFolder))
             ? $"Aspire CLI {AspireClient.SupportedVersion} requires apphost.cs to have no sibling .csproj project" : null;
-    }
-
-    public static IReadOnlyList<string> DiscoverFiles(string folder, CancellationToken cancel)
-    {
-        List<string> found = [];
-        foreach (string path in PathNames.FoldersUnder(folder, Enters).Take(FolderLimit))
-        {
-            cancel.ThrowIfCancellationRequested();
-            try
-            {
-                foreach (FileInfo file in new DirectoryInfo(path).EnumerateFiles("*.cs").OrderBy(f => f.Name, StringComparer.Ordinal))
-                {
-                    cancel.ThrowIfCancellationRequested();
-                    if (IsSingleFile(file.FullName))
-                    {
-                        found.Add(PathNames.Canonical(file.FullName));
-                        if (found.Count == AppHostLimit)
-                        {
-                            return found;
-                        }
-                    }
-                }
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
-        return found;
-
-        bool Enters(string path)
-        {
-            cancel.ThrowIfCancellationRequested();
-            DirectoryInfo directory = new(path);
-            return !directory.Name.StartsWith('.') && !IgnoredFolders.Contains(directory.Name) && directory.LinkTarget is null;
-        }
     }
 
     public static bool IsSingleFile(string path)

@@ -329,7 +329,7 @@ public sealed class ContainerProfilingTests(ContainerProfilingTests.Spins.Built 
         public string Start(string name, bool held = false)
         {
             string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}spins{name}";
-            Docker.Run(["run", "-d", "--name", named, "--label", Docker.RunLabel, .. held ? (string[])["-e", "DOTNET_DefaultDiagnosticPortSuspend=1"] : [], Image]);
+            Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", named, "--label", Docker.RunLabel, .. held ? (string[])["-e", "DOTNET_DefaultDiagnosticPortSuspend=1"] : [], Image]);
             // Started on the window's thread, its loop runs meanwhile; an agent's test starts it off that thread.
             Assert.True(held || (Avalonia.Threading.Dispatcher.UIThread.CheckAccess() ? Ui.Pumped(() => Kept(named) > 0, TimeSpan.FromMinutes(1))
                 : Waiting.Until(() => Kept(named) > 0, TimeSpan.FromMinutes(1))),

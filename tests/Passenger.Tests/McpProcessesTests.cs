@@ -13,8 +13,8 @@ using Passenger.Editor;
 namespace Passenger.Tests;
 
 /// <summary>An agent's own Passenger beside the person's window and on its own: one Local History kept in their
-/// one state, and what it started gone with it, killed or ended as its agent leaves.</summary>
-[Collection(Alone.Name)]
+/// one state, and what it started gone with it when it is killed. What its builds leave for the machine's next build is
+/// <see cref="McpBuildNodesTests"/>'.</summary>
 public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
 {
     public McpProcessesTests(RestoredFolders folders)
@@ -238,6 +238,18 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
                 }
             }
         }
+    }
+}
+
+/// <summary>The MSBuild nodes an agent's own Passenger's builds leave end with it, as it ends or is killed. MSBuild keeps
+/// a node only while the machine's count of nodes allows, which other builds beside it would take, so the class runs
+/// alone.</summary>
+[Collection(Alone.Name)]
+public sealed class McpBuildNodesTests : McpRig, IClassFixture<RestoredFolders>
+{
+    public McpBuildNodesTests(RestoredFolders folders)
+        : base(folders)
+    {
     }
 
     /// <summary>The MSBuild nodes a build of Passenger's leaves for its next build, which no other build takes up, end with

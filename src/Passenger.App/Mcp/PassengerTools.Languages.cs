@@ -356,12 +356,23 @@ public sealed partial class PassengerTools
     }
 
     /// <summary>One of Passenger's own fixes made as choosing it makes it: worked out again on the file's text as it stands,
-    /// one undoable edit, the file saved; refused when the text no longer has what it fixes.</summary>
-    private string ApplyOwnFix(OpenDocument document, EditorFix fix)
+    /// one undoable edit, the file saved; refused when the text no longer has what it fixes. One made in another file (an
+    /// AppHost's WithReference) is that file's command, told the call's <paramref name="patience"/>.</summary>
+    private async Task<string> ApplyOwnFix(OpenDocument document, EditorFix fix, Patience? patience = null)
     {
         if (fix.On(document.Text.Snapshot) is not { } now)
         {
             throw new InvalidOperationException($"'{fix.Title}' was not applied: the file changed, so it no longer fits");
+        }
+        if (now.Elsewhere is { } elsewhere)
+        {
+            RefactorOutcome made = await elsewhere(now.Range, patience);
+            if (made.Problem is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
+            Editors.SaveAll();
+            return $"Applied '{fix.Title}' to {string.Join(", ", made.Files.Select(f => Relative(f.Path)).Distinct())}";
         }
         WorkspaceEdits.ApplyTo(Editors, document, [new TextEdit(now.Range.Start, now.Range.Length, now.Text)]);
         Editors.SaveAll();
@@ -414,7 +425,7 @@ public sealed partial class PassengerTools
         switch (chosen.Made)
         {
             case EditorFix fix:
-                return ApplyOwnFix(xaml.Document, fix);
+                return await ApplyOwnFix(xaml.Document, fix);
             case XamlFix fix:
                 IReadOnlyList<XamlFileChange> changes = [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others];
                 refused = window.Assist.ApplyXamlChanges(fix.Title, changes);

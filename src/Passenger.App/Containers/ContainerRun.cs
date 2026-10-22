@@ -231,11 +231,14 @@ public static class ContainerPlans
         string overrideFile = Path.Combine(state, $"{file}.override.yaml");
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
         // Written once the host's build is done: what fast mode mounts (its static web assets' folders) is that build's.
-        bool pin = Overrides((await engine.StateAsync(cancel: cancel)).ComposeVersion);
+        EngineState engineState = await engine.StateAsync(cancel: cancel);
+        bool pin = Overrides(engineState.ComposeVersion);
+        // Rootless Podman maps a container's users onto the person's subordinate ids: keep-id makes the person's own theirs.
+        bool keepId = engineState is { IsPodman: true, Rootless: true };
         // Each port Passenger pins is chosen once for the plan: every override it writes after (a hold, a restart) keeps it.
         Dictionary<(string Service, int Port), int> pinned = [];
         async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken stop) =>
-            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, stop), overriding: true);
+            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, keepId, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
             await WriteOverride([], [], null, cancel);
@@ -477,7 +480,7 @@ public static class ContainerPlans
     /// to Hot Reload. JSON, which Compose reads as YAML.</summary>
     private static async Task<JsonObject> OverrideAsync(ComposeModel model, string project, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
         IReadOnlyList<ProjectModel> projects, string state, Dictionary<(string Service, int Port), int>? pinned, IReadOnlyCollection<string> held,
-        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken cancel)
+        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, bool keepId, CancellationToken cancel)
     {
         JsonObject services = [];
         string? owner = OperatingSystem.IsLinux() ? DotnetProcesses.UserAndGroup : null;
@@ -550,6 +553,10 @@ public static class ContainerPlans
                 if (owner is not null && (mode == ContainerMode.Fast || Serves(service) || secrets is not null))
                 {
                     entry["user"] = owner;
+                    if (keepId)
+                    {
+                        entry["userns_mode"] = "keep-id";
+                    }
                 }
                 if (held.Contains(service.Name))
                 {
@@ -1142,7 +1149,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             // What the services said before they ended is why, which the down that follows would take with them.
             await StreamAsync([.. Plan.Compose, "logs", "--no-color", "--tail", "40"], cancel);
-            string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } lines
+            string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => !ContainerEngine.ProviderFailed(l)).ToArray()
+                is { Length: > 0 } lines
                 ? lines.LastOrDefault(l => l.Contains("rror", StringComparison.Ordinal)) ?? lines[^1] : $"exit code {up.ExitCode}";
             return $"{Plan.Name} did not come up: {last}";
         }

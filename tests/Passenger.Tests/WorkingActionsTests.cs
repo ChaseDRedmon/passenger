@@ -12,32 +12,13 @@ using Xunit;
 namespace Passenger.Tests;
 
 /// <summary>A click on an action that takes a while is answered at once: its button turns a ring and the status bar says
-/// each stage until the work is done, a second click starts nothing more, and Stop ends the start (#254). Debugs through
-/// the window, so it runs alone.</summary>
-[Collection(Alone.Name)]
-public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDisposable
+/// each stage until the work is done, a second click starts nothing more, and Stop ends the start (#254). Debug's is
+/// <see cref="WorkingActionsDebuggingTests"/>'.</summary>
+public sealed class WorkingActionsTests : WorkingActionsFolders, IClassFixture<RestoredFolders>
 {
-    private readonly RestoredFolders folders;
-    private string? taken;
-
-    public WorkingActionsTests(RestoredFolders folders) => this.folders = folders;
-
-    /// <summary>The test's own solution's folder, restored, taken as its window opens: Fetch's test opens a repository instead.</summary>
-    private string Folder => taken ??= folders.Take("working-", made =>
+    public WorkingActionsTests(RestoredFolders folders)
+        : base(folders)
     {
-        Write(made, "Sample.slnx", "<Solution>\n  <Project Path=\"Hello/Hello.csproj\" />\n</Solution>\n");
-        Write(made, "Hello/Hello.csproj",
-            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
-        Write(made, "Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
-        return Path.Combine(made, "Sample.slnx");
-    });
-
-    public void Dispose()
-    {
-        if (taken is not null)
-        {
-            TestFolders.Delete(taken);
-        }
     }
 
     [AvaloniaFact]
@@ -78,30 +59,6 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         Assert.True(builds == 1, $"Two clicks on Run built {builds} times, where the second should have started nothing");
         Assert.Single(Lines(Output(window)), l => l == "Hello from the run");
         Assert.False(ActionButtons.IsWorking(run), "Run should stop showing work once its program runs");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_double_click_on_Debug_builds_and_debugs_the_program_once()
-    {
-        MainWindow window = Open();
-        Button debug = Toolbar(window, "DebugButton");
-        int builds = 0;
-        HashSet<object> sessions = [];
-        window.Builder.Exited += (_, _) => builds++;
-        window.Debugger.StateChanged += (_, _) =>
-        {
-            if (window.Debugger.Session is { } session)
-            {
-                sessions.Add(session);
-            }
-        };
-
-        Ui.Click(debug, settle: false);
-        Ui.Click(debug, settle: false);
-        Assert.StartsWith("Already under way: Working out how to debug Hello", window.Status, StringComparison.Ordinal);
-        Ui.WaitFor(() => !ActionButtons.IsWorking(debug) && !window.Debugger.IsDebugging, "the debugged program to start and end", TimeSpan.FromMinutes(3));
-        Assert.True(builds == 1 && sessions.Count == 1, $"A double click on Debug built {builds} times and opened {sessions.Count} sessions, where it should have done each once");
         window.Close();
     }
 
@@ -148,14 +105,78 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
             TestFolders.Delete(repository);
         }
     }
+}
 
-    private MainWindow Open() => Ui.OpenFolder(Folder);
+/// <summary>A double click on Debug answered as a click on any action that takes a while is. Debugs through the window, so
+/// the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class WorkingActionsDebuggingTests : WorkingActionsFolders, IClassFixture<RestoredFolders>
+{
+    public WorkingActionsDebuggingTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
 
-    private static Button Toolbar(MainWindow window, string name) =>
+    [AvaloniaFact]
+    public void A_double_click_on_Debug_builds_and_debugs_the_program_once()
+    {
+        MainWindow window = Open();
+        Button debug = Toolbar(window, "DebugButton");
+        int builds = 0;
+        HashSet<object> sessions = [];
+        window.Builder.Exited += (_, _) => builds++;
+        window.Debugger.StateChanged += (_, _) =>
+        {
+            if (window.Debugger.Session is { } session)
+            {
+                sessions.Add(session);
+            }
+        };
+
+        Ui.Click(debug, settle: false);
+        Ui.Click(debug, settle: false);
+        Assert.StartsWith("Already under way: Working out how to debug Hello", window.Status, StringComparison.Ordinal);
+        Ui.WaitFor(() => !ActionButtons.IsWorking(debug) && !window.Debugger.IsDebugging, "the debugged program to start and end", TimeSpan.FromMinutes(3));
+        Assert.True(builds == 1 && sessions.Count == 1, $"A double click on Debug built {builds} times and opened {sessions.Count} sessions, where it should have done each once");
+        window.Close();
+    }
+}
+
+/// <summary>The solution each working action's test opens, restored, and the helpers that read the toolbar and the Run
+/// window.</summary>
+public abstract class WorkingActionsFolders : IDisposable
+{
+    private readonly RestoredFolders folders;
+    private string? taken;
+
+    protected WorkingActionsFolders(RestoredFolders folders) => this.folders = folders;
+
+    /// <summary>The test's own solution's folder, restored, taken as its window opens: Fetch's test opens a repository instead.</summary>
+    protected string Folder => taken ??= folders.Take("working-", made =>
+    {
+        Write(made, "Sample.slnx", "<Solution>\n  <Project Path=\"Hello/Hello.csproj\" />\n</Solution>\n");
+        Write(made, "Hello/Hello.csproj",
+            TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
+        Write(made, "Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
+        return Path.Combine(made, "Sample.slnx");
+    });
+
+    public void Dispose()
+    {
+        if (taken is not null)
+        {
+            TestFolders.Delete(taken);
+        }
+    }
+
+    /// <summary>A window on the test's solution, with no C# language server, which its actions ask nothing of.</summary>
+    protected MainWindow Open() => Ui.OpenFolder(Folder, languageServer: false);
+
+    protected static Button Toolbar(MainWindow window, string name) =>
         window.FindControl<Button>(name) ?? throw new InvalidOperationException($"The toolbar has no {name}");
 
     /// <summary>The window's pixels at sixteen points of the circle the ring round a button's icon is drawn on.</summary>
-    private static Color[] Ring(MainWindow window, Button button)
+    protected static Color[] Ring(MainWindow window, Button button)
     {
         WorkingRing ring = button.GetVisualDescendants().OfType<WorkingRing>().SingleOrDefault()
             ?? throw new InvalidOperationException($"{button.Name} shows no ring");
@@ -164,11 +185,11 @@ public sealed class WorkingActionsTests : IClassFixture<RestoredFolders>, IDispo
         return [.. Enumerable.Range(0, 16).Select(i => Ui.Pixel(window, new Point(centre.X + radius * Math.Cos(i * Math.PI / 8), centre.Y + radius * Math.Sin(i * Math.PI / 8))))];
     }
 
-    private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
+    protected static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
-    private static string[] Lines(string text) => text.Split('\n', StringSplitOptions.TrimEntries);
+    protected static string[] Lines(string text) => text.Split('\n', StringSplitOptions.TrimEntries);
 
-    private static void Write(string root, string relative, string text)
+    protected static void Write(string root, string relative, string text)
     {
         string path = Path.Combine(root, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

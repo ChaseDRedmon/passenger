@@ -77,6 +77,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Folder = folder;
         Configurations = new RunConfigurations(folder, () => Workspace);
         Aspire = new AspireController(this, setup.StateFolder);
+        AspireFiles = new AspireFiles(this);
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, () => Workspace, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
@@ -139,7 +140,8 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Workspace = session.Models.Apply(withSolution ?? new WorkspaceModel(folder, null, []));
         session.TimeSolutionView();
         session.Configurations.Configure(session.Projects);
-        _ = session.RefreshAspireFilesAsync();
+        // The single-file AppHosts are found among the files the index's walk lists, never by a walk of their own.
+        session.Index.Walked += (_, _) => session.AspireFiles.Walked(folder, session.Index.Files);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
         session.Web = new Web.WebLanguages(folder, setup.Settings, setup.Engine) { DockerHub = setup.DockerHub };
@@ -207,63 +209,12 @@ public sealed class ProjectSession : IAsyncDisposable
     public RunConfigurations Configurations { get; }
 
     public AspireController Aspire { get; }
-    public Task AspireFilesRead { get; private set; } = Task.CompletedTask;
 
-    public Task RefreshAspireFilesAsync(IReadOnlyList<string>? changed = null)
-    {
-        UiThread.Check();
-        return AspireFilesRead = ReadAfterAsync(AspireFilesRead);
+    /// <summary>The folder's AppHosts, and what each C# file is to them.</summary>
+    public AspireFiles AspireFiles { get; }
 
-        async Task ReadAfterAsync(Task previous)
-        {
-            await previous;
-            if (IsEnded || Folder is not { } folder)
-            {
-                return;
-            }
-            if (changed is null)
-            {
-                IReadOnlyList<string> files = await BackgroundWork.Run(() => AspireAppHosts.DiscoverFiles(folder, CancellationToken.None));
-                if (!IsEnded)
-                {
-                    Configurations.ConfigureAppHosts(files);
-                }
-                return;
-            }
-            List<(string Path, bool? AppHost)> checkedFiles = await BackgroundWork.Run(() =>
-            {
-                List<(string, bool?)> found = [];
-                foreach (string path in changed)
-                {
-                    try
-                    {
-                        found.Add((path, File.Exists(path) && AspireAppHosts.IsSingleFile(path)));
-                    }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                    {
-                        found.Add((path, null));
-                    }
-                }
-                return found;
-            });
-            if (!IsEnded)
-            {
-                HashSet<string> files = new(Configurations.SingleFileAppHosts, PathNames.Comparer);
-                foreach ((string path, bool? appHost) in checkedFiles)
-                {
-                    if (appHost == true)
-                    {
-                        files.Add(PathNames.Canonical(path));
-                    }
-                    else if (appHost == false)
-                    {
-                        files.Remove(path);
-                    }
-                }
-                Configurations.ConfigureAppHosts([.. files.Order(StringComparer.Ordinal)]);
-            }
-        }
-    }
+    /// <summary>Done once the folder's single-file AppHosts have been read from its first walk.</summary>
+    public Task AspireFilesRead => Folder is null ? Task.CompletedTask : AspireFiles.Read;
 
     /// <summary>The folder's builds, rebuilds and cleans, in the window's Build console.</summary>
     public ProcessRunner Builder { get; }
@@ -772,6 +723,7 @@ public sealed class ProjectSession : IAsyncDisposable
                 Feed = DesignTimeBuilds.Feed,
                 // Razor's HTML is the HTML server's to answer.
                 HtmlServer = Web is { } web ? web.HtmlAsync : null,
+                AspireRoleOf = AspireFiles.RoleOf,
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);

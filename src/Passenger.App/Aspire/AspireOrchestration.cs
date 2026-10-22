@@ -189,13 +189,13 @@ public static class AspireOrchestration
 
     private static void ValidateDefaults(ProjectModel defaults, IReadOnlyList<ProjectModel> services)
     {
-        string path = defaults.Path;
         if (services.Any(service => !CanReference(service.TargetFrameworks, defaults.TargetFrameworks)))
         {
             throw new InvalidOperationException("The selected ServiceDefaults target framework is not compatible with every service.");
         }
-        List<MethodDeclarationSyntax> methods = [.. Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.cs", SearchOption.AllDirectories)
-            .Where(p => !Path.GetRelativePath(Path.GetDirectoryName(path)!, p).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj"))
+        // Its C# files as the folder's one walk finds what a project builds: never its output, a link twice or a hidden folder.
+        List<MethodDeclarationSyntax> methods = [.. FolderWalk.Files(defaults.Folder, built: true)
+            .Where(p => p.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
             .SelectMany(p => CSharpSyntaxTree.ParseText(Read(p).Text).GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())];
         if (!methods.Any(m => m.Identifier.ValueText == "AddServiceDefaults" && m.ParameterList.Parameters.FirstOrDefault()?.Modifiers.Any(SyntaxKind.ThisKeyword) == true))
         {

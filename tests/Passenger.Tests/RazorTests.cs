@@ -323,13 +323,24 @@ public sealed class RazorDebuggingTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
+    /// <summary>A breakpoint in a page's <c>@code</c> block stops the app as the page is asked for, one set on the markup's C#
+    /// while it is stopped there stops it as the page is drawn, and the page comes once it goes on; then one in another
+    /// component's code-behind, set before the app started, stops it as that page is asked for. One app, debugged once, with
+    /// no C# language server: the breakpoints bind through the build's PDB, which the debugger reads.</summary>
     [AvaloniaFact]
-    public void Breakpoints_in_a_pages_code_block_and_markup_stop_the_app_as_the_page_is_asked_for_and_the_page_comes_once_it_goes_on()
+    public void Breakpoints_in_a_pages_code_block_and_markup_and_in_a_components_code_behind_stop_the_app_as_each_page_is_asked_for()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
-        window.OpenFile(Path.Combine(PathNames.Canonical(folder), "Components/Pages/Visits.razor"));
+        string code = Path.Combine(PathNames.Canonical(folder), "Components", "Pages", "Tally.razor.cs");
+        string visits = Path.Combine(PathNames.Canonical(folder), "Components/Pages/Visits.razor");
+        window.OpenFile(code);
+        Ui.Settle();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(18, 8));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Assert.Contains(new LineMark(18, LineMarkKind.Breakpoint), window.EditorArea.CodeEditor.LineMarks);
+        window.OpenFile(visits);
         Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(9, 8));
@@ -359,39 +370,17 @@ public sealed class RazorDebuggingTests : IDisposable
         string html = Ui.Await(page, "the page once the app goes on");
         Assert.Contains("Visits: 42", html, StringComparison.Ordinal);
 
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void A_breakpoint_in_a_components_code_behind_stops_the_app_as_the_page_is_asked_for()
-    {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(folder);
-        string code = Path.Combine(PathNames.Canonical(folder), "Components", "Pages", "Tally.razor.cs");
-        window.OpenFile(code);
-        Ui.Settle();
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(18, 8));
-        Ui.Run(window, AppActions.ToggleBreakpoint);
-        Assert.Contains(new LineMark(18, LineMarkKind.Breakpoint), editor.LineMarks);
-
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Browsed.Count > 0, "the app to listen at its launch profile's address", TimeSpan.FromMinutes(4));
-        using HttpClient client = new() { Timeout = TimeSpan.FromMinutes(3) };
-        Task<string> page = Task.Run(() => client.GetStringAsync($"http://localhost:{port}/tally"));
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, "the app to stop at the breakpoint in the code-behind as the page is asked for");
-        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(18, LineMarkKind.ExecutionPoint)), "the stop shown on the code-behind's line");
-        Assert.Equal(code, window.EditorArea.Active?.Path);
-        Assert.Contains(new LineMark(18, LineMarkKind.BreakpointBound), editor.LineMarks);
+        // The component whose code is all in its code-behind stops there as its page is asked for, shown in that file.
+        Task<string> tally = Task.Run(() => client.GetStringAsync($"http://localhost:{port}/tally"));
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.EditorArea.Active?.Path == code,
+            "the app to stop at the breakpoint in the code-behind as the page is asked for");
+        Ui.WaitFor(() => window.EditorArea.CodeEditor.LineMarks.Contains(new LineMark(18, LineMarkKind.ExecutionPoint)), "the stop shown on the code-behind's line");
+        Assert.Contains(new LineMark(18, LineMarkKind.BreakpointBound), window.EditorArea.CodeEditor.LineMarks);
         Assert.Contains("OnInitialized", window.BottomPanel.Debug.Frames[0].Name, StringComparison.Ordinal);
-        Assert.False(page.IsCompleted, "The page came back while the app was stopped in its code-behind");
+        Assert.False(tally.IsCompleted, "The page came back while the app was stopped in its code-behind");
 
         Ui.Run(window, AppActions.Resume);
-        string html = Ui.Await(page, "the page once the app goes on");
-        Assert.Contains("Clicks: 42", html, StringComparison.Ordinal);
+        Assert.Contains("Clicks: 42", Ui.Await(tally, "the page once the app goes on"), StringComparison.Ordinal);
 
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");

@@ -342,7 +342,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Method and Introduce Variable are), as 'title [kind]', each followed by the choices it offers (actions nested under " +
         "it, a Fix All's scopes, where a new XAML resource or style goes), which apply_code_action takes as choice. In C#, " +
         "Razor and the web languages, the language server's, ESLint's fixes first where it checks the file (a compose file's " +
-        "names Compose finds undeclared have Passenger's own before them); in XAML, " +
+        "names Compose finds undeclared, and an Aspire service's references its AppHost lacks, have Passenger's own before " +
+        "them); in XAML, " +
         "Passenger's own: the line's problems' fixes (a binding's missing property or command, a missing converter), Extract " +
         "Resource and Extract Style. MSBuild files have none.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -385,7 +386,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         int offset = Offset(served.Document, line, column);
         if (window.Assist.OwnFixes(served.Document, offset).FirstOrDefault(f => f.Title == title) is { } own)
         {
-            return ApplyOwnFix(served.Document, own);
+            return await ApplyOwnFix(served.Document, own, patience);
         }
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         if (linted.FirstOrDefault(f => f.Title == title) is { } lint)

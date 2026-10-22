@@ -5,39 +5,12 @@ using Passenger.Tests.Debugging.Helpers;
 namespace Passenger.Tests.Debugging;
 
 /// <summary>A frame of an assembly that ships no symbols (CoreLib's, System.Linq's) is shown with source once its symbols are
-/// decompiled into the folder the adapter is given: off the engine's lock, so the session answers meanwhile, and written
-/// whole or not at all, so a decompile cut short (the adapter killed) or a PDB that does not load costs the next session
-/// no more than a decompile; pruned as an adapter starts. Alone: they hold the adapter to how soon it answers during a
-/// decompile.</summary>
-[Collection(Alone.Name)]
-public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
+/// decompiled into the folder the adapter is given: written whole or not at all, so a decompile cut short (the adapter
+/// killed) or a PDB that does not load costs the next session no more than a decompile; pruned as an adapter starts. The
+/// session answering promptly while CoreLib is decompiled is <see cref="DecompiledSymbolsTimingTests"/>'.</summary>
+[Collection(DebugSession.Collection)]
+public sealed class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper) : DecompiledSymbolsSessions(testOutputHelper)
 {
-    /// <summary>How long a request may take while CoreLib is decompiled beside it: a moment, where it waited out the whole
-    /// decompile (a minute or more) under the engine's lock.</summary>
-    private static readonly TimeSpan Promptly = TimeSpan.FromSeconds(10);
-
-    /// <summary>The longest a decompile may take on a slow runner.</summary>
-    private static readonly TimeSpan Decompile = TimeSpan.FromMinutes(3);
-
-    private int thread;
-
-    [Fact]
-    public async Task A_disconnect_while_CoreLib_is_decompiled_is_answered_at_once_and_leaves_no_symbols_half_written()
-    {
-        string cache = TestFolders.Create("symbols");
-        using DebugSession host = await StoppedInCoreLibCallback(cache);
-        DapStackFrame coreLib = Frame(host, "System.Private.CoreLib.dll!System.Collections.Generic.List<int>.ForEach");
-        Task<ResolveStackFrameResponse> resolving = host.Send<ResolveStackFrameResponse>("resolveStackFrame", new ResolveStackFrameArguments(coreLib.Id));
-        await DecompileStarted(cache, resolving);
-
-        Stopwatch asked = Stopwatch.StartNew();
-        Assert.NotEmpty(host.Request<ThreadsResponse>("threads", limit: Decompile).Threads);
-        Assert.True(asked.Elapsed < Promptly, $"A request made while CoreLib was decompiled took {asked.Elapsed.TotalSeconds:0.0} s: it waited for the decompile");
-        Assert.True(host.Disconnect(Promptly), $"The disconnect went unanswered for {Promptly.TotalSeconds:0} s while CoreLib was decompiled, so an IDE would kill the adapter");
-        Assert.False(resolving.IsCompletedSuccessfully, "CoreLib's frame was resolved before the disconnect, so the disconnect never waited on a decompile");
-        Assert.True(Pdbs(cache).Count == 0, $"The session ended mid-decompile left symbols in the cache, which the next would take for whole: {string.Join(", ", Pdbs(cache))}");
-    }
-
     [Fact]
     public async Task A_frame_whose_decompile_the_killed_adapter_cut_short_is_resolved_by_the_next_session()
     {
@@ -93,16 +66,57 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
         string abandoned = Plant(cache, "Killed.Library.pdb.0a1b.tmp", TimeSpan.FromHours(2));
         string writing = Plant(cache, "Writing.Library.pdb.2c3d.tmp", TimeSpan.FromMinutes(1));
 
-        using DebugSession host = DebugSession.ForLaunch(testOutputHelper, cache).WithInitializeRequest();
+        using DebugSession host = DebugSession.ForLaunch(Output, cache).WithInitializeRequest();
         Assert.True(await Waiting.UntilAsync(() => !File.Exists(stale) && !File.Exists(abandoned), TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken, TimeSpan.FromMilliseconds(50)),
             $"The adapter had not pruned in {TimeSpan.FromSeconds(30).Scaled().TotalSeconds} s: {(File.Exists(stale) ? "symbols unused for 40 days" : "a temporary file 2 hours old")} still there");
         Assert.True(File.Exists(recent), "Symbols used 3 days ago were pruned");
         Assert.True(File.Exists(writing), "A temporary file a minute old, which another adapter may still be writing, was pruned");
         Assert.False(Directory.Exists(Path.GetDirectoryName(Path.GetDirectoryName(stale))), "The pruned entry's folders were left behind, empty");
     }
+}
+
+/// <summary>A decompile runs off the engine's lock, so the session answers meanwhile: held to how soon the adapter answers
+/// during a decompile, so the class runs alone.</summary>
+[Collection(Alone.Name)]
+public sealed class DecompiledSymbolsTimingTests(ITestOutputHelper testOutputHelper) : DecompiledSymbolsSessions(testOutputHelper)
+{
+    [Fact]
+    public async Task A_disconnect_while_CoreLib_is_decompiled_is_answered_at_once_and_leaves_no_symbols_half_written()
+    {
+        string cache = TestFolders.Create("symbols");
+        using DebugSession host = await StoppedInCoreLibCallback(cache);
+        DapStackFrame coreLib = Frame(host, "System.Private.CoreLib.dll!System.Collections.Generic.List<int>.ForEach");
+        Task<ResolveStackFrameResponse> resolving = host.Send<ResolveStackFrameResponse>("resolveStackFrame", new ResolveStackFrameArguments(coreLib.Id));
+        await DecompileStarted(cache, resolving);
+
+        Stopwatch asked = Stopwatch.StartNew();
+        Assert.NotEmpty(host.Request<ThreadsResponse>("threads", limit: Decompile).Threads);
+        Assert.True(asked.Elapsed < Promptly, $"A request made while CoreLib was decompiled took {asked.Elapsed.TotalSeconds:0.0} s: it waited for the decompile");
+        Assert.True(host.Disconnect(Promptly), $"The disconnect went unanswered for {Promptly.TotalSeconds:0} s while CoreLib was decompiled, so an IDE would kill the adapter");
+        Assert.False(resolving.IsCompletedSuccessfully, "CoreLib's frame was resolved before the disconnect, so the disconnect never waited on a decompile");
+        Assert.True(Pdbs(cache).Count == 0, $"The session ended mid-decompile left symbols in the cache, which the next would take for whole: {string.Join(", ", Pdbs(cache))}");
+    }
+
+}
+
+/// <summary>The programs the decompiled symbols' tests stop, each adapter given a cache folder of the test's own, and what
+/// they read of its stack and its cache.</summary>
+public abstract class DecompiledSymbolsSessions(ITestOutputHelper testOutputHelper)
+{
+    /// <summary>The test's output, which its debug sessions write to.</summary>
+    protected ITestOutputHelper Output => testOutputHelper;
+
+    /// <summary>How long a request may take while CoreLib is decompiled beside it: a moment, where it waited out the whole
+    /// decompile (a minute or more) under the engine's lock.</summary>
+    protected static readonly TimeSpan Promptly = TimeSpan.FromSeconds(10);
+
+    /// <summary>The longest a decompile may take on a slow runner.</summary>
+    protected static readonly TimeSpan Decompile = TimeSpan.FromMinutes(3);
+
+    protected int thread;
 
     /// <summary>A file in an entry's folder of a cache (NAME/MVID/FILE), last written as long ago as given.</summary>
-    private static string Plant(string cache, string file, TimeSpan ago)
+    protected static string Plant(string cache, string file, TimeSpan ago)
     {
         string name = file[..file.IndexOf(".pdb", StringComparison.Ordinal)];
         string path = Path.Combine(cache, name, Guid.NewGuid().ToString("N"), file);
@@ -113,7 +127,7 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
     }
 
     /// <summary>PassengerCases launched to its callback from List.ForEach, the frame below CoreLib's.</summary>
-    private async Task<DebugSession> StoppedInCoreLibCallback(string cache)
+    protected async Task<DebugSession> StoppedInCoreLibCallback(string cache)
     {
         DebugSession host = DebugSession.ForLaunch(testOutputHelper, cache);
         await host
@@ -127,14 +141,14 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
     }
 
     /// <summary>DebuggableConsoleApp attached to at its selector, which System.Linq's iterator calls.</summary>
-    private Task<DebugSession> StoppedInLinqCallback(string cache) =>
+    protected Task<DebugSession> StoppedInLinqCallback(string cache) =>
         StoppedAt(cache, Debuggees.Source("DebuggableConsoleApp", "ClassWithBclCall.cs"), 12);
 
     /// <summary>DebuggableConsoleApp attached to without Just My Code, at its call of Console.WriteLine.</summary>
-    private Task<DebugSession> StoppedBeforeConsoleWrite(string cache) =>
+    protected Task<DebugSession> StoppedBeforeConsoleWrite(string cache) =>
         StoppedAt(cache, Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"), 15);
 
-    private async Task<DebugSession> StoppedAt(string cache, string source, int line)
+    protected async Task<DebugSession> StoppedAt(string cache, string source, int line)
     {
         DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended: true, out Process program, cache);
         await host
@@ -148,9 +162,9 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
         return host;
     }
 
-    private DapStackFrame LinqFrame(DebugSession host) => Frame(host, "System.Linq.dll!");
+    protected DapStackFrame LinqFrame(DebugSession host) => Frame(host, "System.Linq.dll!");
 
-    private DapStackFrame Frame(DebugSession host, string named)
+    protected DapStackFrame Frame(DebugSession host, string named)
     {
         host.WithStackTraceRequest(thread, out StackTraceResponse stack, levels: null);
         return stack.StackFrames.FirstOrDefault(frame => frame.Name.StartsWith(named, StringComparison.Ordinal))
@@ -158,7 +172,7 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
     }
 
     /// <summary>Waits for the decompile's temporary file in the cache, the sign that it is under way.</summary>
-    private static async Task DecompileStarted(string cache, Task resolving)
+    protected static async Task DecompileStarted(string cache, Task resolving)
     {
         bool Started() => Directory.EnumerateFiles(cache, "*.tmp", SearchOption.AllDirectories).Any();
         await Waiting.UntilAsync(() => Started() || resolving.IsCompleted, TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken, TimeSpan.FromMilliseconds(20));
@@ -174,5 +188,5 @@ public class DecompiledSymbolsTests(ITestOutputHelper testOutputHelper)
         throw new TimeoutException($"No decompile started in {TimeSpan.FromSeconds(60).Scaled().TotalSeconds} s of resolveStackFrame");
     }
 
-    private static List<string> Pdbs(string cache) => [.. Directory.EnumerateFiles(cache, "*.pdb", SearchOption.AllDirectories)];
+    protected static List<string> Pdbs(string cache) => [.. Directory.EnumerateFiles(cache, "*.pdb", SearchOption.AllDirectories)];
 }

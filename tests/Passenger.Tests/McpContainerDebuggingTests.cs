@@ -22,7 +22,7 @@ public sealed class McpContainerDebuggingTests : McpRig
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
         DeleteAtEnd(shop);
-        await using McpClient client = await Start(["--mcp", shop]);
+        await using McpClient client = await Start(["--mcp", shop], languageServer: false);
         foreach (string app in (string[])["Web", "Api"])
         {
             await Call(client, "breakpoint_set", new() { ["path"] = $"{app}/Program.cs", ["line"] = 1 });
@@ -70,7 +70,8 @@ public sealed class McpContainerDebuggingTests : McpRig
             // A program in a container Passenger did not start: listed by its container, attached to there.
             string output = Path.Combine(shop, "Web", "bin", "Debug", TestProjects.Framework);
             attached = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}agentattach";
-            Docker.Run("run", "-d", "--name", attached, "--label", Docker.RunLabel, "-v", $"{output}:/app:ro", "mcr.microsoft.com/dotnet/aspnet:10.0", "dotnet", "/app/Web.dll");
+            Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", attached, "--label", Docker.RunLabel, "-v", $"{output}:/app:ro", "mcr.microsoft.com/dotnet/aspnet:10.0",
+                "dotnet", "/app/Web.dll"]);
             JsonElement listed = default;
             Assert.True(await Waiting.UntilAsync(async () => (listed = await Call(client, "debug_processes")).EnumerateArray()
                 .Any(p => p.TryGetProperty("container", out JsonElement c) && c.GetString() == attached), TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken),
@@ -107,7 +108,7 @@ public sealed class McpContainerDebuggingTests : McpRig
         (string shop, string project) = ContainerRunsTests.Shop("agentgone");
         DeleteAtEnd(shop);
         bool Up() => Docker.Said("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}") is { Length: > 0 };
-        McpClient client = await Start(["--mcp", shop]);
+        McpClient client = await Start(["--mcp", shop], languageServer: false);
         try
         {
             // The person's own cache, from their own compose up: an agent's run refuses rather than replace it, asking no one.

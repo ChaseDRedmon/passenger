@@ -771,6 +771,43 @@ window or takes the focus; it shows everything but the system's own window chrom
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
+  Podman (#403), on rootless Podman 5.7 in the Ubuntu VM, both ways a person sets it up: Docker's CLI and Compose v2 on
+  Podman's socket (DOCKER_HOST or a context, as Podman Desktop does), and Podman alone, a `docker` that is Podman's own
+  command (podman-docker, or a link ahead on the PATH where it conflicts with Docker's CLI) whose `podman compose` runs
+  Docker's Compose v2 as its provider (Python's podman-compose does not serve: said as no Compose). On Docker's CLI,
+  Compose builds through buildx, whose builder there is a BuildKit container it starts and keeps (buildx_buildkit_default,
+  Compose's and buildx's own doing); Podman's own Compose builds with Buildah through the API. The state knows it
+  (`EngineState.IsPodman`: the server's Podman Engine component, or `PodmanCli`, a client that words its system as
+  OsArch) and whether it is `Rootless` (info). Podman's own command answers in its own JSON, which every reader takes
+  beside Docker's (`ContainerInfo.IdOf`, `First`, `ReadLabels`, `ContainerPort.Read`: ids as Id or id, names and tags as
+  lists, labels and ports as objects; events' Status, ID and Attributes at the top), has no server apart in its version
+  (the client's is the engine's, its OsArch the processor), no -L on cp (it follows a link itself), stats over several
+  lines (asked as a line of Docker's names), its info over many lines (read whole), a start time in Go's words (asked as
+  JSON), and its compose needs the API socket (said when it is not running), names its provider on every command
+  (`PODMAN_COMPOSE_WARNING_LOGS=false`) and adds a line of its own after the provider's error, which every reader of
+  Compose's error passes over (`ContainerEngine.ProviderFailed`).
+  Through Docker's CLI, Podman's list words no health and gives no address on a published port, so Docker's CLI shows
+  none (both read through inspect, `ContainerSnapshot.InspectedAsync`), and its stats cut each name's first letter (each
+  reading named by the id asked). A .NET service run as the person on rootless Podman takes `userns_mode: keep-id`, without
+  which its user is a subordinate id that reads none of what is kept for the person (the build under a 0750 home, the
+  certificate, user secrets: exit code 155, the dotnet host finding no app). Podman has no BuildKit, and Docker's buildx
+  on it would start a BuildKit container of its own: a Dockerfile goes unchecked, said once in the status bar and
+  Problems' Containers tab as one opens with the setting on (`EngineChecks.Limited`, `EngineState.Limit`). A stopped
+  Podman is said as Podman, its socket or machine to start. So a compose file or a Dockerfile runs, debugs (two services
+  at once), Hot Reloads and profiles on Podman as on Docker (ContainerRunsTests, ContainerRunDebuggingTests,
+  ContainerProfilingTests and the Mcp container classes pass with Podman alone; through Docker's CLI all but those its
+  own test images held up, last run before `Docker.Load`). Still open on Podman: a service the debugger could not attach
+  to after its restart, which Stop then does not take down (both ways), and with Podman alone a service's Debug taking
+  the run down and tools from a downloaded release, or copied in for a build naming Windows paths, ending in "exec format
+  error" (ContainerServicesTests, ContainerDebuggingTests). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
+  relabelling (`:z`) or `label=disable`, untested on Ubuntu's AppArmor; rootless Docker, whose user mapping is the same
+  with no keep-id. Docker's CLI 29 `docker run` on Podman 5.7's socket makes a container of one process (pids.max 1;
+  Compose's get Podman's 2048), so the tests' own runs take `Docker.AnyPids`, their own builds `Docker.Load` (buildx's
+  BuildKit container keeps a build in its cache), and they compare an image Passenger tagged by its short name
+  (`Docker.Short`: Podman names one built here docker.io/library/…) and a command without Podman's init
+  (`Docker.WithoutInit`), read a published port however Compose words its address (":port" there), and take the
+  container's own log line over Buildah's echo of the CMD it builds. Every `docker rm -f` waits Podman's 10 s for a
+  container that ignores SIGTERM, where Docker kills at once.
 - `src/Passenger.App/Aspire` (#338): Aspire's AppHosts run with Passenger as their IDE. `AspireController`
   (`ProjectSession.Aspire`) owns the folder's AppHosts and the project resources their orchestrator asks the IDE to start,
   through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
@@ -778,8 +815,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
   WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
   `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
-  single-file `apphost.cs` (`AspireAppHosts.DiscoverFiles` over `PathNames.FoldersUnder`, no hidden or linked folder
-  entered), each a run configuration (`RunConfiguration.Aspire`, `LinkedAppHosts`). `AspireInteractions` is one
+  single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
+  files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#
+  file's head read as a walk first lists it and again only as the watcher says it changed, each a run configuration
+  (`RunConfiguration.Aspire`, `LinkedAppHosts`). `AspireInteractions` is one
   authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`, its C# checked in beside it): its resources,
   their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`), the display's streams followed only
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
@@ -797,12 +836,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   references them, prepared under the state's `aspire-staging/` before any file is written, as one command of global
   undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
   reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
-  it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix worked out again
-  as it is applied (`AspireReferenceFix`), resource names complete, `AddProject` goes to its project
-  (`AspireProjectDeclaration`), and Edit Configurations and the gutter's `AddProject` icons read the same resources
-  (`AspireRunResources`). An agent's `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a
-  resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each
-  resource's target, and `aspire_telemetry` reads their logs and traces.
+  it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
+  own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
+  actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
+  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`), and Edit Configurations and the gutter's
+  `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
+  open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
+  key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
+  references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
+  an AppHost's and a service's ask the extension, a service's pull adds its Aspire warnings, an AppHost's edit pulls its
+  open services' again, and any other file's typing pause, completion, actions and declarations cost Aspire nothing
+  (AspireCodeHelpTests holds a pause to it by what it allocates). An agent's `run`, `debug_start`, `debug_attach`,
+  `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name` (`PassengerTools.Aspire.cs`), `workspace`
+  lists the AppHosts running with each resource's target, and `aspire_telemetry` reads their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -1022,7 +1068,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   another process over the same state (an agent's `--mcp`) writes to it too: each append, each prune (from its read of the
   log to its last delete) and each reused blob's touch holds `localHistory/changes.lock` against that process (waited for
   on the history's queue, 10 s at most). `Workspace/FolderWalk`, beside `IgnoredFolders`, is the open folder's one walk
-  (Go to File's index, Local History, a folder's projects, `TestFinder`, the XAML class lookup), passing over hidden
+  (Go to File's index, whose walks the single-file AppHosts are found among, Local History, a folder's projects,
+  `TestFinder`, the XAML class lookup), passing over hidden
   folders only where it looks for what projects build, as MSBuild's globs do. `LocalHistoryView` is the tool
   window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
 - `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
@@ -1884,8 +1931,9 @@ Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpWpfAp
 `PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
 the self-contained one at the tests' own target, whose runtime pack for this system the tests' project downloads
 (`Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)` at the SDK's bundled version), so its restore finds it
-in the package cache. `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
-a callback from List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
+in the package cache. `DecompiledSymbolsTests` and `DecompiledSymbolsTimingTests` (Alone: the session's answers during a
+decompile) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in a callback from
+List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
 (`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
@@ -1968,9 +2016,12 @@ what it tests to a time, and those that work in its Sum project given `RestoredF
 `McpTests` starts `Passenger --mcp` and works a project through it, `McpDebuggingTests` debugs it there (with the tool
 list's size and a long call's progress), `McpWindowTests` and `McpAttachTests` attach to a window with
 `--mcp-attach` (its sockets in the folder named for the run's `PASSENGER_SETTINGS`) and change what the window shows,
-once it lets them in and the person answers its questions, and `McpProcessesTests`, `McpIdeTests`,
-`McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`, `McpSessionsTests` and the container classes take the
-rest by what the tools reach; each checks a tool's answer, leaving the window's own steps to the window's tests.
+once it lets them in and the person answers its questions (`McpWindowDebuggingTests` where an agent debugs there or
+what it tests is held to a time, as `McpAttachTimingTests` hold the joins and calls given up), and `McpProcessesTests`
+(`McpBuildNodesTests` for the MSBuild nodes a build leaves, which the machine's other builds would sway), `McpIdeTests`
+(`McpIdeProfilingTests` for Attach Profiler's samples), `McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`,
+`McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving
+the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
 client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
 (headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through

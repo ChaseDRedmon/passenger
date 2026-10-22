@@ -597,11 +597,7 @@ public sealed class CSharpService : IAsyncDisposable
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             EventHandler onLoaded = (_, _) => loaded.TrySetResult();
             EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.ColoursMoved()));
-            EventHandler onDiagnostics = (_, _) => UiThread.Post(() =>
-            {
-                AspireVersion++;
-                Each(document => document.RefreshDiagnostics());
-            });
+            EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
             // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
             EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
             EventHandler<string> onExited = (_, _) => UiThread.Post(() => OnExited(started));
@@ -1002,22 +998,21 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    internal int AspireVersion { get; private set; }
-    internal event EventHandler? AspireGraphInvalidated;
+    /// <summary>What a C# file is to Aspire (the session's <see cref="Aspire.AspireFiles.RoleOf"/>): only an AppHost's and a
+    /// service's ask Passenger's extension for Aspire's help; none for a service started without a session.</summary>
+    public Func<string, Aspire.AspireRole>? AspireRoleOf { get; init; }
 
-    internal void AspireGraphChanged()
+    /// <summary>An AppHost's text changed, so its graph may have: each open service file's Aspire warnings go and are pulled
+    /// again, no other file's.</summary>
+    internal void AspireGraphChanged() => Each(document =>
     {
-        AspireVersion++;
-        Each(document => document.AspireChanged());
-        AspireGraphInvalidated?.Invoke(this, EventArgs.Empty);
-    }
+        if (document.AspireRole == Aspire.AspireRole.Service)
+        {
+            document.AspireChanged();
+        }
+    });
 
-    private void RefreshAll()
-    {
-        AspireVersion++;
-        Each(document => document.Refresh());
-        AspireGraphInvalidated?.Invoke(this, EventArgs.Empty);
-    }
+    private void RefreshAll() => Each(document => document.Refresh());
 
     private void Each(Action<CSharpDocument> act)
     {

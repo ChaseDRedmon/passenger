@@ -161,11 +161,9 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         semantic.Refreshed();
     }
 
-    public void RefreshDiagnostics()
-    {
-        ClearAspireDiagnostics();
-        Pull(TimeSpan.Zero);
-    }
+    /// <summary>The server's word that diagnostics may have changed: asked for again, Aspire's warnings with them, whose
+    /// answer replaces those shown.</summary>
+    public void RefreshDiagnostics() => Pull(TimeSpan.Zero);
 
     public void Dispose()
     {
@@ -201,7 +199,12 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
                 Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: h.Kind == InlayHintKind.Type),
             })];
         }
-        service.AspireGraphChanged();
+        Pull(Settle);
+        // An AppHost's edit may change what its services are told is missing; any other file's changes only its own.
+        if (AspireRole == Aspire.AspireRole.AppHost)
+        {
+            service.AspireGraphChanged();
+        }
     }
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
@@ -215,18 +218,17 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    /// <summary>The file's diagnostics with Aspire's for an AppHost (<see cref="AspireDiagnosticsAsync"/>), then its inlay
-    /// hints, each for the text as it stands.</summary>
+    /// <summary>The file's diagnostics, with Aspire's for a service's file (<see cref="AspireDiagnosticsAsync"/>), then its
+    /// inlay hints, each for the text as it stands. A later pull (an AppHost's edit, the server's refresh) cancels this one.</summary>
     private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
-        int graphVersion = service.AspireVersion;
         if (await diagnostics.PulledAsync(lsp, cancel) is not { } found)
         {
             return;
         }
         int version = document.Text.Version;
-        IReadOnlyList<Diagnostic> aspire = await AspireDiagnosticsAsync(lsp, cancel);
-        if (cancel.IsCancellationRequested || version != document.Text.Version || graphVersion != service.AspireVersion || Lsp != lsp)
+        IReadOnlyList<Diagnostic> aspire = AspireRole == Aspire.AspireRole.Service ? await AspireDiagnosticsAsync(lsp, cancel) : [];
+        if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
         {
             return;
         }
