@@ -18,7 +18,8 @@ public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Wo
 
 /// <summary>The Containers window: the engine's Compose projects with their services and containers (stopped ones still
 /// listed), then every other container (Testcontainers' apart), images, volumes and networks, each row with its state,
-/// health, ports (links) and image; and the chosen container's Log, Stats and Files, or a project's merged Log and Stats.
+/// health, ports (links) and image; and the chosen container's Log, Stats, Files and Details (a service's its container's),
+/// or a project's merged Log and Stats.
 /// It asks the engine only while shown: its lists once, then again as the engine's events say something changed; a
 /// container's log and stats stream only while their tab is shown. Its toolbar's buttons run the window's actions.</summary>
 public sealed class ContainersView : DockPanel
@@ -26,6 +27,7 @@ public sealed class ContainersView : DockPanel
     private const string LogTab = "Log";
     private const string StatsTab = "Stats";
     private const string FilesTab = "Files";
+    private const string DetailsTab = "Details";
 
     private readonly ContainersParts parts;
     private readonly ListBox list;
@@ -52,6 +54,7 @@ public sealed class ContainersView : DockPanel
         Log = new ContainerLogPane(parts.Engine);
         Stats = new ContainerStatsPane(parts.Engine);
         Files = new ContainerFilesPane(parts.Engine, parts.StateFolder);
+        Details = new ContainerDetailsPane(parts.Engine, parts.Browse, () => State?.Endpoint);
         Log.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
 
         StackPanel tools = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -113,9 +116,10 @@ public sealed class ContainersView : DockPanel
         nothingChosen = new TextBlock { Classes = { "emptyText" }, Text = "Choose a container or a Compose project to see its log and stats" };
 
         StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
-        foreach (string name in (string[])[LogTab, StatsTab, FilesTab])
+        foreach (string name in (string[])[LogTab, StatsTab, FilesTab, DetailsTab])
         {
             ToggleButton tab = ToolTabs.Tab(name, name == shownTab);
+            tab.Name = $"containers{name}Tab";
             tab.Click += (_, _) => ShowTab(name);
             tabs[name] = tab;
             strip.Children.Add(tab);
@@ -148,6 +152,8 @@ public sealed class ContainersView : DockPanel
 
     public ContainerFilesPane Files { get; }
 
+    public ContainerDetailsPane Details { get; }
+
     /// <summary>What the engine held at the last read.</summary>
     public ContainerSnapshot Snapshot { get; private set; } = ContainerSnapshot.Empty;
 
@@ -163,7 +169,7 @@ public sealed class ContainersView : DockPanel
     /// <summary>The row chosen, which the window's actions act on.</summary>
     public ContainerRow? Chosen => list.SelectedItem as ContainerRow;
 
-    /// <summary>The detail tab shown: Log, Stats or Files.</summary>
+    /// <summary>The detail tab shown: Log, Stats, Files or Details.</summary>
     public string ShownTab => shownTab;
 
     /// <summary>Chooses a row by its key, as a click would.</summary>
@@ -236,6 +242,7 @@ public sealed class ContainersView : DockPanel
         following = null;
         Log.Stop();
         Stats.Stop();
+        Details.Show(null);
     }
 
     /// <summary>Reads the engine's state and what it holds again, off the UI thread; the rows follow, the one chosen kept.</summary>
@@ -383,15 +390,17 @@ public sealed class ContainersView : DockPanel
         Fill();
     }
 
-    /// <summary>The chosen row's details: a container's Log, Stats and Files, a project's or service's Log and Stats, nothing
-    /// for the rest; streamed only while shown.</summary>
+    /// <summary>The chosen row's details: a container's Log, Stats, Files and Details, a service's Log, Stats and its
+    /// container's Details, a project's Log and Stats, nothing for the rest; streamed only while shown.</summary>
     private void ShowChosen()
     {
         ContainerRow? row = Chosen;
         bool container = row?.Container is not null;
+        bool detailed = row is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } && row.Containers.Count > 0;
         bool streams = shown && row is { Kind: ContainerRowKind.Project or ContainerRowKind.Service or ContainerRowKind.Container };
         tabs[FilesTab].IsVisible = container;
-        if (shownTab == FilesTab && !container)
+        tabs[DetailsTab].IsVisible = detailed;
+        if ((shownTab == FilesTab && !container) || (shownTab == DetailsTab && !detailed))
         {
             shownTab = LogTab;
         }
@@ -406,11 +415,13 @@ public sealed class ContainersView : DockPanel
         {
             StatsTab => Stats,
             FilesTab => Files,
+            DetailsTab => Details,
             _ => Log,
         };
         Log.Show(streams && shownTab == LogTab ? row : null);
         Stats.Show(streams && shownTab == StatsTab ? row : null);
         Files.Show(streams && shownTab == FilesTab ? row : null);
+        Details.Show(streams && shownTab == DetailsTab ? row : null);
     }
 
     /// <summary>Runs an action's command on a row as the window's one action of that id under way, the status bar saying
@@ -499,9 +510,7 @@ public sealed class ContainersView : DockPanel
         StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center, [DockProperty] = Dock.Right };
         if (row.Kind is ContainerRowKind.Service or ContainerRowKind.Container && containers.Select(c => c.Health).FirstOrDefault(h => h is not null) is { } health)
         {
-            TextBlock said = new() { Text = health, FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
-            said.Bind(TextBlock.ForegroundProperty, said.GetResourceObservable(health == "healthy" ? "Passenger.Test.Passed" : health == "unhealthy" ? "Passenger.Error" : "Passenger.Warning"));
-            right.Children.Add(new Border { Classes = { "tag" }, Padding = new Thickness(5, 0), VerticalAlignment = VerticalAlignment.Center, Child = said });
+            right.Children.Add(ContainerDetailsPane.HealthTag(health));
         }
         if (row.Kind is ContainerRowKind.Service or ContainerRowKind.Container)
         {

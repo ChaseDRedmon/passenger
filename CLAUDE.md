@@ -501,12 +501,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
   again), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
-  streamed only while its tab shows) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
+  streamed only while its tab shows), Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
+  as it is chosen and as the window reads the engine again, in framed tables with one column of names: state, restarts and
+  last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
+  mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
   -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
   there; what a container says is never trusted: a listed name with a slash, `.` or `..` is no file's and is dropped, a
   copy's place is refused unless it is under the container's folder of the cache (links resolved), the tar is read as it
   comes and a file over 16 MB refused at its header, the copy written beside its place and renamed over it, and a copy
-  opened again, as Inspect's is, takes its new text in the tab it has, `MainWindow.OpenCopy`). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
+  opened again, as Inspect's is, takes its new text in the tab it has, `MainWindow.OpenCopy`). A container's secrets
+  (`ContainerSecrets`: a variable `ComposeCheck.Secret` names one, a URL's password, a connection string's part so named)
+  show masked in Details and in Inspect's JSON, whose copy is written masked. Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
   Remove ask first; a project's Remove is `down`, its volumes kept, and `container_action` reaches no volume or image.
   The status bar and Problems' Containers tab say the engine's problem, the link starting Docker Desktop where it is
   installed; a test run of a project referencing a `Testcontainers*` package asks the engine first
@@ -543,8 +548,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
   run).
-  Its tests (`ContainersTests`, `McpTests.Containers.cs`, `EngineChecksTests`; not `ContainerConfigurationsTests`, which
-  need no engine) skip saying why unless `docker info`'s
+  Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpTests.Containers.cs`, `EngineChecksTests`; not
+  `ContainerConfigurationsTests`, which need no engine) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
   busybox and Compose files they write, and never prune or start or stop Docker Desktop: an engine that stops and starts
   again, or has no Compose v2, is `ContainersTests.StandInEngine`'s, a shell script (so skipped on Windows) whose `state`

@@ -214,7 +214,8 @@ public partial class MainWindow
             [.. project.Arguments, "up", "-d", "--no-recreate", "--scale", $"{service.Service}={count}", "--", service.Service!]);
     }
 
-    /// <summary>Inspect: what the engine says of a container, image, volume or network, as JSON in a read-only tab.</summary>
+    /// <summary>Inspect: what the engine says of a container, image, volume or network, as JSON in a read-only tab, each
+    /// secret's value in its environment masked (<see cref="ContainerSecrets"/>), so no copy of it is written to disk.</summary>
     private async Task InspectAsync(ContainerRow row)
     {
         IReadOnlyList<string> words = row.Container is { } container ? ["inspect", container.Id]
@@ -231,9 +232,10 @@ public partial class MainWindow
         {
             try
             {
-                JsonElement said = await engine.JsonAsync(words);
+                System.Text.Json.Nodes.JsonNode? said = System.Text.Json.Nodes.JsonNode.Parse((await engine.JsonAsync(words)).GetRawText());
+                ContainerSecrets.Mask(said);
                 Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
-                await File.WriteAllTextAsync(copy, JsonSerializer.Serialize(said, new JsonSerializerOptions { WriteIndented = true }) + "\n");
+                await File.WriteAllTextAsync(copy, said?.ToJsonString(Inspected) + "\n");
                 return null;
             }
             catch (Exception failed) when (failed is ContainerCommandException or TimeoutException or JsonException or IOException)
@@ -248,6 +250,9 @@ public partial class MainWindow
         }
         OpenCopy(copy);
     }
+
+    /// <summary>Inspect's JSON as it reads: indented, its characters (a masked secret's dots, an image's names) as they are.</summary>
+    private static readonly JsonSerializerOptions Inspected = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>Opens a copy Passenger wrote under its cache (a container's file, Inspect's JSON), read-only as every such
     /// copy is: a tab that shows it already takes the copy's new text, which no watcher reports outside the folder.</summary>
