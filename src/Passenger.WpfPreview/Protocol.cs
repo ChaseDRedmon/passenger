@@ -77,8 +77,4 @@ public static class WpfPreviewJson
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
-
-    /// <summary>The variable that has WPF keep each element's place in its XAML (VisualDiagnostics.GetXamlSourceInfo),
-    /// which is how a box knows its element.</summary>
-    public const string SourceInfoVariable = "ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO";
 }

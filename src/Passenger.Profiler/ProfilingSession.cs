@@ -141,7 +141,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         {
             start.Environment[key] = value;
         }
-        start.Environment["DOTNET_DiagnosticPorts"] = $"{port},suspend";
+        start.Environment[RuntimeVariables.DiagnosticPorts] = $"{port},suspend";
         Process process;
         try
         {
@@ -197,7 +197,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         try
         {
             // The port is the program's alone; what it starts runs freely.
-            client.SetEnvironmentVariable("DOTNET_DiagnosticPorts", string.Empty);
+            client.SetEnvironmentVariable(RuntimeVariables.DiagnosticPorts, string.Empty);
             session = await client.StartEventPipeSessionAsync(Providers, requestRundown: true, circularBufferMB: 512, cancellation);
             Task copying = Copy(session, trace);
             client.ResumeRuntime();

@@ -112,11 +112,11 @@ internal sealed class WpfPreviewHost : IPreviewHost
         }
         arguments.AddRange([Previewer, "--assembly", assembly]);
         ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments, shadow);
-        start.Environment[WpfPreviewJson.SourceInfoVariable] = "1";
+        start.Environment[RuntimeVariables.XamlDiagnosticsSourceInfo] = "1";
         if (own)
         {
             // Its own configuration rolls forward to the newest runtime, which a project on a preview of .NET needs.
-            start.Environment["DOTNET_ROLL_FORWARD_TO_PRERELEASE"] = "1";
+            start.Environment[RuntimeVariables.RollForwardToPrerelease] = "1";
         }
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;

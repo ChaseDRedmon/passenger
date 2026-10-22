@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.TestFrames;
 
 namespace Passenger.App.Testing;
@@ -23,11 +24,10 @@ internal static class TestFrames
     /// IDE's own environment name after it.</summary>
     public static IReadOnlyDictionary<string, string> With(IReadOnlyDictionary<string, string> environment)
     {
-        string? others = environment.TryGetValue(Variables.StartupHooks, out string? given) ? given : Environment.GetEnvironmentVariable(Variables.StartupHooks);
         return new Dictionary<string, string>(environment)
         {
             [Variables.Frames] = "1",
-            [Variables.StartupHooks] = others is { Length: > 0 } ? $"{HookPath}{Path.PathSeparator}{others}" : HookPath,
+            [RuntimeVariables.StartupHooks] = StartupHooks.First(environment, HookPath),
         };
     }
 }

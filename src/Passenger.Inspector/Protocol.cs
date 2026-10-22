@@ -32,19 +32,8 @@ public static class Wire
     /// <see cref="Request.Overlays"/> names them, joined by commas.</summary>
     public const string OverlaysVariable = "PASSENGER_INSPECTOR_OVERLAYS";
 
-    /// <summary>The runtime's list of startup hooks, which loads the inspector before the app's Main.</summary>
-    public const string StartupHooks = "DOTNET_STARTUP_HOOKS";
-
     /// <summary>A WPF app's environment: the launched project's folder, where its XAML is when its build's symbols do not say.</summary>
     public const string ProjectVariable = "PASSENGER_INSPECTOR_PROJECT";
-
-    /// <summary>A WPF app's environment, set to 1: WPF then records where in its XAML each object was made (its
-    /// VisualDiagnostics.GetXamlSourceInfo) and raises BindingDiagnostics.BindingFailed, as Visual Studio has it for a run it
-    /// starts. WPF reads it as it first loads XAML, so it stays in the app's environment.</summary>
-    public const string XamlSourceInfoVariable = "ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO";
-
-    /// <summary>The Avalonia the inspector is built for; an app on another major version is refused, saying which it has.</summary>
-    public const int AvaloniaMajor = 12;
 
     public const string Tree = "tree";
     public const string Details = "details";

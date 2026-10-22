@@ -280,9 +280,6 @@ public static class ContainerPlans
         return needed;
     }
 
-    /// <summary>What holds a .NET service at its runtime's start until a debugger attaches and lets it go.</summary>
-    public const string HeldVariable = "DOTNET_DefaultDiagnosticPortSuspend";
-
     /// <summary>The tag of an SDK container's image Passenger has the SDK make, as deployed.</summary>
     public const string SdkImageTag = "passenger";
 
@@ -556,11 +553,11 @@ public static class ContainerPlans
                 }
                 if (held.Contains(service.Name))
                 {
-                    environment[HeldVariable] = "1";
+                    environment[RuntimeVariables.DefaultDiagnosticPortSuspend] = "1";
                 }
                 if (modifiable.Contains(service.Name))
                 {
-                    environment["DOTNET_MODIFIABLE_ASSEMBLIES"] = "debug";
+                    environment[RuntimeVariables.ModifiableAssemblies] = "debug";
                 }
                 if (Serves(service) && certificate is { } exported)
                 {

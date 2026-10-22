@@ -433,7 +433,8 @@ public static class ContainerTools
     /// program: the tools' own runtime would hold at its start too, waiting for a debugger never coming, or load the
     /// program's startup hooks. Cleared for every command of theirs.</summary>
     private static readonly string[] Unheld =
-        ["-e", "DOTNET_DefaultDiagnosticPortSuspend=0", "-e", "DOTNET_DiagnosticPorts=", "-e", "DOTNET_STARTUP_HOOKS=", "-e", "DOTNET_MODIFIABLE_ASSEMBLIES="];
+        ["-e", $"{RuntimeVariables.DefaultDiagnosticPortSuspend}=0", "-e", $"{RuntimeVariables.DiagnosticPorts}=", "-e", $"{RuntimeVariables.StartupHooks}=",
+            "-e", $"{RuntimeVariables.ModifiableAssemblies}="];
 
     /// <summary>The adapter's command in a container, over docker exec's standard input and output: the IDE's evaluation
     /// limit given it as the IDE's own adapter has it.</summary>

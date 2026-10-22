@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Debugger;
 using Passenger.Debugger.Models;
@@ -379,7 +380,7 @@ public sealed partial class DebugAdapter
             if (hotReload)
             {
                 // The runtime's own switch for code that may change, as dotnet watch sets it; a launch's own is kept.
-                environment.TryAdd("DOTNET_MODIFIABLE_ASSEMBLIES", "debug");
+                environment.TryAdd(RuntimeVariables.ModifiableAssemblies, "debug");
             }
             LaunchInfo launch = new()
             {
@@ -555,7 +556,7 @@ public sealed partial class DebugAdapter
         Dictionary<string, string> env = new(launch.Env)
         {
             // The program waits at startup for the debugger to attach and let it go.
-            ["DOTNET_DefaultDiagnosticPortSuspend"] = "1",
+            [RuntimeVariables.DefaultDiagnosticPortSuspend] = "1",
         };
         RunInTerminalArguments arguments = new(
             launch.LaunchRequestConsoleType switch

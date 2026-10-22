@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Sockets;
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.Core;
 
 namespace Passenger.Profiler;
 
@@ -44,7 +45,7 @@ public static class InContainer
                 try
                 {
                     // What it starts runs freely, as a program the profiler starts on this machine leaves its children.
-                    client.SetEnvironmentVariable("DOTNET_DefaultDiagnosticPortSuspend", "0");
+                    client.SetEnvironmentVariable(RuntimeVariables.DefaultDiagnosticPortSuspend, "0");
                 }
                 catch (Exception error) when (error is DiagnosticsClientException or IOException)
                 {

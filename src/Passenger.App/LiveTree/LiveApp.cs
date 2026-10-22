@@ -73,11 +73,11 @@ public sealed class LiveApp : IDisposable
             Dictionary<string, string> environment = new(plan.Environment)
             {
                 [Wire.SocketVariable] = socket,
-                [Wire.StartupHooks] = Hooks(plan, kind == LiveAppKind.Wpf ? WpfInspectorPath : InspectorPath),
+                [RuntimeVariables.StartupHooks] = StartupHooks.First(plan.Environment, kind == LiveAppKind.Wpf ? WpfInspectorPath : InspectorPath),
             };
             if (kind == LiveAppKind.Wpf)
             {
-                environment[Wire.XamlSourceInfoVariable] = "1";
+                environment[RuntimeVariables.XamlDiagnosticsSourceInfo] = "1";
                 if (plan.Project is { } project)
                 {
                     environment[Wire.ProjectVariable] = Path.GetDirectoryName(project)!;
@@ -284,14 +284,6 @@ public sealed class LiveApp : IDisposable
             return null;
         }
         return (socket, listener);
-    }
-
-    /// <summary>The inspector first among the program's startup hooks, those its configuration or the IDE's environment
-    /// name after it.</summary>
-    private static string Hooks(LaunchPlan plan, string inspector)
-    {
-        string? others = plan.Environment.TryGetValue(Wire.StartupHooks, out string? given) ? given : Environment.GetEnvironmentVariable(Wire.StartupHooks);
-        return others is { Length: > 0 } ? $"{inspector}{Path.PathSeparator}{others}" : inspector;
     }
 
     /// <summary>The app's windows and their visual trees.</summary>

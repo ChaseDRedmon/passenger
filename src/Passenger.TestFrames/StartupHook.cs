@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.Loader;
+using Passenger.Core;
 using Passenger.TestFrames;
 
 /// <summary>The runtime calls this before the test program's Main, as DOTNET_STARTUP_HOOKS names this assembly: only in a
@@ -44,12 +45,7 @@ internal static class StartupHook
     private static void Unlist()
     {
         Environment.SetEnvironmentVariable(Variables.Frames, null);
-        string self = typeof(StartupHook).Assembly.Location;
-        if (Environment.GetEnvironmentVariable(Variables.StartupHooks) is { Length: > 0 } hooks)
-        {
-            string[] others = [.. hooks.Split(Path.PathSeparator).Where(h => h.Length > 0 && !string.Equals(Path.GetFullPath(h), self, StringComparison.Ordinal))];
-            Environment.SetEnvironmentVariable(Variables.StartupHooks, others.Length == 0 ? null : string.Join(Path.PathSeparator, others));
-        }
+        StartupHooks.TakeOut(typeof(StartupHook).Assembly.Location);
     }
 
     /// <summary>Whether the program will load Avalonia 12, from the assemblies the runtime was given for it.</summary>
@@ -57,7 +53,7 @@ internal static class StartupHook
     {
         string? path = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string)?.Split(Path.PathSeparator)
             .FirstOrDefault(p => string.Equals(Path.GetFileName(p), "Avalonia.Base.dll", StringComparison.OrdinalIgnoreCase));
-        return path is not null && AssemblyName.GetAssemblyName(path).Version?.Major == Variables.AvaloniaMajor;
+        return path is not null && AssemblyName.GetAssemblyName(path).Version?.Major == StartupHooks.AvaloniaMajor;
     }
 }
 
