@@ -114,6 +114,31 @@ public static class AppActions
     public const string FindNext = "app.findNext";
     public const string FindPrevious = "app.findPrevious";
     public const string FocusExplorer = "app.focusExplorer";
+
+    // The Explorer's own actions, on the row its menu opened on or the one chosen while it has the keys: Rider's Project
+    // view's NewFile, NewDir, Class/Interface, the solution's own (New Solution Folder, Existing Project, Existing Item),
+    // Add Reference, Docker Support and Compose, NuGet, Edit Project File, Unload and Reload Project, Compare Files
+    // (CompareTwoFiles, off macOS sharing the editor's Duplicate keys), Copy Path (CopyPaths), Reveal in Finder (RevealIn)
+    // and Open in Terminal. Rename and Delete are Rename's and the editor's Delete, as Rider's RenameElement and $Delete are one
+    // action wherever they are pressed.
+    public const string NewFile = "app.explorer.newFile";
+    public const string NewFolder = "app.explorer.newFolder";
+    public const string NewType = "app.explorer.newType";
+    public const string NewSolutionFolder = "app.explorer.newSolutionFolder";
+    public const string AddExistingProject = "app.explorer.addExistingProject";
+    public const string AddExistingItem = "app.explorer.addExistingItem";
+    public const string AddReference = "app.explorer.addReference";
+    public const string AddDockerSupport = "app.explorer.addDockerSupport";
+    public const string AddDockerCompose = "app.explorer.addDockerCompose";
+    public const string ManageNuGet = "app.explorer.manageNuGet";
+    public const string EditProjectFile = "app.explorer.editProjectFile";
+    public const string UnloadProject = "app.explorer.unloadProject";
+    public const string ReloadProject = "app.explorer.reloadProject";
+    public const string CompareFiles = "app.explorer.compareFiles";
+    public const string CopyPath = "app.explorer.copyPath";
+    public const string RevealInFileManager = "app.explorer.reveal";
+    public const string OpenInTerminal = "app.explorer.openInTerminal";
+
     public const string Build = "app.build";
     public const string RebuildSolution = "app.build.rebuildSolution";
     public const string CleanSolution = "app.build.cleanSolution";
@@ -416,6 +441,10 @@ public static class AppActions
                 .Bind(FindNext, "F3", "meta alt PAGE_DOWN")
                 .Bind(FindPrevious, "shift F3", "meta alt PAGE_UP")
                 .Bind(FocusExplorer, "meta 1", "meta alt L")
+                // Rider's CopyPaths and CompareTwoFiles, $default's Ctrl+Shift+C and Ctrl+D as Mac OS X 10.5+ takes them (its
+                // Duplicate is Ctrl+D here, Windows' Ctrl+D the editor's Duplicate, which Compare Files shares there); RevealIn has none.
+                .Bind(CopyPath, "meta shift C")
+                .Bind(CompareFiles, "meta D")
                 .Bind(Build, "meta shift B")
                 .Bind(RunProgram, "control F5")
                 .Bind(Debug, "alt F5")
@@ -537,6 +566,7 @@ public static class AppActions
             .Bind(FindNext, "F3", "control alt PAGE_DOWN")
             .Bind(FindPrevious, "shift F3", "control alt PAGE_UP")
             .Bind(FocusExplorer, "alt 1", "control alt L")
+            .Bind(CopyPath, "control shift C")
             .Bind(Build, "control shift B")
             .Bind(RunProgram, "control F5")
             .Bind(Debug, "alt F5")
@@ -662,6 +692,8 @@ public static class AppActions
                 // Its third, Cmd+Shift+F5, is VS Code's Restart, Rerun here.
                 .Bind(FindPrevious, "meta shift G", "shift F3")
                 .Bind(FocusExplorer, "meta shift E")
+                .Bind(CopyPath, "meta alt C", "meta K , P")
+                .Bind(RevealInFileManager, "meta K , R", "meta alt R")
                 .Bind(Build, "meta shift B")
                 .Bind(RunProgram, "control F5")
                 .Bind(Stop, "shift F5")
@@ -767,6 +799,8 @@ public static class AppActions
             .Bind(FindNext, "F3", "control K , control D")
             .Bind(FindPrevious, "shift F3", "control shift F3")
             .Bind(FocusExplorer, "control shift E")
+            .Bind(CopyPath, "shift alt C", "control K , P")
+            .Bind(RevealInFileManager, "shift alt R", "control K , R")
             .Bind(Build, "control shift B")
             .Bind(RunProgram, "control F5")
             .Bind(Stop, "shift F5")

@@ -350,9 +350,9 @@ public sealed partial class CodeAssist
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
         Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
             new("Refactor", 0, 0), xaml: true);
-        // IntelliJ's RefactoringMenu: Rename and Change Signature, the Extract and Introduce actions, Inline; Move and Safe
-        // Delete; Pull Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
-        Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0), xaml: true);
+        // IntelliJ's RefactoringMenu: Rename (the window's, Rider's RenameElement, an Explorer row's too: Rename and
+        // WhyNotRename here) and Change Signature, the Extract and Introduce actions, Inline; Move and Safe Delete; Pull
+        // Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
         Code(AppActions.ChangeSignature, "Change Signature...", context => _ = ChangeSignature(), new("Refactor", 1, 1));
         Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
             new("Refactor", 1, 2));
@@ -399,6 +399,12 @@ public sealed partial class CodeAssist
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
+
+    /// <summary>Rename at the editor's caret: a C# symbol through the server, a XAML name of its own.</summary>
+    public void Rename() => ShowRename();
+
+    /// <summary>Why Rename cannot run at the editor's caret; null when it can.</summary>
+    public string? WhyNotRename(ActionContext context) => WhyNot(context, server: true, xaml: true);
 
     /// <summary>Quick Documentation: the card for what is at the caret (its problems, a paused program's value, the symbol's
     /// description); pressed again while a value's card shows, the card takes the keys, its rows to open with the arrows.</summary>

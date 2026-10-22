@@ -281,7 +281,7 @@ public sealed class LocalHistoryTests : IDisposable
 
         // The folder's history from its row: its files' changes only, the newest first.
         RightClick(window, Show(window, Path.Combine(folder, "src")));
-        ChooseFromMenu(window, null, "Show Local History");
+        ChooseFromMenu(window, "Local History", "Show History...");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Assert.Equal("src", window.LocalHistoryWindow.Titles.Single());
         Ui.Landed(() => history.Rows.Count == 3, "A.cs's save, B.cs's save and B.cs's deletion");
@@ -323,7 +323,7 @@ public sealed class LocalHistoryTests : IDisposable
         Save(window, 6, 8, "count++; ");
 
         RightClick(window, Show(window, purchase));
-        ChooseFromMenu(window, null, "Show Local History");
+        ChooseFromMenu(window, "Local History", "Show History...");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 3, "the saves under both names and the rename between them");
         Assert.Equal(["Change", "Rename Order.cs to Purchase.cs", "Change"], history.Rows.Select(r => r.Title));
@@ -365,7 +365,7 @@ public sealed class LocalHistoryTests : IDisposable
 
         // Its first version is what it held before the edit made it anew.
         RightClick(window, Show(window, notes));
-        ChooseFromMenu(window, null, "Show Local History");
+        ChooseFromMenu(window, "Local History", "Show History...");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count > 1, "the file's versions");
         history.Select(history.Rows[^1]);

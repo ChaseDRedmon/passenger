@@ -154,7 +154,7 @@ public sealed class SolutionFoldersTests : IDisposable
 
         // Rename, by its key.
         Choose(window, Row(window, NodeKind.SolutionFolder, "Tools"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         Edit(() => Name(window, "Utilities"));
         Assert.DoesNotContain(tree.Rows, r => r.Name == "Tools");
         // Each change reads the solution again, so the folder's row is a new one each time.
@@ -252,11 +252,11 @@ public sealed class SolutionFoldersTests : IDisposable
         }
         IEnumerable<string> ProjectFiles() => Directory.EnumerateFiles(projects, "*.csproj").Select(Path.GetFileName).Order(StringComparer.Ordinal)!;
 
-        // F2 on the project in its solution folder: the name box holds its name, and a new one renames its file.
+        // Rename's keys on the project in its solution folder: the name box holds its name, and a new one renames its file.
         Choose(window, Row(window, NodeKind.SolutionFolder, "src"));
         Ui.Press(window, "RIGHT");
         Choose(window, Row(window, NodeKind.Project, "Shop.Core"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         Passenger.App.Vcs.NamePopup popup = Assert.IsType<Passenger.App.Vcs.NamePopup>(window.Popup);
         Assert.Equal("Shop.Core", popup.Text);
         popup.Text = string.Empty;

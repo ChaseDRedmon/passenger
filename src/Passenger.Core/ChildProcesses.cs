@@ -359,39 +359,9 @@ public static class ChildProcesses
         }
     }
 
-    /// <summary>What an action that reveals a file calls the program it opens: the Finder, Explorer, or on Linux whichever
-    /// file manager the desktop has, which IntelliJ names "File Manager" when it cannot tell.</summary>
-    public static string FileManager { get; } = OperatingSystem.IsMacOS() ? "Finder" : OperatingSystem.IsWindows() ? "Explorer" : "File Manager";
-
-    /// <summary>Shows a file or folder in the Finder (in Explorer on Windows, its folder in the file manager elsewhere).
-    /// The file manager is the person's, not a child: it is never ended with the IDE.</summary>
-    public static void Reveal(string path)
-    {
-        try
-        {
-            if (OperatingSystem.IsMacOS())
-            {
-                Process.Start("open", ["-R", path])?.Dispose();
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                // Explorer reads its command line its own way: the comma and the quotes are its.
-                Process.Start("explorer.exe", $"/select,\"{path}\"")?.Dispose();
-            }
-            else
-            {
-                Process.Start("xdg-open", [Path.GetDirectoryName(path) ?? path])?.Dispose();
-            }
-        }
-        catch (Win32Exception)
-        {
-            // No file manager to ask.
-        }
-    }
-
-    /// <summary>Starts a program of the person's own that outlives whatever started it, as the file manager <see
-    /// cref="Reveal"/> opens does: the person's Passenger, which an agent's <c>--mcp-attach</c> starts on its folder when
-    /// none is running and the build is in no app bundle LaunchServices could open. A session of its own (never on the
+    /// <summary>Starts a program of the person's own that outlives whatever started it: the person's Passenger, which an
+    /// agent's <c>--mcp-attach</c> starts on its folder when none is running and the build is in no app bundle
+    /// LaunchServices could open. A session of its own (never on the
     /// watchdog's list, nor in a job), its input and output none of the starter's, which is an agent's protocol.</summary>
     public static void StartApart(ProcessStartInfo start)
     {

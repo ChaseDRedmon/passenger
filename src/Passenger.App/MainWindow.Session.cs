@@ -278,7 +278,7 @@ public partial class MainWindow
             {
                 if (session == next)
                 {
-                    Say(message, StatusPlace.Log);
+                    Say(message, LogPlace);
                 }
             };
             web.Message += (_, message) =>
@@ -406,7 +406,7 @@ public partial class MainWindow
             service.StateChanged += (_, _) => OutlineWhenUnseen();
             service.StateChanged += (_, _) => Structure.FollowServer();
             // Each stop is logged with why: the log is where to see more.
-            service.Stopped += (_, message) => Say(message, StatusPlace.Log);
+            service.Stopped += (_, message) => Say(message, LogPlace);
             service.Said += (_, said) => status.Say(said.Text, said.Severity, said.Problem is { } problem ? LoadProblemPlace(problem) : null);
             WatchProblems(service);
             service.FollowIndent(Editors.Active);

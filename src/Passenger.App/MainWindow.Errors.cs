@@ -12,7 +12,7 @@ public partial class MainWindow
         IdeErrors.Raised += OnIdeError;
         Closed += (_, _) => IdeErrors.Raised -= OnIdeError;
         ShowErrorCount();
-        actions!.Add(new IdeAction(AppActions.ShowLog, $"Show Log in {Core.ChildProcesses.FileManager}", "Help", _ => ErrorsPopup.ShowLog())
+        actions!.Add(new IdeAction(AppActions.ShowLog, $"Show Log in {FileManager.Name}", "Help", _ => ShowLog())
         {
             Menus = [new MenuPlace("Help", 1, 0)],
         });
@@ -42,6 +42,7 @@ public partial class MainWindow
     public ErrorsPopup ShowErrors()
     {
         ErrorsPopup popup = new(IdeErrors.Errors, IdeErrors.Unlisted);
+        popup.LogAsked += (_, _) => ShowLog();
         popup.Done += (_, _) =>
         {
             popups.Close();
@@ -49,5 +50,13 @@ public partial class MainWindow
         };
         popups.Show(popup);
         return popup;
+    }
+
+    /// <summary>Help, Show Log in Finder (Explorer on Windows): the log chosen in the logs folder.</summary>
+    public void ShowLog()
+    {
+        IdeErrors.Flush();
+        Directory.CreateDirectory(IdeErrors.LogFolder);
+        ShowInFileManager(File.Exists(IdeErrors.LogPath) ? IdeErrors.LogPath : IdeErrors.LogFolder);
     }
 }

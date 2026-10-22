@@ -75,7 +75,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             window.MouseDown(middle, MouseButton.Left);
             window.MouseUp(middle, MouseButton.Left);
             Ui.Settle();
-            Assert.Equal([landing], window.ShownFolders);
+            Assert.Equal([landing], window.ShownInFileManager);
         }
         finally
         {
@@ -273,7 +273,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal(BuildStatus.Failed, ended.Status);
             Assert.StartsWith("Publish failed: 1 error", window.Status, StringComparison.Ordinal);
             Assert.Contains(window.BottomPanel.Problems.Problems, p => p.Code == "CS0029");
-            Assert.True(ended.Published is null && window.ShownFolders.Count == 0, "A failed publish said where it landed");
+            Assert.True(ended.Published is null && window.ShownInFileManager.Count == 0, "A failed publish said where it landed");
             Assert.DoesNotContain("Published Hello", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
         }
         finally

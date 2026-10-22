@@ -371,6 +371,10 @@ public partial class MainWindow : Window
         }
         if (EditorWithKeys(window, focused) is not { } editor)
         {
+            if (!shifted && ExplorerTakes(action))
+            {
+                e.Handled = true;
+            }
             return;
         }
         bool own = editor == Editors.CodeEditor;

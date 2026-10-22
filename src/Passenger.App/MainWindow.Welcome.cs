@@ -30,6 +30,7 @@ public partial class MainWindow
         welcome.CloneRequested += (_, _) => Request(AppActions.CloneRepository);
         welcome.Chosen += (_, row) => OpenRecent(row.Path);
         welcome.RemoveRequested += (_, row) => ForgetRecent(row.Path);
+        welcome.RevealRequested += (_, row) => ShowInFileManager(row.Path);
         AddNewProjectActions();
         actions!.Add(new IdeAction(AppActions.OpenFolder, "Open Folder...", "IDE", context => _ = PickFolder()) { Menus = [new MenuPlace("File", 0, 1)] });
         actions.Add(new IdeAction(AppActions.CloneRepository, "Clone Repository...", "Git", _ => ShowCloneRepository())

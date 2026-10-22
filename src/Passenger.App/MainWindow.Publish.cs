@@ -39,7 +39,6 @@ public partial class MainWindow
             Words = ["Republish", "dotnet publish"],
             Works = A.Publish,
         });
-        Explorer.WhyNotPublish = project => Projects.FirstOrDefault(p => PathNames.Same(p.Path, project)) is { } model ? PublishProfiles.WhyNot(model) : "It is not one of the folder's projects";
     }
 
     /// <summary>The project Publish publishes: the one chosen in the Explorer or holding the file shown, else the solution's

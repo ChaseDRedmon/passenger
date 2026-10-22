@@ -32,7 +32,8 @@ public sealed record ProfilerParts(
     Func<int, long, bool> RevealControl,
     EditorArea Editors,
     Func<Task<DotnetProcess?>> ChooseInContainer,
-    Func<DotnetProcess, ContainerPaths, Action<string>, CancellationToken, Task<(DotnetProcess Target, ProfilePlace Place)>> InContainer);
+    Func<DotnetProcess, ContainerPaths, Action<string>, CancellationToken, Task<(DotnetProcess Target, ProfilePlace Place)>> InContainer,
+    Action<string> ShowInFileManager);
 
 /// <summary>The window's profiler, as Rider's: Profile builds and starts the chosen configuration under the sampling
 /// profiler (an Avalonia app with the inspector in it, which records its frames), or Attach Profiler profiles the program
@@ -97,7 +98,7 @@ public sealed class ProfilerCommands
         View.RevealSnapshotsRequested += (_, _) =>
         {
             Directory.CreateDirectory(SnapshotFolder);
-            ChildProcesses.Reveal(SnapshotFolder);
+            parts.ShowInFileManager(SnapshotFolder);
         };
         View.MemoryRequested += (_, _) => _ = MemorySnapshotAsync();
     }

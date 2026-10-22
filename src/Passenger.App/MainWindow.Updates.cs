@@ -363,7 +363,7 @@ public partial class MainWindow
         }
         else
         {
-            Say($"Passenger {installing} did not install: Help, Show Log says why", StatusPlace.Log);
+            Say($"Passenger {installing} did not install: Help, Show Log says why", LogPlace);
             IdeErrors.Write($"Updates: Passenger {installing} was to install as the last session ended, but this is {Product.Version}");
         }
     }
@@ -439,7 +439,7 @@ public partial class MainWindow
         }
         else if (UpdateShown is { } shown)
         {
-            _ = Launcher.LaunchUriAsync(notice == UpdateNotice.Downloading ? shown.Page : shown.Link);
+            Browse(notice == UpdateNotice.Downloading ? shown.Page : shown.Link);
         }
     }
 

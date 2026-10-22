@@ -96,7 +96,6 @@ public partial class MainWindow
     {
         actions = new ActionRegistry(Context, () => keys.Keymap, work);
         Dock.Actions = actions;
-        Explorer.Actions = actions;
         // The toolbar's buttons run their actions as their keys do, each showing its action's work while it is under way.
         foreach ((Button button, string id) in (ReadOnlySpan<(Button, string)>)[(BuildButton, A.Build), (RunButton, A.RunProgram), (DebugButton, A.Debug),
             (ProfileButton, A.Profile), (HotReloadButton, A.ApplyHotReloadChanges), (StopButton, A.Stop), (SearchButton, A.GoToEverything), (SettingsButton, A.ShowSettings)])
@@ -201,7 +200,9 @@ public partial class MainWindow
             actions!.Add(new IdeAction(id, title, "Editor", context => Edit(id, context))
             {
                 InEditor = true,
-                WhyNot = context => context.File is null && context.Focused is not (TextBox or CodeEditor) && !ExplorerEdits(id, context) ? NoFile : null,
+                WhyNot = context => ExplorerEdits(id, context) ? WhyNotOnRow(id, context)
+                    : context.File is null && context.Focused is not (TextBox or CodeEditor) ? NoFile : null,
+                TitleIn = id == E.Delete ? context => DeleteTitle(context) ?? title : null,
                 Menus = menus.GetValueOrDefault(id, []),
             });
         }
@@ -211,7 +212,7 @@ public partial class MainWindow
     {
         if (ExplorerEdits(action, context))
         {
-            ExplorerEdit(action);
+            ExplorerEdit(action, context);
             return;
         }
         switch (context.Focused)

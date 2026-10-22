@@ -209,11 +209,11 @@ public sealed class ExplorerFilesTests : IDisposable
         MainWindow window = Open();
         List<string> asked = Answer(window);
 
-        // F2 on the folder in the Solution view: the project removes the same files from where they went.
+        // Rename's keys on the folder in the Solution view: the project removes the same files from where they went.
         window.ExplorerView.Reveal(legacy);
         Ui.Settle();
         Choose(window, window.ExplorerView.Tree.Rows.First(r => r.Path == legacy));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Archive");
@@ -303,6 +303,117 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.Equal("namespace Shop.Models;\n\npublic class Order\n{\n    public int Total;\n}\n", document.Text.Snapshot.ToString());
         Assert.Equal(4, Assert.Single(window.Debugger.Breakpoints.In(purchase)).Line);
         window.Close();
+    }
+
+    /// <summary>The Explorer's menu and keys are the window's actions (#393), where its own copies ignored the keymap: a
+    /// row's Rename and Delete run from its menu and from the keys of the keymap chosen, Visual Studio's Ctrl+R, R (⌘R, R
+    /// on macOS) and Delete, VS Code's F2 and Delete, as Rider's RenameElement and $Delete are bound in each; F2 renames
+    /// nothing in Visual Studio's, where Rider gives it none. Open In's file manager shows the row's file there, as the one
+    /// way the IDE opens the file manager records it (headless, it opens nothing).</summary>
+    [AvaloniaFact]
+    public void The_explorers_rename_delete_and_reveal_run_from_its_menu_and_from_each_keymaps_keys()
+    {
+        foreach (string name in (string[])["One.txt", "Two.txt", "Three.txt", "Four.txt"])
+        {
+            File.WriteAllText(Path.Combine(folder, name), name);
+        }
+        MainWindow window = Open();
+        List<string> asked = Answer(window);
+        try
+        {
+            // From the row's menu.
+            ChooseFromMenu(window, Row(window, "One.txt"), "Edit", "Rename...");
+            Renamed(window, "Uno.txt");
+            ChooseFromMenu(window, Row(window, "Uno.txt"), "Edit", "Delete...");
+            Gone(window, "Uno.txt", "the delete from the row's menu");
+            ChooseFromMenu(window, Row(window, "Four.txt"), "Open In", FileManager.Name);
+            Assert.Equal([Row(window, "Four.txt").Path!], window.ShownInFileManager);
+
+            // By Visual Studio's keys.
+            Pick(window, Row(window, "Two.txt"));
+            Ui.Press(window, "F2");
+            Assert.False(window.Popup is NamePopup, "F2 renamed a row in Visual Studio's keymap, which gives Rename Ctrl+R, R");
+            Ui.Press(window, OperatingSystem.IsMacOS() ? "meta R , R" : "control R , R");
+            Renamed(window, "Dos.txt");
+            Pick(window, Row(window, "Dos.txt"));
+            Ui.Press(window, "DELETE");
+            Gone(window, "Dos.txt", "Delete in Visual Studio's keymap");
+
+            // By VS Code's.
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
+            Ui.Settle();
+            Pick(window, Row(window, "Three.txt"));
+            Ui.Press(window, "F2");
+            Renamed(window, "Tres.txt");
+            Pick(window, Row(window, "Tres.txt"));
+            Ui.Press(window, "DELETE");
+            Gone(window, "Tres.txt", "Delete in VS Code's keymap");
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VisualStudio });
+            window.Close();
+        }
+
+        void Renamed(MainWindow window, string name)
+        {
+            NamePopup popup = window.Popup as NamePopup ?? throw new Xunit.Sdk.XunitException($"No rename was asked for, to {name}: the status bar says '{window.Status}'");
+            popup.Text = string.Empty;
+            window.KeyTextInput(name);
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to {name} to finish: {popup.Problem}");
+            Assert.True(File.Exists(Path.Combine(folder, name)), $"Nothing was renamed {name}: {window.Status}");
+        }
+
+        void Gone(MainWindow window, string name, string what)
+        {
+            // The delete asks first, which Answer agrees to: nothing asked means the keys deleted nothing.
+            Ui.Settle();
+            Assert.True(window.Status?.StartsWith("Moved", StringComparison.Ordinal) == true || asked.Count > 0 && asked[^1] == "Delete",
+                $"{what} did not delete {name}: the status bar says '{window.Status}'");
+            asked.Clear();
+            Ui.WaitFor(() => Finished(window, "Moved"), $"{what} to move {name} to the Trash");
+            Assert.True(!File.Exists(Path.Combine(folder, name)) && File.Exists(Path.Combine(trash, name)), $"{what} left {name} out of the Trash: '{window.Status}'");
+        }
+    }
+
+    /// <summary>A file's row, opened to and chosen in the Explorer by its name in the folder.</summary>
+    private ExplorerNode Row(MainWindow window, string name)
+    {
+        string path = PathNames.Canonical(Path.Combine(folder, name));
+        window.ExplorerView.Reveal(path);
+        Ui.Settle();
+        return window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == path) ?? throw new InvalidOperationException($"The Explorer shows no row for {name}");
+    }
+
+    /// <summary>Chooses a row with the keys in the Explorer, as Focus Explorer and the arrows would: a click there, on the
+    /// place another row was just clicked at, would be a double click, which opens the file.</summary>
+    private static void Pick(MainWindow window, ExplorerNode row)
+    {
+        window.ExplorerView.Choose(row);
+        window.ExplorerView.FocusRows();
+        Ui.Settle();
+        Assert.True(window.Actions.Context().ToolWindow?.Id == "explorer", $"The Explorer did not take the keys on {row.Name}");
+    }
+
+    /// <summary>Opens a row's menu as a right click does and clicks an item of one of its submenus.</summary>
+    private static void ChooseFromMenu(MainWindow window, ExplorerNode row, string submenu, string item)
+    {
+        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
+        Control container = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
+        Point at = container.TranslatePoint(new Point(container.Bounds.Width / 2, container.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Right);
+        window.MouseUp(at, MouseButton.Right);
+        Ui.Settle();
+        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {row.Name}");
+        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
+            ?? throw new InvalidOperationException($"{row.Name}'s menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
+        MenuItem chosen = parent.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
+            ?? throw new InvalidOperationException($"{submenu} has no {item}: [{string.Join(", ", parent.Items.OfType<MenuItem>().Select(i => i.Header))}]");
+        Assert.True(chosen.IsEnabled, $"{submenu} > {item} is disabled: {ToolTip.GetTip(chosen)}");
+        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close();
+        Ui.Settle();
     }
 
     private MainWindow Open()

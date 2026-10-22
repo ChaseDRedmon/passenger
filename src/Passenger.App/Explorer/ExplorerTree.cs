@@ -689,6 +689,17 @@ public sealed class ExplorerNode : Observable
     /// <summary>A file or folder on disk that can be cut, copied or dragged, rather than a part of the solution.</summary>
     public bool IsMovable => Kind is NodeKind.Folder || Kind == NodeKind.File && !IsSolutionItem;
 
+    /// <summary>What Rename renames: what is on disk, but a file only the solution lists, and a solution folder.</summary>
+    public bool CanRename => Kind is NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder || Kind == NodeKind.File && !IsSolutionItem;
+
+    /// <summary>What Delete takes away: a file or folder to the Trash, or what is the solution's own out of it.</summary>
+    public bool CanRemove => Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder
+        || Kind == NodeKind.ProjectReference && Referenced is not null;
+
+    /// <summary>What Delete only takes out of the solution or its project, its files staying on disk, as Rider's Remove does:
+    /// a project, a solution folder, a file it lists, a project reference.</summary>
+    public bool LeavesFilesBehind => Kind is NodeKind.Project or NodeKind.SolutionFolder or NodeKind.ProjectReference || IsSolutionItem;
+
     public bool HasChildren => load is not null;
     public bool IsDirectory => Kind == NodeKind.Folder;
     public bool IsFile => Kind == NodeKind.File;

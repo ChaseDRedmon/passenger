@@ -36,10 +36,14 @@ public partial class MainWindow
             });
     }
 
-    /// <summary>What a file action runs on: the Explorer's one chosen row while the Explorer has the keys (a project's or
-    /// the solution's folder for theirs), else the file shown.</summary>
+    /// <summary>What a file action runs on: the Explorer's row its menu opened on, or its one chosen row while the Explorer
+    /// has the keys (a project's or the solution's folder for theirs), else the file shown.</summary>
     private static string? Target(ActionContext context, bool fileOnly)
     {
+        if (context.ExplorerRow is { } row)
+        {
+            return Target(row, fileOnly);
+        }
         if (context.ToolWindow?.Id != "explorer")
         {
             return context.File?.Path;
@@ -223,26 +227,5 @@ public partial class MainWindow
         TextSnapshot text = mine.Snapshot;
         FileDiff diff = await BackgroundWork.Run(() => FileDiff.Compare(theirs, text));
         return OpenLocalDiff(path, open, mine, diff, version);
-    }
-
-    /// <summary>The Explorer's Git items for a row: what it acts on is the row's file or folder.</summary>
-    private async Task ExplorerGitAsync(ExplorerAction action, ExplorerNode node)
-    {
-        if (Target(node, fileOnly: action != ExplorerAction.ShowHistory) is not { } path)
-        {
-            return;
-        }
-        switch (action)
-        {
-            case ExplorerAction.ShowHistory:
-                await ShowHistoryAsync(path);
-                break;
-            case ExplorerAction.CompareWithBranch:
-                await ShowCompareWithBranchAsync(path);
-                break;
-            case ExplorerAction.CompareWithRevision:
-                await ShowCompareWithRevisionAsync(path);
-                break;
-        }
     }
 }

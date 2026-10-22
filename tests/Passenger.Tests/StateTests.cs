@@ -48,7 +48,7 @@ public sealed class StateTests : IDisposable
         Assert.Contains("set aside as settings.json.bad", log, StringComparison.Ordinal);
         Assert.True(window.Status?.Contains($"settings.json did not read, so its defaults stand: what it held is kept as {file}.bad", StringComparison.Ordinal) == true,
             $"Only the log says the settings were set aside, so the person finds them gone with nothing saying where they went: '{window.Status}'");
-        Assert.True(window.StatusPlace?.Name == $"show settings.json.bad in {Passenger.Core.ChildProcesses.FileManager}",
+        Assert.True(window.StatusPlace?.Name == $"show settings.json.bad in {Passenger.App.FileManager.Name}",
             $"The status bar's word on the settings set aside goes to '{window.StatusPlace?.Name}', not to the file they are kept in");
 
         // A change after it goes to a new file, whole, and the one set aside stays as it was.

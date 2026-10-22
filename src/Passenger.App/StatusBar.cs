@@ -23,8 +23,6 @@ public sealed record StatusPlace(string Name, Action Go)
             problems.Reveal(tab, which);
         });
 
-    /// <summary>Help, Show Log: the log chosen in the file manager.</summary>
-    public static StatusPlace Log { get; } = new($"show the log in {Core.ChildProcesses.FileManager}", ErrorsPopup.ShowLog);
 }
 
 /// <summary>Says something in the window's status bar, with where a click on it shows more (none when null).</summary>

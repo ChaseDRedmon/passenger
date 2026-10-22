@@ -922,7 +922,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Rerun, Stop and the debugger's keys stay with the IDE. Console links come from `ToolWindows/ConsoleLinks` (URLs, .NET
   stack frames, compiler messages; in the terminal also paths to any file, hidden until Cmd/Ctrl), drawn by
   `CodeEditor.Links` and `TerminalView.Links`; `MainWindow.Browse` is the only way the IDE opens a browser (recording
-  `Browsed` for tests), and Run and Debug open a plan's `BrowserUrl` once its port answers (`Run/BrowserLaunch`).
+  `Browsed` for tests; the update notice's link too), and Run and Debug open a plan's `BrowserUrl` once its port answers
+  (`Run/BrowserLaunch`). `MainWindow.ShowInFileManager` is the only way it opens the file manager (recording
+  `ShownInFileManager`): `FileManager.Show` opens a folder through the system's launcher and chooses a file with macOS's
+  `open -R` or Explorer's `/select` through ChildProcesses, and the headless platform, which has no launcher, opens nothing.
 - Publish (`Run/Publishing.cs`, `Run/PublishDialog.cs`, `Run/BuildRunController.Publish.cs`, `MainWindow.Publish.cs`): a
   project to a folder through `dotnet publish` with a publish profile, the SDK's own `Properties/PublishProfiles/NAME.pubxml`,
   so `dotnet publish -c CONFIG -p:PublishProfile=NAME` does the same (the CLI takes no configuration from a profile, and
@@ -939,8 +942,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   what it found, the Build window's Rerun publishing again), its folder resolved by MSBuild before it starts
   (`PublishProfiles.ResolveAsync`: PublishDir; a Visual Studio web profile's PublishUrl, where Visual Studio copies the
   app on with DeployOnBuild and dotnet publish does not, is only said in the dialog), said in the Build window and
-  the status bar, whose word opens it (`MainWindow.ShowInFileManager`, the system's launcher, recorded as `ShownFolders`
-  for tests). Publish Again publishes a project with the profile it last published with (`PublishMemory`, the folder's
+  the status bar, whose word opens it (`MainWindow.ShowInFileManager`, recorded as `ShownInFileManager` for tests). Publish Again publishes a project with the profile it last published with (`PublishMemory`, the folder's
   `publish.json`); an agent's `build` publishes given `publish` (a project) and `profile`, folded into build since a
   tool of its own took the list past McpTests' budget, and answers the folder. Remote targets (Web Deploy, FTP, Azure) come as
   kinds of `PublishProfileFile.Remote`: a page of their own in the dialog and a deploy after the folder's publish, their
@@ -1016,7 +1018,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`BackingService.Reached`: Host= postgres, Server= or Data Source= SQL Server but a file's, mongodb://, amqp://, a
   Redis host:port; one of another shape, SQLite's, is left as the app has it), its database kept and made by
   POSTGRES_DB (RabbitMQ's virtual host by RABBITMQ_DEFAULT_VHOST), compose.yaml saying in a comment what SQL Server and
-  a second Postgres database leave to the app. `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
+  a second Postgres database leave to the app. The Explorer's row menu is the window's actions run on that row
+  (`ActionContext.ExplorerRow`, as a tab's menu has `ActionContext.Tab`; `MainWindow.ExplorerActions.cs`), its own keys
+  only Enter and the arrows: the keymap's run there on the row chosen, Rider's one key for two actions told apart by where
+  it is pressed, so the editor's Cut, Copy, Paste, Delete (Backspace too), Undo and Redo act on the row (`ExplorerEdits`),
+  Rename renames it (Rider's RenameElement), and Compare Files takes the editor's Duplicate keys in Visual Studio's
+  keymap off macOS (`IdeAction.KeysOf`, which menus show; Cmd+D of its own on macOS). `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
@@ -1555,7 +1562,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   one through LaunchServices (`open`, through ChildProcesses). A program a run configuration runs in the terminal is
   started by Porta.Pty and then `ChildProcesses.Adopt`ed: its process group goes on Lifeline's watchdog (macOS, Linux),
   and Porta.Pty's job ends it on Windows. Docker Desktop, which the status bar's link starts, is the person's: `open -a`
-  (through ChildProcesses) on macOS, `StartApart` on Windows.
+  (through ChildProcesses) on macOS, `StartApart` on Windows. So is the file manager a reveal reaches: `open -R` and
+  Explorer's `/select` run through ChildProcesses and hand the file to the Finder or Explorer already running (`FileManager`).
 - **Containers are ended by label**, since no child holds one and Lifeline cannot end it: everything Passenger has an
   engine make carries `ContainerLabels.Arguments` (`net.passenger-ide.state`, a hash of the state folder,
   `net.passenger-ide.machine`, a hash of the machine's name and id, `net.passenger-ide.process`, the process's id and start

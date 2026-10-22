@@ -99,7 +99,6 @@ public partial class MainWindow
             }
             await session.Vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
         };
-        Explorer.IsVersioned = path => session.Vcs.Repository?.IsInside(path) == true;
         // Back from another program, the open files take what it changed on disk, and Git is read again (Rider's
         // synchronize on frame activation).
         Activated += (_, _) =>

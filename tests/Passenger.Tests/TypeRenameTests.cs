@@ -122,7 +122,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         MainWindow window = Open("Till.cs");
         List<(string Title, string Text)> asked = Answer(window);
         Choose(window, OrderPath);
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         Assert.Equal("Order.cs", popup.Text);
         CheckBox option = popup.Option ?? throw new Xunit.Sdk.XunitException("Renaming Order.cs did not offer to rename the class Order");
@@ -155,7 +155,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
     {
         MainWindow window = Open("Till.cs");
         Choose(window, Path.Combine(folder, "Form1.cs"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         Assert.True(popup.Option?.IsChecked == true, "Renaming Form1.cs did not offer to rename the class Form1 with it");
         window.KeyTextInput("Window1.cs");
@@ -199,7 +199,7 @@ public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposabl
         // Renamed in the Solution view, it offers no type to rename and its code stays as it is.
         window.EditorArea.SaveAll();
         Choose(window, shapes);
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         Assert.Null(popup.Option);
         window.KeyTextInput("Figures.cs");

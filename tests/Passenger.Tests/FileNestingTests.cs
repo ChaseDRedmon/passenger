@@ -114,9 +114,9 @@ public sealed class FileNestingTests : IDisposable
         MainWindow window = Open();
         List<string> asked = Answer(window);
 
-        // F2 on a Razor component: its code-behind and its styles take its new name.
+        // Rename's keys on a Razor component: its code-behind and its styles take its new name.
         Choose(window, At("Components/Counter.razor"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Clicker.razor");
@@ -127,7 +127,7 @@ public sealed class FileNestingTests : IDisposable
 
         // A file the project says depends on another goes with it, the project naming it and its parent by their new names.
         Choose(window, At("Shapes.cs"));
-        Ui.Press(window, "F2");
+        Ui.Run(window, AppActions.Rename);
         popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Figures.cs");
