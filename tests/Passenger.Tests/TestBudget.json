@@ -11,7 +11,7 @@
     "BuildRunTests": 300,
     "RunConfigurationsTests": 90,
     "PublishTests": 240,
-    "UnitTestsTests": 240,
+    "UnitTestsTests": 180,
     "McpAspireTests": 60,
     "McpAttachTests": 90,
     "McpAvaloniaAppTests": 90,
