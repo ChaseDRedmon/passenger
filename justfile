@@ -96,6 +96,11 @@ icons:
 file-icons:
     python3 -I tools/file-icons.py
 
+# Rewrite the C# of Aspire's resource service protocol (src/Passenger.App/Aspire/Protocol) from its .proto, with protoc
+# from a pinned Grpc.Tools fetched into artifacts/aspire-protocol (tools/aspire-protocol.py).
+aspire-protocol:
+    python3 -I tools/aspire-protocol.py
+
 # Fail naming any package the solution restores, Roslyn's server carries or dotnet-tools.json pins that the notices miss.
 notices:
     python3 -I tools/check-notices.py
