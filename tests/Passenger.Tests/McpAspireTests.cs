@@ -102,7 +102,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
-    [Fact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [Fact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public async Task An_agent_must_qualify_duplicate_official_starter_resource_names_with_the_owned_AppHost()
     {
         using AspireApp project = new();
@@ -214,7 +214,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
-    [Fact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
+    [Fact(Skip = AspireApp.AppHostSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]
     public async Task Ending_a_windowless_Passengers_input_stops_the_official_starter_tree_and_Dcp_listener()
     {
         string starter = TestFolders.Create("mcp-aspire-shutdown-");

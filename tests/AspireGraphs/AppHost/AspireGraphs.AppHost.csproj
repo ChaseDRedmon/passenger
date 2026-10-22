@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An AppHost's graph, to which its SDK adds only Aspire's dashboard and orchestrator (Passenger.Tests.csproj downloads
+       those where PassengerAspireRuntime is true); none of the package's assets, whose build targets are an AppHost's. -->
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" ExcludeAssets="all" />
+  </ItemGroup>
+</Project>

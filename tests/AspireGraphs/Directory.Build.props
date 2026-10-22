@@ -1,0 +1,19 @@
+<Project>
+  <!-- The package graphs of the Aspire projects the tests write (an AppHost, Aspire's ServiceDefaults and the starter's API
+       service, as Aspire's templates make them) at the tests' own target, TestProjects.Framework, restored with the
+       solution so the package cache holds them: a test folder restores from the run's local feed alone, which finds the
+       rest there (AspireApp.UseFeed), never on nuget.org. The test project's own restore cannot hold them, since it prunes
+       the packages its frameworks bring (Microsoft.Extensions.*), which a net10.0 AppHost asks at versions above its
+       framework's. An AppHost's project references take no part in its restore, so an AppHost's graph is its package's
+       alone, and the starter's web frontend's is ServiceDefaults'. Built as empty libraries, never run, under none of the
+       repo's rules, which are for Passenger's code (as the debuggees' Directory.Build.props). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)../../artifacts</ArtifactsPath>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+</Project>

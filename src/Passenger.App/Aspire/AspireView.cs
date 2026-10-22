@@ -48,6 +48,10 @@ public sealed class AspireView : DockPanel, IDisposable
     private bool liveResources;
     private int resourceUpdateVersion;
     private bool displayVisible;
+
+    /// <summary>Discover or Refresh asked while the window was hidden, which their actions show it for first: done as it shows.</summary>
+    private bool discoverWhenShown;
+    private bool refreshWhenShown;
     private CancellationTokenSource? telemetryReading;
     private (Uri Endpoint, string ApiKey, string Page, string AppHost)? telemetrySource;
     private readonly Dictionary<string, TreeViewItem> resourceNodes = new(StringComparer.Ordinal);
@@ -213,6 +217,14 @@ public sealed class AspireView : DockPanel, IDisposable
         }
         UpdateConsole();
         UpdateTelemetry();
+        if (visible && discoverWhenShown)
+        {
+            BackgroundWork.Track(RefreshAppsAsync());
+        }
+        else if (visible && refreshWhenShown)
+        {
+            BackgroundWork.Track(RequestRefreshAsync());
+        }
     }
 
     public void BindActions(ActionRegistry actions, Func<string, bool> request)
@@ -445,6 +457,11 @@ public sealed class AspireView : DockPanel, IDisposable
         {
             return;
         }
+        refreshWhenShown = !displayVisible;
+        if (refreshWhenShown)
+        {
+            return;
+        }
         RefreshRequested?.Invoke(this, EventArgs.Empty);
         await RefreshAsync();
     }
@@ -452,7 +469,8 @@ public sealed class AspireView : DockPanel, IDisposable
     public async Task RefreshAppsAsync()
     {
         UiThread.Check();
-        if (disposed || !displayVisible)
+        discoverWhenShown = !displayVisible;
+        if (disposed || discoverWhenShown)
         {
             return;
         }

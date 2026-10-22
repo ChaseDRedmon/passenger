@@ -239,8 +239,8 @@ public sealed class ContainerFilesPane : DockPanel
         Process process;
         try
         {
-            // -L: the file ls -L listed, which a link names, rather than the link.
-            ProcessStartInfo start = docker.Command(["cp", "-L", $"{id}:{path}", "-"]);
+            // -L: the file ls -L listed, which a link names, rather than the link; Podman's own cp follows it unasked, and has no -L.
+            ProcessStartInfo start = docker.Command(docker.Known is { PodmanCli: true } ? ["cp", $"{id}:{path}", "-"] : ["cp", "-L", $"{id}:{path}", "-"]);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
             process = ChildProcesses.Start(start);

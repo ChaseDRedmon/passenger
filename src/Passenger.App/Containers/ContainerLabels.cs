@@ -222,8 +222,8 @@ public static partial class ContainerLabels
                 removed.AddRange(gone);
             }
             IReadOnlyList<JsonElement> networks = await engine.JsonLinesAsync(["network", "ls", "--filter", filter, "--filter", machine, "--format", "json"], cancel);
-            string[] left = [.. networks.Where(n => ContainerInfo.ReadLabels(ContainerEngine.Text(n, "Labels")).GetValueOrDefault(Process) is { } made && IsGone(made))
-                .Select(n => ContainerEngine.Text(n, "ID")).OfType<string>()];
+            string[] left = [.. networks.Where(n => ContainerInfo.ReadLabels(n).GetValueOrDefault(Process) is { } made && IsGone(made))
+                .Select(ContainerInfo.IdOf).OfType<string>()];
             if (left.Length > 0)
             {
                 await engine.RunAsync(["network", "rm", .. left], ContainerEngine.AskLimit, cancel);

@@ -70,7 +70,8 @@ public sealed class McpContainerDebuggingTests : McpRig
             // A program in a container Passenger did not start: listed by its container, attached to there.
             string output = Path.Combine(shop, "Web", "bin", "Debug", TestProjects.Framework);
             attached = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}agentattach";
-            Docker.Run("run", "-d", "--name", attached, "--label", Docker.RunLabel, "-v", $"{output}:/app:ro", "mcr.microsoft.com/dotnet/aspnet:10.0", "dotnet", "/app/Web.dll");
+            Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", attached, "--label", Docker.RunLabel, "-v", $"{output}:/app:ro", "mcr.microsoft.com/dotnet/aspnet:10.0",
+                "dotnet", "/app/Web.dll"]);
             JsonElement listed = default;
             Assert.True(await Waiting.UntilAsync(async () => (listed = await Call(client, "debug_processes")).EnumerateArray()
                 .Any(p => p.TryGetProperty("container", out JsonElement c) && c.GetString() == attached), TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken),

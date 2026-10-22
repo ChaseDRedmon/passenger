@@ -772,6 +772,43 @@ window or takes the focus; it shows everything but the system's own window chrom
   on its own so one that ends meanwhile leaves the rest listed: the tools' `processes` where they are in, else `docker top` from
   outside (the dotnet host, a .dll, or in a .NET image any program but a shell), their ids there 0 until the tools,
   copied in as the person attaches (the dialog's heading says so first), name them.
+  Podman (#403), on rootless Podman 5.7 in the Ubuntu VM, both ways a person sets it up: Docker's CLI and Compose v2 on
+  Podman's socket (DOCKER_HOST or a context, as Podman Desktop does), and Podman alone, a `docker` that is Podman's own
+  command (podman-docker, or a link ahead on the PATH where it conflicts with Docker's CLI) whose `podman compose` runs
+  Docker's Compose v2 as its provider (Python's podman-compose does not serve: said as no Compose). On Docker's CLI,
+  Compose builds through buildx, whose builder there is a BuildKit container it starts and keeps (buildx_buildkit_default,
+  Compose's and buildx's own doing); Podman's own Compose builds with Buildah through the API. The state knows it
+  (`EngineState.IsPodman`: the server's Podman Engine component, or `PodmanCli`, a client that words its system as
+  OsArch) and whether it is `Rootless` (info). Podman's own command answers in its own JSON, which every reader takes
+  beside Docker's (`ContainerInfo.IdOf`, `First`, `ReadLabels`, `ContainerPort.Read`: ids as Id or id, names and tags as
+  lists, labels and ports as objects; events' Status, ID and Attributes at the top), has no server apart in its version
+  (the client's is the engine's, its OsArch the processor), no -L on cp (it follows a link itself), stats over several
+  lines (asked as a line of Docker's names), its info over many lines (read whole), a start time in Go's words (asked as
+  JSON), and its compose needs the API socket (said when it is not running), names its provider on every command
+  (`PODMAN_COMPOSE_WARNING_LOGS=false`) and adds a line of its own after the provider's error, which every reader of
+  Compose's error passes over (`ContainerEngine.ProviderFailed`).
+  Through Docker's CLI, Podman's list words no health and gives no address on a published port, so Docker's CLI shows
+  none (both read through inspect, `ContainerSnapshot.InspectedAsync`), and its stats cut each name's first letter (each
+  reading named by the id asked). A .NET service run as the person on rootless Podman takes `userns_mode: keep-id`, without
+  which its user is a subordinate id that reads none of what is kept for the person (the build under a 0750 home, the
+  certificate, user secrets: exit code 155, the dotnet host finding no app). Podman has no BuildKit, and Docker's buildx
+  on it would start a BuildKit container of its own: a Dockerfile goes unchecked, said once in the status bar and
+  Problems' Containers tab as one opens with the setting on (`EngineChecks.Limited`, `EngineState.Limit`). A stopped
+  Podman is said as Podman, its socket or machine to start. So a compose file or a Dockerfile runs, debugs (two services
+  at once), Hot Reloads and profiles on Podman as on Docker (ContainerRunsTests, ContainerRunDebuggingTests,
+  ContainerProfilingTests and the Mcp container classes pass with Podman alone; through Docker's CLI all but those its
+  own test images held up, last run before `Docker.Load`). Still open on Podman: a service the debugger could not attach
+  to after its restart, which Stop then does not take down (both ways), and with Podman alone a service's Debug taking
+  the run down and tools from a downloaded release, or copied in for a build naming Windows paths, ending in "exec format
+  error" (ContainerServicesTests, ContainerDebuggingTests). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
+  relabelling (`:z`) or `label=disable`, untested on Ubuntu's AppArmor; rootless Docker, whose user mapping is the same
+  with no keep-id. Docker's CLI 29 `docker run` on Podman 5.7's socket makes a container of one process (pids.max 1;
+  Compose's get Podman's 2048), so the tests' own runs take `Docker.AnyPids`, their own builds `Docker.Load` (buildx's
+  BuildKit container keeps a build in its cache), and they compare an image Passenger tagged by its short name
+  (`Docker.Short`: Podman names one built here docker.io/library/…) and a command without Podman's init
+  (`Docker.WithoutInit`), read a published port however Compose words its address (":port" there), and take the
+  container's own log line over Buildah's echo of the CMD it builds. Every `docker rm -f` waits Podman's 10 s for a
+  container that ignores SIGTERM, where Docker kills at once.
 - `src/Passenger.App/Aspire` (#338): Aspire's AppHosts run with Passenger as their IDE. `AspireController`
   (`ProjectSession.Aspire`) owns the folder's AppHosts and the project resources their orchestrator asks the IDE to start,
   through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
@@ -1938,15 +1975,22 @@ Run brings it up and open another folder as Debug does (its cache answering its 
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
 run up, each leaving no container of the project. Aspire's tests (#338): the run gives every `aspire` CLI and AppHost it
-starts a home of its own (`ASPIRE_HOME`), telemetry and version checks off (`TestRun`), but an AppHost and the CLI keep
-their record of running AppHosts in `$HOME/.aspire/cli/bch` whatever `ASPIRE_HOME` says (on Windows in the person's
-profile whatever the environment says), so `AspireTests` (Alone), `AspireExternalDataTests` and `McpAspireTests`' tests of
-a real AppHost skip, saying why (`AspireApp.CliSkipped`), until they run with a home of the run's own; `AspireApp` makes two of
+starts a home of its own (`ASPIRE_HOME`), telemetry, version checks and certificate making off (`TestRun`), and since an
+AppHost and the CLI keep their record of running AppHosts in `$HOME/.aspire/cli/bch` whatever `ASPIRE_HOME` says, a HOME
+of the run's own too (`AspireCli.Home`, `/tmp/passenger-aspire-<pid>`, short for macOS's 104-byte socket paths, removed
+with the run): the fixtures' AppHosts' launch profiles name it, and on macOS and Linux the run's PATH starts with a wrapper
+named `aspire` that runs the run's own CLI there (`Aspire.Cli.<rid>`, a PackageDownload where `PassengerAspireRuntime` is
+true, its bundle unpacked beside it in the package cache) or refuses, so neither the IDE nor a test ever runs the person's
+CLI or reaches their ~/.aspire. On Windows an AppHost keeps that record in the person's profile whatever its environment
+says, so there `AspireTests` (Alone) and `McpAspireTests`' tests of a real AppHost skip (`AspireApp.Unavailable`), and
+`AspireExternalDataTests` (`AspireApp.CliUnavailable`), which runs `aspire run` through ChildProcesses, finds its AppHost
+in the window and ends it with its process group, waiting until no service or orchestrator of it is left; `AspireApp` makes two of
 Aspire's starters from its templates installed in a hive of the run's own, restored from the run's local feed, and
 `AspireCodeHelpTests` restore their AppHosts the same way (`AspireApp.UseFeed`), as do `AspireOrchestrationTests`, on a
-solution of the tests' own target, from the package cache: the test project's restore prunes what its frameworks bring
-(Microsoft.Extensions.*), so a cache only it filled lacks a net10.0 AppHost's and ServiceDefaults' graph, and the
-orchestration class then skips saying so (NU1101; AspireCodeHelpTests fail) until the build restores that graph (#400);
+solution of the tests' own target, the rest from the package cache: `tests/AspireGraphs` (an AppHost's, ServiceDefaults'
+and the starter's API service's graphs at net10.0, restore-only projects of the solution, built empty) puts them there,
+since the test project's own restore prunes what its frameworks bring (Microsoft.Extensions.*), which a net10.0 AppHost
+asks at versions above its framework's, and an AppHost's project references take no part in its restore;
 Aspire's dashboard and orchestrator (`Aspire.Dashboard.Sdk.<rid>`, `Aspire.Hosting.Orchestration.<rid>`, about 900 MB in
 the package cache), which only running an AppHost needs, are downloaded only where `PassengerAspireRuntime` is true (a
 property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a

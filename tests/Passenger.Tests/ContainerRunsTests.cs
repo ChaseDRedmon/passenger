@@ -49,7 +49,7 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
             Assert.All(states.Values, state => Assert.Equal("running", state));
             // Each .NET service is its project's build on the host, run by dotnet as the container's first process, labelled Passenger's.
             string web = Container(project, "web");
-            Assert.Equal("dotnet /passenger/app/Web.dll", Docker.Run("inspect", "-f", "{{.Path}} {{join .Args \" \"}}", web));
+            Assert.Equal("dotnet /passenger/app/Web.dll", Docker.WithoutInit(Docker.Run("inspect", "-f", "{{.Path}} {{join .Args \" \"}}", web)));
             Assert.Equal(ContainerLabels.StateValue, Docker.Run("inspect", "-f", "{{index .Config.Labels \"net.passenger-ide.state\"}}", web));
             Assert.Equal(ContainerLabels.StateValue, Docker.Run("inspect", "-f", "{{index .Config.Labels \"net.passenger-ide.state\"}}", Container(project, "cache")));
             int webPort = Published(project, "web");
@@ -122,12 +122,14 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         try
         {
             Launched(window, "the image to be built and run");
-            Ui.WaitFor(() => Run(window).Contains("at Shop.Program.Main()", StringComparison.Ordinal), "the container's frame in the Run window", TimeSpan.FromMinutes(1));
-            string line = Run(window).Split('\n').First(l => l.Contains("at Shop.Program.Main()", StringComparison.Ordinal));
+            // The container's own line, its service's prefix before it: Podman's build (Buildah) writes the CMD it builds in too.
+            static bool Logged(string l) => l.Contains("at Shop.Program.Main()", StringComparison.Ordinal) && l.Contains("| ", StringComparison.Ordinal);
+            Ui.WaitFor(() => Run(window).Split('\n').Any(Logged), "the container's frame in the Run window", TimeSpan.FromMinutes(1));
+            string line = Run(window).Split('\n').First(Logged);
             FileLink link = Assert.IsType<FileLink>(Assert.Single(window.BottomPanel.Run.Links.In(line)).Target);
             Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Shop", "Program.cs")), link.Path);
             Assert.Equal(0, link.Position.Line);
-            Assert.Equal($"{project}-shop:passenger", Docker.Run("inspect", "-f", "{{.Config.Image}}", Container(project, "shop")));
+            Assert.Equal($"{project}-shop:passenger", Docker.Short(Docker.Run("inspect", "-f", "{{.Config.Image}}", Container(project, "shop"))));
             Assert.Equal(ownImage, Docker.Run("image", "inspect", "-f", "{{.Id}}", own));
         }
         finally
@@ -680,8 +682,8 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         string theirs = Container(project, "cache");
         // And their own of a service the compose file does not have.
         string own = $"{project}-own";
-        Docker.Run("run", "-d", "--name", own, "--label", Docker.RunLabel, "--label", $"com.docker.compose.project={project}",
-            "--label", "com.docker.compose.service=notes", "--label", "com.docker.compose.oneoff=False", Docker.Image, "sleep", "600");
+        Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", own, "--label", Docker.RunLabel, "--label", $"com.docker.compose.project={project}",
+            "--label", "com.docker.compose.service=notes", "--label", "com.docker.compose.oneoff=False", Docker.Image, "sleep", "600"]);
         MainWindow window = Open(folder);
         RunConfiguration cache = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Cache", Services = ["cache"], Generated = false };
         window.SetConfigurations([cache], cache.Name);
@@ -897,7 +899,8 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
     {
         string said = Docker.Ask(["compose", "-p", project, "port", service, "8080"]).Split('\n')[0].Trim();
         string? answer = null;
-        if (said.LastIndexOf(':') is int colon and > 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
+        // Docker's CLI says 0.0.0.0:port; on Podman's socket ":port", the address left out.
+        if (said.LastIndexOf(':') is int colon and >= 0 && int.TryParse(said[(colon + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out int port)
             && Ui.Pumped(() => (answer = Answer(port)) is not null, TimeSpan.FromMinutes(1)))
         {
             return answer!;

@@ -1,0 +1,4 @@
+<Project>
+  <!-- The repo's own versions, whose tests' section names those Aspire's templates write. -->
+  <Import Project="../../Directory.Packages.props" />
+</Project>

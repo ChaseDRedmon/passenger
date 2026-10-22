@@ -29,7 +29,7 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
         Assert.Equal("Ready", listed.GetProperty("status").GetString());
         JsonElement mine = listed.GetProperty("containers").EnumerateArray().Single(c => c.GetProperty("name").GetString() == name);
         Assert.Equal("running", mine.GetProperty("state").GetString());
-        Assert.Equal(Docker.Image, mine.GetProperty("image").GetString());
+        Assert.Equal(Docker.Image, Docker.Short(mine.GetProperty("image").GetString()!));
 
         Assert.Contains("agent-hello", Text(await Call(client, "container_logs", new() { ["container"] = name })), StringComparison.Ordinal);
 

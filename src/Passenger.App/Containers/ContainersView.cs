@@ -43,7 +43,8 @@ public sealed class ContainersView : DockPanel
 
     /// <summary>Events that change nothing the window lists: a command run in a container, an attach, a copy.</summary>
     private static bool Quiet(string action) =>
-        action.StartsWith("exec_", StringComparison.Ordinal) || action is "attach" or "detach" or "resize" or "top" or "archive-path" or "extract-to-dir" or "export" or "copy";
+        action.StartsWith("exec_", StringComparison.Ordinal) || action is "exec" or "attach" or "detach" or "resize" or "top" or "archive-path" or "extract-to-dir"
+            or "export" or "copy";
     private int reads;
     private string shownTab = LogTab;
 
