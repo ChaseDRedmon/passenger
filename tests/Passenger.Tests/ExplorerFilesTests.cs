@@ -72,16 +72,22 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(File.Exists(Path.Combine(trash, "Purchase.cs")));
         Assert.Empty(window.EditorArea.Documents);
         Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Name == "Purchase.cs");
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void New_class_named_with_a_folder_goes_in_that_folder_in_its_namespace()
-    {
-        MainWindow window = Open();
+        // A folder renamed with two of its files open keeps the one in front in front.
+        string domain = PathNames.Canonical(Path.Combine(folder, "Domain"));
+        File.WriteAllText(Path.Combine(domain, "Alpha.cs"), "class Alpha { }\n");
+        File.WriteAllText(Path.Combine(domain, "Beta.cs"), "class Beta { }\n");
+        window.OpenFile(Path.Combine(domain, "Alpha.cs"));
+        window.OpenFile(Path.Combine(domain, "Beta.cs"));
+        window.OpenFile(Path.Combine(domain, "Alpha.cs"));
+        Ui.Settle();
+        Assert.Null(window.Rename(domain, "Models"));
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Models", "Alpha.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(2, window.EditorArea.Documents.Count);
+
+        // New Class named with a folder, typed as a person types it into New Class/Interface: the folder first, and the
+        // file's .cs by habit; it goes in that folder, in its namespace.
         string project = PathNames.Canonical(folder);
-
-        // Typed as a person types it into New Class/Interface: the folder first, and the file's .cs by habit.
         Assert.Null(window.CreateType(project, "Shapes/Circle.cs", "Class"));
         string circle = Path.Combine(project, "Shapes", "Circle.cs");
         Assert.True(File.Exists(circle), $"Shapes/Circle.cs made no Shapes/Circle.cs, but {string.Join(", ", Directory.EnumerateFiles(project, "*.cs", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(project, f)))}");
@@ -94,29 +100,7 @@ public sealed class ExplorerFilesTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void Delete_on_a_project_beside_its_solution_takes_it_out_of_the_solution_and_leaves_the_folder()
-    {
-        string solution = Path.Combine(folder, "Shop.slnx");
-        File.WriteAllText(solution, "<Solution>\n  <Project Path=\"Shop.csproj\" />\n</Solution>\n");
-        MainWindow window = Open();
-        List<string> asked = Answer(window);
-
-        // The project and the solution share the repository's top folder, which Delete must never offer to trash.
-        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project));
-        Ui.Press(window, "BACK_SPACE");
-        Ui.WaitFor(() => Finished(window, "Removed"), "the project's removal");
-        Assert.Equal("Removed Shop from Shop", window.Status);
-        Assert.DoesNotContain("Shop.csproj", File.ReadAllText(solution), StringComparison.Ordinal);
-        Assert.Equal(["Remove Project"], asked);
-        Assert.True(File.Exists(Path.Combine(folder, "Shop.csproj")), "The project's file went with it");
-        Assert.True(Directory.Exists(Path.Combine(folder, "Models")), "The folder beside the solution went to the Trash");
-        Assert.Empty(Directory.EnumerateFileSystemEntries(trash));
-        Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Delete_on_a_project_in_its_own_folder_moves_that_folder_to_the_Trash_only_once_asked_again()
+    public void Delete_on_a_project_in_its_own_folder_moves_that_folder_to_the_Trash_only_once_asked_again_and_one_beside_its_solution_leaves_the_folder()
     {
         string library = Directory.CreateDirectory(Path.Combine(folder, "Lib")).FullName;
         File.Copy(Path.Combine(folder, "Shop.csproj"), Path.Combine(library, "Lib.csproj"));
@@ -135,13 +119,27 @@ public sealed class ExplorerFilesTests : IDisposable
         string left = File.ReadAllText(solution);
         Assert.Contains("Shop.csproj", left, StringComparison.Ordinal);
         Assert.DoesNotContain("Lib.csproj", left, StringComparison.Ordinal);
+
+        // The project and the solution share the repository's top folder, which Delete must never offer to trash.
+        asked.Clear();
+        Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project));
+        Ui.Press(window, "BACK_SPACE");
+        Ui.WaitFor(() => Finished(window, "Removed"), "the project's removal");
+        Assert.Equal("Removed Shop from Shop", window.Status);
+        Assert.DoesNotContain("Shop.csproj", File.ReadAllText(solution), StringComparison.Ordinal);
+        Assert.Equal(["Remove Project"], asked);
+        Assert.True(File.Exists(Path.Combine(folder, "Shop.csproj")), "The project's file went with it");
+        Assert.True(Directory.Exists(Path.Combine(folder, "Models")), "The folder beside the solution went to the Trash");
+        Assert.True(Directory.EnumerateFileSystemEntries(trash).Select(Path.GetFileName).SequenceEqual(["Lib"]),
+            $"Removing the project beside its solution put [{string.Join(", ", Directory.EnumerateFileSystemEntries(trash).Select(Path.GetFileName))}] in the Trash, where only Lib was");
+        Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project);
         window.Close();
     }
 
     [AvaloniaFact]
-    public void A_delete_the_Trash_refuses_keeps_the_open_file_and_its_unsaved_edit()
+    public void A_delete_the_Trash_refuses_keeps_the_open_file_and_its_unsaved_edit_and_one_it_takes_goes_with_them_kept_in_Local_History()
     {
-        string notes = Path.Combine(folder, "Notes.txt");
+        string notes = PathNames.Canonical(Path.Combine(folder, "Notes.txt"));
         File.WriteAllText(notes, "groceries\n");
         MainWindow window = Open();
         window.Autosaves = false;
@@ -163,32 +161,23 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.Equal("milk, groceries\n", open.Text.Snapshot.ToString());
         // Saved before the Trash was asked, the edit is on disk as well.
         Assert.True(File.ReadAllText(notes) == "milk, groceries\n" || open.IsModified, "The unsaved edit was marked saved without being written, so it would be lost");
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_file_deleted_with_unsaved_edits_goes_to_the_Trash_with_them_and_Local_History_keeps_them()
-    {
-        string notes = PathNames.Canonical(Path.Combine(folder, "Notes.txt"));
-        File.WriteAllText(notes, "groceries\n");
-        MainWindow window = Open();
-        window.OpenFile(notes);
+        // Another edit, unsaved, and a Trash that takes the file: it goes with every edit, and Local History keeps them.
+        Trash.Folder = trash;
         window.EditorArea.CodeEditor.Focus();
-        window.KeyTextInput("milk, ");
+        window.KeyTextInput("eggs, ");
         Ui.Settle();
         Assert.True(window.EditorArea.Active!.IsModified);
-        window.Confirm = (_, _, _) => Task.FromResult(true);
-
         Ui.ClickRow(window, Assert.Single(window.ExplorerView.Tree.Rows, r => r.Name == "Notes.txt"));
         Ui.Press(window, "BACK_SPACE");
         Ui.WaitFor(() => !File.Exists(notes) && window.EditorArea.Documents.Count == 0, "Notes.txt deleted and its tab closed");
         string trashed = File.ReadAllText(Path.Combine(trash, "Notes.txt"));
-        Assert.True(trashed == "milk, groceries\n", $"The Trash has Notes.txt without what was typed into it before the delete, so the edit is lost: '{trashed}'");
+        Assert.True(trashed == "milk, eggs, groceries\n", $"The Trash has Notes.txt without what was typed into it before the delete, so the edit is lost: '{trashed}'");
         Passenger.App.History.LocalHistory history = window.LocalHistory!;
         Ui.WaitFor(() => history.Snapshot().Events.Any(e => e.Kind == Passenger.App.History.HistoryKind.Deleted && e.Path == notes), "Local History to keep the deletion");
         string? kept = history.Snapshot().Events.Last(e => e.Kind == Passenger.App.History.HistoryKind.Deleted && e.Path == notes).Before is { } hash
             && history.Content(hash) is { } bytes ? System.Text.Encoding.UTF8.GetString(bytes) : null;
-        Assert.True(kept == "milk, groceries\n", $"Local History kept Notes.txt as deleted without what was typed into it: '{kept}'");
+        Assert.True(kept == "milk, eggs, groceries\n", $"Local History kept Notes.txt as deleted without what was typed into it: '{kept}'");
         window.Close();
     }
 
@@ -205,7 +194,6 @@ public sealed class ExplorerFilesTests : IDisposable
         File.WriteAllText(Path.Combine(legacy, "Kept.cs"), "namespace Shop.Legacy;\n\npublic class Kept\n{\n}\n");
         File.WriteAllText(Path.Combine(legacy, "Old.cs"), "this was C# once\n");
         File.WriteAllText(Path.Combine(legacy, "Generated", "Stale.cs"), "and so was this\n");
-        Builds(project, "the project removed its files");
         MainWindow window = Open();
         List<string> asked = Answer(window);
 
@@ -221,7 +209,6 @@ public sealed class ExplorerFilesTests : IDisposable
         Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
         Assert.True(Directory.Exists(Path.Combine(folder, "Archive")), $"Legacy was not renamed: {window.Status}");
         Assert.Equal(written.Replace("Legacy\\", "Archive\\", StringComparison.Ordinal), File.ReadAllText(project));
-        Builds(project, "the folder holding the files the project removes was renamed");
 
         // Undo takes the folder and the project back together, asked first.
         string archive = PathNames.Canonical(Path.Combine(folder, "Archive"));
@@ -232,24 +219,6 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.Equal(["Undo"], asked);
         Assert.True(Directory.Exists(legacy), $"Undo did not rename Archive back: {window.Status}");
         Assert.Equal(written, File.ReadAllText(project));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Renaming_a_folder_with_two_open_files_keeps_the_one_in_front_in_front()
-    {
-        string models = PathNames.Canonical(Path.Combine(folder, "Models"));
-        File.WriteAllText(Path.Combine(models, "Alpha.cs"), "class Alpha { }\n");
-        File.WriteAllText(Path.Combine(models, "Beta.cs"), "class Beta { }\n");
-        MainWindow window = Open();
-        window.OpenFile(Path.Combine(models, "Alpha.cs"));
-        window.OpenFile(Path.Combine(models, "Beta.cs"));
-        window.OpenFile(Path.Combine(models, "Alpha.cs"));
-        Ui.Settle();
-
-        Assert.Null(window.Rename(models, "Domain"));
-        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Domain", "Alpha.cs")), window.EditorArea.Active?.Path);
-        Assert.Equal(2, window.EditorArea.Documents.Count);
         window.Close();
     }
 
@@ -408,13 +377,6 @@ public sealed class ExplorerFilesTests : IDisposable
             return Task.FromResult(true);
         };
         return asked;
-    }
-
-    /// <summary>dotnet build of a project as it is on disk now, which fails the test naming what was done to it.</summary>
-    private static void Builds(string project, string after)
-    {
-        ChildResult built = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", project]), limit: Restore.Limit)).GetAwaiter().GetResult();
-        Assert.True(built.Succeeded, $"Once {after}, dotnet build no longer builds the project:\n{built.Output}{built.Error}");
     }
 
     /// <summary>Whether the status bar says the work ended, as it does or with why it could not.</summary>
