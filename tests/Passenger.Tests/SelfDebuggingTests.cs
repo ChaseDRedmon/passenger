@@ -37,11 +37,13 @@ public sealed class SelfDebuggingTests : IDisposable
     public void Passenger_opened_on_its_repository_debugs_itself_on_a_state_of_its_own_stopping_stepping_and_evaluating_in_its_ui_code()
     {
         string repository = Debugging.Helpers.Debuggees.Root;
-        MainWindow window = new() { Width = 1400, Height = 900, StateFolder = state };
+        // Debugging asks nothing of the outer window's C# language server, whose load of Passenger's whole solution (and the
+        // design-time builds it asks for) took longer than the rest of the test; the inner Passenger starts its own.
+        MainWindow window = new() { Width = 1400, Height = 900, StateFolder = state, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(repository);
-        // Passenger's whole solution, which a small machine's language server loads in longer than a key may settle in.
-        Ui.PumpUntil(() => BackgroundWork.Pending == 0, "the language server to load Passenger's solution", TimeSpan.FromMinutes(5));
+        // Passenger's whole solution, which a small machine evaluates in longer than a key may settle in.
+        Ui.PumpUntil(() => BackgroundWork.Pending == 0, "Passenger's solution to load", TimeSpan.FromMinutes(5));
         Ui.Settle();
         string app = PathNames.Canonical(Path.Combine(repository, "src", "Passenger.App", "Passenger.App.csproj"));
         Assert.True(window.Configuration?.Project == app, $"Opened on its repository, Passenger would debug {window.Configuration?.Name}, not itself");

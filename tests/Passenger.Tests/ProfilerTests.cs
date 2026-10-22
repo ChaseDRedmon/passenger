@@ -81,7 +81,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
             "{ \"profiles\": { \"Young\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_GCgen0size\": \"0x400000\" } } } }");
         string settings = TestFolders.Create("settings-");
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project);
         Ui.Settle();
@@ -229,7 +229,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Configure(window, "Ends first", pids: null, undiagnosed: true);
             started = window.ProfileAsync();
             Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-            Assert.StartsWith("Ends first never reached the profiler: it ended first, with exit code ", started.Result, StringComparison.Ordinal);
+            Assert.StartsWith("Waits never reached the profiler: it ended first, with exit code ", started.Result, StringComparison.Ordinal);
             Assert.Null(window.Profiling);
             Assert.Equal(started.Result, view.Status);
             Assert.Equal(before, Ports());
@@ -477,7 +477,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
                 }
             }
             """);
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project);
         Ui.Settle();
@@ -589,11 +589,11 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             WriteEvent(3, frame, durationMs, endedMsAgo, measurePasses, arrangePasses, measureMs, arrangeMs, renderMs, measures, arranges);
     }
 
-    /// <summary>A window on <see cref="Waits"/>, on the server the last window on it left, with the configuration of
-    /// <see cref="Configure"/>.</summary>
+    /// <summary>A window on <see cref="Waits"/> with the configuration of <see cref="Configure"/>, and no C# language server,
+    /// which profiling asks nothing of.</summary>
     private MainWindow OpenWaits(string name, string pids, bool undiagnosed = false)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = waits.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(waits.Folder);
         Ui.Settle();
