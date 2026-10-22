@@ -42,6 +42,46 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         window.Close();
     }
 
+    /// <summary>A connection string a service reads, by GetConnectionString or a ConnectionStrings: key, and a service it
+    /// discovers, by an https+http:// address or a services: key, go to the AppHost line that declares the resource, at its
+    /// name, as compose's names go to their declarations.</summary>
+    [AvaloniaFact]
+    public void A_service_s_connection_string_or_discovered_service_goes_to_the_AppHost_line_declaring_it()
+    {
+        project.Write("Api/Program.cs", Project.Service.Replace("builder.Build().Run();",
+            "var keyed = builder.Configuration[\"ConnectionStrings:connected\"];\nvar section = builder.Configuration.GetSection(\"services:worker:http:0\");\nbuilder.Build().Run();", StringComparison.Ordinal));
+        MainWindow window = project.Open(project.PathOf("Api/Program.cs"));
+        try
+        {
+            GoesTo(window, "GetConnectionString(\"conn", "var connected = builder.AddConnectionString(\"", "connected");
+            GoesTo(window, "ConnectionStrings:conn", "var connected = builder.AddConnectionString(\"", "connected");
+            GoesTo(window, "services:wor", "var worker = builder.AddProject<Projects.Worker>(\"", "worker");
+            window.OpenFile(project.PathOf("Worker/Program.cs"));
+            Ui.Settle();
+            GoesTo(window, "https+http://ap", "var api = builder.AddProject<Projects.Api>(\"", "api");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        void GoesTo(MainWindow window, string after, string declaring, string name)
+        {
+            string from = window.EditorArea.Active!.Path;
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.GoToDeclaration);
+            Ui.WaitFor(() => PathNames.Same(window.EditorArea.Active!.Path, PathNames.Canonical(project.PathOf("Host/Program.cs"))),
+                $"Go to Declaration on {after}… to open the AppHost");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            string line = editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line);
+            Assert.True(line.StartsWith(declaring, StringComparison.Ordinal) && editor.CaretPosition.Column == declaring.Length
+                && line[declaring.Length..].StartsWith(name, StringComparison.Ordinal),
+                $"Go to Declaration on {after}… did not land at {name} where the AppHost declares it, but at column {editor.CaretPosition.Column + 1} of: {line}");
+            window.OpenFile(from);
+            Ui.Settle();
+        }
+    }
+
     [AvaloniaFact]
     public void Connection_completion_offers_only_connected_resources_and_a_connection_warning_offers_a_native_reference_fix_undo_takes_back()
     {
@@ -312,6 +352,8 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             builder.Build().Run();
             """;
 
+        internal const string Service = "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n";
+
         public Project() : base("aspire-help-")
         {
             Put("Shop.slnx", "<Solution><Project Path=\"Api/Api.csproj\" /><Project Path=\"Worker/Worker.csproj\" /><Project Path=\"Host/Host.csproj\" /><Project Path=\"OtherHost/OtherHost.csproj\" /><Project Path=\"Plain/Plain.csproj\" /></Solution>");
@@ -322,7 +364,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             {
                 Put($"{name}/{name}.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>"));
             }
-            Put("Api/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n");
+            Put("Api/Program.cs", Service);
             Put("Worker/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n");
             foreach (string name in new[] { "Host", "OtherHost" })
             {

@@ -1688,7 +1688,7 @@ public sealed partial class CodeAssist
         }
         try
         {
-            if (await AspireGoToProject(lsp, offset))
+            if (await AspireGoTo(lsp, offset))
             {
                 return;
             }

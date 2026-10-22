@@ -839,7 +839,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
   actions and worked out again by the extension as it is chosen (`AspireReferenceFix`), resource names complete in a
-  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`), and Edit Configurations and the gutter's
+  string literal, `AddProject` goes to its project (`AspireProjectDeclaration`) and a resource's name a service reads (a
+  connection string's, by GetConnectionString, a client integration's connectionName or a `ConnectionStrings:` key; a
+  service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one
+  declaration path with MCP's `definition` (`CodeAssist.AspireDeclarationAsync`), and Edit Configurations and the gutter's
   `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost

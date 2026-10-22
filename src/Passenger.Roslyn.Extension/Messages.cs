@@ -58,8 +58,9 @@ public sealed record Place([property: JsonPropertyName("line")] int Line, [prope
 /// <summary>Where the caret is: what a describing message asks about.</summary>
 public sealed record Caret([property: JsonPropertyName("at")] Place At);
 
-/// <summary>The source project identified by an Aspire AddProject call, or null when its path cannot be proven.</summary>
-public sealed record AspireProjectTarget([property: JsonPropertyName("path")] string? Path);
+/// <summary>Where Go to Declaration goes in Aspire's code: an AddProject call's project file, or the AppHost's file and the
+/// place (<paramref name="At"/>) its Add call names a resource a service reads; a null path when neither can be proven.</summary>
+public sealed record AspireProjectTarget([property: JsonPropertyName("path")] string? Path, [property: JsonPropertyName("at")] Place? At = null);
 
 /// <summary>Semantic Aspire help; a caret requests resource-name completion as well as diagnostics.</summary>
 public sealed record AspireHelpRequest([property: JsonPropertyName("at")] Place? At, bool Explain = false);

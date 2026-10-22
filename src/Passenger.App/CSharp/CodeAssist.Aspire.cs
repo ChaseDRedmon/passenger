@@ -101,29 +101,38 @@ public sealed partial class CodeAssist
         };
     }
 
-    /// <summary>AddProject's project, in an AppHost's or a service's file: the project's file, not its generated metadata type.</summary>
-    private async Task<bool> AspireGoToProject(LspDocument document, int offset)
+    /// <summary>Aspire's Go to Declaration, in an AppHost's or a service's file: AddProject's project file, not its generated
+    /// metadata type, and from a service's connection string or service-discovery name the AppHost's line that declares the
+    /// resource; false elsewhere, for the server's own.</summary>
+    private async Task<bool> AspireGoTo(LspDocument document, int offset)
     {
-        if (AspireRoleOfShown == AspireRole.None)
+        if (AspireRoleOfShown == AspireRole.None || await AspireDeclarationAsync(document, offset, ServerPlaces.Texts(editors)) is not { } place)
         {
             return false;
         }
+        Navigate?.Invoke(this, place);
+        return true;
+    }
+
+    /// <summary>Where Aspire's Go to Declaration goes from an offset of an AppHost's or a service's file, at the editor's line of
+    /// the file it lands in; null where it finds nothing, or without Passenger's extension. Shared with the agents' definition.</summary>
+    internal static async Task<(string Path, TextPosition Position)?> AspireDeclarationAsync(LspDocument document, int offset, Func<string, TextSnapshot?> texts)
+    {
         AspireProjectTarget target;
         try
         {
-            target = await document.ExtensionAsync<AspireProjectTarget>(
-                Handlers.AspireProjectDeclaration, new Caret(document.PlaceOf(offset)));
+            target = await document.ExtensionAsync<AspireProjectTarget>(Handlers.AspireProjectDeclaration, new Caret(document.PlaceOf(offset)));
         }
         catch (LanguageServerFailed)
         {
             // Ordinary declaration navigation still works without Passenger's extension.
-            return false;
+            return null;
         }
-        if (target.Path is not { } path || !File.Exists(path))
+        if (target.Path is not { } found || !File.Exists(found))
         {
-            return false;
+            return null;
         }
-        Navigate?.Invoke(this, (Passenger.Core.PathNames.Canonical(path), new TextPosition(0, 0)));
-        return true;
+        string path = Passenger.Core.PathNames.Canonical(found);
+        return (path, target.At is { } at ? ServerPlaces.PositionOf(texts(path), new LspPosition(at.Line, at.Character)) : new TextPosition(0, 0));
     }
 }

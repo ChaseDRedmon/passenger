@@ -176,7 +176,14 @@ public sealed partial class PassengerTools
             : throw new InvalidOperationException(answer.Said);
     }
 
-    /// <summary>Rename in JSON, whose server has none: the property's name, and in a package.json's scripts every run of a
+    /// <summary>Aspire's Go to Declaration in an AppHost's or a service's C# file, as the window's goes: AddProject's project,
+    /// a connection string's or service's name to the AppHost line declaring it; null elsewhere, for the server's own.</summary>
+    private async Task<IReadOnlyList<Place>?> AspireDefinition(Served served, int offset, CancellationToken cancel) =>
+        served is ServerServed { Web: null, Language: "C#" } csharp && Session.AspireFiles.RoleOf(csharp.Document.Path) != Aspire.AspireRole.None
+            && await CodeAssist.AspireDeclarationAsync(csharp.Lsp, offset, ServerPlaces.Texts(Editors)) is { } place
+            ? await PlacesOf([place], cancel) : null;
+
+    /// <summary>Rename in JSON, whose server has none:the property's name, and in a package.json's scripts every run of a
     /// script renamed with it, one undoable edit, saved.</summary>
     private async Task<string> JsonRename(ServerServed json, int offset, string newName)
     {

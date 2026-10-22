@@ -221,7 +221,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "no source, and says so. From XAML: the C# or XAML declaring a type, property, event, resource or element, a library's " +
         "type decompiled (read-only), or a theme's XAML through its Source Link. In the web languages, their server's; in " +
         "package.json, a dependency's package and an npm run's script; in a compose file, a build's Dockerfile and project, a " +
-        "service, volume, network, config or secret named, a variable's .env line, an env_file. In an MSBuild file: where a property was set (the one " +
+        "service, volume, network, config or secret named, a variable's .env line, an env_file; in Aspire's C#, AddProject's project and " +
+        "a resource name a service reads (a connection string's, https+http://api) to its AppHost declaration. In an MSBuild file: where a property was set (the one " +
         "in force first), an item type or target defined, or the files an import or SDK brings in.")]
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
@@ -230,6 +231,10 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         if (await ComposeDefinition(served, offset, cancel) is { } composed)
         {
             return composed;
+        }
+        if (await AspireDefinition(served, offset, cancel) is { } aspire)
+        {
+            return aspire;
         }
         switch (served)
         {
