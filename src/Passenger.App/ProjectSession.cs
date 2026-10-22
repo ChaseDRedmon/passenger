@@ -203,14 +203,24 @@ public sealed class ProjectSession : IAsyncDisposable
     /// down (or the next run comes); its containers are the folder's (<see cref="Containers"/>) until then.</summary>
     public Containers.ContainerRun? ContainerRun { get; set; }
 
-    /// <summary>Stop of a container run: its log no longer followed, and its containers taken down (the .NET services alone
-    /// when backing services are kept, which then go with the folder); done once the engine has answered.</summary>
-    public Task StopContainersAsync()
+    /// <summary>A container configuration's start under way (Run's, Debug's or Profile's), from its first moment until it is
+    /// up or has given up: the next container start ends it first, and the folder's end ends it, as Stop does.</summary>
+    public Run.StartUnderWay? ContainerStarting { get; set; }
+
+    /// <summary>Stop of a container run (the one under way, or <paramref name="which"/>, one a start made): its log no longer
+    /// followed, and its containers taken down (the .NET services alone when backing services are kept, which then go with
+    /// the folder); done once the engine has answered. A run another has replaced is only taken down, its own containers
+    /// alone, the one under way left as it is.</summary>
+    public Task StopContainersAsync(Containers.ContainerRun? which = null)
     {
         UiThread.Check();
-        if (ContainerRun is not { } run)
+        if ((which ?? ContainerRun) is not { } run)
         {
             return Task.CompletedTask;
+        }
+        if (run != ContainerRun)
+        {
+            return run.StopAsync(run.IsStopped ? null : Task.WhenAll([.. run.Debugged.Select(Debug.StopAsync), run.EndProfiling?.Invoke() ?? Task.CompletedTask]));
         }
         Runner.Stop();
         // The services debugged end first, and the one profiled ends its recording: a container taken from under its debugger
@@ -743,6 +753,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder.Stop();
         InTerminal?.Stop();
         ProfileStarting?.Cancel();
+        ContainerStarting?.Work.Cancel();
         // Profile's program ends with the others, its snapshot taken or not, and each run, read by no one now, leaves no
         // port listening.
         Profiled?.Run.Kill();
@@ -761,9 +772,9 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharp = null;
         parts.Add(("the web language servers", Web?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         Web = null;
-        // No child holds a container: what the folder started is ended by asking the engine.
-        ContainerRun?.Abandon();
-        parts.Add(("the folder's containers", Containers.EndAsync()));
+        // No child holds a container: what the folder started is ended by asking the engine, once Compose bringing a run up
+        // (ended here) has stopped making them.
+        parts.Add(("the folder's containers", Containers.EndAsync(ContainerRun?.Abandon())));
         Xaml.Dispose();
         MSBuild.Dispose();
         return parts;

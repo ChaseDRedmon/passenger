@@ -1,5 +1,7 @@
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.App.Debugging;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
 
 namespace Passenger.Tests;
@@ -31,6 +33,94 @@ public sealed class ContainerRunStopsTests(ContainerRunDebuggingTests.Tools tool
                 "every container to be taken down", TimeSpan.FromMinutes(2));
         }
         window.Close();
+    }
+
+    /// <summary>Debug pressed while Run is still bringing the configuration up (its cache slow to answer its health check, which
+    /// up waits on) takes Run's place: Run's up ends and says it was stopped, and Debug's run comes up whole, one container
+    /// a service, its sessions left as they are once Run's start has ended.</summary>
+    [AvaloniaFact]
+    public void Debug_while_Run_comes_up_takes_its_place_leaving_one_run_and_its_sessions()
+    {
+        Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
+        (string folder, string project) = Slow("runthendebug");
+        MainWindow window = ContainerRunsTests.Open(folder);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            Task<string?> running = window.RunAsync();
+            Ui.PumpUntil(() => running.IsCompleted || window.Actions.Work.Of(AppActions.RunProgram)?.Stage.StartsWith("Bringing", StringComparison.Ordinal) == true
+                && Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length > 0, "Run to begin bringing the services up", TimeSpan.FromMinutes(5));
+            Assert.False(running.IsCompleted, $"Run ended before its services came up: {(running.IsCompleted ? running.Result : null)}");
+            Task<string?> debugging = window.DebugAsync();
+            Assert.Equal("Compose: compose.yaml was stopped as it started", Ui.Await(running, "Run's start to end as Debug takes its place", TimeSpan.FromMinutes(2)));
+            string? refused = Ui.Await(debugging, "Debug's run to come up", TimeSpan.FromMinutes(5));
+            Assert.True(refused is null, $"{refused}{Ui.BuildErrors(window)}\n{ContainerRunsTests.Run(window)}");
+            DebugTab web = ContainerRunDebuggingTests.Tab(window, "web");
+            DebugTab api = ContainerRunDebuggingTests.Tab(window, "api");
+            Ui.WaitFor(() => web.Session is { State: DebugState.Running } && api.Session is { State: DebugState.Running }, "web and api to run under the debugger");
+            Ui.Hold(TimeSpan.FromSeconds(3), "Run's ended start to show it takes nothing of Debug's");
+            Assert.True(web.IsLive && api.IsLive, "Debug's sessions ended after Run's start did");
+            string[] containers = Docker.Run("ps", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.Equal(3, containers.Length);
+            Assert.Equal(["api", "cache", "web"], ContainerRunsTests.States(project).Keys.Order(StringComparer.Ordinal));
+            Assert.All(ContainerRunsTests.States(project).Values, state => Assert.Equal("running", state));
+            Assert.True(window.IsRunning, "Debug's run is not followed after Run's start ended");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "every container to be taken down", TimeSpan.FromMinutes(2));
+        }
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the sessions to end with Stop");
+        window.Close();
+    }
+
+    /// <summary>Another folder opened while Debug brings a configuration up ends that start: its up ended and what it made
+    /// taken down, and no session of it opening in the next folder's Debug window.</summary>
+    [AvaloniaFact]
+    public void Opening_another_folder_while_Debug_comes_up_leaves_no_container_and_no_Debug_tab_in_the_next_folder()
+    {
+        Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
+        (string folder, string project) = Slow("leave");
+        MainWindow window = ContainerRunsTests.Open(folder);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        string other = TestFolders.Create("ctr-next-");
+        File.WriteAllText(Path.Combine(other, "notes.txt"), "the next folder\n");
+        try
+        {
+            Task<string?> debugging = window.DebugAsync();
+            Ui.PumpUntil(() => debugging.IsCompleted || window.Actions.Work.Of(AppActions.Debug)?.Stage.StartsWith("Attaching the debugger", StringComparison.Ordinal) == true
+                && Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length > 0, "Debug to bring the services up and attach", TimeSpan.FromMinutes(5));
+            Assert.False(debugging.IsCompleted, $"Debug ended before its services came up: {(debugging.IsCompleted ? debugging.Result : null)}");
+            Task opening = window.OpenFolder(other);
+            Ui.WaitFor(() => opening.IsCompleted, "the next folder to open", TimeSpan.FromMinutes(1));
+            Assert.Equal("The solution was closed", Ui.Await(debugging, "Debug's start to end with its folder", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "the left folder's containers to be taken down", TimeSpan.FromMinutes(2));
+            Ui.Hold(TimeSpan.FromSeconds(3), "a late session of the left folder's to show");
+            Assert.Empty(window.Debugger.Tabs.Select(t => t.Name));
+            Assert.False(window.Debugger.IsDebugging, "A session of the left folder's is debugging in the next one");
+            Assert.Equal(string.Empty, Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}"));
+        }
+        finally
+        {
+            foreach (string left in Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Docker.Run("rm", "-f", left);
+            }
+        }
+        window.Close();
+    }
+
+    /// <summary>ContainerRunsTests' Compose solution, its cache answering its health check only after 25 s, so up (and web,
+    /// which needs it healthy) waits on it.</summary>
+    private static (string Folder, string Project) Slow(string name)
+    {
+        (string folder, string project) = ContainerRunsTests.Shop(name);
+        string compose = Path.Combine(folder, "compose.yaml");
+        File.WriteAllText(compose, File.ReadAllText(compose).Replace("\"mkdir -p /www", "\"sleep 25 && mkdir -p /www", StringComparison.Ordinal));
+        return (folder, project);
     }
 
     /// <summary>Debugs the configuration, presses Stop once Debug's stage says <paramref name="stage"/>, and checks what is left.</summary>

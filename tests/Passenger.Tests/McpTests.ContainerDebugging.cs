@@ -111,10 +111,11 @@ public sealed partial class McpTests
         }
     }
 
-    /// <summary>A compose configuration's debug_start an agent gives up on as its held services come up takes the run down
-    /// rather than leaving it up for no one; and a run up as a --mcp IDE's input ends goes with the IDE.</summary>
+    /// <summary>A compose configuration's debug_start an agent gives up on as its held services come up, and a run it stops as
+    /// it comes up, take the run down rather than leaving it up for no one; and a run up as a --mcp IDE's input ends goes
+    /// with the IDE.</summary>
     [Fact]
-    public async Task A_compose_start_an_agent_gives_up_on_comes_down_and_a_run_up_goes_with_the_ides_end()
+    public async Task A_compose_start_an_agent_gives_up_on_or_stops_comes_down_and_a_run_up_goes_with_the_ides_end()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         CancellationToken test = TestContext.Current.CancellationToken;
@@ -125,6 +126,16 @@ public sealed partial class McpTests
         McpClient client = await Start(["--mcp", shop]);
         try
         {
+            // Stopped as its services come up: up ends and nothing of it is left.
+            Task<ModelContextProtocol.Protocol.CallToolResult> running = Result(client, "run", new() { ["configuration"] = "Compose: compose.yaml" });
+            Assert.True(await Waiting.UntilAsync(() => Up() || running.IsCompleted, TimeSpan.FromMinutes(5), test), "run never brought a container up");
+            Assert.False(running.IsCompleted, $"run answered before it could be stopped: {(running.IsCompleted ? Text(await running) : null)}");
+            Assert.Equal("Stopped", Text(await Call(client, "stop")));
+            ModelContextProtocol.Protocol.CallToolResult stopped = await running;
+            Assert.True(stopped.IsError == true && Text(stopped).Contains("was stopped as it started", StringComparison.Ordinal), $"The run stopped as it came up answered: {Text(stopped)}");
+            Assert.True(await Waiting.UntilAsync(() => !Up(), TimeSpan.FromMinutes(2), test), $"The run stopped as it came up left its containers up: "
+                + $"{Docker.Run("ps", "-a", "--filter", $"label=com.docker.compose.project={project}", "--format", "{{.Names}} {{.Status}} {{.Labels}}")}\n{LogTail()}");
+
             using CancellationTokenSource giveUp = new();
             Task<ModelContextProtocol.Protocol.CallToolResult> starting = CallGivingUp(client, "debug_start",
                 new() { ["configuration"] = "Compose: compose.yaml", ["waitSeconds"] = 120 }, giveUp.Token);

@@ -46,8 +46,10 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
 
     /// <summary>Ends what the folder started: its containers removed, and of its Compose projects the containers and
     /// networks this process's labels are on (what its own <c>up</c> made, never the person's own of the project, as
-    /// <c>down</c> would take), off the UI thread, done once the engine has answered (or given up after its limit).</summary>
-    public Task EndAsync()
+    /// <c>down</c> would take), off the UI thread, done once the engine has answered (or given up after its limit). A run's
+    /// <c>up</c> still under way, <paramref name="upEnded"/> (ended by the folder's end), is waited for first, and its
+    /// projects looked at again a moment after, since the engine can finish a container it was making as Compose ended.</summary>
+    public Task EndAsync(Task? upEnded = null)
     {
         string[] removing = [.. containers];
         IReadOnlyList<string>[] downing = [.. projects];
@@ -57,9 +59,14 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
         {
             return Task.CompletedTask;
         }
+        bool coming = upEnded is { IsCompleted: false };
         // Not held: nothing it does is drawn, and the process waits for it once the window's loop has stopped.
-        return Task.Run(async () =>
+        Task ended = Task.Run(async () =>
         {
+            if (coming)
+            {
+                await Task.WhenAny(upEnded!, Task.Delay(TimeSpan.FromSeconds(10)));
+            }
             List<Task> ending = [.. downing.Select(project => TakeDownAsync(Engine, project, folder, "as the folder closed"))];
             if (removing.Length > 0)
             {
@@ -67,6 +74,16 @@ public sealed class FolderContainers(string? folder, ContainerEngine engine)
             }
             await Task.WhenAll(ending);
         });
+        if (coming)
+        {
+            // Not waited for by the folder's end, nor held: the IDE's own end removes what its process made should it go first.
+            _ = ended.ContinueWith(async _ =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                await Task.WhenAll(downing.Select(project => TakeDownAsync(Engine, project, folder, "as the folder closed")));
+            }, TaskScheduler.Default).Unwrap();
+        }
+        return ended;
     }
 
     /// <summary>Takes down what this process's <c>up</c> made of a Compose project (its <c>compose -p NAME …</c> words) for

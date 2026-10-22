@@ -67,6 +67,22 @@ public sealed class ContainerRunsTests
             Assert.Equal(webPort, Published(project, "web"));
             Assert.True(Waiting.Until(() => Answer(webPort) == "web 2", TimeSpan.FromMinutes(1)), $"web did not answer with its new build: {Answer(webPort)}");
             Assert.True(window.IsRunning, "The run's log stopped being followed through the restart");
+
+            // api's change built, then web alone restarted from the Containers window: api still runs its old build, so Rerun
+            // restarts it, whatever web's restart came after.
+            File.WriteAllText(Path.Combine(folder, "Api", "Message.cs"), "public static class Message\n{\n    public const string Text = \"api 2\";\n}\n");
+            BuildOutcome built = Ui.Await(window.BuildAsync(), "the solution's build", TimeSpan.FromMinutes(3));
+            Assert.True(built.Succeeded, built.Message);
+            apiStarted = Started(project, "api");
+            ContainerServicesTests.Act(window, ContainerServicesTests.Shown(window), project, "web", AppActions.ContainerRestart);
+            Ui.WaitFor(() => window.Status?.Contains(": restarted web", StringComparison.Ordinal) == true, "web's restart from the Containers window", TimeSpan.FromMinutes(2));
+            Assert.Equal(apiStarted, Started(project, "api"));
+            Assert.True(window.Perform(AppActions.Rerun), "Rerun did not run");
+            Ui.WaitFor(() => window.Status?.Contains("with the new build", StringComparison.Ordinal) == true || window.Status?.Contains("nothing restarted", StringComparison.Ordinal) == true,
+                "Rerun to restart what changed", TimeSpan.FromMinutes(3));
+            Assert.True(window.Status!.Split(": restarted ")[^1].Split(" with ")[0].Split(", ").Contains("api"),
+                $"Rerun did not restart api, whose build changed before web's restart: {window.Status}");
+            Assert.True(Waiting.Until(() => Answer(apiPort) == "api 2", TimeSpan.FromMinutes(1)), $"api did not answer with its new build: {Answer(apiPort)}");
         }
         finally
         {
@@ -511,13 +527,14 @@ public sealed class ContainerRunsTests
     }
 
     /// <summary>The stand-in for dotnet dev-certs: it notes what it was asked, answers the check with the exit code the test
-    /// put in "check", trusts nothing, and exports a file that is no certificate (or fails, as a locked keychain does, while
-    /// "fail" is there). Its first word is the folder it keeps those in.</summary>
+    /// put in "check" (first taking two minutes while "slow" is there), trusts nothing, and exports a file that is no
+    /// certificate (or fails, as a locked keychain does, while "fail" is there). Its first word is the folder it keeps those in.</summary>
     private const string DevCerts = """
         dir=$1; shift
         echo "$*" >> "$dir/asked"
         case " $* " in
-          *" --check "*) exit "$(cat "$dir/check")" ;;
+          *" --check "*) if [ -f "$dir/slow" ]; then sleep 120; fi
+                         exit "$(cat "$dir/check")" ;;
           *" -ep "*) if [ -f "$dir/fail" ]; then echo "The keychain is locked" >&2; exit 3; fi
                      while [ "$1" != "-ep" ]; do shift; done; printf 'stand-in' > "$2"; exit 0 ;;
           *" --trust "*) exit 0 ;;
@@ -528,7 +545,8 @@ public sealed class ContainerRunsTests
     /// <summary>A run whose service serves HTTPS with no trusted development certificate asks first: Run over HTTP serves it
     /// over HTTP on its port, with no certificate made or trusted; a certificate whose export fails is said in the status bar,
     /// a click away from what dev-certs said, the service over HTTP; and Create and Trust has dev-certs trust it, exports it
-    /// and gives it to the service. dev-certs is a stand-in throughout, which trusts nothing on this machine.</summary>
+    /// and gives it to the service. Run and Profile stopped as dev-certs checks it say so and leave nothing. dev-certs is a
+    /// stand-in throughout, which trusts nothing on this machine.</summary>
     [AvaloniaFact]
     public void A_run_that_serves_HTTPS_with_no_trusted_certificate_asks_to_create_and_trust_it_or_run_over_HTTP_and_says_an_export_that_fails()
     {
@@ -559,6 +577,24 @@ public sealed class ContainerRunsTests
         string Mounts() => Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));
         try
         {
+            // Stopped as dev-certs checks the certificate, Run and Profile each say so, the profiler starting no more, and make nothing.
+            File.WriteAllText(Path.Combine(standIn, "check"), "0");
+            File.WriteAllText(Path.Combine(standIn, "slow"), string.Empty);
+            foreach ((string action, Func<Task<string?>> start) in (ReadOnlySpan<(string, Func<Task<string?>>)>)[(AppActions.RunProgram, () => window.RunAsync()),
+                (AppActions.Profile, () => window.ProfileAsync())])
+            {
+                Task<string?> starting = start();
+                Ui.PumpUntil(() => window.Actions.Work.Of(action)?.Stage.StartsWith("Checking the HTTPS", StringComparison.Ordinal) == true || starting.IsCompleted,
+                    $"{action} to check the development certificate", TimeSpan.FromMinutes(5));
+                Assert.False(starting.IsCompleted, $"{action} ended before it checked the certificate: {(starting.IsCompleted ? starting.Result : null)}");
+                Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+                Assert.Equal("Web over HTTPS was stopped as it started", Ui.Await(starting, $"{action} to end once stopped", TimeSpan.FromMinutes(1)));
+            }
+            Assert.False(window.ProfilerView.Status.StartsWith("Starting", StringComparison.Ordinal), $"The profiler still says {window.ProfilerView.Status}");
+            Assert.Equal(string.Empty, Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}"));
+            File.Delete(Path.Combine(standIn, "slow"));
+            File.Delete(Path.Combine(standIn, "asked"));
+
             // Not trusted: asked, and Run over HTTP serves it over HTTP, nothing made or trusted.
             File.WriteAllText(Path.Combine(standIn, "check"), "7");
             Task<string?> running = window.RunAsync();
@@ -627,6 +663,34 @@ public sealed class ContainerRunsTests
             Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=web").Length == 0,
                 "Stop to take web down", TimeSpan.FromMinutes(2));
             Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
+        }
+    }
+
+    /// <summary>A configuration whose every service is marked Don't start runs nothing, saying why, where up given no service
+    /// would have started them all.</summary>
+    [AvaloniaFact]
+    public void A_configuration_that_starts_no_service_says_so_and_starts_nothing()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        (string folder, string project) = Shop("nothing");
+        MainWindow window = Open(folder);
+        RunConfiguration none = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with
+        {
+            Name = "None",
+            ServiceActions = new Dictionary<string, ServiceStart> { ["web"] = ServiceStart.DontStart, ["api"] = ServiceStart.DontStart, ["cache"] = ServiceStart.DontStart },
+            Generated = false,
+        };
+        window.SetConfigurations([none], none.Name);
+        try
+        {
+            Assert.Equal("None starts nothing: every service it would start is marked Don't start (Run > Edit Configurations)",
+                Ui.Await(window.RunAsync(), "Run to refuse", TimeSpan.FromMinutes(2)));
+            Assert.Equal(string.Empty, Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}"));
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            window.Close();
         }
     }
 

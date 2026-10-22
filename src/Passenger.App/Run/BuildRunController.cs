@@ -40,8 +40,9 @@ public sealed record BuildRunParts(
     public Containers.DotnetWords? DevCertificates { get; init; }
 
     /// <summary>Asks the person whether to make and trust the development certificate (true) or run over HTTP (false), given
-    /// the configuration, the services that serve HTTPS and whether there is none at all.</summary>
-    public Func<string, string, bool, Task<bool>>? AskCertificate { get; init; }
+    /// the configuration, the services that serve HTTPS and whether there is none at all; the question closed unanswered
+    /// (false) once the start is stopped.</summary>
+    public Func<string, string, bool, CancellationToken, Task<bool>>? AskCertificate { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of

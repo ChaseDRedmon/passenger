@@ -78,6 +78,14 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
     /// <summary>The .NET services that serve HTTPS (Kestrel told an https address or port, or a port of HTTPS's), which take
     /// the development certificate, or are told to serve HTTP instead when there is none.</summary>
     public IReadOnlyList<string> Https { get; init; } = [];
+
+    /// <summary>The services <c>up</c> makes: those it starts and what they depend on (every service when it names none),
+    /// whose containers it would make again over any of the project's it finds.</summary>
+    public IReadOnlyList<string> Touched { get; init; } = [];
+
+    /// <summary>What the run says of itself as it comes up (a service marked Don't start that another depends on), after its
+    /// status.</summary>
+    public IReadOnlyList<string> Notes { get; init; } = [];
 }
 
 /// <summary>Works out a container configuration's <see cref="ContainerPlan"/>: Compose's model of its files (a Dockerfile
@@ -192,11 +200,20 @@ public static class ContainerPlans
             dotnet.Add(new DotnetService(service.Name, project.Path, assembly, output, action, stage, paths));
         }
         HashSet<string> dotnetNames = [.. dotnet.Select(d => d.Service)];
-        List<string> start = configuration.Services.Count > 0 ? [.. configuration.Services]
-            : configuration.ServiceActions.Values.Any(a => a == ServiceStart.DontStart) ? [.. model.Services.Select(s => s.Name).Where(s => configuration.ServiceActions.GetValueOrDefault(s) != ServiceStart.DontStart)]
+        bool dontStarts = configuration.ServiceActions.Values.Any(a => a == ServiceStart.DontStart);
+        List<string> start = configuration.Services.Count > 0 ? [.. configuration.Services.Where(s => configuration.ServiceActions.GetValueOrDefault(s) != ServiceStart.DontStart)]
+            : dontStarts ? [.. model.Services.Select(s => s.Name).Where(s => configuration.ServiceActions.GetValueOrDefault(s) != ServiceStart.DontStart)]
             : [];
+        // up given no service would start them all, those marked Don't start among them.
+        if (start.Count == 0 && (configuration.Services.Count > 0 || dontStarts))
+        {
+            throw new LaunchException($"{configuration.Name} starts nothing: every service it would start is marked Don't start (Run > Edit Configurations)");
+        }
+        List<string> touched = start.Count == 0 ? [.. model.Services.Select(s => s.Name)] : Needed(model, start);
         List<string> backing = [.. model.Services.Select(s => s.Name).Where(s => !dotnetNames.Contains(s))];
         List<string> watched = [.. model.Services.Where(s => s.Watches && !dotnetNames.Contains(s.Name) && (start.Count == 0 || start.Contains(s.Name))).Select(s => s.Name)];
+        List<string> notes = [.. dotnet.Where(d => !d.Starts && touched.Contains(d.Service))
+            .Select(d => $"{d.Service} is marked Don't start, but a service it starts depends on it: Compose starts it from its own image, as its files build it")];
 
         string overrideFile = Path.Combine(state, $"{file}.override.yaml");
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
@@ -224,7 +241,28 @@ public static class ContainerPlans
             Publish = publish,
             State = state,
             Https = [.. model.Services.Where(s => dotnet.Any(d => d.Service == s.Name) && Serves(s)).Select(s => s.Name)],
+            Touched = touched,
+            Notes = notes,
         };
+    }
+
+    /// <summary>The services <c>up</c> of these makes: they and what they depend on, as Compose's model says.</summary>
+    private static List<string> Needed(ComposeModel model, IReadOnlyList<string> start)
+    {
+        List<string> needed = [];
+        Queue<string> next = new(start);
+        while (next.TryDequeue(out string? service))
+        {
+            if (!needed.Contains(service))
+            {
+                needed.Add(service);
+                foreach (string on in model[service]?.DependsOn ?? [])
+                {
+                    next.Enqueue(on);
+                }
+            }
+        }
+        return needed;
     }
 
     /// <summary>What holds a .NET service at its runtime's start until a debugger attaches and lets it go.</summary>
@@ -436,7 +474,8 @@ public static class ContainerPlans
             {
                 entry["build"] = new JsonObject { ["labels"] = Labels(labels) };
             }
-            if (dotnet.FirstOrDefault(d => d.Service == service.Name) is { } built)
+            // A .NET service marked Don't start that another depends on runs as its files say: Passenger built nothing for it.
+            if (dotnet.FirstOrDefault(d => d.Service == service.Name) is { Starts: true } built)
             {
                 JsonObject environment = [];
                 bool development = !service.Environment.ContainsKey("ASPNETCORE_ENVIRONMENT") && !service.Environment.ContainsKey("DOTNET_ENVIRONMENT")
@@ -832,6 +871,11 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     private Process? watching;
     private Task? stopping;
 
+    // Never disposed: a command that took its token may register on it after the run has ended.
+    /// <summary>Canceled as the run is taken down (by whoever asks, whatever started it) or its folder ends: its own
+    /// <c>up</c>, publish and restarts end with it, whichever start or action began them.</summary>
+    private readonly CancellationTokenSource ending = new();
+
     /// <summary>Whether <c>up</c> was ended before it had made all it would: the engine may finish a container it was making.</summary>
     private bool cut;
 
@@ -937,13 +981,18 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             words.Add("--build");
         }
         words.AddRange(Plan.Start.Count > 0 ? ["--", .. Plan.Start] : []);
-        using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        using CancellationTokenSource upEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
         upEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task<ChildResult> coming = StreamAsync(words, ending.Token);
+        if (ending.IsCancellationRequested)
+        {
+            upEnded.TrySetResult();
+            throw new OperationCanceledException(ending.Token);
+        }
+        Task<ChildResult> coming = StreamAsync(words, upEnding.Token);
         ChildResult up;
         try
         {
-            if (alongside is not null && await alongside(coming, ending.Token) is { } unattached)
+            if (alongside is not null && await alongside(coming, upEnding.Token) is { } unattached)
             {
                 await EndedAsync();
                 return unattached;
@@ -964,7 +1013,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         async Task EndedAsync()
         {
             cut = true;
-            await ending.CancelAsync();
+            await upEnding.CancelAsync();
             try
             {
                 await coming;
@@ -1066,7 +1115,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         bool coming = !up.IsCompleted || cut;
         stopping = BackgroundWork.Run(async () =>
         {
-            // Compose still bringing it up (Stop's own start's end ends it) makes no container after the take-down's look.
+            // Compose still bringing it up (ended just below, whoever started it) makes no container after the take-down's look.
             await Task.WhenAny(Task.WhenAll(first ?? Task.CompletedTask, up), Task.Delay(TimeSpan.FromSeconds(10)));
             await FolderContainers.TakeDownAsync(engine, Plan.Compose, LabelledFor, $"as {Plan.Name} stopped", only);
             if (coming)
@@ -1076,19 +1125,27 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
                 await FolderContainers.TakeDownAsync(engine, Plan.Compose, LabelledFor, $"as {Plan.Name} stopped", only);
             }
         });
+        // After stopping is set: a caller its end wakes at once asks again and is given the same take-down.
+        ending.Cancel();
         return stopping;
     }
 
-    /// <summary>Lets go of what the run started on this machine (Compose's watch) as the folder ends; its containers go with
-    /// the folder's (<see cref="FolderContainers"/>).</summary>
-    public void Abandon()
+    /// <summary>Lets go of what the run started on this machine (Compose's watch, and its <c>up</c> or restart under way,
+    /// ended) as the folder ends; its containers go with the folder's (<see cref="FolderContainers"/>), once the task given
+    /// back is done: <c>up</c> has ended, making nothing after their take-down looks.</summary>
+    public Task Abandon()
     {
         if (watching is { } watch)
         {
             ChildProcesses.Kill(watch);
             watching = null;
         }
+        ending.Cancel();
+        return upEnded.Task;
     }
+
+    /// <summary>What the run said of itself as it came up (its notes: a service over HTTP, one that runs without the debugger).</summary>
+    public List<string> Notes { get; } = [];
 
     /// <summary>The .NET services whose build changed since they started (or were last restarted), Rerun's to restart.</summary>
     public IReadOnlyList<DotnetService> Changed() =>
@@ -1113,11 +1170,12 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             await WriteOverrideAsync(cancel);
         }
-        using CancellationTokenSource ending = CancellationTokenSource.CreateLinkedTokenSource(cancel);
-        Task<string?> restarting = RestartEachAsync(ending.Token);
-        if (alongside is not null && await alongside(restarting, ending.Token) is { } unattached)
+        // Stop of the run ends its restart too, whoever asked for it.
+        using CancellationTokenSource restartEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
+        Task<string?> restarting = RestartEachAsync(restartEnding.Token);
+        if (alongside is not null && await alongside(restarting, restartEnding.Token) is { } unattached)
         {
-            await ending.CancelAsync();
+            await restartEnding.CancelAsync();
             try
             {
                 await restarting;
@@ -1129,7 +1187,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             return unattached;
         }
         string? failed = await restarting;
-        Stamp();
+        // Only those restarted run the build they have now: another's that changed meanwhile is still Rerun's to restart.
+        Stamp(services);
         return failed;
 
         async Task<string?> RestartEachAsync(CancellationToken stop)
@@ -1164,12 +1223,25 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         }
     }
 
-    private void Stamp()
+    private void Stamp(IEnumerable<DotnetService>? services = null)
     {
-        foreach (DotnetService service in Plan.Restartable)
+        foreach (DotnetService service in services ?? Plan.Restartable)
         {
             stamps[service.Service] = Stamp(service.Output);
         }
+    }
+
+    /// <summary>Restarts services the run does not build (its backing services) as they are, saying so in the console;
+    /// null once done, else why not. Stop of the run ends it.</summary>
+    public async Task<string?> RestartOthersAsync(IReadOnlyList<string> services, CancellationToken cancel)
+    {
+        if (services.Count == 0)
+        {
+            return null;
+        }
+        using CancellationTokenSource restartEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
+        ChildResult restarted = await StreamAsync([.. Plan.Compose, "restart", "--", .. services], restartEnding.Token);
+        return restarted.Succeeded ? null : $"{Plan.Name}'s services did not restart: docker compose restart ended with exit code {restarted.ExitCode}";
     }
 
     /// <summary>A build's output as it stands: each assembly's, symbols' and settings' name, length and time.</summary>
@@ -1248,7 +1320,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             start.Environment["PATH"] = start.Environment.TryGetValue("PATH", out string? path) ? $"{bin}{Path.PathSeparator}{path}" : bin;
         }
-        ChildResult published = await StreamAsync(start, cancel);
+        using CancellationTokenSource publishEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
+        ChildResult published = await StreamAsync(start, publishEnding.Token);
         return published.Succeeded ? null : $"{Plan.Name} could not be made as deployed: dotnet publish ended with exit code {published.ExitCode}; the Run window has what it said";
     }
 
@@ -1270,10 +1343,10 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             ChildProcesses.Kill(process);
             // Gone before its caller goes on: Compose killed makes nothing more after a take-down has looked.
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { }, TaskScheduler.Default);
+            await Within(process.WaitForExitAsync(), TimeSpan.FromSeconds(5));
             throw;
         }
-        await Task.WhenAll(output, errors).WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
+        await Within(Task.WhenAll(output, errors), TimeSpan.FromSeconds(5));
         lock (said)
         {
             return new ChildResult(process.ExitCode, string.Join('\n', said), string.Empty);
@@ -1298,6 +1371,24 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
                     UiThread.Post(() => ProblemFound?.Invoke(this, problem));
                 }
             }
+        }
+    }
+
+    /// <summary>Waits for a process's end or its output's for a while at most: one that comes later, or fails (its pipe
+    /// broken as it was killed), is let go, its failure observed.</summary>
+    private static async Task Within(Task task, TimeSpan limit)
+    {
+        try
+        {
+            await task.WaitAsync(limit);
+        }
+        catch (TimeoutException)
+        {
+            _ = task.ContinueWith(static late => _ = late.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        }
+        catch (Exception ended) when (ended is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Its output ended with the process.
         }
     }
 

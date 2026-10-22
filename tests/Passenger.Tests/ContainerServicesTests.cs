@@ -141,9 +141,11 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
     }
 
     /// <summary>The Containers window's Stop and Remove of a debugged service go through the run: its session ends before
-    /// its container stops or goes (an adapter losing it would be the IDE's error, which fails the test), the run going on.</summary>
+    /// its container stops or goes (an adapter losing it would be the IDE's error, which fails the test), the run going on.
+    /// So do its Restart and Stop of the run's own project: Restart ends the sessions, restarts every service and attaches
+    /// to the debugged ones again; Stop is the run's, its sessions ended before its containers go.</summary>
     [AvaloniaFact]
-    public void Stop_and_Remove_of_a_debugged_service_in_the_Containers_window_end_its_session_first_and_leave_the_run_up()
+    public void Stop_and_Remove_of_a_debugged_service_and_Restart_and_Stop_of_its_project_in_the_Containers_window_go_through_the_run()
     {
         Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
         (string folder, string project) = ContainerRunsTests.Shop("svcstop");
@@ -157,6 +159,19 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Ui.WaitFor(() => web.Session is { State: DebugState.Running } && api.Session is { State: DebugState.Running }, "web and api to run under the debugger");
             ContainersView view = Shown(window);
 
+            // The project's Restart: every service restarted, web and api held again and attached to again.
+            string cacheStarted = Started(project, "cache");
+            DebugSession webBefore = web.Session!;
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
+            Assert.True(window.Perform(AppActions.ContainerRestart), $"Restart could not run on {project}: {window.Status}");
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.ContainerRestart) is null, $"{project}'s restart", TimeSpan.FromMinutes(3));
+            Assert.Equal("Compose: compose.yaml: restarted its services", window.Status);
+            Assert.NotEqual(cacheStarted, Started(project, "cache"));
+            web = ContainerRunDebuggingTests.Tab(window, "web");
+            api = ContainerRunDebuggingTests.Tab(window, "api");
+            Ui.WaitFor(() => web.Session is { State: DebugState.Running } && web.Session != webBefore && api.Session is { State: DebugState.Running },
+                "web and api to run under the debugger again");
+
             Act(window, view, project, "api", AppActions.ContainerStop);
             Ui.WaitFor(() => !api.IsLive && ContainerRunsTests.States(project).GetValueOrDefault("api") == "exited", "api's session to end and its container to stop",
                 TimeSpan.FromMinutes(2));
@@ -165,6 +180,53 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             Act(window, view, project, "web", AppActions.ContainerRemove);
             Ui.WaitFor(() => !web.IsLive && !ContainerRunsTests.States(project).ContainsKey("web"), "web's session to end and its container to go", TimeSpan.FromMinutes(2));
             Assert.Equal("running", ContainerRunsTests.States(project)["cache"]);
+
+            // The project's Stop is the run's: nothing of it left, its log no longer followed.
+            Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Project && r.Project?.Name == project), $"{project}'s row");
+            Assert.True(window.Perform(AppActions.ContainerStop), $"Stop could not run on {project}: {window.Status}");
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "the project's Stop to take the run down",
+                TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => !window.IsRunning, "the run's log to stop being followed");
+            Assert.Null(window.Builds.Containers);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0,
+                "Stop to take every container down", TimeSpan.FromMinutes(2));
+        }
+        window.Close();
+    }
+
+    /// <summary>Debug of one service whose debugger cannot attach after its restart (no container tools to put in it: none
+    /// here, and no release to download them from) says why, and makes it again unheld, so it runs on without the debugger
+    /// rather than waiting at its runtime's start for one that never comes.</summary>
+    [AvaloniaFact]
+    public void A_service_the_debugger_cannot_attach_to_after_its_restart_runs_on_without_it()
+    {
+        Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
+        (string folder, string project) = ContainerRunsTests.Shop("noattach");
+        string none = TestFolders.Create("ctr-notools-");
+        MainWindow window = new()
+        {
+            Width = 1200,
+            Height = 800,
+            ContainerToolsFrom = new ContainerToolsSource([none], Passenger.App.Updates.ReleaseFeed.Default, Path.Combine(none, "cache")),
+        };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            Ui.Launched(window, window.RunAsync(), "the services to come up", TimeSpan.FromMinutes(5));
+            Act(window, Shown(window), project, "web", AppActions.ServiceDebug);
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.ServiceDebug) is null, "Debug of web to give up", TimeSpan.FromMinutes(3));
+            Assert.Contains("Could not debug web", window.Status, StringComparison.Ordinal);
+            Assert.Contains("web restarted to run without the debugger", window.Status, StringComparison.Ordinal);
+            Assert.DoesNotContain(window.Debugger.Tabs, t => t.Name == "web" && t.IsLive);
+            Assert.Equal("web 1", Answered(Request(project, "web"), project, "web"));
+            Assert.True(window.IsRunning, "Debug of web took the run down");
         }
         finally
         {
@@ -220,7 +282,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             ? Docker.Ask(["inspect", "-f", "{{.State.StartedAt}}", container]).Trim()
             : string.Empty;
 
-    private static ContainersView Shown(MainWindow window)
+    internal static ContainersView Shown(MainWindow window)
     {
         window.ShowToolWindow("containers");
         Ui.Settle();
@@ -228,7 +290,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
     }
 
     /// <summary>One of the Containers window's actions on a service's row, chosen as a click chooses it.</summary>
-    private static void Act(MainWindow window, ContainersView view, string project, string service, string action)
+    internal static void Act(MainWindow window, ContainersView view, string project, string service, string action)
     {
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == service), $"{service}'s row");
         Assert.True(window.Perform(action), $"{action} could not run on {service}: {window.Status}");

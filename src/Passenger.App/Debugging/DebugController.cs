@@ -423,10 +423,19 @@ public sealed class DebugController : IDisposable
         bool inTerminal = false, bool hotReloadOn = false, AdapterPlace? place = null, string? group = null)
     {
         UiThread.Check();
+        // A start that comes after its folder was left would open in the next folder's Debug window, which is not its own.
+        if (disposed)
+        {
+            return $"Could not debug {name}: its folder was closed";
+        }
         // A program debugged again takes its last session's place, which is let go first.
         if (view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive) is { } again)
         {
             await EndAsync(again);
+            if (disposed)
+            {
+                return $"Could not debug {name}: its folder was closed";
+            }
         }
         DebugTab tab = Place(name);
         tab.Group = group;
@@ -590,10 +599,20 @@ public sealed class DebugController : IDisposable
     public async Task<string?> AttachForHotReloadAsync(int processId, string name, AdapterPlace place)
     {
         UiThread.Check();
+        if (disposed)
+        {
+            return $"Could not attach to {name} for Hot Reload: its folder was closed";
+        }
         BuiltLines built = new(path => CSharp.ServerPlaces.TextOf(editors, path));
         try
         {
             DebugSession session = await DebugSession.AttachAsync(processId, Breakpoints, built, _ => { }, _ => { }, hotReload: true, place: place, quiet: true);
+            if (disposed)
+            {
+                // Its folder was left as it attached: no one would end it.
+                _ = session.StopAsync();
+                return $"Could not attach to {name} for Hot Reload: its folder was closed";
+            }
             RunningReload reload = new(name, session, new HotReload(session, Server, editors));
             running.Add(reload);
             session.StateChanged += (_, _) =>

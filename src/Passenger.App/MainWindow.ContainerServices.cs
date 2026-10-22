@@ -17,8 +17,9 @@ public partial class MainWindow
     public CertificateQuestionDialog? CertificateQuestion { get; private set; }
 
     /// <summary>Asks whether to make and trust the development certificate for a run's HTTPS services, or run them over HTTP;
-    /// an agent's own IDE (--mcp) has nobody to ask, and runs them over HTTP.</summary>
-    private async Task<bool> AskCertificateAsync(string configuration, string services, bool missing)
+    /// an agent's own IDE (--mcp) has nobody to ask, and runs them over HTTP; a start stopped meanwhile closes the question,
+    /// answered Run over HTTP.</summary>
+    private async Task<bool> AskCertificateAsync(string configuration, string services, bool missing, CancellationToken stop)
     {
         if (!AgentsAllowed)
         {
@@ -28,7 +29,7 @@ public partial class MainWindow
         CertificateQuestion = question;
         try
         {
-            return await question.ShowDialog<bool>(this);
+            return await AskAsync(question, stop);
         }
         finally
         {
@@ -37,6 +38,19 @@ public partial class MainWindow
                 CertificateQuestion = null;
             }
         }
+    }
+
+    /// <summary>A yes-or-no question's answer, the question closed unanswered (no) once <paramref name="stop"/> is canceled.</summary>
+    private async Task<bool> AskAsync(Avalonia.Controls.Window question, CancellationToken stop)
+    {
+        using CancellationTokenRegistration closing = stop.Register(() => UiThread.Post(() =>
+        {
+            if (question.IsVisible)
+            {
+                question.Close(false);
+            }
+        }));
+        return await question.ShowDialog<bool>(this);
     }
 
     private void AddServiceActions(ContainersView view)
@@ -98,9 +112,15 @@ public partial class MainWindow
 
     /// <summary>A Containers window action on a row, through the container run when it is one of its .NET services: its
     /// session (and the profiler's recording) ended before Stop or Remove takes its container, and Restart restarting it as
-    /// the run does, held again and attached to again where it was debugged. Null once done, else why not.</summary>
+    /// the run does, held again and attached to again where it was debugged; and on the run's own project, its Restart, Stop
+    /// and Remove the run's (<see cref="BuildRunController.ProjectActionAsync"/>). Null once done, else why not.</summary>
     public async Task<string?> ContainerActAsync(string id, string action, ContainerRow row)
     {
+        // The run's own project: its Restart, Stop and Remove are the run's, its sessions ended first.
+        if (row is { Kind: ContainerRowKind.Project, Project: { } project } && buildRun.Containers?.Plan.ProjectName == project.Name && action is "restart" or "stop" or "remove")
+        {
+            return await buildRun.ProjectActionAsync(action);
+        }
         if (ServiceOfRow(row) is { } service && buildRun.ServiceOfRun(service).Service is not null)
         {
             if (action == "restart")

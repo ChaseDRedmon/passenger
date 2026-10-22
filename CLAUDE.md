@@ -600,12 +600,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
   and user secrets in Development; a fast .NET service's ports the file leaves to the engine
   chosen free once (`FreePort`) and put in the file's place (`!override` on JSON's flow list, Compose 2.24 on), since a
-  restart otherwise publishes another. An SDK container as deployed is the SDK's own image (`dotnet publish
+  restart otherwise publishes another. A configuration whose every service is marked Don't start runs nothing, saying so
+  (`up` given none would start them all); a .NET service marked Don't start that a started one depends on is left out of
+  the override's .NET part, Compose starting it from its own image, which the run says (`ContainerPlan.Notes`;
+  `ContainerPlan.Touched` is what `up` makes: the services it starts and what they depend on). An SDK container as deployed is the SDK's own image (`dotnet publish
   -t:PublishContainer` into the engine, `ContainerRun.PublishAsync`, named `passenger-<config>-<folder>:passenger`, which
   carries no label of Passenger's). `ContainerRun` (`ProjectSession.ContainerRun`) is `up
   --detach --wait` streamed into the Run console, then `logs --follow` through the session's `Runner` (so Run's Stop,
   `IsRunning` and its end are the log's), Compose's own watch for other services that declare one, Rerun's restart of the
-  services whose build changed (`Changed`, by the output's stamps), and
+  services whose build changed (`Changed`, by the output's stamps, a restart stamping only those it restarted), and
   `StopAsync` (`FolderContainers.TakeDownAsync`: the containers and networks of its project carrying this machine's, process's and
   folder's labels, the .NET services' alone when backing services are kept, which then go with the folder; never `down` or
   `--remove-orphans`, which would take the person's own of the project). A service's name follows `--` in every command.
@@ -634,9 +637,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   runs on) and an image of another processor than the engine's are said in the status bar after the run comes up. Stop ends
   the run's sessions (`ContainerRun.Debugged`) before the containers go, since a container taken from under its adapter
   would end it as a failure. A start stopped (Stop, the window's Kill, an agent giving up on `run` or `debug_start`,
-  `PassengerTools.Started`) ends Compose's `up` and waits for its CLI to go before the take-down looks, which waits for it
+  `PassengerTools.Started`, an agent's `stop`) ends Compose's `up` and waits for its CLI to go before the take-down looks, which waits for it
   (`ContainerRun.upEnded`) and looks again 2 s later, since the engine can finish a container it was making as `up` ended;
-  an attach whose container was reached after the Stop starts no session. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
+  `StopAsync` cancels the run's own token whoever asks, so its `up`, publish and restarts end with it whatever began them;
+  an attach whose container was reached after the Stop, or after its folder was left, starts no session (nor does the
+  debugger once disposed). One container start at a time (`ProjectSession.ContainerStarting`, a `StartUnderWay`): a start
+  ends one under way first (Debug pressed as Run comes up) and waits for its end and its run's take-down, a start that fails
+  takes down its own run alone (`StopContainersAsync(run)`), and the folder's end ends it, its `up` waited for before the
+  folder's containers are taken down (`FolderContainers.EndAsync(upEnded)`); a stop as the certificate is checked, made or
+  exported, or as the person is asked about it (the question closed), is the start stopped too. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
@@ -647,7 +656,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
   modifiable)`), and the run keeps what each service is held for (`ContainerRun.HeldFor`, `HoldAsync`) and which containers
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
-  no debugger to let it go. A .NET service of the run under way is acted on alone, the run left up (`MainWindow.ContainerServices.cs`,
+  no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
+  said, rather than waiting at its start for good. A .NET service of the run under way is acted on alone, the run left up (`MainWindow.ContainerServices.cs`,
   `AppActions.Service*`, on the Containers window's service and container rows and the gutter's icon, whose menu joins a run
   that reads its compose file, `InRunNow`): Debug (`DebugServiceAsync`: held from now and restarted, attached in a tab, its
   startup stopping at breakpoints), Attach (`AttachServiceAsync`: as it runs, its startup said to have run;
@@ -656,7 +666,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   and Run without Debugger's choice is kept by configuration (`chosenDebugged`) for the run's restarts and a Rerun that
   brings it up again. The window's Restart, Stop and Remove of such a service, and an agent's `container_action`, go through
   the run (`MainWindow.ContainerActAsync`): its session and recording ended first, Restart attaching again as the run's restart
-  does (`RestartServiceAsync`).
+  does (`RestartServiceAsync`); so do those of the run's own project (`ProjectActionAsync`): Restart ends its sessions,
+  restarts its other services as they are and its .NET ones as the run's restart does, Stop and Remove are the run's Stop.
   Edit Configurations' Compose page lists the services from Compose's model
   (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
@@ -1619,10 +1630,13 @@ aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is
 since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
 solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
 method leads web's own (a web app's idle threads wait in the runtime's code). `ContainerServicesTests` (Alone) act on one
-service of that solution's run from the Containers window's rows and the gutter, the others never restarted, and Stop and
-Remove a debugged one there (`McpTests.ContainerDebugging.cs`' agent restarts and stops one with `container_action`);
-`ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, and
-`McpTests.ContainerDebugging.cs`' agent gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
+service of that solution's run from the Containers window's rows and the gutter, the others never restarted, Stop and
+Remove a debugged one there and Restart and Stop the run's project, and Debug one whose tools cannot be found
+(`ContainerToolsFrom` an empty folder and the dead release feed), which then runs on unheld (`McpTests.ContainerDebugging.cs`'
+agent restarts and stops one with `container_action`); `ContainerRunStopsTests` (Alone) press Stop during its first build and
+during `up` as held services attach, press Debug as Run brings it up and open another folder as Debug does (its cache
+answering its health check only after 25 s, so `up` waits), and `McpTests.ContainerDebugging.cs`' agent stops a run as it
+comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
 run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive

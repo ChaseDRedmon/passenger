@@ -6,6 +6,9 @@ using Passenger.Editor;
 
 namespace Passenger.App.Run;
 
+/// <summary>A container configuration's start under way: its action's work, which Stop and the next start end, and its end.</summary>
+public sealed record StartUnderWay(Working Work, Task Ended);
+
 /// <summary>Run of a container configuration: Compose's model of its files read, Passenger's override written, its .NET
 /// services built on the host (fast mode), its services brought up and waited for, their merged log followed in the Run
 /// console, the browser opened once the launched service's published port answers, and the Containers window shown its
@@ -52,9 +55,46 @@ public sealed partial class BuildRunController
     public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work, ContainerProfiler profile) =>
         RunContainersAsync(chosen, work, ContainerStart.Profile, profile);
 
+    /// <summary>One container start at a time, which the folder's end ends too (<see cref="ProjectSession.ContainerStarting"/>):
+    /// one under way (Run's, as Debug begins) is ended first, as Stop ends it, and this one goes on once it has.</summary>
     private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, ContainerStart how = ContainerStart.Run, ContainerProfiler? profile = null)
     {
         using IDisposable held = BackgroundWork.Scope();
+        if (session.ContainerStarting is { } earlier)
+        {
+            earlier.Work.Cancel();
+            try
+            {
+                await earlier.Ended.WaitAsync(work.Stopping);
+            }
+            catch (OperationCanceledException)
+            {
+                return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
+            }
+        }
+        if (session.IsEnded)
+        {
+            return Left;
+        }
+        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        StartUnderWay mine = new(work, ended.Task);
+        session.ContainerStarting = mine;
+        try
+        {
+            return await StartContainersAsync(chosen, work, how, profile);
+        }
+        finally
+        {
+            if (session.ContainerStarting == mine)
+            {
+                session.ContainerStarting = null;
+            }
+            ended.TrySetResult();
+        }
+    }
+
+    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, ContainerStart how, ContainerProfiler? profile)
+    {
         parts.Editors.SaveAll();
         parts.Views.Run.Clear();
         ContainerEngine engine = session.Containers.Engine;
@@ -72,11 +112,22 @@ public sealed partial class BuildRunController
         {
             return Said($"{chosen.Name} cannot run: {state.Problem}");
         }
-        if (session.ContainerRun is { IsStopped: false } before)
+        if (session.ContainerRun is { } before)
         {
-            // Another configuration's run (or this one's, its backing services kept) goes first: one log at a time.
-            await session.StopContainersAsync();
-            await before.Stopped;
+            // Another configuration's run (or this one's, its backing services kept) goes first, wholly down before this one
+            // comes, whoever stopped it: one log at a time.
+            if (!before.IsStopped)
+            {
+                _ = session.StopContainersAsync();
+            }
+            try
+            {
+                await before.Stopped.WaitAsync(work.Stopping);
+            }
+            catch (OperationCanceledException)
+            {
+                return Said(StoppedStarting(chosen.Name));
+            }
         }
         work.Say($"Reading {chosen.Name}'s compose files…");
         ContainerPlan plan;
@@ -120,7 +171,19 @@ public sealed partial class BuildRunController
         if (plan.Builds.Count > 0)
         {
             work.Say($"Building {string.Join(", ", plan.Builds.Select(Path.GetFileNameWithoutExtension))}…");
-            BuildOutcome built = await BuildProjectsAsync(plan.Builds);
+            BuildOutcome built;
+            // The start ended (by a start that takes its place, or the folder's end) ends its build, as Stop's does.
+            using (work.Stopping.Register(() => UiThread.Post(() =>
+            {
+                // The folder's end stops it itself.
+                if (!session.IsEnded)
+                {
+                    session.Builder.Stop();
+                }
+            })))
+            {
+                built = await BuildProjectsAsync(plan.Builds);
+            }
             if (!built.Succeeded)
             {
                 return work.IsStopped ? Said(StoppedStarting(chosen.Name)) : built.Message;
@@ -138,7 +201,18 @@ public sealed partial class BuildRunController
         {
             return Said(StoppedStarting(chosen.Name));
         }
-        (DevelopmentCertificate.Exported? certificate, string? overHttp, bool unexported) = await CertificateAsync(plan, work);
+        DevelopmentCertificate.Exported? certificate;
+        string? overHttp;
+        bool unexported;
+        try
+        {
+            (certificate, overHttp, unexported) = await CertificateAsync(plan, work);
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped as dev-certs checked, made or exported it, or as the person was asked.
+            return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
+        }
         if (session.IsEnded)
         {
             return Left;
@@ -154,11 +228,19 @@ public sealed partial class BuildRunController
         }
         catch (OperationCanceledException)
         {
-            return Said(StoppedStarting(chosen.Name));
+            return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
         }
         catch (Exception unwritten) when (unwritten is IOException or UnauthorizedAccessException)
         {
             return Said($"{chosen.Name} cannot run: Passenger's override could not be written: {unwritten.Message}");
+        }
+        if (session.IsEnded)
+        {
+            return Left;
+        }
+        if (work.IsStopped)
+        {
+            return Said(StoppedStarting(chosen.Name));
         }
         work.Say($"Bringing {chosen.Name}'s services up…");
         ran = chosen.Name;
@@ -188,7 +270,12 @@ public sealed partial class BuildRunController
         session.Containers.StartedProject(plan.Compose);
         session.ContainerRun = run;
         RunningChanged?.Invoke(this, EventArgs.Empty);
-        List<string> notes = overHttp is null ? [] : [overHttp];
+        List<string> notes = run.Notes;
+        notes.AddRange(plan.Notes);
+        if (overHttp is not null)
+        {
+            notes.Add(overHttp);
+        }
         string? failed;
         try
         {
@@ -209,17 +296,26 @@ public sealed partial class BuildRunController
         }
         if (failed is not null)
         {
-            // Whatever came up goes: a run that did not start leaves nothing running.
+            if (session.IsEnded)
+            {
+                // The folder's end takes down what came, once its up has ended; the window's views are another folder's now.
+                return Left;
+            }
+            // Whatever came up goes: a run that did not start leaves nothing running. Its own run alone: another start
+            // that replaced it meanwhile has its own.
             IdeLog.Write(IdeLog.Ide, $"Containers: {chosen.Name} did not start ({failed}): what came up is taken down");
-            await session.StopContainersAsync();
-            parts.Views.Run.SetRunning(false);
-            RunningChanged?.Invoke(this, EventArgs.Empty);
+            await session.StopContainersAsync(run);
+            if (session.ContainerRun == run && !session.IsEnded)
+            {
+                parts.Views.Run.SetRunning(false);
+                RunningChanged?.Invoke(this, EventArgs.Empty);
+            }
             return Said(failed);
         }
         string? following = Started(session.Runner.Start(engine.Cli!, run.Logs, plan.Folder, Quiet));
         if (following is not null)
         {
-            await session.StopContainersAsync();
+            await session.StopContainersAsync(run);
             return following;
         }
         string what = how switch
@@ -251,7 +347,8 @@ public sealed partial class BuildRunController
     /// https --check --trust</c>), and, missing or not trusted, the person asked once whether to make and trust it or run
     /// over HTTP; then exported into the state. With none (the person's choice, nobody to ask, or a step that failed),
     /// those services serve HTTP for this run, which <paramref name="work"/>'s run says, a failure with what dev-certs said
-    /// in the Run window. None asked of a run whose services serve no HTTPS.</summary>
+    /// in the Run window. None asked of a run whose services serve no HTTPS. Stopped, it throws
+    /// <see cref="OperationCanceledException"/>.</summary>
     private async Task<(DevelopmentCertificate.Exported? Certificate, string? Note, bool Failed)> CertificateAsync(ContainerPlan plan, Working work)
     {
         string[] serving = [.. plan.Https.Where(plan.Starts)];
@@ -263,13 +360,11 @@ public sealed partial class BuildRunController
         DotnetWords dotnet = parts.DevCertificates ?? DevelopmentCertificate.Machine;
         work.Say("Checking the HTTPS development certificate…");
         (DevelopmentCertificate.Standing standing, string said) = await BackgroundWork.Run(() => DevelopmentCertificate.CheckAsync(dotnet, plan.Folder, work.Stopping));
-        if (work.IsStopped)
-        {
-            return (null, null, false);
-        }
+        work.Stopping.ThrowIfCancellationRequested();
         if (standing is DevelopmentCertificate.Standing.Missing or DevelopmentCertificate.Standing.NotTrusted)
         {
             bool missing = standing == DevelopmentCertificate.Standing.Missing;
+            string standsSo = $"the development certificate {(missing ? "is not there" : "is not trusted")}";
             bool trust = false;
             if (parts.AskCertificate is { } ask)
             {
@@ -277,16 +372,17 @@ public sealed partial class BuildRunController
                 BackgroundWork.End();
                 try
                 {
-                    trust = await ask(plan.Name, named, missing);
+                    trust = await ask(plan.Name, named, missing, work.Stopping);
                 }
                 finally
                 {
                     BackgroundWork.Begin();
                 }
             }
+            work.Stopping.ThrowIfCancellationRequested();
             if (!trust)
             {
-                return (null, $"{named} over HTTP for this run: the development certificate {(missing ? "is not there" : "is not trusted")}", false);
+                return (null, $"{named} over HTTP for this run: {standsSo}", false);
             }
             work.Say("Making and trusting the HTTPS development certificate…");
             if (await BackgroundWork.Run(() => DevelopmentCertificate.TrustAsync(dotnet, plan.Folder, plan.State, work.Stopping)) is { } untrusted)
@@ -300,7 +396,8 @@ public sealed partial class BuildRunController
         }
         work.Say("Exporting the HTTPS development certificate…");
         (DevelopmentCertificate.Exported? exported, string? problem) = await BackgroundWork.Run(() => DevelopmentCertificate.ExportAsync(dotnet, plan.State, work.Stopping));
-        return exported is not null || work.IsStopped ? (exported, null, false) : Unmade($"the development certificate could not be exported: {problem}");
+        work.Stopping.ThrowIfCancellationRequested();
+        return exported is not null ? (exported, null, false) : Unmade($"the development certificate could not be exported: {problem}");
 
         (DevelopmentCertificate.Exported?, string?, bool) Unmade(string why)
         {
@@ -312,13 +409,17 @@ public sealed partial class BuildRunController
     /// <summary>Attaches to each service held at its start, all at once, while Compose brings the run up: null once each is
     /// attached (one whose runtime has its debugger off runs on undebugged, said in <paramref name="notes"/>), else why not.</summary>
     private async Task<string?> AttachAllAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Task up, List<string> notes, Working work, CancellationToken stop,
-        ContainerStart? purpose = null)
+        ContainerStart? purpose = null) =>
+        (await AttachEachAsync(run, services, up, notes, work, stop, purpose)).Select(a => a.Refused).FirstOrDefault(s => s is not null);
+
+    /// <summary>Attaches to each service held at its start, all at once: each with why it was not attached, or null.</summary>
+    private Task<(DotnetService Service, string? Refused)[]> AttachEachAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Task up, List<string> notes, Working work,
+        CancellationToken stop, ContainerStart? purpose = null)
     {
         string named = string.Join(", ", services.Select(s => s.Service));
         work.Say(purpose == ContainerStart.Profile ? $"Attaching the profiler to {named}…" : services.All(s => run.HeldFor(s.Service) == ContainerStart.HotReload) ? "Attaching for Hot Reload…"
             : $"Attaching the debugger to {named}…");
-        string?[] said = await Task.WhenAll(services.Select(s => AttachAsync(run, s, up, notes, stop, purpose)));
-        return said.FirstOrDefault(s => s is not null);
+        return Task.WhenAll(services.Select(async s => (s, await AttachAsync(run, s, up, notes, stop, purpose))));
     }
 
     /// <summary>One service held at its start: its container, once Compose has started it; Passenger's tools copied into it
@@ -346,9 +447,10 @@ public sealed partial class BuildRunController
             // Compose ended without starting it: what it said is in the Run window, and the run's failure says why.
             return null;
         }
-        // Stopped while its container was reached: a session begun now would outlive the Stop that ended the others.
+        // Stopped, or its folder left, while its container was reached: a session begun now would outlive the Stop that ended
+        // the others, or open in the next folder's Debug window.
         stop.ThrowIfCancellationRequested();
-        if (run.IsStopped)
+        if (run.IsStopped || session.IsEnded)
         {
             throw new OperationCanceledException(stop);
         }
@@ -537,10 +639,23 @@ public sealed partial class BuildRunController
                 return failed;
             }
             List<string> notes = [];
-            string? unattached = held.Count == 0 ? null : await AttachAllAsync(run, held, Task.CompletedTask, notes, work, work.Stopping);
+            (DotnetService Service, string? Refused)[] attached = held.Count == 0 ? [] : await AttachEachAsync(run, held, Task.CompletedTask, notes, work, work.Stopping);
+            string? unattached = attached.Select(a => a.Refused).FirstOrDefault(r => r is not null);
             foreach (DotnetService again in running)
             {
                 unattached ??= await AttachAsync(run, again, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
+            }
+            // Restarted held, a service no debugger reached would wait at its runtime's start for good: it is made again
+            // unheld, running without the debugger, its hold for the run let go.
+            if (attached.Where(a => a.Refused is not null).Select(a => a.Service).ToList() is { Count: > 0 } stuck)
+            {
+                foreach (DotnetService service in stuck)
+                {
+                    await run.HoldAsync(service.Service, null, CancellationToken.None);
+                }
+                string names = string.Join(", ", stuck.Select(s => s.Service));
+                string? unheld = await run.RestartAsync(stuck, CancellationToken.None, "to run without the debugger, which could not attach");
+                return $"{unattached}; {names} {(unheld is null ? "restarted to run without the debugger" : $"could not be restarted to run without it: {unheld}")}";
             }
             return unattached;
         }
@@ -611,6 +726,47 @@ public sealed partial class BuildRunController
     /// first, restarted (held again where it is debugged), and attached to again. Null once done, else why not.</summary>
     public Task<string?> RestartServiceAsync(string name) => OnServiceAsync(name, AppActions.ContainerRestart, $"Restarting {name}…", async (run, service, work) =>
         Done(await RestartServicesAsync(run, [service], work, "restarted from the Containers window"), $"{run.Plan.Name}: restarted {name}"));
+
+    /// <summary>The Containers window's Restart, Stop or Remove of the container run's own Compose project, and an agent's,
+    /// through the run, as for one of its services: Restart ends its sessions and recording, restarts its other services as
+    /// they are and its .NET services as the run's restart does (held again where debugged, attached again); Stop and Remove
+    /// are the run's own Stop, its sessions ended before its containers go. Null once done, else why not.</summary>
+    public async Task<string?> ProjectActionAsync(string action)
+    {
+        UiThread.Check();
+        if (Containers is not { } run)
+        {
+            return Said("No container run is under way");
+        }
+        if (action != "restart")
+        {
+            await session.StopContainersAsync(run);
+            return null;
+        }
+        if (parts.Work.Begin(AppActions.ContainerRestart, $"Restarting {run.Plan.ProjectName}…") is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(AppActions.ContainerRestart)!));
+        }
+        using (work)
+        {
+            using IDisposable held = BackgroundWork.Scope();
+            List<DotnetService> dotnet = [.. run.Plan.Dotnet.Where(d => d.Starts && run.Plan.Touched.Contains(d.Service))];
+            List<string> others = [.. run.Plan.Touched.Where(s => dotnet.All(d => d.Service != s))];
+            await EndSessionsAsync(run, dotnet);
+            try
+            {
+                if (await run.RestartOthersAsync(others, work.Stopping) is { } failed)
+                {
+                    return Said(failed);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return Said($"{run.Plan.Name}'s restart was stopped");
+            }
+            return Done(await RestartServicesAsync(run, dotnet, work, "restarted from the Containers window"), $"{run.Plan.Name}: restarted its services");
+        }
+    }
 
     /// <summary>Ends what reaches one .NET service of the container run from here (its session, the profiler's recording),
     /// before something takes its container from under it (the Containers window's Stop or Remove).</summary>
