@@ -565,16 +565,27 @@ public sealed class ProfilerTests : IDisposable
             Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
             Ui.WaitFor(() => Shows(run, "ready"), "the program's EventSource");
             DateTime now = DateTime.Now;
+            List<string> blocked = [];
             for (int second = -1; second <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; second++)
             {
                 string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
-                Directory.CreateDirectory(Path.Combine(window.SnapshotFolder, $"Blocked-{stamp}.nettrace"));
+                string path = Path.Combine(window.SnapshotFolder, $"Blocked-{stamp}.nettrace");
+                Directory.CreateDirectory(path);
+                blocked.Add(path);
             }
             string? refused = Ui.Await(window.AttachProfilerAsync(), "the refused trace attachment");
-            Assert.Contains("could not record", refused, StringComparison.Ordinal);
+            Assert.Contains("no snapshot can be written", refused, StringComparison.Ordinal);
             Assert.Null(window.Profiling);
             Assert.True(window.Runner.IsRunning);
             Ui.WaitFor(() => Shows(run, "frames Enable") && Shows(run, "frames Disable"), "the failed attachment's EventPipe session to be released");
+            foreach (string path in blocked)
+            {
+                Directory.Delete(path);
+            }
+            Assert.Null(Ui.Await(window.AttachProfilerAsync(), "the recovered trace attachment"));
+            Ui.WaitFor(() => Shows(run, "frames Enable"), "the recovered EventPipe session");
+            Assert.NotNull(Ui.Await(window.SnapshotAsync(), "the recovered attachment's snapshot").Snapshot);
+            Assert.True(window.Runner.IsRunning);
         }
         finally
         {

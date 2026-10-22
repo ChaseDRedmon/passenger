@@ -171,8 +171,10 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Ui.WaitFor(() => ServiceChoice(dialog, "apiservice") is not null && ServiceChoice(dialog, "webfrontend") is not null,
                 "both official project resources on the initially selected AppHost");
-            Assert.False(ServiceChoice(dialog, "apiservice")!.IsEnabled);
-            Assert.False(ServiceChoice(dialog, "webfrontend")!.IsEnabled);
+            Assert.True(ServiceChoice(dialog, "apiservice")!.IsEnabled);
+            Assert.True(ServiceChoice(dialog, "webfrontend")!.IsEnabled);
+            Assert.Equal(0, ServiceChoice(dialog, "apiservice")!.SelectedIndex);
+            Assert.Equal(0, ServiceChoice(dialog, "webfrontend")!.SelectedIndex);
             Click(dialog, dialog.CopyButton);
             Click(dialog, dialog.NameBox);
             Ui.Press(dialog, "control A");

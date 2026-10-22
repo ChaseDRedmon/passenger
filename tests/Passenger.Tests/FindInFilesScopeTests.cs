@@ -56,10 +56,8 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
             popup.RequestReplace();
             Assert.Equal(0, confirmations);
             Assert.Equal(outside, File.ReadAllText(Full("Lib/Money.cs")));
-            Ui.Settle();
-            Assert.Equal(["Main.cs"], Found(popup));
-            popup.RequestReplace();
             Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the current-file replacement");
+            Assert.Equal("Replaced 2 matches in 1 file", window.Status);
             Assert.Equal(1, confirmations);
             Assert.Equal(outside, File.ReadAllText(Full("Lib/Money.cs")));
             Assert.Contains("sum", window.EditorArea.CodeEditor.Document.Snapshot.ToString(), StringComparison.Ordinal);

@@ -361,7 +361,7 @@ public sealed class FindInFilesPopup : UserControl
     private void Retype()
     {
         asking?.Cancel();
-        Show([], "Searching...");
+        Show([], "Searching...", null);
         typing.Restart();
     }
 
@@ -426,7 +426,7 @@ public sealed class FindInFilesPopup : UserControl
             Show([], problem, (asked, where));
             return;
         }
-        Show([], "Searching...");
+        Show([], "Searching...", null);
         try
         {
             IReadOnlyList<SearchMatch> found = await search(asked, where, cancel.Token);
@@ -442,7 +442,7 @@ public sealed class FindInFilesPopup : UserControl
         }
     }
 
-    private void Show(IReadOnlyList<SearchMatch> found, string said, (SearchQuery Query, SearchScope Scope) of)
+    private void Show(IReadOnlyList<SearchMatch> found, string said, (SearchQuery Query, SearchScope Scope)? of)
     {
         matches = found;
         shownFor = of;
