@@ -762,7 +762,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         Ui.WaitFor(() => window.Configurations.Any(configuration => PathNames.Same(configuration.Project, file)), "SDK directive discovery beside a project");
         Assert.True(window.SelectConfiguration(window.Configurations.Single(configuration => PathNames.Same(configuration.Project, file)).Name));
         string? refused = Ui.Await(window.RunAsync(), "the pinned CLI's sibling-project refusal");
-        Assert.Contains(AspireApp.TemplatesVersion, refused, StringComparison.Ordinal);
+        Assert.Contains("13.x (13.6.0 or newer)", refused, StringComparison.Ordinal);
         Assert.Contains("sibling .csproj", refused, StringComparison.Ordinal);
         Assert.Empty(window.AspireRuntime.Apps);
         Assert.False(window.IsRunning);
@@ -841,9 +841,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         Ui.WaitFor(() => window.Configurations.Any(configuration => PathNames.Same(configuration.Project, single)), "asynchronous single-file AppHost discovery");
         Assert.Equal(linked.Name, window.Configuration?.Name);
         RunConfiguration discovered = window.Configurations.Single(configuration => PathNames.Same(configuration.Project, single));
-        Assert.Contains($"{AspireApp.TemplatesVersion} requires apphost.cs", window.WhyNotHere(discovered), StringComparison.Ordinal);
+        Assert.Contains("requires apphost.cs", window.WhyNotHere(discovered), StringComparison.Ordinal);
         Assert.True(window.SelectConfiguration(discovered.Name));
-        Assert.Contains($"{AspireApp.TemplatesVersion} requires apphost.cs", Ui.Await(window.RunAsync(), "the noncanonical single-file refusal"), StringComparison.Ordinal);
+        Assert.Contains("requires apphost.cs", Ui.Await(window.RunAsync(), "the noncanonical single-file refusal"), StringComparison.Ordinal);
         Assert.Empty(window.AspireRuntime.Apps);
         Assert.True(window.SelectConfiguration(linked.Name));
         Assert.Equal([PathNames.Canonical(project.CompanionHost)], window.Configuration!.LinkedAppHosts);

@@ -232,7 +232,9 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             string host = Path.Combine(starter, AspireApp.Name + ".AppHost", "AppHost.cs");
             string text = File.ReadAllText(host);
             File.WriteAllText(host, $"File.WriteAllText({JsonSerializer.Serialize(endpointFile)}, Environment.GetEnvironmentVariable(\"DEBUG_SESSION_PORT\") ?? string.Empty);\n" + text);
-            Restore.Run(starter);
+            // By its real path, as the AppHost names its projects: through /var and /private/var at once the restore wrote one
+            // project's files twice.
+            Restore.Run(PathNames.Canonical(starter));
         }, starter);
 
         await using McpClient client = await Start(["--mcp", starter], environment: new()
