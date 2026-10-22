@@ -164,17 +164,23 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             // Its own checks run after it opens or changes, its markers set as they end; the rest of the IDE's work (a build,
             // a test run, a busy console) is not waited for.
             await Until(() => !marked.IsChecking, MarkersLimit, cancel);
+            List<Finding> missing = [];
             if (Session.Web is { } web && web.For(marked) is { Lsp: null })
             {
-                // A web file whose server cannot start has no checks: none found would read as none there.
-                throw new InvalidOperationException(web.Unready("Its diagnostics", marked));
+                if (!WebLanguages.IsDockerfile(Path.GetFileName(marked.Path)) && !ComposeDeclarations.IsCompose(marked.Path))
+                {
+                    // A web file whose server cannot start has no checks: none found would read as none there.
+                    throw new InvalidOperationException(web.Unready("Its diagnostics", marked));
+                }
+                // A Dockerfile's or compose file's container engine checks it without the server: its findings, and a word that the server's are missing.
+                missing.Add(new Finding("info", null, web.Unready("Checking it beyond the container engine", marked), Relative(marked.Path), 1, 1));
             }
             TextSnapshot text = marked.Text.Snapshot;
             return (IReadOnlyList<Finding>)[.. marked.Markers.Where(m => m.Kind is MarkerKind.Error or MarkerKind.Warning).Select(m =>
             {
                 TextPosition at = text.GetPosition(Math.Min(m.Range.Start, text.Length));
                 return new Finding(m.Kind == MarkerKind.Error ? "error" : "warning", null, m.Message, Relative(marked.Path), at.Line + 1, at.Column + 1);
-            })];
+            }), .. missing];
         }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync(cancel);

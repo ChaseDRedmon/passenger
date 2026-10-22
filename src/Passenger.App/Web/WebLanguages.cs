@@ -184,7 +184,12 @@ public sealed class WebLanguages : IAsyncDisposable
         {
             features.Connect(running);
         }
-        else if (server.Problem is null && server.Starting is null)
+        else if (server.Problem is not null)
+        {
+            // A server that cannot start holds none of its files' checks, this one's no more than those before it.
+            features.Unreached();
+        }
+        else if (server.Starting is null)
         {
             Start(server);
         }

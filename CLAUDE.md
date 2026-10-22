@@ -514,7 +514,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `EngineChecks` (`WebLanguages.Checks`, given each Dockerfile and compose file with its server, as ESLint is) is what the
   engine says of the open files while `StateAsync` says it can, each check off the UI thread as background work holding
   the file's `Checking()`, one at a time, dropped when the text moved on before it landed: BuildKit's own checks as a
-  Dockerfile opens and is saved (`DockerfileCheck`: `docker buildx build --call=check,format=json -` on its text, on the
+  Dockerfile opens and is saved, never on unsaved text (one typed over as it ran waits for the next save; `DockerfileCheck`: `docker buildx build --call=check,format=json -` on its text, on the
   context's own builder, no context sent, its `syntax` parser directive in either form BuildKit reads (`# syntax=`,
   `// syntax=`) blanked to spaces and BUILDKIT_SYNTAX out of the CLI's environment (`DockerfileCheck.BuiltIn`), so the
   engine's own frontend checks it and no frontend image a file names is pulled or run, a text BuildKit would read as a

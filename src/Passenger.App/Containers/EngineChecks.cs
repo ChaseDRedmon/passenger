@@ -273,8 +273,7 @@ internal abstract class EngineCheck : IDisposable
             }
             if (Document.Text.Version != version)
             {
-                // Typed over while it ran: what it found belongs to text no longer there.
-                Later();
+                // Typed over while it ran: a compose file is checked again as typed, a Dockerfile at its next save.
                 return;
             }
             Show(found);
@@ -328,11 +327,6 @@ internal abstract class EngineCheck : IDisposable
         }
         if (AsTyped)
         {
-            Later();
-        }
-        else if (running is not null)
-        {
-            // A check under way reads text no longer there; it is done again once typing pauses.
             Later();
         }
     }

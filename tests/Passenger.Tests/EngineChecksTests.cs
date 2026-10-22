@@ -259,6 +259,43 @@ public sealed class EngineChecksTests
         }
     }
 
+    /// <summary>Without a Node.js, a compose file's language server cannot start, but the engine still checks it: each file
+    /// opened after the first waits for no server's checks, and an agent's diagnostics answer the engine's findings with a
+    /// word that the server's are missing and why, rather than refusing.</summary>
+    [AvaloniaFact]
+    public void Without_a_node_js_an_agents_diagnostics_of_a_compose_file_are_the_engines_with_why_the_servers_are_missing()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        const string Broken = "services:\n  web:\n    image: busybox:1.37\n    depends_on:\n      - cache\n";
+        string folder = Folder(("compose.yaml", Broken), ("other/compose.yaml", Broken));
+        string missing = Path.Combine(TestRun.Root, "no-node-here", OperatingSystem.IsWindows() ? "node.exe" : "node");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        try
+        {
+            window.ApplySettings(window.Settings with { NodeInterpreter = missing });
+            window.OpenFolder(folder);
+            window.OpenFile(PathOf(folder, "compose.yaml"));
+            Ui.Settle();
+            window.OpenFile(PathOf(folder, Path.Combine("other", "compose.yaml")));
+            Ui.Settle();
+            OpenDocument second = window.EditorArea.Active!;
+            Assert.False(second.IsChecking, "A compose file opened after the YAML server could not start waits for its checks");
+
+            const string Said = "Compose: service \"web\" depends on undefined service \"cache\": invalid compose project";
+            IReadOnlyList<Passenger.App.Mcp.Finding> found = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Diagnostics("other/compose.yaml"), "the diagnostics an agent asks for");
+            Assert.Contains(found, f => f.Severity == "error" && f.Message == Said);
+            Passenger.App.Mcp.Finding note = Assert.Single(found, f => f.Severity == "info");
+            Assert.Equal($"Checking it beyond the container engine needs the YAML language server: there is no Node.js at {missing}, which Settings | Languages & Frameworks | Node.js names",
+                note.Message);
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void With_no_engine_running_a_dockerfile_and_a_compose_file_show_nothing_of_it_and_problems_say_only_the_engines_state()
     {
