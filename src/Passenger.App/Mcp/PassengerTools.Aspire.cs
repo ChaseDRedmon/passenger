@@ -51,7 +51,7 @@ public sealed partial class PassengerTools
     });
 
     private async Task<(AspireSelection Selection, bool Started)> PrepareAspireResource(string resource, string? configuration,
-        AspireRunMode? mode, string? arguments, CancellationToken cancel)
+        RunStart? mode, string? arguments, CancellationToken cancel)
     {
         ProjectSession current = Session;
         RunConfiguration? explicitConfiguration = configuration is null ? null
@@ -108,7 +108,7 @@ public sealed partial class PassengerTools
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.RunProgram, AppActions.Build);
         using LaunchBuild built = new(Builds);
         (AspireSelection selection, bool started) = await PrepareAspireResource(resource, configuration,
-            attach ? null : AspireRunMode.Debug, arguments, cancel);
+            attach ? null : RunStart.Debug, arguments, cancel);
         DebugSession? previous = current.Aspire.FindService(selection)?.DebugTab?.Session;
         if (!started && await window.RunAspireToolResourceAsync(selection, attach ? "attach" : "debug", cancel) is { } problem)
         {

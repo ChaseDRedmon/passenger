@@ -498,7 +498,7 @@ public sealed partial class BuildRunController
         }
         if (session.Aspire.IsAspire(chosen))
         {
-            AspireRunMode mode = (hotReload ?? parts.Settings().HotReload) ? AspireRunMode.HotReload : AspireRunMode.Run;
+            RunStart mode = (hotReload ?? parts.Settings().HotReload) ? RunStart.HotReload : RunStart.Run;
             return await RunAspireAsync(chosen, arguments, mode, cancellation);
         }
         if (IsRunning)
@@ -524,7 +524,7 @@ public sealed partial class BuildRunController
             using (work)
             {
                 // With Hot Reload through the debugger in each service: dotnet watch would need the SDK in its image.
-                return await RunContainersAsync(chosen, work, hotReload ?? parts.Settings().HotReload ? ContainerStart.HotReload : ContainerStart.Run);
+                return await RunContainersAsync(chosen, work, hotReload ?? parts.Settings().HotReload ? RunStart.HotReload : RunStart.Run);
             }
         }
         using IDisposable held = BackgroundWork.Scope();
@@ -698,9 +698,9 @@ public sealed partial class BuildRunController
         return problem;
     }
 
-    public async Task<string?> RunAspireAsync(RunConfiguration chosen, string? arguments, AspireRunMode mode, CancellationToken cancellation = default)
+    public async Task<string?> RunAspireAsync(RunConfiguration chosen, string? arguments, RunStart mode, CancellationToken cancellation = default)
     {
-        string action = mode == AspireRunMode.Debug ? AppActions.Debug : AppActions.RunProgram;
+        string action = mode == RunStart.Debug ? AppActions.Debug : AppActions.RunProgram;
         if (parts.Work.Begin(action, $"Starting {chosen.Name}…") is not { } work)
         {
             return Said(ActionWork.Busy(parts.Work.Of(action)!));
@@ -736,7 +736,7 @@ public sealed partial class BuildRunController
                 }
                 AspireAppRun[] running = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
                 aspireEnd = Ended(running);
-                parts.Say($"{mode switch { AspireRunMode.Debug => "Debugging", AspireRunMode.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}"
+                parts.Say($"{mode switch { RunStart.Debug => "Debugging", RunStart.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}"
                     + (https.OverHttp is { } overHttp ? $" ({overHttp})" : string.Empty), StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
                 RunningChanged?.Invoke(this, EventArgs.Empty);
                 return null;
@@ -759,7 +759,7 @@ public sealed partial class BuildRunController
     }
 
     public Task<string?> ProfileAspireAsync(RunConfiguration configuration, string? arguments = null, CancellationToken cancellation = default) =>
-        RunAspireAsync(configuration, arguments, AspireRunMode.Profile, cancellation);
+        RunAspireAsync(configuration, arguments, RunStart.Profile, cancellation);
 
     public async Task<string?> RerunAspireAsync(CancellationToken cancellation = default)
     {
@@ -844,7 +844,7 @@ public sealed partial class BuildRunController
     {
         if (session.Aspire.IsAspire(chosen))
         {
-            return await RunAspireAsync(chosen, arguments, AspireRunMode.Debug, cancellation);
+            return await RunAspireAsync(chosen, arguments, RunStart.Debug, cancellation);
         }
         if (parts.Work.Begin(AppActions.Debug, $"Working out how to debug {chosen.Name}…") is not { } work)
         {
@@ -861,7 +861,7 @@ public sealed partial class BuildRunController
         if (chosen.IsContainer)
         {
             // A session per service, each attached in its container as Compose brings the run up.
-            return await RunContainersAsync(chosen, work, ContainerStart.Debug);
+            return await RunContainersAsync(chosen, work, RunStart.Debug);
         }
         debugged[chosen.Name] = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();

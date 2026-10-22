@@ -149,7 +149,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
             Passenger.App.Workspace.OpenDocument compose = window.EditorArea.Active!;
             RunTarget target = window.RunTargets(compose).Single(t => t.Service == "web");
             window.Debugger.Breakpoints.Toggle(Source(folder, "Web"), InRequest);
-            Assert.Null(Ui.Await(window.RunTarget(target, ContainerStart.Debug), "web to come up under the debugger", TimeSpan.FromMinutes(5)));
+            Assert.Null(Ui.Await(window.RunTarget(target, RunStart.Debug), "web to come up under the debugger", TimeSpan.FromMinutes(5)));
             DebugTab web = Tab(window, "web");
             Assert.DoesNotContain(window.Debugger.Tabs, t => t.Name == "api");
 

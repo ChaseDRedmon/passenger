@@ -25,18 +25,6 @@ public sealed record DotnetService(string Service, string Project, string Assemb
     string IRunService.Name => Service;
 }
 
-/// <summary>How a container configuration is started: run; debugged, its .NET services (those marked Debug, else every one)
-/// held at their start until a session per service attaches; run with Hot Reload, every .NET service held and attached
-/// to quietly, no breakpoint sent, so the edits reach it through the debugger (dotnet watch would need the SDK in its image);
-/// or profiled, one .NET service (<see cref="ContainerPlan.Profiled"/>) held at its start until the profiler records it there.</summary>
-public enum ContainerStart
-{
-    Run,
-    Debug,
-    HotReload,
-    Profile,
-}
-
 /// <summary>What a container configuration runs, worked out once from Compose's own model of its files: the Compose
 /// words every command takes (<c>compose -p NAME -f … -f override --env-file … --profile …</c>, the override Passenger
 /// wrote into the folder's state last), the services it starts, the .NET ones Passenger builds on the host, those Compose

@@ -356,7 +356,7 @@ public sealed partial class PassengerTools
         async Task<string?> ProfileAspireTarget()
         {
             (Aspire.AspireSelection selection, bool launched) = await PrepareAspireResource(resource!, configuration,
-                attach ? null : Aspire.AspireRunMode.Profile, arguments, cancel);
+                attach ? null : global::Passenger.App.Run.RunStart.Profile, arguments, cancel);
             return launched ? null : await window.RunAspireToolResourceAsync(selection, "profile", cancel);
         }
 

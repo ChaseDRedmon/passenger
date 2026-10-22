@@ -324,9 +324,9 @@ public partial class MainWindow
             MenuItem run = new() { Header = $"Run '{what}'{from}" };
             run.Click += (_, _) => RunTarget(target);
             MenuItem debug = new() { Header = $"Debug '{what}'{from}" };
-            debug.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Debug);
+            debug.Click += (_, _) => RunTarget(target, RunStart.Debug);
             MenuItem profile = new() { Header = $"Profile '{what}'{from}" };
-            profile.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Profile);
+            profile.Click += (_, _) => RunTarget(target, RunStart.Profile);
             menu.Items.Add(run);
             menu.Items.Add(debug);
             menu.Items.Add(profile);
@@ -342,7 +342,7 @@ public partial class MainWindow
     /// <summary>Runs (or debugs, or profiles) what a run icon stands beside: a Compose configuration's one service (with what
     /// it depends on, the service alone debugged or profiled), or a Dockerfile configuration; what stopped it, if anything,
     /// is in the status bar.</summary>
-    public Task<string?> RunTarget(RunTarget target, Containers.ContainerStart how = Containers.ContainerStart.Run)
+    public Task<string?> RunTarget(RunTarget target, RunStart how = RunStart.Run)
     {
         if (target.Configuration.Aspire)
         {
@@ -357,10 +357,10 @@ public partial class MainWindow
                 ServiceActions = new Dictionary<string, ServiceStart>(target.Configuration.ServiceActions) { [service] = ServiceStart.Debug },
             }
             : target.Configuration;
-        return how == Containers.ContainerStart.Profile ? ProfileAsync(configuration) : buildRun.RunContainersAsync(configuration, how);
+        return how == RunStart.Profile ? ProfileAsync(configuration) : buildRun.RunContainersAsync(configuration, how);
     }
 
-    private async Task<string?> RunAspireTargetAsync(RunTarget target, Containers.ContainerStart how)
+    private async Task<string?> RunAspireTargetAsync(RunTarget target, RunStart how)
     {
         ProjectSession current = session;
         if (target.Service is not { } name)
@@ -390,8 +390,8 @@ public partial class MainWindow
             AspireResource resource = matches[0];
             return how switch
             {
-                Containers.ContainerStart.Debug => await DebugAspireResourceAsync(app.Configuration.Project, resource.Name),
-                Containers.ContainerStart.Profile => await ProfileAspireResourceAsync(app.Configuration.Project, resource.Name),
+                RunStart.Debug => await DebugAspireResourceAsync(app.Configuration.Project, resource.Name),
+                RunStart.Profile => await ProfileAspireResourceAsync(app.Configuration.Project, resource.Name),
                 _ => await RestartAspireServiceAsync(current, new(app.Configuration.Project, resource), debugging: false),
             };
         }
@@ -402,13 +402,13 @@ public partial class MainWindow
         RunConfiguration configuration = target.Configuration with
         {
             ServiceActions = declared.ToDictionary(resource => resource.Name,
-                resource => resource.Name == name && how is Containers.ContainerStart.Debug or Containers.ContainerStart.Profile ? ServiceStart.Debug : ServiceStart.Run,
+                resource => resource.Name == name && how is RunStart.Debug or RunStart.Profile ? ServiceStart.Debug : ServiceStart.Run,
                 StringComparer.Ordinal),
             ServiceProjects = declared.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
             LaunchService = name,
         };
-        return how == Containers.ContainerStart.Profile ? await buildRun.ProfileAspireAsync(configuration)
-            : await buildRun.RunAspireAsync(configuration, null, AspireRunMode.Run);
+        return how == RunStart.Profile ? await buildRun.ProfileAspireAsync(configuration)
+            : await buildRun.RunAspireAsync(configuration, null, RunStart.Run);
     }
 
     /// <summary>Whether a compose file's service is a .NET service of the container run under way, which reads that file.</summary>

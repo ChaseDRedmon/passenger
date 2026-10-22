@@ -23,15 +23,15 @@ public sealed partial class BuildRunController
     /// <summary>Attaches to each service held at its start, all at once, while its run comes up: null once each is attached
     /// (one whose runtime has its debugger off runs on undebugged, said in <paramref name="notes"/>), else why not.</summary>
     private async Task<string?> AttachAllAsync(ServiceRun run, IReadOnlyList<IRunService> services, Task up, List<string> notes, Working work, CancellationToken stop,
-        ContainerStart? purpose = null) =>
+        RunStart? purpose = null) =>
         (await AttachEachAsync(run, services, up, notes, work, stop, purpose)).Select(a => a.Refused).FirstOrDefault(s => s is not null);
 
     /// <summary>Attaches to each service held at its start, all at once: each with why it was not attached, or null.</summary>
     private Task<(IRunService Service, string? Refused)[]> AttachEachAsync(ServiceRun run, IReadOnlyList<IRunService> services, Task up, List<string> notes, Working work,
-        CancellationToken stop, ContainerStart? purpose = null)
+        CancellationToken stop, RunStart? purpose = null)
     {
         string named = string.Join(", ", services.Select(s => s.Name));
-        work.Say(purpose == ContainerStart.Profile ? $"Attaching the profiler to {named}…" : services.All(s => run.HeldFor(s.Name) == ContainerStart.HotReload) ? "Attaching for Hot Reload…"
+        work.Say(purpose == RunStart.Profile ? $"Attaching the profiler to {named}…" : services.All(s => run.HeldFor(s.Name) == RunStart.HotReload) ? "Attaching for Hot Reload…"
             : $"Attaching the debugger to {named}…");
         return Task.WhenAll(services.Select(async s => (s, await AttachAsync(run, s, up, notes, stop, purpose))));
     }
@@ -39,11 +39,11 @@ public sealed partial class BuildRunController
     /// <summary>One service, held at its start or running: its program, once its run has started it, where its kind runs it
     /// (<see cref="ServiceRun.ProgramAsync"/>), and a session attached to it, which lets it go: one with its tab in the Debug
     /// window, or, under Run with Hot Reload, a quiet one; or the profiler recording it. Null once attached, else why not.</summary>
-    private async Task<string?> AttachAsync(ServiceRun run, IRunService service, Task up, List<string> notes, CancellationToken stop, ContainerStart? given = null)
+    private async Task<string?> AttachAsync(ServiceRun run, IRunService service, Task up, List<string> notes, CancellationToken stop, RunStart? given = null)
     {
         UiThread.Check();
         // Held for the debugger (in a tab, or quietly for Hot Reload), held for the profiler, or attached to as it runs.
-        ContainerStart purpose = given ?? run.HeldFor(service.Name) ?? ContainerStart.Debug;
+        RunStart purpose = given ?? run.HeldFor(service.Name) ?? RunStart.Debug;
         ServiceProgram? found;
         try
         {
@@ -51,7 +51,7 @@ public sealed partial class BuildRunController
         }
         catch (ServiceUnreachedException failed)
         {
-            return $"Could not {(purpose == ContainerStart.Profile ? "profile" : "debug")} {service.Name}: {failed.Message}";
+            return $"Could not {(purpose == RunStart.Profile ? "profile" : "debug")} {service.Name}: {failed.Message}";
         }
         if (found is not { } program)
         {
@@ -67,7 +67,7 @@ public sealed partial class BuildRunController
         }
         if (program.WhyNot is { } why)
         {
-            notes.Add($"{service.Name} runs without the {(purpose == ContainerStart.Profile ? "profiler" : "debugger")}: {why}");
+            notes.Add($"{service.Name} runs without the {(purpose == RunStart.Profile ? "profiler" : "debugger")}: {why}");
             return null;
         }
         foreach (string note in program.Notes)
@@ -75,7 +75,7 @@ public sealed partial class BuildRunController
             notes.Add($"{service.Name}: {note}");
         }
         string? refused;
-        if (purpose == ContainerStart.Profile)
+        if (purpose == RunStart.Profile)
         {
             run.Profiled = service.Name;
             refused = await run.Profiler!(service, program, stop);
@@ -83,7 +83,7 @@ public sealed partial class BuildRunController
         else
         {
             run.Debugged.Add(service.Name);
-            refused = purpose == ContainerStart.HotReload
+            refused = purpose == RunStart.HotReload
                 ? await session.Debug.AttachForHotReloadAsync(program.Id, service.Name, program.Place)
                 : await session.Debug.AttachAsync(program.Id, service.Name, hotReload: program.HotReload, place: program.Place, group: run.Name);
         }
@@ -109,7 +109,7 @@ public sealed partial class BuildRunController
             string? unattached = attached.Select(a => a.Refused).FirstOrDefault(r => r is not null);
             foreach (IRunService again in running)
             {
-                unattached ??= await AttachAsync(run, again, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
+                unattached ??= await AttachAsync(run, again, Task.CompletedTask, notes, work.Stopping, RunStart.Debug);
             }
             // Restarted held, a service no debugger reached would wait at its runtime's start for good: it is made again
             // unheld, running without the debugger, its hold for the run let go.
@@ -152,7 +152,7 @@ public sealed partial class BuildRunController
     {
         Choose(run, name, debug: true);
         run.AttachedRunning.Remove(name);
-        await run.HoldAsync(name, ContainerStart.Debug, work.Stopping);
+        await run.HoldAsync(name, RunStart.Debug, work.Stopping);
         parts.Dock.Show(ToolWindowIds.Debug);
         parts.Views.Debug.ShowTab(console: true);
         return Done(await RestartServicesAsync(run, [service], work, "to debug it from its start"),
@@ -167,7 +167,7 @@ public sealed partial class BuildRunController
         run.AttachedRunning.Add(name);
         parts.Dock.Show(ToolWindowIds.Debug);
         List<string> notes = [];
-        string? refused = await AttachAsync(run, service, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
+        string? refused = await AttachAsync(run, service, Task.CompletedTask, notes, work.Stopping, RunStart.Debug);
         if (refused is not null || session.Debug.SessionNamed(name) is not { State: not Debugging.DebugState.Ended })
         {
             run.AttachedRunning.Remove(name);
@@ -266,7 +266,7 @@ public sealed partial class BuildRunController
             services = named;
         }
         names = [.. services.Select(s => s.Name)];
-        string action = run.How == ContainerStart.Debug ? AppActions.Debug : AppActions.RunProgram;
+        string action = run.How == RunStart.Debug ? AppActions.Debug : AppActions.RunProgram;
         if (parts.Work.Begin(action, $"Restarting {string.Join(", ", names)} to apply changes…") is not { } work)
         {
             return false;

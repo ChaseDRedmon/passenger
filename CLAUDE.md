@@ -707,7 +707,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   and back (a container's path never to a file outside the folder it maps to: a `..`, a `//` or a rooted rest gives
   none), for `ConsoleLinks.Paths` (a Compose log's "web-1  | " prefix passed over) and `BuildOutput.Parse(line, paths)`;
   the debugger takes it at the protocol's edge (`AdapterPlace`, a service's `DotnetService.Paths` in images mode,
-  `ContainerPaths.None` in fast mode). A run is started one of three ways (`ContainerStart`): Run; Debug, its services
+  `ContainerPaths.None` in fast mode). A run is started one of three ways (`RunStart`, every run of services' one enum): Run; Debug, its services
   marked Debug (else every .NET service it starts, `ContainerPlan.Debugged`) held at their runtime's start
   (`ContainerPlans.HeldVariable`, DOTNET_DefaultDiagnosticPortSuspend=1, with DOTNET_MODIFIABLE_ASSEMBLIES=debug, in the
   override); and Run with Hot Reload (Settings' Hot Reload when running, or `run`'s `hotReload`), every .NET service held, since
@@ -736,7 +736,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   ends one under way first (Debug pressed as Run comes up) and waits for its end and its run's take-down, a start that fails
   takes down its own run alone (`StopContainersAsync(run)`), and the folder's end ends it, its `up` waited for before the
   folder's containers are taken down (`FolderContainers.EndAsync(upEnded)`); a stop as the certificate is checked, made or
-  exported, or as the person is asked about it (the question closed), is the start stopped too. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
+  exported, or as the person is asked about it (the question closed), is the start stopped too. Profile of a container configuration (`RunStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for

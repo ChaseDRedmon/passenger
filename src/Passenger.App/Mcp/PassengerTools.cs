@@ -600,7 +600,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
             AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
             using LaunchBuild resourceBuild = new(Builds);
-            (Aspire.AspireSelection target, bool started) = await PrepareAspireResource(resource, configuration, Aspire.AspireRunMode.Run, arguments, cancel);
+            (Aspire.AspireSelection target, bool started) = await PrepareAspireResource(resource, configuration, RunStart.Run, arguments, cancel);
             if (!started && await window.RunAspireToolResourceAsync(target, "run", cancel) is { } problem)
             {
                 throw new InvalidOperationException(WithBuildErrors(problem, resourceBuild.Ended));

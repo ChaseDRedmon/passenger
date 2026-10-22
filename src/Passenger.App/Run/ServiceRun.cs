@@ -3,6 +3,19 @@ using Passenger.App.Debugging;
 
 namespace Passenger.App.Run;
 
+/// <summary>How a run of services is started, a container configuration's and an Aspire AppHost's alike: run; debugged, its
+/// .NET services (those marked Debug, else every one) held at their start until a session per service attaches; run with
+/// Hot Reload, every .NET service held and attached to quietly, no breakpoint sent, so the edits reach it through the
+/// debugger (dotnet watch would need the SDK in a container's image); or profiled, one .NET service held at its start until
+/// the profiler records it. What a service is held at its start for is one of these too (<see cref="ServiceRun.HeldFor"/>).</summary>
+public enum RunStart
+{
+    Run,
+    Debug,
+    HotReload,
+    Profile,
+}
+
 /// <summary>A .NET service of a run of services (<see cref="ServiceRun"/>): its name in the run, the project it runs, and
 /// whether the run starts it.</summary>
 public interface IRunService
@@ -49,7 +62,7 @@ public abstract class ServiceRun
 {
     /// <summary>What each .NET service is held at its start for, as last chosen (debugged, or attached to quietly for Hot
     /// Reload): a restart holds it again and attaches again. A service not here runs unheld.</summary>
-    private readonly Dictionary<string, ContainerStart> holds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RunStart> holds = new(StringComparer.Ordinal);
 
     /// <summary>The run's name, its configuration's, by which its Debug tabs are grouped and the person's choices kept.</summary>
     public abstract string Name { get; }
@@ -61,7 +74,7 @@ public abstract class ServiceRun
     public abstract bool IsStopped { get; }
 
     /// <summary>How it was started: run, debugged, run with Hot Reload through the debugger, or profiled.</summary>
-    public ContainerStart How { get; init; }
+    public RunStart How { get; init; }
 
     /// <summary>What has the profiler record the service Profile holds at its start; null for any other start.</summary>
     public ServiceProfiler? Profiler { get; init; }
@@ -91,15 +104,15 @@ public abstract class ServiceRun
     protected IReadOnlyCollection<string> HeldNames => holds.Keys;
 
     /// <summary>What a service is held at its start for (Debug or Hot Reload), or null when it runs unheld.</summary>
-    public ContainerStart? HeldFor(string service) => holds.TryGetValue(service, out ContainerStart how) ? how : null;
+    public RunStart? HeldFor(string service) => holds.TryGetValue(service, out RunStart how) ? how : null;
 
     /// <summary>The services as they were brought up: those held for the debugger (or the one for the profiler, whose hold its
     /// recording lets go, never asked again).</summary>
-    public void Brought(IReadOnlyList<(IRunService Service, ContainerStart How)> held)
+    public void Brought(IReadOnlyList<(IRunService Service, RunStart How)> held)
     {
-        foreach ((IRunService service, ContainerStart how) in held)
+        foreach ((IRunService service, RunStart how) in held)
         {
-            if (how != ContainerStart.Profile)
+            if (how != RunStart.Profile)
             {
                 holds[service.Name] = how;
             }
@@ -113,7 +126,7 @@ public abstract class ServiceRun
     }
 
     /// <summary>Chooses what a service is held at its start for from now (null: unheld), which its next start makes so.</summary>
-    public Task HoldAsync(string service, ContainerStart? how, CancellationToken cancel)
+    public Task HoldAsync(string service, RunStart? how, CancellationToken cancel)
     {
         if (how is { } held)
         {

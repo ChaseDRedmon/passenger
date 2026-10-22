@@ -23,7 +23,7 @@ public sealed partial class BuildRunController
     /// <summary>Runs (or debugs) a container configuration not chosen in the toolbar (a gutter icon's: one compose service, a
     /// Dockerfile's image), as Run (or Debug) runs the chosen one; a container run under way is taken down first. Null once it
     /// runs.</summary>
-    public async Task<string?> RunContainersAsync(RunConfiguration configuration, ContainerStart how = ContainerStart.Run)
+    public async Task<string?> RunContainersAsync(RunConfiguration configuration, RunStart how = RunStart.Run)
     {
         UiThread.Check();
         if (!configuration.IsContainer)
@@ -34,8 +34,8 @@ public sealed partial class BuildRunController
         {
             return Said("Already running");
         }
-        string action = how == ContainerStart.Debug ? AppActions.Debug : AppActions.RunProgram;
-        if (parts.Work.Begin(action, $"Working out how to {(how == ContainerStart.Debug ? "debug" : "run")} {configuration.Name}…") is not { } work)
+        string action = how == RunStart.Debug ? AppActions.Debug : AppActions.RunProgram;
+        if (parts.Work.Begin(action, $"Working out how to {(how == RunStart.Debug ? "debug" : "run")} {configuration.Name}…") is not { } work)
         {
             return Said(ActionWork.Busy(parts.Work.Of(action)!));
         }
@@ -49,11 +49,11 @@ public sealed partial class BuildRunController
     /// (<see cref="ContainerPlan.Profiled"/>) held at its start until <paramref name="profile"/> has the profiler recording
     /// it in its container, which lets it go; the rest run as Run runs them. Null once it records, else why not.</summary>
     public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work, ServiceProfiler profile) =>
-        RunContainersAsync(chosen, work, ContainerStart.Profile, profile);
+        RunContainersAsync(chosen, work, RunStart.Profile, profile);
 
     /// <summary>One container start at a time, which the folder's end ends too (<see cref="ProjectSession.ContainerStarting"/>):
     /// one under way (Run's, as Debug begins) is ended first, as Stop ends it, and this one goes on once it has.</summary>
-    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, ContainerStart how = ContainerStart.Run, ServiceProfiler? profile = null)
+    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, RunStart how = RunStart.Run, ServiceProfiler? profile = null)
     {
         using IDisposable held = BackgroundWork.Scope();
         if (session.ContainerStarting is { } earlier)
@@ -89,7 +89,7 @@ public sealed partial class BuildRunController
         }
     }
 
-    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, ContainerStart how, ServiceProfiler? profile)
+    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, RunStart how, ServiceProfiler? profile)
     {
         parts.Editors.SaveAll();
         parts.Views.Run.Clear();
@@ -158,22 +158,22 @@ public sealed partial class BuildRunController
         {
             return session.IsEnded ? Left : Said(StoppedStarting(chosen.Name));
         }
-        List<(DotnetService Service, ContainerStart How)> holding = how switch
+        List<(DotnetService Service, RunStart How)> holding = how switch
         {
-            ContainerStart.Run => [],
-            ContainerStart.Profile => plan.Profiled() is { } profiled ? [(profiled, how)] : [],
-            _ => [.. plan.Debugged(marked: how == ContainerStart.Debug).Select(d => (d, how))],
+            RunStart.Run => [],
+            RunStart.Profile => plan.Profiled() is { } profiled ? [(profiled, how)] : [],
+            _ => [.. plan.Debugged(marked: how == RunStart.Debug).Select(d => (d, how))],
         };
         // What a person chose for a service of this configuration's last run (Debug, or Run without debugger) holds here too.
-        if (how != ContainerStart.Profile && chosenDebugged.TryGetValue(chosen.Name, out Dictionary<string, bool>? choices))
+        if (how != RunStart.Profile && chosenDebugged.TryGetValue(chosen.Name, out Dictionary<string, bool>? choices))
         {
             holding.RemoveAll(h => choices.ContainsKey(h.Service.Service));
-            holding.AddRange(plan.Dotnet.Where(d => plan.Starts(d.Service) && choices.GetValueOrDefault(d.Service)).Select(d => (d, ContainerStart.Debug)));
+            holding.AddRange(plan.Dotnet.Where(d => plan.Starts(d.Service) && choices.GetValueOrDefault(d.Service)).Select(d => (d, RunStart.Debug)));
         }
         IReadOnlyList<DotnetService> debugged = [.. holding.Select(h => h.Service)];
-        if (how is ContainerStart.Debug or ContainerStart.Profile && debugged.Count == 0)
+        if (how is RunStart.Debug or RunStart.Profile && debugged.Count == 0)
         {
-            return Said($"Nothing to {(how == ContainerStart.Debug ? "debug" : "profile")}: {chosen.Name} starts no .NET service");
+            return Said($"Nothing to {(how == RunStart.Debug ? "debug" : "profile")}: {chosen.Name} starts no .NET service");
         }
         if (plan.Builds.Count > 0)
         {
@@ -233,7 +233,7 @@ public sealed partial class BuildRunController
         }
         try
         {
-            await plan.WriteOverride([.. debugged.Select(d => d.Service)], [.. holding.Where(h => h.How != ContainerStart.Profile).Select(h => h.Service.Service)], certificate,
+            await plan.WriteOverride([.. debugged.Select(d => d.Service)], [.. holding.Where(h => h.How != RunStart.Profile).Select(h => h.Service.Service)], certificate,
                 work.Stopping);
         }
         catch (OperationCanceledException)
@@ -260,8 +260,8 @@ public sealed partial class BuildRunController
         session.InTerminal = null;
         parts.Views.Run.Links.Forget();
         parts.Views.Run.SetRunning(true);
-        parts.Dock.Show(how == ContainerStart.Debug ? ToolWindowIds.Debug : ToolWindowIds.Run);
-        if (how == ContainerStart.Debug)
+        parts.Dock.Show(how == RunStart.Debug ? ToolWindowIds.Debug : ToolWindowIds.Run);
+        if (how == RunStart.Debug)
         {
             parts.Views.Debug.ShowTab(console: true);
         }
@@ -298,7 +298,7 @@ public sealed partial class BuildRunController
         try
         {
             failed = await run.PublishAsync(work.Stopping)
-                ?? await run.UpAsync(work.Stopping, debugged.Count == 0 ? null : (up, stop) => AttachAllAsync(run, debugged, up, notes, work, stop, how == ContainerStart.Profile ? how : null));
+                ?? await run.UpAsync(work.Stopping, debugged.Count == 0 ? null : (up, stop) => AttachAllAsync(run, debugged, up, notes, work, stop, how == RunStart.Profile ? how : null));
         }
         catch (OperationCanceledException)
         {
@@ -338,12 +338,12 @@ public sealed partial class BuildRunController
         }
         string what = how switch
         {
-            ContainerStart.Debug => $"Debugging {chosen.Name}: {Named(debugged)} under the debugger",
-            ContainerStart.HotReload => $"Running {chosen.Name} with Hot Reload: a save applies its changes to {Named(debugged)}",
-            ContainerStart.Profile => $"Profiling {Named(debugged)} of {chosen.Name}: Get Snapshot when it has done what is to be measured",
+            RunStart.Debug => $"Debugging {chosen.Name}: {Named(debugged)} under the debugger",
+            RunStart.HotReload => $"Running {chosen.Name} with Hot Reload: a save applies its changes to {Named(debugged)}",
+            RunStart.Profile => $"Profiling {Named(debugged)} of {chosen.Name}: Get Snapshot when it has done what is to be measured",
             _ => $"Running {chosen.Name}",
         };
-        parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Plural.Of(plan.Dotnet.Count(d => plan.Starts(d.Service)), ".NET service")} from Passenger's build"
+        parts.Say($"{what}{(how == RunStart.Run ? ":" : ";")} {Plural.Of(plan.Dotnet.Count(d => plan.Starts(d.Service)), ".NET service")} from Passenger's build"
             + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Plural.Of(plan.Backing.Count, "other service")}; Stop takes them down"
             + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty),
             // What dev-certs said of a certificate that did not come is in the Run window.
