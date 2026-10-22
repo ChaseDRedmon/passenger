@@ -5,10 +5,12 @@ Guidance for Claude Code working in this repository.
 ## What this is
 
 **Passenger** is an IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity), written in C# on
-.NET 11 with an Avalonia 12 UI, for Windows and macOS first. The MVP shipped as v0.1.0; the work still to do is the
-issues of the Post-MVP 1 milestone (https://github.com/Zaneris/passenger/milestone/2), each saying what Passenger does
-now, what it should do and when it is done (**Now:**, **The aim:**, **Done when:**). Read the issue before starting
-anything larger than a fix, and close or tick it when it lands. A new feature is the best Passenger can make it from what
+.NET 11 with an Avalonia 12 UI, for Windows and macOS first. The MVP shipped as v0.1.0; the work to do is the issues
+of the release in progress, a milestone and a branch of its name (0.2.0 now:
+https://github.com/Zaneris/passenger/milestone/3), with the features waiting beyond it in Post-MVP 1
+(https://github.com/Zaneris/passenger/milestone/2), each issue saying what Passenger does now, what it should do and
+when it is done (**Now:**, **The aim:**, **Done when:**). Read the issue before starting anything larger than a fix, and
+close or tick it when it lands. A new feature is the best Passenger can make it from what
 it already has, never a copy of another IDE's; only its keys follow Rider's keymaps (Rules), whose files are in the jars
 of JetBrains Rider at `~/Applications/Rider.app`. What is built keeps the behaviour this file describes.
 
@@ -28,6 +30,9 @@ just file-icons            # rewrite Theme/FileIconSet.axaml, the file icons, fr
                            # picks each file's)
 just themes                # rewrite the generated themes (Theme/Sorbet.axaml and the rest) from tools/themes.py's
                            # palettes, every token worked out and nudged until UiRulesTests' contrast holds
+just unicode-widths        # rewrite src/Passenger.Terminal/WideCharacters.cs (the terminal's wide characters) from the
+                           # Unicode Character Database at the version .NET's CharUnicodeInfo knows, its files in
+                           # artifacts/unicode
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
                            # unless every size's corners are transparent (never write the three files any other way)
 just package-linux [RID]   # artifacts/package/Passenger-linux-x64.tar.gz (or -arm64): one passenger/ folder (app/,
@@ -39,7 +44,7 @@ just container-tools [RID] [--archive]  # artifacts/container-tools/<rid>/, the 
                            # dev build finds them; --archive also the release's Passenger-container-tools-<rid>.tar.gz
 just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
                            # notices miss
-just test [filter]         # every test, or those whose name matches
+just test [filter]         # every test, or those whose name matches; dotnet test's results in artifacts/test-results
 just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
                            # CI runs' results
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
@@ -88,7 +93,8 @@ that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests). `Ui.Set
 a key holds in `BackgroundWork` short (the XAML service waits for typing to pause only in a C# file under a loaded XAML
 project).
 
-Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
+Builds land under `artifacts/` (`UseArtifactsOutput`), and dotnet test's results in `artifacts/test-results/`
+(the tests' `VSTestResultsDirectory`), never beside the sources. Package versions live only in
 `Directory.Packages.props` (Roslyn's server's too, as `RoslynServerVersion`); shared properties only in
 `Directory.Build.props`. Packages come from nuget.org alone, as nuget.org signed them (`nuget.config`), at what each
 project's `packages.lock.json` pins: a restore that adds or changes a package rewrites the lock file, committed with
@@ -262,7 +268,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   edits, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
   opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
-  client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
+  client of a file's HTML, through the HTML server (below; without Node.js, HTML's element names and global attributes
+  alone). A request nothing waits on, sent as a window closes,
   goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Requests resume off the caller's
   thread inside Passenger.Lsp (`ConfigureAwait(false)`), and a large answer (completion's list) is read in
   `LspDocument` before its caller resumes, so the UI thread never decodes it. `CountedMessages` notes each of the
@@ -1022,11 +1029,6 @@ window or takes the focus; it shows everything but the system's own window chrom
   Problems' Toolset, Environment, a build's problems in Build, Hot Reload's edits, a binding error stopped at in
   Bindings, Unit Tests, IDE Internal Errors, a `.bad` file, Show Log (`MainWindow.StatusPlaces.cs`). A controller says
   through a `StatusSay`; the window's `Say` keeps a place when the same words come again (a failed build's, from Run).
-- `src/Passenger.App/StatusBar.cs`: what the status bar says, its whole text its tooltip, and a `StatusPlace` a click on it
-  goes to, held only while those words stand (a link then, `Button.statusMessage.place`): a load problem's row in
-  Problems' Toolset, Environment, a build's problems in Build, Hot Reload's edits, a binding error stopped at in Bindings,
-  Unit Tests, IDE Internal Errors, a `.bad` file, Show Log (`MainWindow.StatusPlaces.cs`). A controller says through a
-  `StatusSay`; the window's `Say` keeps a place when the same words come again (a failed build's, from Run).
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
@@ -1154,7 +1156,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
   angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
-  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after), so it says each thing once: the
+  agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpTests,
+  which the tools added since have all but reached), so it says each thing once: the
   element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
   own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
@@ -1790,7 +1793,9 @@ folder) in the run's template home while a dialog is open; the watch sees it.
 ## Code style
 
 - C#: four spaces, file-scoped namespaces, braces on every block, explicit types over `var`, accessibility always
-  written. `.editorconfig` enforces most of it in the build.
+  written. `.editorconfig` makes the build fail on a block-scoped namespace, a missing brace or a missing accessibility
+  (IDE0161, IDE0011, IDE0040, warnings made errors); `var` is only a suggestion there (IDE0008), which the build lets
+  through, so the type is written by hand.
 - Comments say why, or what else depends on this, never what the next lines do. A type's or member's `///` summary
   is at most five lines; an in-body comment is one line.
 - XAML: four spaces; one style per selector in `Theme/Shell.axaml`, restyling Fluent's states on its

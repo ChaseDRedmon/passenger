@@ -85,7 +85,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.True(testsRun.Contains("Testing Platform", StringComparison.Ordinal) && testsRun.Contains("xUnit v3", StringComparison.Ordinal),
             $"tests_run tells an agent its tests run otherwise than they do: {testsRun}");
         // What every session pays to read says each thing once: the app_ tools' element query in app_tree's description alone
-        // (it was in nine tools), and no optional parameter's null default or type; the list was 69 KB and is 55 KB.
+        // (it was in nine tools), and no optional parameter's null default or type; the list was 69 KB and is held under 60 KB.
         Assert.Equal(["app_tree"], tools.Where(t => JsonSerializer.Serialize(t.ProtocolTool).Contains("#Panel/Button", StringComparison.Ordinal)).Select(t => t.Name));
         Assert.DoesNotContain(tools, t => SaysNothing(t.ProtocolTool.InputSchema));
         int listed = tools.Sum(t => JsonSerializer.Serialize(t.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length);
