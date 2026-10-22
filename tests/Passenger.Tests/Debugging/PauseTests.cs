@@ -31,30 +31,17 @@ public class PauseTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("pause", (await Pause(host)).Reason);
     }
 
+    /// <summary>A pause that caught the thread in the runtime's own code (its sleep), where the runtime may run none of the
+    /// program's: a value its ToString would show is then shown by its type, as Visual Studio shows it, its fields there to
+    /// open, never as an error in its place; and a step from there comes back to the loop.</summary>
     [Fact]
-    public async Task A_step_from_a_pause_inside_a_sleep_comes_back_to_the_loop()
+    public async Task A_value_paused_in_a_sleep_shows_its_type_and_fields_where_its_ToString_cannot_run_and_a_step_comes_back_to_the_loop()
     {
         using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
         await Launch(host, sleeps: true);
 
         StoppedEvent stopped = await Pause(host);
         Assert.Equal("pause", stopped.Reason);
-        host.WithStepOverRequest(stopped.ThreadId!.Value);
-        StoppedEvent stepped = await host.WaitForStoppedEvent();
-        Assert.Equal("step", stepped.Reason);
-        AssertInLoop(host.GetTopStackFrame(stepped.ThreadId!.Value));
-    }
-
-    /// <summary>A pause that caught the thread in the runtime's own code (its sleep), where the runtime may run none of the
-    /// program's: a value its ToString would show is then shown by its type, as Visual Studio shows it, its fields there to
-    /// open, never as an error in its place.</summary>
-    [Fact]
-    public async Task A_value_paused_in_a_sleep_shows_its_type_and_fields_where_its_ToString_cannot_run()
-    {
-        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
-        await Launch(host, sleeps: true);
-
-        StoppedEvent stopped = await Pause(host);
         host.WithStackTraceRequest(stopped.ThreadId!.Value, out StackTraceResponse stack, levels: null);
         DapStackFrame main = stack.StackFrames.First(f => f.Source?.Path?.EndsWith("Program.cs", StringComparison.Ordinal) == true);
         host.WithScopesRequest(main.Id, out ScopesResponse scopes);
@@ -64,18 +51,26 @@ public class PauseTests(ITestOutputHelper testOutputHelper)
             $"A TimeSpan read where the pause caught its thread shows as {nap.Value}");
         host.WithVariablesRequest(nap.VariablesReference, out List<DapVariable> fields);
         Assert.Equal("200000", Assert.Single(fields, f => f.Name == "_ticks").Value);
+
+        host.WithStepOverRequest(stopped.ThreadId!.Value);
+        StoppedEvent stepped = await host.WaitForStoppedEvent();
+        Assert.Equal("step", stepped.Reason);
+        AssertInLoop(host.GetTopStackFrame(stepped.ThreadId!.Value));
     }
 
+    /// <summary>Stopped while another thread counts: listing an object's properties, whose getter takes a while, leaves that
+    /// thread where it was; and an evaluation that waits on it is stopped saying why, the next one running as ever.</summary>
     [Fact]
-    public async Task Listing_an_objects_properties_leaves_the_programs_other_threads_where_they_were()
+    public async Task Listing_an_objects_properties_leaves_the_other_threads_where_they_were_and_an_evaluation_waiting_on_one_is_stopped_saying_why()
     {
         using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
         await Start(host, ["count"], host => host.WithBreakpointsRequest(Debuggees.Line(Looping, "stop while counting"), Debuggees.Source(Looping, "Program.cs")));
         StoppedEvent stopped = await host.WaitForStoppedEvent();
+        int frame = host.GetTopStackFrame(stopped.ThreadId!.Value).Id;
 
         string Count()
         {
-            host.WithEvaluateRequest(host.GetTopStackFrame(stopped.ThreadId!.Value).Id, "Counter.Value", out EvaluateResponse counted);
+            host.WithEvaluateRequest(frame, "Counter.Value", out EvaluateResponse counted);
             return counted.Result;
         }
         string before = Count();
@@ -86,20 +81,11 @@ public class PauseTests(ITestOutputHelper testOutputHelper)
         Assert.Equal("\"slow\"", Assert.Single(properties, p => p.Name == "Value").Value);
         string after = Count();
         Assert.True(after == before, $"The paused program's other thread counted on from {before} to {after} while its properties were listed");
-    }
-
-    [Fact]
-    public async Task An_evaluation_that_waits_on_another_thread_is_stopped_and_says_why()
-    {
-        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
-        await Start(host, ["count"], host => host.WithBreakpointsRequest(Debuggees.Line(Looping, "stop while counting"), Debuggees.Source(Looping, "Program.cs")));
-        StoppedEvent stopped = await host.WaitForStoppedEvent();
-        int frame = host.GetTopStackFrame(stopped.ThreadId!.Value).Id;
 
         host.WithEvaluateRequest(frame, "Counter.Next", out EvaluateResponse waited);
         Assert.Contains("another thread", waited.Result, StringComparison.Ordinal);
-        host.WithEvaluateRequest(frame, "1 + 1", out EvaluateResponse after);
-        Assert.Equal("2", after.Result);
+        host.WithEvaluateRequest(frame, "1 + 1", out EvaluateResponse sum);
+        Assert.Equal("2", sum.Result);
     }
 
     [Fact]
