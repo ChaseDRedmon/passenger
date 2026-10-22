@@ -531,8 +531,9 @@ public sealed class ContainerRunsTests
 
     /// <summary>The stand-in for dotnet dev-certs: it notes what it was asked, answers the check with the exit code the test
     /// put in "check" (naming the certificate in "thumbprint" as found, when there is one; first taking two minutes while
-    /// "slow" is there), trusts nothing, and exports a file that is no certificate (or fails, as a locked keychain does, while
-    /// "fail" is there). Its first word is the folder it keeps those in.</summary>
+    /// "slow" is there), trusts nothing, and exports a file that is no certificate with the mode its umask gives (or fails,
+    /// as a locked keychain does, while "fail" is there), noting in "folder" the mode of the folder it exports into as it is
+    /// called. Its first word is the folder it keeps those in.</summary>
     internal const string DevCerts = """
         dir=$1; shift
         echo "$*" >> "$dir/asked"
@@ -541,7 +542,8 @@ public sealed class ContainerRunsTests
                          if [ -f "$dir/thumbprint" ]; then echo "A valid certificate was found: $(cat "$dir/thumbprint") - CN=localhost"; fi
                          exit "$(cat "$dir/check")" ;;
           *" -ep "*) if [ -f "$dir/fail" ]; then echo "The keychain is locked" >&2; exit 3; fi
-                     while [ "$1" != "-ep" ]; do shift; done; printf 'stand-in' > "$2"; exit 0 ;;
+                     while [ "$1" != "-ep" ]; do shift; done; ls -ld "$(dirname "$2")" | cut -c1-10 > "$dir/folder"
+                     printf 'stand-in' > "$2"; exit 0 ;;
           *" --trust "*) exit 0 ;;
         esac
         exit 1
@@ -551,8 +553,9 @@ public sealed class ContainerRunsTests
     /// agent in too (--no-mcp): Run over HTTP serves it over HTTP on its port, with no certificate made or trusted; a
     /// certificate whose export fails is said in the status bar, a click away from what dev-certs said, the service over HTTP;
     /// and Create and Trust has dev-certs trust it, exports it and gives it to the service, the override that holds its
-    /// password the person's alone to read. The copy is exported again once dev-certs names another certificate, and kept
-    /// while it names the same. Run and Profile stopped as dev-certs checks it say so and leave nothing. dev-certs is a
+    /// password, the copy and the password kept beside it the person's alone to read, in a folder only they enter from
+    /// before dev-certs writes there. The copy is exported again once dev-certs names another certificate (into a folder
+    /// an earlier Passenger left open put right first, its files replaced), and kept while it names the same. Run and Profile stopped as dev-certs checks it say so and leave nothing. dev-certs is a
     /// stand-in throughout, which trusts nothing on this machine.</summary>
     [AvaloniaFact]
     public void A_run_that_serves_HTTPS_with_no_trusted_certificate_asks_to_create_and_trust_it_or_run_over_HTTP_and_says_an_export_that_fails()
@@ -647,9 +650,13 @@ public sealed class ContainerRunsTests
             // The override names the certificate's password: no one but its owner reads it.
             string written = window.Builds.Containers!.Plan.Compose.Single(w => w.EndsWith(".override.yaml", StringComparison.Ordinal));
             Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Password", File.ReadAllText(written), StringComparison.Ordinal);
+            string https = Path.Combine(window.Builds.Containers!.Plan.State, "https");
             if (!OperatingSystem.IsWindows())
             {
                 Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(written));
+                // The folder was the person's alone as dev-certs wrote the copy there, and its files are theirs alone to read.
+                Assert.Equal("drwx------", File.ReadAllText(Path.Combine(standIn, "folder")).Trim());
+                OwnersAlone(https, "aspnetapp.pfx", "password");
             }
             Stopped(window, project);
 
@@ -660,9 +667,21 @@ public sealed class ContainerRunsTests
             {
                 File.WriteAllText(Path.Combine(standIn, "thumbprint"), thumbprint);
                 File.Delete(Path.Combine(standIn, "asked"));
+                File.Delete(Path.Combine(standIn, "folder"));
+                if (again && !OperatingSystem.IsWindows())
+                {
+                    // As an earlier Passenger left them: the folder open to others, and the password theirs to read.
+                    File.SetUnixFileMode(https, File.GetUnixFileMode(https) | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+                    File.SetUnixFileMode(Path.Combine(https, "password"), File.GetUnixFileMode(Path.Combine(https, "password")) | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+                }
                 Launched(window, window.RunAsync(), "web to come up with the certificate dev-certs names");
                 Assert.True(Exported() == again, $"With dev-certs naming {thumbprint[..4]}…, the certificate was {(again ? "not exported again" : "exported again")}: {Asked()}");
                 Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx", Env(), StringComparison.Ordinal);
+                if (again && !OperatingSystem.IsWindows())
+                {
+                    Assert.Equal("drwx------", File.ReadAllText(Path.Combine(standIn, "folder")).Trim());
+                    OwnersAlone(https, "aspnetapp.pfx", "password", "thumbprint");
+                }
                 Stopped(window, project);
             }
         }
@@ -671,6 +690,15 @@ public sealed class ContainerRunsTests
             window.Perform(AppActions.Stop);
             Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take web down", TimeSpan.FromMinutes(2));
             window.Close();
+        }
+
+        static void OwnersAlone(string folder, params string[] files)
+        {
+            foreach (string file in files)
+            {
+                Assert.True(File.GetUnixFileMode(Path.Combine(folder, file)) == (UnixFileMode.UserRead | UnixFileMode.UserWrite),
+                    $"The certificate's {file} is {File.GetUnixFileMode(Path.Combine(folder, file))}, which others may read");
+            }
         }
 
         static CertificateQuestionDialog Question(MainWindow window, Task<string?> running)

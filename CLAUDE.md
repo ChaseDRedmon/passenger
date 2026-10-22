@@ -625,8 +625,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   compose file of one service Passenger writes) and the project each service runs (its Dockerfile's ENTRYPOINT assembly
   or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command
   takes Passenger's override from the folder's state (`workspaces/…/containers/<config>.override.yaml`, JSON, written
-  after the host's build, the person's alone to read on macOS and Linux, as a single service's compose file is, since it
-  names the certificate's password and the configuration's environment): labels on every service, image build and network;
+  after the host's build, the person's alone to read on macOS and Linux from the moment it is made, as a single service's
+  compose file is (`OwnFiles`), since it names the certificate's password and the configuration's environment): labels on
+  every service, image build and network;
   in fast mode each .NET service it starts its runtime
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
   read-only, its static web assets' folders mounted and its manifest rewritten (`ASPNETCORE_STATICWEBASSETS`); in images
@@ -639,7 +640,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   and Trust running `--trust` or Run over HTTP; a run an agent's call started (`Mcp.AgentCall.Current`) or an agent's own
   IDE (`MainWindow.AgentsOwn`, `--mcp`'s, not `--no-mcp`'s) asks no one and runs over HTTP, saying so in the status bar and
   the call's answer (`ContainerRun.Notes`); a start stopped closes the question; then exported, again once the check names
-  another certificate than the one exported (its thumbprint kept beside it), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
+  another certificate than the one exported (its thumbprint kept beside it), into a folder only the person enters, made so
+  before dev-certs writes there, its files theirs alone to read (`OwnFiles`), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
   failure is said in the status bar, a click from the Run window's line of what dev-certs said; the wait for the answer
   holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
   and in Development the project's own user secrets (its UserSecretsId's folder alone, mounted at

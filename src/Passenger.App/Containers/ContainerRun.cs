@@ -753,12 +753,8 @@ public static class ContainerPlans
         string text = json.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         text = overriding ? text.Replace("\"ports\": [", "\"ports\": !override [", StringComparison.Ordinal) : text;
         string temporary = path + ".tmp";
-        File.WriteAllText(temporary, text);
         // It may hold the certificate's password and the configuration's environment: the person's alone to read.
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        }
+        OwnFiles.Write(temporary, text);
         File.Move(temporary, path, overwrite: true);
     }
 
@@ -786,6 +782,53 @@ public static class ContainerPlans
 public sealed class ComposeModelException(string name, string said) : LaunchException($"{name} cannot run: Compose could not read its files: {said}")
 {
     public string Said { get; } = said;
+}
+
+/// <summary>The state's files that only the person may read on macOS and Linux (the development certificate's copy and its
+/// password, a run's override and single service's compose file, which name them and the configuration's environment), so
+/// from the moment each is made: a folder made 0700, a file 0600 as it is created, never set so after its text is in.</summary>
+internal static class OwnFiles
+{
+    private const UnixFileMode OwnersFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    private const UnixFileMode OwnersFolder = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
+    /// <summary>Makes a folder only the person enters (one an earlier Passenger made, put right), before anything is
+    /// written in it.</summary>
+    public static void Folder(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(path);
+            return;
+        }
+        Directory.CreateDirectory(path, OwnersFolder);
+        File.SetUnixFileMode(path, OwnersFolder);
+    }
+
+    /// <summary>Writes a file only the person reads: one there before is replaced, never written into, since it would
+    /// keep the mode it had.</summary>
+    public static void Write(string path, string text)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(path, text);
+            return;
+        }
+        File.Delete(path);
+        using FileStream stream = new(path, new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, UnixCreateMode = OwnersFile });
+        using StreamWriter writer = new(stream);
+        writer.Write(text);
+    }
+
+    /// <summary>A file another program wrote in such a folder, made only the person's to read too.</summary>
+    public static void Keep(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, OwnersFile);
+        }
+    }
 }
 
 /// <summary>The .NET command line <c>dotnet dev-certs</c> runs through: the machine's (<see cref="DevelopmentCertificate.Machine"/>),
@@ -880,7 +923,7 @@ public static partial class DevelopmentCertificate
         await Gate.WaitAsync(cancel);
         try
         {
-            Directory.CreateDirectory(folder);
+            OwnFiles.Folder(folder);
             if (File.Exists(file) && File.Exists(kept)
                 && (thumbprint is null || File.Exists(exportedOf) && string.Equals((await File.ReadAllTextAsync(exportedOf, cancel)).Trim(), thumbprint, StringComparison.OrdinalIgnoreCase)))
             {
@@ -893,14 +936,12 @@ public static partial class DevelopmentCertificate
             {
                 return (null, $"dotnet dev-certs https -ep ended with exit code {exported.ExitCode}: {Said(exported)}");
             }
-            await File.WriteAllTextAsync(kept, password, cancel);
-            if (!OperatingSystem.IsWindows())
-            {
-                File.SetUnixFileMode(kept, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
+            // Whatever mode dev-certs gave the copy, in the folder no one else enters.
+            OwnFiles.Keep(file);
+            OwnFiles.Write(kept, password);
             if (thumbprint is not null)
             {
-                await File.WriteAllTextAsync(exportedOf, thumbprint, cancel);
+                OwnFiles.Write(exportedOf, thumbprint);
             }
             return (new Exported(folder, file, password), null);
         }
