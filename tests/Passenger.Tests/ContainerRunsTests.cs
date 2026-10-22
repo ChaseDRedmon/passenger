@@ -127,7 +127,7 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
             FileLink link = Assert.IsType<FileLink>(Assert.Single(window.BottomPanel.Run.Links.In(line)).Target);
             Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Shop", "Program.cs")), link.Path);
             Assert.Equal(0, link.Position.Line);
-            Assert.Equal($"{project}-shop:passenger", Docker.Run("inspect", "-f", "{{.Config.Image}}", Container(project, "shop")));
+            Assert.Equal($"{project}-shop:passenger", Docker.Short(Docker.Run("inspect", "-f", "{{.Config.Image}}", Container(project, "shop"))));
             Assert.Equal(ownImage, Docker.Run("image", "inspect", "-f", "{{.Id}}", own));
         }
         finally
@@ -700,8 +700,8 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
         string theirs = Container(project, "cache");
         // And their own of a service the compose file does not have.
         string own = $"{project}-own";
-        Docker.Run("run", "-d", "--name", own, "--label", Docker.RunLabel, "--label", $"com.docker.compose.project={project}",
-            "--label", "com.docker.compose.service=notes", "--label", "com.docker.compose.oneoff=False", Docker.Image, "sleep", "600");
+        Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", own, "--label", Docker.RunLabel, "--label", $"com.docker.compose.project={project}",
+            "--label", "com.docker.compose.service=notes", "--label", "com.docker.compose.oneoff=False", Docker.Image, "sleep", "600"]);
         MainWindow window = Open(folder);
         RunConfiguration cache = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Cache", Services = ["cache"], Generated = false };
         window.SetConfigurations([cache], cache.Name);

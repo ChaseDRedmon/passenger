@@ -14,7 +14,7 @@ using Passenger.Core;
 namespace Passenger.Tests;
 
 /// <summary>The engine a test runs containers on: the person's docker, used only where its server runs Linux containers
-/// (Docker Desktop, Docker Engine, Colima, OrbStack), each object a test makes carrying the run's label, which the run's
+/// (Docker Desktop, Docker Engine, Colima, OrbStack, Podman), each object a test makes carrying the run's label, which the run's
 /// end removes (<see cref="RemoveEverything"/>), and which a later run removes once the run's process is gone, should it
 /// end without its own end (<see cref="RemoveDeadRuns"/>). Tiny public images only: busybox.</summary>
 internal static class Docker
@@ -26,6 +26,11 @@ internal static class Docker
     public static readonly string RunLabel = $"{RunKey}={ContainerLabels.MachineValue}.{ContainerLabels.ProcessValue}";
 
     public const string Image = "busybox:1.37";
+
+    /// <summary>What every test's <c>docker run</c> takes: Docker's CLI on Podman's socket otherwise makes a container that
+    /// holds one process (pids.max 1, Podman 5.7's reading of what the CLI sends; Compose's are Podman's 2048), where no
+    /// exec, shell or .NET program could start a thread. Unlimited, as Docker's own default is.</summary>
+    public static readonly string[] AnyPids = ["--pids-limit", "-1"];
 
     /// <summary>Set to <c>never</c> where the images the tests run on are pulled before the run (CI's test.yml): no test
     /// pulls one there, and a missing one skips every container test, saying which. Unset, a test pulls what it needs.</summary>
@@ -51,6 +56,11 @@ internal static class Docker
         try
         {
             ChildResult info = Ask(["info", "--format", "{{.OSType}}"], limit);
+            if (!info.Succeeded && Ask(["info", "--format", "{{.Host.OS}}"], limit) is { Succeeded: true } podman)
+            {
+                // A docker that is Podman's own command words its system there.
+                info = podman;
+            }
             string os = info.Output.Trim();
             string? why = !info.Succeeded ? $"The container engine is not running here: {ContainerEngine.Said(info)}"
                 : os != "linux" ? $"The container engine here runs {os} containers, and these tests run Linux ones" : null;
@@ -130,6 +140,12 @@ internal static class Docker
         return result.Output.Length > 0 ? result.Output : result.Error;
     }
 
+    /// <summary>An image's name as Docker words it: Podman names an image built or loaded here in full (docker.io/library/…,
+    /// localhost/…).</summary>
+    public static string Short(string image) =>
+        image.StartsWith("docker.io/library/", StringComparison.Ordinal) ? image["docker.io/library/".Length..]
+        : image.StartsWith("localhost/", StringComparison.Ordinal) ? image["localhost/".Length..] : image;
+
     /// <summary>Why no container can run here (no CLI, no engine, Windows containers), or null when one can.</summary>
     public static string? WhyNot => Unusable.Value;
 
@@ -190,7 +206,7 @@ internal static class Docker
     public static string Container(string name, string command, params string[] labels)
     {
         string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}{name}";
-        List<string> words = ["run", "-d", "--name", named, "--label", RunLabel];
+        List<string> words = ["run", "-d", .. AnyPids, "--name", named, "--label", RunLabel];
         foreach (string label in labels)
         {
             words.AddRange(["--label", label]);

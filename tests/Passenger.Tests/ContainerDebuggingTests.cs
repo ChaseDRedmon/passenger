@@ -262,7 +262,7 @@ public sealed class ContainerDebuggingTests(ContainerDebuggingTests.Turns turns)
     private static string Start(string name, string image, params string[] options)
     {
         string named = $"ptest{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}turns{name}";
-        Docker.Run(["run", "-d", "--name", named, "--label", Docker.RunLabel, .. options, image]);
+        Docker.Run(["run", "-d", .. Docker.AnyPids, "--name", named, "--label", Docker.RunLabel, .. options, image]);
         if (!options.Contains(Held))
         {
             Ui.WaitFor(() => Turned(named) > 0, "the program in the container to start counting");
