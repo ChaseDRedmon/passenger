@@ -27,7 +27,7 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 [Collection(Alone.Name)]
-public sealed class AspireTests : IClassFixture<AspireApp>
+public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
 {
     private readonly AspireApp project;
 
@@ -166,7 +166,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         try
         {
             Choose(window);
-            FindAction(window, "Edit Configurations...");
+            FindAction(window, "Edit Configurations…");
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Ui.WaitFor(() => ServiceChoice(dialog, "apiservice") is not null && ServiceChoice(dialog, "webfrontend") is not null,
                 "both official project resources on the initially selected AppHost");
@@ -202,7 +202,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             RunConfiguration restored = Assert.Single(window.Configurations, configuration => configuration.Name == saved.Name);
             Assert.Equal(saved.ServiceActions, restored.ServiceActions);
             Assert.Equal(saved.ServiceProjects, restored.ServiceProjects);
-            FindAction(window, "Edit Configurations...");
+            FindAction(window, "Edit Configurations…");
             dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
             Ui.WaitFor(() => ServiceChoice(dialog, "apiservice")?.SelectedIndex == 1
                 && ServiceChoice(dialog, "webfrontend")?.SelectedIndex == 0, "the persisted per-resource choices");
@@ -1185,8 +1185,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     private MainWindow OpenRunning()
     {
         // An AppHost an earlier test left running holds the ports this one's would listen on, and its services would answer.
-        Assert.True(Waiting.Until(() => Leftovers().Length == 0, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1)),
-            $"An earlier test left its AppHost's programs running:\n{string.Join("\n", Leftovers())}");
+        Assert.True(Waiting.Until(() => Leftovers().Count == 0, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1)),
+            $"An earlier test left its AppHost's programs running:\n{string.Join("\n", Leftovers().Values)}");
         MainWindow window = project.OpenHost();
         Choose(window);
         Ui.Run(window, AppActions.RunProgram);
@@ -1295,13 +1295,37 @@ public sealed class AspireTests : IClassFixture<AspireApp>
     private AspireResourceRun Service(MainWindow window, AspireResource resource) => Assert.IsType<AspireResourceRun>(window.AspireRuntime.FindService(new(project.Host, resource)));
     /// <summary>Each program of the fixture's AppHosts now running: a service or AppHost by its folder, the orchestrator by the
     /// run's Aspire home its notification socket is in.</summary>
-    private string[] Leftovers()
+    private Dictionary<int, string> Leftovers()
     {
         string folder = PathNames.Canonical(project.Folder);
-        return [.. Processes.Listed().Where(process => process.Value.Contains(AspireCli.Home, StringComparison.Ordinal)
+        return Processes.Listed().Where(process => process.Value.Contains(AspireCli.Home, StringComparison.Ordinal)
             || process.Value.Contains(folder, StringComparison.Ordinal) && (process.Value.Contains("dotnet run", StringComparison.Ordinal)
                 || process.Value.Contains("/bin/Debug/", StringComparison.Ordinal)))
-            .Select(process => $"{process.Key}: {process.Value}")];
+            .ToDictionary(process => process.Key, process => $"{process.Key}: {process.Value}");
+    }
+
+    /// <summary>After each test, its windows closed: one that left its AppHost's programs running fails, naming them, and they
+    /// are ended, so the next test's AppHost has its ports and the class goes on.</summary>
+    public void Dispose()
+    {
+        if (project.WhyNot is not null || Waiting.Until(() => Leftovers().Count == 0, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1)))
+        {
+            return;
+        }
+        Dictionary<int, string> left = Leftovers();
+        foreach (int id in left.Keys)
+        {
+            try
+            {
+                using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(id);
+                process.Kill();
+            }
+            catch (Exception ended) when (ended is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // Gone meanwhile.
+            }
+        }
+        Assert.Fail($"The test's AppHost's programs outlived its window, and were ended:\n{string.Join("\n", left.Values)}");
     }
 
     /// <summary>The Aspire window given the room its lists need, as a person makes it: a resource chosen in it, and the window

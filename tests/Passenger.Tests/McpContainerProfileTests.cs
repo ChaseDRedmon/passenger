@@ -15,7 +15,7 @@ public sealed class McpContainerProfileTests : McpRig
     {
         ContainerProfilingTests.Spins spins = await Task.Run(() => ContainerProfilingTests.Spins.Shared);
         Assert.SkipWhen(spins.WhyNot is not null, spins.WhyNot ?? string.Empty);
-        string container = await Task.Run(() => spins.Start("agent"));
+        string container = await Task.Run(() => spins.Start("agent", offWindow: true));
         await using McpClient client = await Start(["--mcp", spins.Folder], languageServer: false);
 
         CallToolResult unattached = await Result(client, "profile", new() { ["container"] = container, ["seconds"] = 1 });
