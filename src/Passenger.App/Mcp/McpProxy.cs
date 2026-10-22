@@ -28,6 +28,10 @@ public sealed class McpProxy
     /// <summary>How long joining may take, including old connection cleanup, opening a window and initialization.</summary>
     private static readonly TimeSpan StartLimit = TimeSpan.FromMinutes(2);
 
+    /// <summary>How long a call's failure waits for its connection's end to be told, as the thread pool may run it late on a
+    /// busy machine; only a failure that is no such end waits it out.</summary>
+    private static readonly TimeSpan EndingLimit = TimeSpan.FromSeconds(5);
+
     private readonly int? processId;
     private readonly string here;
     private readonly SemaphoreSlim joining = new(1, 1);
@@ -179,8 +183,13 @@ public sealed class McpProxy
             }
             throw;
         }
-        catch (Exception error) when (window.Completion.IsCompleted && error is not OperationCanceledException)
+        // The window's own error answers (a protocol error) are passed on as they came.
+        catch (Exception error) when (error is not McpProtocolException && !cancel.IsCancellationRequested)
         {
+            if (!await EndedAsync(window, cancel))
+            {
+                throw;
+            }
             return Refused($"The connection to the Passenger window ended before it answered {tool}; a later call joins one again.");
         }
         finally
@@ -332,6 +341,21 @@ public sealed class McpProxy
             {
                 joining.Release();
             }
+        }
+    }
+
+    /// <summary>Whether a call's failure is its connection to the window ending: the session fails the calls still waiting as
+    /// its reader stops, and says it is complete only a moment after, on another of the pool's threads.</summary>
+    private static async Task<bool> EndedAsync(McpClient window, CancellationToken cancel)
+    {
+        try
+        {
+            await window.Completion.WaitAsync(EndingLimit, cancel);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
         }
     }
 
