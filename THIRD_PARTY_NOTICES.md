@@ -3,8 +3,8 @@
 What Passenger uses that others made, and under what terms. Each package is named by its NuGet id, with the licence
 and the copyright its package states (its nuspec's licence expression or licence file and its copyright line, else its
 authors). `tools/check-notices.py`, which CI runs after its restore (`just notices` here), fails naming any package
-the solution restores, Roslyn's language server carries, or the tool manifest (`dotnet-tools.json`) pins, that is not
-named here.
+the solution restores, Roslyn's language server carries, the container tools carry, or the tool manifest
+(`dotnet-tools.json`) pins, that is not named here.
 
 ## In the app
 
@@ -16,8 +16,8 @@ HTML, CSS, JSON, Dockerfile and YAML language servers' npm packages under `web/`
 adds to it (`just package-win`), and in the Linux archive Passenger's own launcher, install script, desktop entry and
 file types beside it (`just package-linux`). The Linux build carries the Linux natives of SkiaSharp, HarfBuzzSharp and
 dbgshim for its processor (x64 or Arm64), each named below. Packages restored with these whose files no build carries
-(SkiaSharp's and HarfBuzzSharp's natives for the browser, dbgshim's for 32-bit Arm and musl Linux and for 32-bit
-Windows) are left out.
+(SkiaSharp's and HarfBuzzSharp's natives for the browser, dbgshim's for 32-bit Arm and for 32-bit Windows) are left
+out; dbgshim's musl Linux natives are the container tools' (below), which the app never carries.
 
 | Package | In Passenger | Licence | Copyright |
 |---|---|---|---|
@@ -157,6 +157,31 @@ carry of their own. `tools/check-notices.py` fails naming any package the lock f
 | `fast-uri` | ajv's URIs | BSD-3-Clause | Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae |
 | `require-from-string` | ajv's | MIT | Copyright (c) Vsevolod Strukchinsky <floatdrop@gmail.com> (github.com/floatdrop) |
 
+## In the container tools
+
+What `just container-tools` makes and each release carries as `Passenger-container-tools-<rid>.tar.gz`
+(`src/Passenger.ContainerTools`, for linux-x64, linux-arm64, linux-musl-x64 and linux-musl-arm64): `passenger-tools`,
+which Passenger copies into or mounts in a Linux container to debug and profile the .NET programs there, self-contained,
+with `LICENSE.txt` and notices of its own beside it, `THIRD-PARTY-NOTICES.txt`, written at its build by
+`tools/Passenger.Notices` from the packages its `.deps.json` names (each one's copyright, licence text and own notices),
+then the debugger's copied source below (SharpDbg and ICorDebugSharp, ILSpy's and ClrDebug's code). The app never
+carries them. `tools/check-notices.py` fails naming any package they carry on one of their systems that is not named
+here.
+
+| Package | In the container tools | Licence | Copyright |
+|---|---|---|---|
+| The .NET runtime (`Microsoft.NETCore.App.Runtime.linux-x64`, `Microsoft.NETCore.App.Runtime.linux-arm64`, `Microsoft.NETCore.App.Runtime.linux-musl-x64`, `Microsoft.NETCore.App.Runtime.linux-musl-arm64`) | the runtime pack of the tools' system, which they run on whatever .NET the container has, or none | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.DbgShim`, `Microsoft.Diagnostics.DbgShim.linux-x64`, `Microsoft.Diagnostics.DbgShim.linux-arm64`, `Microsoft.Diagnostics.DbgShim.linux-musl-x64`, `Microsoft.Diagnostics.DbgShim.linux-musl-arm64` | the debugger's way into a runtime (`libdbgshim.so`), the tools' system's alone: on a musl system musl's own (`KeepMuslDbgShim` in the tools' project, since the glibc one needs ld-linux, which Alpine lacks) | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.NETCore.Client` | the diagnostic port: the debugger's attach and the profiler's recording, in the container | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.Runtime` | ClrMD, reading a heap snapshot in the container with its runtime's own DAC | MIT | © Microsoft Corporation. All rights reserved. |
+| `Azure.Identity`, `Azure.Core`, `System.ClientModel`, `System.Memory.Data`, `Microsoft.Identity.Client`, `Microsoft.Identity.Client.Extensions.Msal`, `Microsoft.IdentityModel.Abstractions`, `Microsoft.Security.AntiSSRF`, `Microsoft.Bcl.AsyncInterfaces` | ClrMD's, carried as the app carries them (above) | MIT | © Microsoft Corporation. All rights reserved. |
+| `System.Security.Cryptography.ProtectedData` (4.5.0) | the Azure sign-in's (MSAL's), which ClrMD never asks for | MIT (its package's `LICENSE.TXT`; its nuspec names only the licence's URL) | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.Tracing.TraceEvent` | the profiler's EventPipe providers and their events, with its COM interop assemblies `Dia2Lib.dll` and `TraceReloggerLib.dll`; no Windows native | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.CodeAnalysis.CSharp`, `Microsoft.CodeAnalysis.Common`, `Microsoft.DiaSymReader` | the debugger's expressions | MIT | © Microsoft Corporation. All rights reserved. |
+| `MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler`, `MP.Microsoft.CodeAnalysis.ExpressionEvaluator.ExpressionCompiler` | Roslyn's expression compiler, as in the app | MIT | no copyright line; its authors: .NET Foundation and contributors |
+| `ICSharpCode.Decompiler` | ILSpy's decompiler: the debugger's frames without source | MIT | Copyright 2011-2026 AlphaSierraPapa |
+| `ZLinq` | the debugger's queries | MIT | © Cysharp, Inc. |
+
 ## Building and testing only
 
 Packages the build or the tests use that no app carries.
@@ -236,7 +261,8 @@ licence its package.json states and the copyright line its licence file (else it
 `tools/Passenger.Notices/Licenses/` holds the texts of the licences packages name by SPDX identifier (`MIT.txt`,
 `Apache-2.0.txt`, `ISC.txt`), from the SPDX License List 3.29.0 (https://github.com/spdx/license-list-data), unchanged; its README
 says where each came from. The app's notices, `THIRD-PARTY-NOTICES.txt` beside it, are written from them, from the
-packages themselves and from this file: Roslyn's server's table above, and everything below.
+packages themselves and from this file: Roslyn's server's table above, and everything below; the container tools' carry
+the debugger's two sections below.
 
 <!-- The app's notices (THIRD-PARTY-NOTICES.txt) carry everything below this line as it is. -->
 

@@ -29,12 +29,59 @@
     </ItemGroup>
   </Target>
 
-  <!-- Passenger's licence and the notices of what it carries (the runtime and the debugger's packages, all named there)
-       go with the tools, as with the app. -->
+  <!-- LICENSE.txt and THIRD-PARTY-NOTICES.txt go with the tools in every build and publish, as with the app, the notices
+       written by tools/Passenger.Notices from what the tools' .deps.json names, as the runtime loads it: the runtime pack a
+       publish carries, the debugger's and the profiler's packages (ClrMD and its Azure ones, TraceEvent, Roslyn's
+       expression compiler, ILSpy's decompiler) and dbgshim for the tools' system (musl's own, KeepMuslDbgShim), each with
+       its copyright, licence text and own notices, then THIRD_PARTY_NOTICES.md's sections of the debugger's copied source.
+       A package whose licence it cannot write fails the build. The deps file is written just before the output is copied,
+       so the notices are written after it, straight into the output, and a publish takes them from there. -->
   <ItemGroup>
+    <ProjectReference Include="../../tools/Passenger.Notices/Passenger.Notices.csproj" ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
     <None Include="../../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
-    <None Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
+
+  <Target Name="ToolsNoticeInputs">
+    <MSBuild Projects="../../tools/Passenger.Notices/Passenger.Notices.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="NoticesTool" />
+    </MSBuild>
+    <PropertyGroup>
+      <NoticesFile>$([MSBuild]::NormalizePath('$(OutDir)', 'THIRD-PARTY-NOTICES.txt'))</NoticesFile>
+      <NoticesArguments>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'notices.txt'))</NoticesArguments>
+      <NoticesHost>$(DOTNET_HOST_PATH)</NoticesHost>
+      <NoticesHost Condition="'$(NoticesHost)' == ''">dotnet</NoticesHost>
+      <NoticesRepository>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '..', '..'))</NoticesRepository>
+    </PropertyGroup>
+    <ItemGroup>
+      <NoticeText Include="$(NoticesRepository)THIRD_PARTY_NOTICES.md;$(NoticesRepository)LICENSE;$(NoticesRepository)tools/Passenger.Notices/Licenses/*.txt" />
+      <NoticeLine Include="for=tools" />
+      <NoticeLine Include="out=$(NoticesFile)" />
+      <NoticeLine Include="license=$(NoticesRepository)LICENSE" />
+      <NoticeLine Include="notices=$(NoticesRepository)THIRD_PARTY_NOTICES.md" />
+      <NoticeLine Include="licenses=$(NoticesRepository)tools/Passenger.Notices/Licenses" />
+      <NoticeLine Include="packages=$(NuGetPackageRoot)" />
+      <NoticeLine Include="tools=$(ProjectDepsFilePath)" />
+      <NoticeLine Include="section=SharpDbg and ICorDebugSharp" />
+      <NoticeLine Include="section=Code from ILSpy and ClrDebug" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(NoticesArguments)" Lines="@(NoticeLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <FileWrites Include="$(NoticesFile)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="WriteToolsNotices" AfterTargets="GenerateBuildDependencyFile" DependsOnTargets="ToolsNoticeInputs"
+          Inputs="$(NoticesArguments);@(NoticesTool);@(NoticeText);$(ProjectDepsFilePath)" Outputs="$(NoticesFile)">
+    <Exec Command="&quot;$(NoticesHost)&quot; &quot;@(NoticesTool)&quot; &quot;$(NoticesArguments)&quot;" />
+  </Target>
+
+  <Target Name="PublishToolsNotices" AfterTargets="ComputeResolvedFilesToPublishList" DependsOnTargets="ToolsNoticeInputs">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(NoticesFile)" RelativePath="THIRD-PARTY-NOTICES.txt" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <Compile Include="../Passenger.DebugAdapter/AdapterProgram.cs" Link="DebugAdapter/AdapterProgram.cs" />

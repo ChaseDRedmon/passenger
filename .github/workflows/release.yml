@@ -373,7 +373,11 @@ jobs:
           tools/container-tools.sh "$RID" --archive
           mkdir -p artifacts/release
           cp "artifacts/container-tools/Passenger-container-tools-$RID.tar.gz" artifacts/release/
-          tar -tzf "artifacts/release/Passenger-container-tools-$RID.tar.gz" | grep -qx './passenger-tools'
+          contents=$(tar -tzf "artifacts/release/Passenger-container-tools-$RID.tar.gz")
+          # The tools, with their licence and the notices their build wrote of what they carry.
+          for part in passenger-tools LICENSE.txt THIRD-PARTY-NOTICES.txt; do
+            echo "$contents" | grep -qx "./$part" || { echo "The archive has no $part" >&2; exit 1; }
+          done
           ls -l artifacts/release
 
       - name: Upload the release's files

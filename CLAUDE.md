@@ -42,8 +42,8 @@ just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -ar
 just container-tools [RID] [--archive]  # artifacts/container-tools/<rid>/, the container tools self-contained (linux-x64,
                            # linux-arm64, linux-musl-x64, linux-musl-arm64; none: the engine's processor, glibc), where a
                            # dev build finds them; --archive also the release's Passenger-container-tools-<rid>.tar.gz
-just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
-                           # notices miss
+just notices               # fail naming any package the solution, Roslyn's server, the container tools or a dotnet tool
+                           # carries that the notices miss
 just test [filter]         # every test, or those whose name matches; dotnet test's results in artifacts/test-results
 just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
                            # CI runs' results
@@ -1320,7 +1320,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   packages carried; `ContainerTools.ToolsCommand`) and `version`. Self-contained and InvariantGlobalization, never
   carried by the app (the release's `Passenger-container-tools-<rid>.tar.gz`, or `just container-tools`); a musl
   publish keeps its own libdbgshim.so
-  (`KeepMuslDbgShim`: the glibc package's matches a musl system too, and won). The engine's `SourcePaths.Match` takes a
+  (`KeepMuslDbgShim`: the glibc package's matches a musl system too, and won). They carry `LICENSE.txt` and notices of
+  their own, `THIRD-PARTY-NOTICES.txt`, which their build writes (`WriteToolsNotices`, below).
+  The engine's `SourcePaths.Match` takes a
   PDB document that exists where the adapter runs while the breakpoint's file does not (the IDE's, outside the
   container) by what they share from the end, and compares a Windows path (C:\…, \\server\…) ignoring case on any
   system; the engine gives a Windows document's path back with forward slashes. Before
@@ -1448,7 +1450,13 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
-  of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build.
+  of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build. Given `for=tools`, it
+  writes the container tools' (`WriteToolsNotices` in `Passenger.ContainerTools.csproj`, straight into their output once
+  their `.deps.json` is written, which a publish then takes) from the packages that `.deps.json` names, their runtime
+  pack and dbgshim for their system included, and only the sections of the debugger's copied source (`section=`);
+  `tools/container-tools.sh` and the release check the archive has them. `tools/check-notices.py` (`just notices`) reads
+  what the tools carry on each of their systems from their restore, so THIRD_PARTY_NOTICES.md's "In the container
+  tools" names it all.
 - `src/Passenger.App/MSBuild`: code help in project, .props and .targets files. `MSBuildService` is the session's
   (`ProjectSession.MSBuild`), one `MSBuildDocument` per open MSBuild file, evaluated through its project (itself, the
   workspace project whose evaluation imports it, a Directory.* file's nearest project, or the one Go to Declaration
