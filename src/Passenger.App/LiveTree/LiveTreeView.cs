@@ -601,7 +601,7 @@ public sealed class LiveTreeView : DockPanel
                 break;
         }
         line.Children.Add(setter.Place is { } place ? Link(text, place) : text);
-        if (setter.By is { } by)
+        if (AppPlaces.OverriddenBy(setter) is { } by)
         {
             line.Children.Add(new TextBlock { Text = $"overridden by {by}", Classes = { "muted" }, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 0, 0, 2) });
         }

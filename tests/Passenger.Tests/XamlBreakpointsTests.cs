@@ -177,6 +177,10 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     [AvaloniaFact]
     public void Break_when_value_changes_stops_in_the_code_the_style_or_the_binding_that_changed_that_controls_property()
     {
+        // XamlIl counts the lone '\r' in the window's tag as a line's end, which the editor reads inside its line.
+        string xaml = File.ReadAllText(Xaml).Replace("Title=\"XAML Breakpoints\" Width", "Title=\"XAML Breakpoints\"\r        Width", StringComparison.Ordinal);
+        File.WriteAllText(Xaml, xaml);
+        int red = EditorPlace(xaml, "<Setter Property=\"Foreground\" Value=\"Red\"").Line;
         MainWindow window = Opened();
         Ui.Launched(window, window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4));
         Ui.WaitFor(() => window.LiveTree.Rows.Any(r => r.Element.Name == "Save"),
@@ -239,6 +243,8 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         AssertAt(stop, CodeBehind, Line(CodeBehind, "Save.Classes.Add(\"danger\");"));
         Says(window, $"Property Breakpoint Hit: {foreground.Location} is changed");
         Says(window, "by style Button.danger");
+        // Where its setter is written, at the editor's line, which XamlIl's runs one past below the lone '\r'.
+        Says(window, $" at MainWindow.axaml:{red + 1})");
         Resume(window);
 
         // A binding: the caption's Text, which the view model's caption changes.

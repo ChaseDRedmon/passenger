@@ -288,10 +288,22 @@ window or takes the focus; it shows everything but the system's own window chrom
   at the compiler's line in the built text and shows a stop's frame (the arrow, its row, MCP's place) at the editor's
   line now, and Hot Reload's rude edits are listed at the editor's line. XAML's compilers count lines as an XML reader
   does (`ServerLines.OfXml`: a lone '\r' ends a line, U+0085, U+2028 and U+2029 do not), and `ServerPlaces.Compiled`
-  gives any file's lines as its compiler counts them, which BuiltLines and a profile's hot spots read the PDB through.
+  gives any file's lines as its compiler counts them, which BuiltLines and a profile's hot spots read the PDB through,
+  and a build's problems too (`BuildRunController.Placed`, through `ServerPlaces.PositionOfCompiled`: Avalonia's AVLN and
+  WPF's MC errors in Problems, an agent's `problems` and the XAML editor's markers at the editor's line, the place their
+  message repeats, "Line 8, position 6.", said there by `BuildOutput.Moved`). A console's link to a compiler's message or a
+  stack frame converts the same way (`FileLink.CompiledLines`), in a XAML file only for a compiler's message (its
+  severity and code after the place): Passenger's own failed-binding lines name the editor's. The previewers' errors and
+  notes name the line of the text they were sent as their XML reader counted it, said at the editor's
+  (`XamlPreview.Where`; the WPF previewer's `WpfPreviewNote.Line`, App.xaml's note no line, as WPF's names one of the
+  dictionary text the previewer made).
   The places a running app reports of its XAML (each element's XamlSourceInfo, in the Live Visual Tree's details and Go
   to, a failed binding's in Problems, the consoles and its fixes, the Frames page's rows, `app_details` and `profile`)
-  are its XAML compiler's lines too, WPF's BAML as Avalonia's XamlIl, and `LiveTree/AppPlaces` reads them at the editor's.
+  are its XAML compiler's lines too, WPF's BAML as Avalonia's XamlIl, and `LiveTree/AppPlaces` reads them at the editor's;
+  the inspector never words a place, since the IDE could not convert it: an overridden setter's overriding style is
+  `SetterReport.ByPlace` (protocol v7), a property breakpoint's setting style `Breaks.Changed`'s `setAt` (a place as the
+  protocol writes one), and `$bindingError`'s Xaml, which the app words for conditions and log messages, is shown in
+  Variables and `debug_variables` at the editor's (`DebugController.MembersAsync`, from the failure's place).
   `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
   a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
   HTML in the HTML server (`LanguageServer.HtmlServer`) as `<uri>__virtual.html` and forwards Razor's HTML questions
@@ -1266,7 +1278,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `BuiltLines`). `PropertyBreakpoint` is the Live Visual Tree's Break When Value
   Changes, for one session: the inspector watches that element's property (protocol v3 `watch`, `PropertyBreaks.cs`)
   and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
-  `breakpoint == Id && (…)`, the hit count kept in the app). The inspector is never optimized (the debugger reads that
+  `breakpoint == Id && (…)`, the hit count kept in the app); the stop says its `change` and, from `setAt`, where the
+  style that set it is written at the editor's line. The inspector is never optimized (the debugger reads that
   call's arguments) and its watching code is `[DebuggerNonUserCode]`, shown as external code under Just My Code, so
   the stop selects the code that set the value. `BindingErrorBreakpoint` is XAML Binding Errors ("Any binding
   error", off until turned on, never removed, kept with the folder): under a debugger the inspector's binding sink calls
@@ -1406,7 +1419,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   carried under `inspector/wpf/` only by a Windows build or win-* publish): `LiveApp.For` gives it (`LiveAppKind.Wpf`) to
   a Run or Debug launch on Windows whose runtimeconfig names Microsoft.WindowsDesktop.App and whose assembly references
   PresentationFramework, with `ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1`. It links Protocol.cs and Connection.cs (the same
-  socket, protocol v6, `Hello.Framework`), runs in the default load context, and retries a main-thread dispatcher WPF is
+  socket, protocol v7, `Hello.Framework`), runs in the default load context, and retries a main-thread dispatcher WPF is
   still making. Value sources are `DependencyPropertyHelper.GetValueSource`; places `VisualDiagnostics.GetXamlSourceInfo`
   turned into files through the assembly's PDB; binding errors come from `PresentationTraceSources` and
   `BindingDiagnostics.BindingFailed`, and `Breaks.BindingFailed`/`Changed` keep their names so one function breakpoint

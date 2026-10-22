@@ -175,7 +175,11 @@ public sealed partial class McpTests
         Assert.True(failed.GetProperty("state").GetString() == "paused"
             && failed.GetProperty("locals").EnumerateArray().Any(l => l.GetProperty("name").GetString() == "$bindingError" && l.GetProperty("value").GetString()!.Contains("Nmae", StringComparison.Ordinal)),
             $"The misspelt binding did not stop the app with XAML Binding Errors on: {failed}");
-        JsonElement off = Assert.Single((await Call(client, "breakpoint_remove", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
+        // Its control's element at the editor's line, which XamlIl's runs one past below the window's lone '\r'.
+        int reference = failed.GetProperty("locals").EnumerateArray().First(l => l.GetProperty("name").GetString() == "$bindingError").GetProperty("reference").GetInt32();
+        JsonElement xaml = Assert.Single((await Call(client, "debug_variables", new() { ["reference"] = reference })).EnumerateArray(), m => m.GetProperty("name").GetString() == "Xaml");
+        Assert.Equal($"\"{AppXamlPlace("TextBlock x:Name=\"Caption\"")}\"", xaml.GetProperty("value").GetString());
+        JsonElement off =Assert.Single((await Call(client, "breakpoint_remove", new() { ["bindingErrors"] = true })).EnumerateArray(), b => b.TryGetProperty("bindingErrors", out _));
         Assert.False(off.GetProperty("enabled").GetBoolean(), $"XAML Binding Errors is still on: {off}");
         Assert.Equal("running", (await Call(client, "debug_continue", new() { ["waitSeconds"] = 2 })).GetProperty("state").GetString());
 

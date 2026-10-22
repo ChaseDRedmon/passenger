@@ -23,7 +23,7 @@ namespace Passenger.Inspector;
 public static class Wire
 {
     /// <summary>Bumped by a change either end must know of: a hello of another version is refused, saying so.</summary>
-    public const int Version = 6;
+    public const int Version = 7;
 
     /// <summary>The app's environment: the socket's path, where it connects.</summary>
     public const string SocketVariable = "PASSENGER_INSPECTOR";
@@ -401,7 +401,12 @@ public static class StyleKinds
 
 /// <summary>A setter of a style: the property, the value it sets, where it is written, and what became of it
 /// (<see cref="SetterStates"/>), with what overrides it.</summary>
-public sealed record SetterReport(string Property, string Value, SourcePlace? Place, string State, string? By);
+public sealed record SetterReport(string Property, string Value, SourcePlace? Place, string State, string? By)
+{
+    /// <summary>Where what overrides it is written (another style's selector), which Passenger says after <see cref="By"/> at
+    /// the editor's line: a place in words keeps the XAML compiler's, which a lone '\r' puts lines ahead.</summary>
+    public SourcePlace? ByPlace { get; init; }
+}
 
 public static class SetterStates
 {

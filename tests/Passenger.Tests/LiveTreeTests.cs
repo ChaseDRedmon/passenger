@@ -114,14 +114,15 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
     /// <summary>The app's XAML compiler counts lines as an XML reader does, ending one at a lone '\r' and at no U+0085, U+2028
     /// or U+2029, so below a lone '\r' in the window's tag and a comment holding all four before Delete on Delete's own line,
     /// the places the app reports run two lines ahead of the editor's at Delete and one at the danger style: the details name
-    /// each at its own line, and Go to Source lands on it.</summary>
+    /// each at its own line, the theme's setter the style overrides on Delete names it there too, and Go to Source lands on
+    /// it.</summary>
     [AvaloniaFact]
     public void Below_line_breaks_only_an_xml_reader_counts_the_details_name_and_go_to_each_place_at_the_editors_line()
     {
         string xaml = Path.Combine(folder, "MainWindow.axaml");
         string text = File.ReadAllText(xaml)
             .Replace("Title=\"Live Tree App\" Width", "Title=\"Live Tree App\"\r        Width", StringComparison.Ordinal)
-            .Replace("<Button x:Name=\"Delete\"", $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd --> <Button x:Name=\"Delete\"", StringComparison.Ordinal);
+            .Replace("<Button x:Name=\"Delete\"", $"<!-- Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd --> <Button x:Name=\"Delete\" Classes=\"danger\"", StringComparison.Ordinal);
         File.WriteAllText(xaml, text);
         (int delete, int button) = EditorPlace(text, "Button x:Name=\"Delete\"");
         int danger = EditorPlace(text, "Selector=\"Button.danger\"").Line;
@@ -145,6 +146,9 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
         Control block = tree.StyleBlocks.First(b => b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Button.danger"));
         Button link = block.GetLogicalDescendants().OfType<Button>().First();
         Assert.Equal($"MainWindow.axaml:{danger + 1}", (link.Content as TextBlock)?.Text);
+        // The button's theme's Foreground, which the danger style overrides, names that style where the editor has it.
+        Assert.Contains(tree.StyleBlocks.SelectMany(b => b.GetLogicalDescendants().OfType<TextBlock>()),
+            t => t.Text == $"overridden by Button.danger (MainWindow.axaml:{danger + 1})");
         Click(link);
         Assert.Equal(danger, window.EditorArea.CodeEditor.CaretPosition.Line);
 

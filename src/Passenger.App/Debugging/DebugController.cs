@@ -487,7 +487,7 @@ public sealed class DebugController : IDisposable
                 tab.Session = made;
                 if (tab == chosen)
                 {
-                    view.Tree.Load = reference => made.VariablesAsync(reference);
+                    view.Tree.Load = reference => MembersAsync(made, reference);
                 }
                 // The toolbar's Stop shows, and Stop runs, while the debugger waits for the program.
                 StateChanged?.Invoke(this, EventArgs.Empty);
@@ -773,7 +773,7 @@ public sealed class DebugController : IDisposable
         UpdateAllMarks();
         if (tab.Session is { } session)
         {
-            view.Tree.Load = reference => session.VariablesAsync(reference);
+            view.Tree.Load = reference => MembersAsync(session, reference);
             return Show(tab, say);
         }
         view.SetState(tab.HasEnded ? DebugState.Ended : DebugState.Starting);
@@ -1544,10 +1544,12 @@ public sealed class DebugController : IDisposable
         {
             try
             {
-                // Said by the inspector's call the debugger stopped in: the values, and what set the new one.
-                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed)
+                // Said by the inspector's call the debugger stopped in: the values, and what set the new one, with where that
+                // is written apart, at its XAML compiler's line, said at the editor's.
+                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed
+                    && StringValue((await session.EvaluateAsync("change", changed.Id, "watch")).Result) is { } words)
                 {
-                    propertyChange = StringValue((await session.EvaluateAsync("change", changed.Id, "watch")).Result);
+                    propertyChange = words + AppPlaces.At(SetAt(await session.EvaluateAsync("setAt", changed.Id, "watch")), CSharp.ServerPlaces.Texts(editors));
                 }
             }
             catch (DapException)
@@ -1629,8 +1631,40 @@ public sealed class DebugController : IDisposable
         {
             return null;
         }
-        return failure is null ? null : new BindingStop(
-            BindingErrors.Problem(failure, failure.Place is { } at ? BindingErrors.TextOf(at.File, editors.Documents) : null), error.Result, error.Type, error.VariablesReference);
+        if (failure is null)
+        {
+            return null;
+        }
+        TextSnapshot? text = failure.Place is { } at ? BindingErrors.TextOf(at.File, editors.Documents) : null;
+        SourcePlace? element = failure.Place is { } place ? AppPlaces.InEditor(place, _ => text) : null;
+        return new BindingStop(BindingErrors.Problem(failure, text), error.Result, error.Type, error.VariablesReference)
+        {
+            Xaml = element is null ? null : $"{Path.GetFileName(element.File)}:{element.Line}:{element.Column}",
+        };
+    }
+
+    /// <summary>The members behind a reference, as Variables and an agent open them: those of <c>$bindingError</c> with its
+    /// Xaml, which the app wrote at its XAML compiler's line, at the editor's (<see cref="BindingStop.Xaml"/>).</summary>
+    public async Task<IReadOnlyList<DapVariable>> MembersAsync(DebugSession session, int reference)
+    {
+        IReadOnlyList<DapVariable> members = await session.VariablesAsync(reference);
+        return bindingStop is { Xaml: { } xaml } failed && failed.Reference == reference && session == Session
+            ? [.. members.Select(m => m.Name == "Xaml" && m.Value.StartsWith('"') ? m with { Value = SymbolDisplay.FormatLiteral(xaml, quote: true) } : m)]
+            : members;
+    }
+
+    /// <summary>Where the style that set a watched property is written, as the inspector's call gives it (a place as the
+    /// protocol writes one); null when it names none.</summary>
+    private static SourcePlace? SetAt(EvaluateResponse evaluated)
+    {
+        try
+        {
+            return StringValue(evaluated.Result) is { } said ? JsonSerializer.Deserialize(said, WireJson.Default.SourcePlace) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>A string as the debugger shows one, a C# literal, as it is; null for anything else (an error, null).</summary>
@@ -2135,6 +2169,10 @@ public sealed record DebugStop(int Thread, string? Reason, IReadOnlyList<DapStac
 /// its control's element), and the inspector call's parameter as the debugger shows it, which opens into its parts.</summary>
 public sealed record BindingStop(BindingProblem Problem, string Value, string? Type, int Reference)
 {
+    /// <summary>Its control's element as the parameter's Xaml names it ("MainWindow.axaml:8:20"), at the editor's line and
+    /// column: the app wrote its XAML compiler's, which a lone '\r' above puts lines ahead.</summary>
+    public string? Xaml { get; init; }
+
     /// <summary>Its row in Variables, as Rider names the exception stopped at $exception; the breakpoint's condition and log
     /// message read it by the same name.</summary>
     public const string Name = "$bindingError";

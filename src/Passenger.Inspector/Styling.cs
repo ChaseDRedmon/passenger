@@ -256,10 +256,10 @@ internal sealed class Styling
         {
             return new SetterReport(name, value, place, SetterStates.Wins, null);
         }
-        string by = winner.Source is StyleBase other
-            ? Details.Place(other) is { } at ? $"{SelectorText(other)} ({Path.GetFileName(at.File)}:{at.Line})" : SelectorText(other)
+        StyleBase? other = winner.Source as StyleBase;
+        string by = other is not null ? SelectorText(other)
             : winner.Type == IValueFrameDiagnostic.FrameType.Template ? "its template" : "another frame";
-        return new SetterReport(name, value, place, SetterStates.Overridden, by);
+        return new SetterReport(name, value, place, SetterStates.Overridden, by) { ByPlace = other is null ? null : Details.Place(other) };
     }
 
     /// <summary>A setter's value as its XAML wrote it: a resource or binding as markup, else the value itself.</summary>

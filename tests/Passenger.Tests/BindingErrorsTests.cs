@@ -42,7 +42,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     private string Xaml => Path.Combine(folder, "MainWindow.axaml");
 
     /// <summary>Where the caption's binding names Nmae, on its start tag's third line, from zero.</summary>
-    private TextPosition Misspelt => new(Line("{Binding Nmae}") - 1, File.ReadAllLines(Xaml)[Line("{Binding Nmae}") - 1].IndexOf("Nmae", StringComparison.Ordinal));
+    private TextPosition Misspelt => new(Line("{Binding Nmae}") - 1, Lines()[Line("{Binding Nmae}") - 1].IndexOf("Nmae", StringComparison.Ordinal));
 
     [AvaloniaFact]
     public void A_running_apps_misspelt_binding_shows_in_run_linked_to_its_line_and_in_problems_once_with_its_count_and_fix()
@@ -171,6 +171,8 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     [AvaloniaFact]
     public void Avalonia_binding_errors_stops_a_debugged_app_where_its_binding_fails_saying_what_failed_and_its_condition_and_log_choose()
     {
+        // XamlIl counts the lone '\r' in the window's tag as a line's end, which the editor reads inside its line.
+        File.WriteAllText(Xaml, File.ReadAllText(Xaml).Replace("Title=\"Binding Errors App\" Width", "Title=\"Binding Errors App\"\r        Width", StringComparison.Ordinal));
         MainWindow window = Opened();
         BreakpointStore store = window.Debugger.Breakpoints;
         string app = Path.Combine(folder, "App.axaml.cs");
@@ -206,8 +208,9 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.Equal("\"Nmae\"", Member(window, "$bindingError", "FailedPart"));
         Assert.Contains("MainViewModel", Member(window, "$bindingError", "DataContext"), StringComparison.Ordinal);
         Assert.Contains("TextBlock", Member(window, "$bindingError", "Control"), StringComparison.Ordinal);
-        // Its control's element, where Avalonia records it: the line, and the column of its name.
-        Assert.Equal($"\"MainWindow.axaml:{Line("x:Name=\"Caption\"")}:{File.ReadAllLines(Xaml)[Line("x:Name=\"Caption\"") - 1].IndexOf("TextBlock", StringComparison.Ordinal) + 1}\"",
+        // Its control's element, where Avalonia records it, at the editor's line though XamlIl's runs one on past the lone '\r':
+        // the line, and the column of its name.
+        Assert.Equal($"\"MainWindow.axaml:{Line("x:Name=\"Caption\"")}:{Lines()[Line("x:Name=\"Caption\"") - 1].IndexOf("TextBlock", StringComparison.Ordinal) + 1}\"",
             Member(window, "$bindingError", "Xaml"));
         // The Debug console links the binding's XAML: a click shows the misspelt member.
         window.BottomPanel.Debug.ShowTab(console: true);
@@ -537,6 +540,9 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     }
 
     /// <summary>The line (from one) of MainWindow.axaml holding some text, so a test names what it means rather than a number.</summary>
-    private int Line(string text) => Array.FindIndex(File.ReadAllLines(Xaml), l => l.Contains(text, StringComparison.Ordinal)) + 1;
+    private int Line(string text) => Array.FindIndex(Lines(), l => l.Contains(text, StringComparison.Ordinal)) + 1;
+
+    /// <summary>MainWindow.axaml's lines as the editor counts them, at each '\n' alone.</summary>
+    private string[] Lines() => File.ReadAllText(Xaml).Split('\n');
 
 }

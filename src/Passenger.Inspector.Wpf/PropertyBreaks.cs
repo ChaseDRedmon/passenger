@@ -71,7 +71,7 @@ internal sealed class PropertyBreaks
                 return;
             }
             string change = $"Previous Value: {Details.Format(before)}, New Value: {Details.Format(now)}{By()}";
-            Breaks.Changed(breakpoint, Element, property, before, now, change);
+            Breaks.Changed(breakpoint, Element, property, before, now, change, null);
         }
 
         /// <summary>What set the value, from where WPF says it now comes.</summary>

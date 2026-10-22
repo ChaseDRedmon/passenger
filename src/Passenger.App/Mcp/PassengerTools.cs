@@ -1126,7 +1126,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     public Task<IReadOnlyList<VariableInfo>> DebugVariables(int reference, string? session = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugSession paused = await Paused(session);
-        return (IReadOnlyList<VariableInfo>)[.. (await paused.VariablesAsync(reference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference))];
+        return (IReadOnlyList<VariableInfo>)[.. (await Session.Debug.MembersAsync(paused, reference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference))];
     });
 
     [McpServerTool(Name = "debug_output", Title = "The program's output", ReadOnly = true), Description(

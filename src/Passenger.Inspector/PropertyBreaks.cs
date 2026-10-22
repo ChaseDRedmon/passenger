@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Data;
 using Avalonia.Data.Core;
@@ -73,40 +74,42 @@ internal sealed class PropertyBreaks
             {
                 return;
             }
-            string change = $"Previous Value: {Details.Format(e.OldValue)}, New Value: {Details.Format(e.NewValue)}{By(e)}";
-            Breaks.Changed(breakpoint, Element, property, e.OldValue, e.NewValue, change);
+            (string by, SourcePlace? at) = By(e);
+            string change = $"Previous Value: {Details.Format(e.OldValue)}, New Value: {Details.Format(e.NewValue)}{by}";
+            Breaks.Changed(breakpoint, Element, property, e.OldValue, e.NewValue, change, at is null ? null : JsonSerializer.Serialize(at, WireJson.Default.SourcePlace));
         }
 
         /// <summary>What set the value, from the priority Avalonia set it at: a binding (as its XAML writes it), a style
-        /// (its selector, where it is written), an animation, the template, inheritance, or the element's local value.</summary>
-        private string By(AvaloniaPropertyChangedEventArgs e)
+        /// (its selector, and apart where it is written), an animation, the template, inheritance, or the element's local
+        /// value.</summary>
+        private (string By, SourcePlace? At) By(AvaloniaPropertyChangedEventArgs e)
         {
             try
             {
                 switch (e.Priority)
                 {
                     case BindingPriority.Animation:
-                        return ", by an animation";
+                        return (", by an animation", null);
                     case BindingPriority.Inherited:
-                        return ", inherited";
+                        return (", inherited", null);
                     case BindingPriority.Template:
-                        return ", by its template";
+                        return (", by its template", null);
                     case BindingPriority.Style or BindingPriority.StyleTrigger when Element is Visual visual && new Styling(visual).Winner(property) is { } won:
-                        return $", by {(won.Source == ValueSources.Theme ? "theme" : "style")} {won.Detail}{(won.Place is { } at ? $" at {Path.GetFileName(at.File)}:{at.Line}" : string.Empty)}";
+                        return ($", by {(won.Source == ValueSources.Theme ? "theme" : "style")} {won.Detail}", won.Place);
                     case BindingPriority.Style or BindingPriority.StyleTrigger:
-                        return ", by a style";
+                        return (", by a style", null);
                     case BindingPriority.LocalValue when BindingOperations.GetBindingExpressionBase(Element, property) is UntypedBindingExpressionBase { Priority: BindingPriority.LocalValue } bound:
-                        return $", by its binding {bound.Description}";
+                        return ($", by its binding {bound.Description}", null);
                     case BindingPriority.LocalValue:
-                        return ", its local value";
+                        return (", its local value", null);
                     default:
-                        return string.Empty;
+                        return (string.Empty, null);
                 }
             }
             catch (Exception error) when (error is InvalidOperationException or NotSupportedException or ArgumentException)
             {
                 // Read in the middle of Avalonia's own change: what set it goes unsaid rather than stopping the app.
-                return string.Empty;
+                return (string.Empty, null);
             }
         }
     }

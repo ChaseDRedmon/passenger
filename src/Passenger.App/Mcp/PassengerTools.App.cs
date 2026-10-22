@@ -156,7 +156,7 @@ public sealed partial class PassengerTools
                 .Select(p => new AppProperty(p.Name, p.Value, p.Type, p.Source, p.Detail, p.Place is { } at ? Placed(at) : null,
                     watchable && breakpoints.FindProperty(details.Id, p.Name) is not null ? true : null))],
             [.. details.Styles.Select(s => new AppStyle(s.Selector, s.Kind, s.Origin, s.Place is { } at ? Placed(at) : null, s.Applies, s.WhyNot,
-                [.. s.Setters.Select(setter => new AppSetter(setter.Property, setter.Value, setter.State, setter.By, setter.Place is { } placed ? Placed(placed) : null))]))]);
+                [.. s.Setters.Select(setter => new AppSetter(setter.Property, setter.Value, setter.State, AppPlaces.OverriddenBy(setter), setter.Place is { } placed ? Placed(placed) : null))]))]);
 
         static string Boxed(Box box) => string.Create(CultureInfo.InvariantCulture, $"{box.X:0.##},{box.Y:0.##} {box.Width:0.##}x{box.Height:0.##}");
 

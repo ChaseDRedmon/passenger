@@ -41,9 +41,23 @@ public static class AppPlaces
         {
             Source = Placed(details.Source),
             Properties = [.. details.Properties.Select(p => p with { Place = Placed(p.Place) })],
-            Styles = [.. details.Styles.Select(s => s with { Place = Placed(s.Place), Setters = [.. s.Setters.Select(setter => setter with { Place = Placed(setter.Place) })] })],
+            Styles = [.. details.Styles.Select(s => s with
+            {
+                Place = Placed(s.Place),
+                Setters = [.. s.Setters.Select(setter => setter with { Place = Placed(setter.Place), ByPlace = Placed(setter.ByPlace) })],
+            })],
         };
     }
+
+    /// <summary>What overrides a setter, with where it is written when the app says (its line as the details have it):
+    /// "Button.danger (MainWindow.axaml:7)"; null for a setter nothing overrides.</summary>
+    public static string? OverriddenBy(SetterReport setter) =>
+        setter.By is { } by && setter.ByPlace is { } at ? $"{by} ({Path.GetFileName(at.File)}:{at.Line})" : setter.By;
+
+    /// <summary>Where what set a watched property is written, as a property breakpoint's stop says it: " at
+    /// MainWindow.axaml:7", the editor's line; empty for none.</summary>
+    public static string At(SourcePlace? place, Func<string, TextSnapshot?> texts) =>
+        place is null ? string.Empty : $" at {Path.GetFileName(place.File)}:{InEditor(place, texts).Line}";
 
     /// <summary>The editor's line (from one) of a laid-out control's element, which the app reports at its compiler's line;
     /// as reported where its file's text cannot be read.</summary>
