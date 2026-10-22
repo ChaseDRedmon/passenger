@@ -8,6 +8,28 @@ pattern shows. A **race in the IDE** is fixed in the IDE; waiting longer or tryi
 To add one: a line under its date, newest first, naming the test, the run, the cause in a sentence and the commit
 that fixed it, in one of the forms below. A failure not yet understood goes in only once it is.
 
+## 2026-10-22
+
+- `ContainerRunDebuggingTests`' Hot Reload of a paused service, the Mac's 24-minute run of the container, MCP, profiler
+  and debug-session classes: "The file should have '"web 1"' to replace" with Program.cs's text, the editor gone to web's
+  stop just after the test had opened Message.cs. The window shows a stop once the debugger has answered its threads and
+  then its frames, which was no background work: the test's wait (the session paused, and its own frames, asked after the
+  window's threads and so answered first) and the settle after it opened Message.cs both ended before the window's frames
+  came. Holding the window's frames back until Message.cs opened failed it the same way, and with the fix it passed.
+  **Race in the IDE**, fixed in 4d1e4017 (a stop is background work until the editor is at it, so every wait for a
+  quiet IDE waits for it; the test settles after the stop before it acts).
+- `McpTests`' attached diagnostic shut out (`revokeConnection: True`), the same run: "An error occurred invoking
+  'diagnostics'." where the agent should hear that the connection to the window ended. The proxy's MCP client fails a
+  call still waiting as the connection's reader stops, and says the session is complete a moment later on another of the
+  pool's threads (the SDK's code read); the proxy looked at that word as the failure came, so when a busy machine ran the
+  failure first, the IOException went to the SDK, which answers any such with that line. Not reproduced: 30 runs alone,
+  and 3,300 of the SDK's client hung up on mid-call over a Unix socket, idle and with the pool busy, all heard the end
+  first. **Race in the IDE**, fixed in a45a1abf (a call's failure waits up to 5 s for the connection's end to be told).
+- `ProtocolTests`' header past the adapter's limit (`sent: "header"`), the Windows VM: "The pipe has been ended". The
+  adapter stops reading at 64 KB and ends, as it should, and Windows' pipe ends under the rest of the test's 80 KB write,
+  where macOS's and Linux's larger buffers take the rest first. Neither: **the test took the adapter's end for a failure**, fixed
+  in 65dded10 (a write cut short is what that header expects; the adapter's end and its log's reason are still checked).
+
 ## 2026-10-21
 
 - `ContainersTests`' no docker or engine not running, the Mac beside two agents' Docker test runs: "The IDE was not
