@@ -10,6 +10,11 @@ namespace Passenger.App.Workspace;
 public sealed record FolderChanges(IReadOnlySet<string> Paths, bool Structure, bool Projects, bool Git)
 {
     public IReadOnlySet<string> Restored { get; init; } = new HashSet<string>();
+
+    /// <summary>Whether the system lost changes (too many at once, as a large checkout makes) or a watch failed: what they
+    /// were is not known, so everything shown from the folder is read again (the open files, the Explorer, the solution,
+    /// Go to File's index). <see cref="Paths"/> then holds the folder itself.</summary>
+    public bool Lost { get; init; }
 }
 
 /// <summary>Watches a folder for what other programs change in it (a terminal's <c>git pull</c>, an agent's edits,
@@ -41,6 +46,7 @@ public sealed class FolderWatcher : IDisposable
     private bool structure;
     private bool projects;
     private bool git;
+    private bool lost;
     private bool pending;
     private bool disposed;
     private int outOfWatches;
@@ -201,6 +207,10 @@ public sealed class FolderWatcher : IDisposable
             return;
         }
         // Changes lost (too many at once) or a watch that failed: everything is read again, and walked again if lost.
+        lock (gate)
+        {
+            lost = true;
+        }
         Note(folder, created: true);
         if (watching.EachFolder && error is InternalBufferOverflowException)
         {
@@ -451,10 +461,11 @@ public sealed class FolderWatcher : IDisposable
             changes = new FolderChanges(new HashSet<string>(paths, StringComparer.Ordinal), structure, projects, git)
             {
                 Restored = new HashSet<string>(restored, StringComparer.Ordinal),
+                Lost = lost,
             };
             paths.Clear();
             restored.Clear();
-            structure = projects = git = pending = false;
+            structure = projects = git = lost = pending = false;
             live = !disposed;
         }
         if (live)
