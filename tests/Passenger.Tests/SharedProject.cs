@@ -34,14 +34,16 @@ public abstract class SharedProject : IDisposable
 
     /// <summary>Restores the project, once its files are written, and takes them as the ones every test starts on; with no
     /// restore (<paramref name="restore"/>) for a class whose windows start no C# language server and whose tests read
-    /// nothing a restore writes (the Solution view's projects and Find in Files' scopes are the MSBuild host's evaluation).</summary>
-    protected void Prepare(bool restore = true)
+    /// nothing a restore writes (the Solution view's projects and Find in Files' scopes are the MSBuild host's evaluation);
+    /// restored by the folder's real path (<paramref name="byRealPath"/>) when a project names the others by theirs (an
+    /// Aspire AppHost's references), so the solution and it never have one project restored twice at once.</summary>
+    protected void Prepare(bool restore = true, bool byRealPath = false)
     {
         TestFolders.Prepare(() =>
         {
             if (restore)
             {
-                Restore.Run(Folder);
+                Restore.Run(byRealPath ? PathNames.Canonical(Folder) : Folder);
             }
             folders.UnionWith(Directory.EnumerateDirectories(Folder, "*", SearchOption.AllDirectories).Where(Own));
             foreach (string file in Directory.EnumerateFiles(Folder, "*", SearchOption.AllDirectories).Where(Own))

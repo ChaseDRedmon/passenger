@@ -238,7 +238,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             Put("OtherHost/Program.cs", "System.Console.WriteLine(\"No graph\");\n");
             // The AppHosts' graph is the starter's, in the package cache the test project's restore filled: never nuget.org.
             AspireApp.UseFeed(Folder);
-            Prepare();
+            Prepare(byRealPath: true);
         }
 
         private void Put(string name, string text) => TestFolders.Write(Folder, name, text);
