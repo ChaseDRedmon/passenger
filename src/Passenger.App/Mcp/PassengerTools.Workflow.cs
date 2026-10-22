@@ -268,14 +268,13 @@ public sealed partial class PassengerTools
     // The profiler
 
     [McpServerTool(Name = "profile", Title = "Profile a configuration", Destructive = true), Description(
-        "Builds and runs a run configuration (the chosen one by default) under the sampling profiler from its start, as " +
-        "Profile does, until it ends or, with seconds, for that long (then the snapshot is taken and it goes on until stop). Returns the " +
-        "run's length, the hot spots by their own time (the folder's own with their source, path:line), the busiest thread's " +
-        "hot path, and for an Avalonia app its frames: their UI thread's time at the median and longest, measure, arrange, " +
-        "render and compositor time in all, the layout table by control type with the heaviest controls and their XAML lines, " +
-        "and the longest frame's breakdown (or a count of 0 and why). With attach, Attach Profiler instead: the program being " +
-        "debugged, else Run's, or with container the .NET program running in that container (debug_processes lists them), " +
-        "from now for seconds (else until it ends), left running.")]
+        "Profiles a run configuration (the chosen one by default) from its start, as Profile does, until it ends, or for " +
+        "seconds (then the snapshot; it runs on until stop). Returns its length, the hot spots by own time (the folder's with " +
+        "source, path:line), the busiest thread's hot path, and for an Avalonia app its frames: the UI thread's median and " +
+        "longest, measure, arrange, render and compositor totals, the layout table by control type with the heaviest controls " +
+        "and their XAML lines, and the longest frame's breakdown (or 0 and why). With attach, Attach Profiler instead: the " +
+        "debugged program, else Run's, or with container the .NET program in it (debug_processes lists them), from now for " +
+        "seconds (else until it ends), left running.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,

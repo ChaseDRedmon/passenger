@@ -744,16 +744,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     // The debugger
 
     [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint", Destructive = true), Description(
-        "Sets a breakpoint, or changes the one there: a line breakpoint at path and line; a CLR exception breakpoint on " +
-        "exception, stopping in its scenarios (Rider's Suspend If; a new one on a type in all of them); XAML Binding Errors " +
-        "with bindingErrors true, stopping a debugged Avalonia or WPF app as a binding fails, its condition and logMessage " +
-        "reading $bindingError (Control, Property, Path, FailedPart, DataContext, Message, Xaml); or, with control and " +
-        "property, the Live Visual Tree's Break When Value Changes on a property of the debugged app's element (as app_details " +
-        "lists them), stopping in the code that changes it (a style's, a binding's, code-behind's), its condition reading " +
-        "newValue, oldValue and control, for the session. condition is a C# bool expression, hitCondition \"==3\", \">=2\" or " +
-        "\"%2\"; logMessage (\"count is {count}\") is written on each hit, and suspend false makes a tracepoint. Bound at once " +
-        "while debugging. In .axaml a line's breakpoint stops where the first element or attribute on it is made or set; with " +
-        "attribute, where that property is set as its element is made.")]
+        "Sets or changes a breakpoint: a line one at path and line (in .axaml where the line's first element or attribute is " +
+        "made or set; with attribute, where that property is set); a CLR exception one on exception, in its scenarios (Rider's " +
+        "Suspend If; a new one on a type: all); XAML Binding Errors with bindingErrors true (a debugged Avalonia or WPF app " +
+        "stops as a binding fails; condition and logMessage read $bindingError: Control, Property, Path, FailedPart, " +
+        "DataContext, Message, Xaml); or with control and property, Break When Value Changes on the debugged app's element " +
+        "(app_details lists them), stopping in the code that sets it, condition reading newValue, oldValue and control, for " +
+        "the session. condition: a C# bool; hitCondition \"==3\", \">=2\" or \"%2\"; logMessage (\"count is {count}\") is " +
+        "written each hit; suspend false makes a tracepoint. Bound at once while debugging.")]
     public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(
         string? path = null,
         int? line = null,

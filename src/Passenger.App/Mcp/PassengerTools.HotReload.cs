@@ -10,13 +10,12 @@ namespace Passenger.App.Mcp;
 public sealed partial class PassengerTools
 {
     [McpServerTool(Name = "hot_reload", Title = "Apply Hot Reload changes", Destructive = true), Description(
-        "Applies the code edits made since the launch or the last apply to the running program, as Apply Hot Reload Changes " +
-        "does: to one debug_start launched, paused or running (Edit and Continue), or to one run with Hot Reload, saving the " +
-        "files for dotnet watch. The edits are the editors', saved or not. Returns the result (applied, nothingToApply, " +
-        "restartNeeded, errors, failed), what it said, what was updated, each edit it could not apply or that does not compile " +
-        "(file, line, Roslyn's ENC id), and whether the program was restarted for it (restart true, or Settings' Always " +
-        "restart for a rude edit, on by default) and where the new session is. debug_continue and debug_step also apply edits " +
-        "made while paused.")]
+        "Applies the edits made since the launch or the last apply to the running program, as Apply Hot Reload Changes does: " +
+        "a debug_start launch, paused or running (Edit and Continue), or a run with Hot Reload (saved for dotnet watch). The " +
+        "edits are the editors', saved or not. Returns the result (applied, nothingToApply, restartNeeded, errors, failed), " +
+        "what it said, what was updated, each edit it could not apply or compile (file, line, ENC id), and whether the program " +
+        "was restarted (restart true, or Settings' Always restart for a rude edit, on by default) and the new session. " +
+        "debug_continue and debug_step also apply edits made while paused.")]
     public Task<HotReloadInfo> HotReload(
         [Description("Restart when an edit needs it (true) or keep the code running (false); Settings' choice by default")] bool? restart = null,
         [Description("After a restart, how long to wait for a stop (an app with a window: its UI)")] int waitSeconds = 30,
