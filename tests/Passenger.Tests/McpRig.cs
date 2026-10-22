@@ -418,6 +418,9 @@ public abstract class McpRig : IDisposable
         string[] written = Errors();
         return $"\nPassenger's standard error:{(written.Length == 0 ? " nothing" : "\n  " + string.Join("\n  ", written.TakeLast(40)))}"
             + Tail("Passenger's log", Path.Combine(OwnState, "logs", "passenger.log"), 20)
+            // An attached agent's window and proxy keep the run's own state, not the test's.
+            + Tail("The run's Passenger log", Path.Combine(TestRun.Settings, "logs", "passenger.log"), 20)
+            + Tail("The run's MCP log", Path.Combine(TestRun.Settings, "logs", "mcp.log"), 30)
             + Tail("The debugger engine's log", EngineLog, 30);
 
         static string Tail(string name, string path, int lines)
