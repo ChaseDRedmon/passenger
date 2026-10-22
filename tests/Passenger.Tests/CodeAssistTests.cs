@@ -152,6 +152,59 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void CamelHumps_typed_offer_the_names_they_start_after_the_prefix_matches_and_enter_writes_the_one_chosen()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "static void Main()\n    {");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("var built = new System.Text.");
+        Ui.Settle();
+        Type("SB");
+        Assert.True(window.Assist.CompletionLabels.FirstOrDefault() == "StringBuilder",
+            $"Typing SB offered [{string.Join(", ", window.Assist.CompletionLabels.Take(5))}], not StringBuilder first");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Contains("new System.Text.StringBuilder", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // A lower-case hump then capitals, as gTOD names GetTypeOrDefault.
+        window.KeyTextInput("();");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("int at = \"text\".");
+        Ui.Settle();
+        Type("lIO");
+        Assert.True(window.Assist.CompletionLabels.Take(2).SequenceEqual(["LastIndexOf", "LastIndexOfAny"]),
+            $"Typing lIO offered [{string.Join(", ", window.Assist.CompletionLabels.Take(5))}], not LastIndexOf then LastIndexOfAny");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Contains("int at = \"text\".LastIndexOf", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // A name the humps start comes after every name the letters begin.
+        window.KeyTextInput("('x');");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("bool plain = \"text\".");
+        Ui.Settle();
+        Type("IN");
+        IReadOnlyList<string> labels = window.Assist.CompletionLabels;
+        int humps = labels.ToList().IndexOf("IsNormalized");
+        Assert.True(humps > 0 && labels.Take(humps).All(l => l.StartsWith("IN", StringComparison.OrdinalIgnoreCase))
+            && !labels.Skip(humps).Any(l => l.StartsWith("IN", StringComparison.OrdinalIgnoreCase)),
+            $"Typing IN offered [{string.Join(", ", labels.Take(8))}], not IsNormalized after every name beginning with In");
+        Ui.Press(window, "ESCAPE");
+        window.Close();
+
+        void Type(string letters)
+        {
+            foreach (char letter in letters)
+            {
+                window.KeyTextInput(letter.ToString());
+                Ui.Settle();
+            }
+        }
+    }
+
+    [AvaloniaFact]
     public void A_commit_character_types_the_chosen_item_before_it_and_the_items_documentation_shows_beside_the_list()
     {
         Assert.SkipWhen(project.ReferencePackDownloaded,

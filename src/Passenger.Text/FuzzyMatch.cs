@@ -56,6 +56,41 @@ public static class FuzzyMatch
         return null;
     }
 
+    /// <summary>How well a typed word names a completion item's label, which is no path ('/', '\' and '.' are its own
+    /// characters): a prefix in its own case, then in any case, then CamelHumps from its first word ("SB" for
+    /// StringBuilder, "gTOD" for GetTypeOrDefault), then from a later one, then two letters or more anywhere in it;
+    /// within each band the shorter label first. Higher is better; null is no match. Nothing is copied, as completion
+    /// asks this of every item on every key.</summary>
+    public static int? Label(string query, string label)
+    {
+        if (query.Length == 0)
+        {
+            return 0;
+        }
+        if (label.StartsWith(query, StringComparison.Ordinal))
+        {
+            return 4000 - label.Length;
+        }
+        if (label.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 3000 - label.Length;
+        }
+        if (!Within(query, label))
+        {
+            return null;
+        }
+        if (Humps(query, label))
+        {
+            // The humps take the label's first word whenever its first letter is the query's.
+            return (char.ToLowerInvariant(label[0]) == char.ToLowerInvariant(query[0]) ? 2000 : 1500) - label.Length;
+        }
+        if (query.Length >= 2 && label.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1000 - label.Length;
+        }
+        return null;
+    }
+
     /// <summary>Whether the query's letters are in the name in order, a letter matching in either case (as each way of
     /// matching above takes it); a query with a surrogate pair, which ignoring case compares whole, always is.</summary>
     private static bool Within(string query, ReadOnlySpan<char> name)
