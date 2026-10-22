@@ -1325,6 +1325,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
         }
+        catch (OperationCanceledException error) when (!cancel.IsCancellationRequested)
+        {
+            // Given up inside the IDE, not by the agent (a folder left under the call): said, where the SDK would hide it.
+            throw new ModelContextProtocol.McpException($"{Faulted}{error.GetType().Name}: {error.Message}", error);
+        }
         catch (Exception error) when (error is not (OperationCanceledException or ModelContextProtocol.McpException))
         {
             // No answer but a fault of the IDE's: logged as one on the window's own thread is, and its words the agent's,

@@ -153,13 +153,22 @@ public sealed partial class PassengerTools
         List<AspireOwnedAppInfo> apps = [];
         foreach (AspireAppRun app in current.Aspire.Apps.Where(app => !app.IsTest && !app.Stopping).ToArray())
         {
-            IReadOnlyList<AspireResource> resources = app.Interactions is { } connection ? await connection.GetResourcesAsync(cancel) : [];
+            IReadOnlyList<AspireResource> resources = [];
+            string state = app.Interactions is null ? "Starting" : "Running";
+            try
+            {
+                resources = app.Interactions is { } connection ? await connection.GetResourcesAsync(cancel) : [];
+            }
+            catch (Exception unread) when (unread is IOException or TimeoutException)
+            {
+                // The rest of the workspace still answers: this AppHost's state is why its resources cannot be read.
+                state = unread.Message;
+            }
             if (Session != current || current.IsEnded || current.Aspire.FindApp(app.Configuration.Project) != app || app.Stopping)
             {
                 throw new InvalidOperationException("The workspace or owned AppHost changed");
             }
-            apps.Add(new AspireOwnedAppInfo(app.Configuration.Project, app.ProcessId ?? 0,
-                app.Interactions is null ? "Starting" : "Running", app.Group,
+            apps.Add(new AspireOwnedAppInfo(app.Configuration.Project, app.ProcessId ?? 0, state, app.Group,
                 [.. resources.Select(resource => ResourceInfo(app.Configuration.Project, resource))]));
         }
         return snapshot with { AspireApps = apps };

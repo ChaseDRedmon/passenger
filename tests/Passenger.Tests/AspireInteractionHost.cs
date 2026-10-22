@@ -28,6 +28,7 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Resource> resources = new(StringComparer.Ordinal);
     private readonly Channel<WatchResourcesUpdate> resourceUpdates = Channel.CreateUnbounded<WatchResourcesUpdate>();
     private readonly ConcurrentQueue<ConsoleSubscription> consoles = new();
+    private readonly ConcurrentDictionary<HttpContext, byte> open = new();
     private WireBarrier? nextAnswer;
 
     private AspireInteractionHost(WebApplication server, string keyFile)
@@ -85,6 +86,9 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
             options.Listen(IPAddress.Loopback, 0, listener => listener.Protocols = HttpProtocols.Http2);
             options.Limits.Http2.InitialStreamWindowSize = 65_535;
             options.Limits.Http2.InitialConnectionWindowSize = 65_535;
+            // None, as Aspire's gRPC server has none for its streams: Kestrel's would end an idle watch's connection in seconds.
+            options.Limits.MinRequestBodyDataRate = null;
+            options.Limits.MinResponseDataRate = null;
         });
         AspireInteractionHost host = new(builder.Build(), keyFile);
         try
@@ -119,6 +123,15 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         return barrier;
     }
 
+    /// <summary>Ends every call the window has open, as a resource service that restarts or goes away ends them.</summary>
+    public void Drop()
+    {
+        foreach (HttpContext context in open.Keys)
+        {
+            context.Abort();
+        }
+    }
+
     private RequestDelegate Guard(RequestDelegate handle) => async context =>
     {
         context.Response.ContentType = "application/grpc";
@@ -132,6 +145,7 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
             context.Response.AppendTrailer("grpc-status", "16");
             return;
         }
+        open.TryAdd(context, 0);
         try
         {
             await handle(context);
@@ -146,6 +160,10 @@ internal sealed class AspireInteractionHost : IAsyncDisposable
         {
             Errors.Enqueue(error);
             throw;
+        }
+        finally
+        {
+            open.TryRemove(context, out _);
         }
     };
 

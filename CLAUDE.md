@@ -893,8 +893,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
   pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
   `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
-  (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each resource's target, and
-  `aspire_telemetry` reads their logs and traces.
+  (`PassengerTools.Aspire.cs`), `workspace` lists the AppHosts running with each resource's target (one whose resource
+  connection has ended, or that sends no resources within 30 s, with that as its state and none listed:
+  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation), and `aspire_telemetry` reads
+  their logs and traces.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -1840,7 +1842,7 @@ What runs beside what is chosen (`Collections.cs`): window tests run one at a ti
 the assembly's one collection, class after class; beside them run only the debug adapter's protocol tests
 (`DebugSession.Collection`) and `Beside`'s classes, one after another: a class that opens no window, waits on nothing of
 the headless session's, changes nothing the process shares (its PATH, its environment) and holds nothing to a time, so a
-busy machine only lengthens it (`AspireExecutionServerTests`, `AspireTelemetryTests`, `McpLanguagesTests`, whose
+busy machine only lengthens it (`AspireExecutionServerTests`, `McpAspireStandInTests` and `McpLanguagesTests`, whose
 Passengers are processes of their own; not `McpTests`, which holds a git status to ten seconds). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
 window answers, a profile's samples, the debugger's evaluation limit), or that debugs through the window, goes in
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
@@ -2041,9 +2043,10 @@ stand-in resource service the test drives (`AspireInteractionHost`, admitting on
 prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
 (BannedSymbols);
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
-its execution listener; `AspireExecutionServerTests` and `AspireTelemetryTests` speak to the execution server and a
-stand-in dashboard on loopback, AspireStandInTests' windows run a stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`,
-a shell script, so skipped on Windows), and
+its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
+have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
+applicationUrl) and its resource service's calls ended (`AspireInteractionHost.Drop`); AspireStandInTests' windows run a
+stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`, a shell script, so skipped on Windows); and
 `AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive

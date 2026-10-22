@@ -852,6 +852,7 @@ public sealed class StandInAppHost : SharedProject
 
             string keyFile = Environment.GetEnvironmentVariable("PASSENGER_STAND_IN_KEY")!;
             File.WriteAllText(keyFile + ".urls", $"{Environment.GetEnvironmentVariable("ASPNETCORE_URLS")}\n{Environment.GetEnvironmentVariable("ASPIRE_ALLOW_UNSECURED_TRANSPORT")}");
+            File.WriteAllText(keyFile + ".dashboard", Environment.GetEnvironmentVariable("AppHost__DashboardApiKey"));
             File.WriteAllText(keyFile + ".part", Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_RESOURCESERVICE_APIKEY"));
             File.Move(keyFile + ".part", keyFile, overwrite: true);
             Console.WriteLine("The stand-in AppHost is up");
@@ -873,11 +874,20 @@ public sealed class StandInAppHost : SharedProject
     /// whether it may serve them unsecured (ASPIRE_ALLOW_UNSECURED_TRANSPORT), a line each, before its key.</summary>
     public string UrlsFile => KeyFile + ".urls";
 
+    /// <summary>Where the stand-in AppHost writes, before its key, the dashboard key the IDE gave it, which the IDE's telemetry
+    /// requests carry.</summary>
+    public string DashboardKeyFile => KeyFile + ".dashboard";
+
     /// <summary>The AppHost's launch profile, naming the stand-in resource service's address, as an AppHost's names its own;
     /// with <paramref name="https"/>, its dashboard served there as an https profile serves it, with no unsecured transport.</summary>
     internal void Serve(AspireInteractionHost backend, string? https = null) => Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, https));
 
-    private string Profile(Uri? resourceService, string? https = null)
+    /// <summary>The launch profile of <see cref="Serve(AspireInteractionHost, string?)"/>, the AppHost's own address
+    /// (applicationUrl, where the IDE finds its dashboard) the stand-in dashboard's.</summary>
+    internal void Serve(AspireInteractionHost backend, Uri dashboard) =>
+        Write($"{Name}/Properties/launchSettings.json", Profile(backend.Endpoint, applicationUrl: dashboard.AbsoluteUri.TrimEnd('/')));
+
+    private string Profile(Uri? resourceService, string? https = null, string? applicationUrl = null)
     {
         Dictionary<string, string> environment = new()
         {
@@ -895,6 +905,8 @@ public sealed class StandInAppHost : SharedProject
         {
             environment["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"] = resourceService.AbsoluteUri;
         }
-        return JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", environmentVariables = environment } } });
+        return applicationUrl is null
+            ? JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", environmentVariables = environment } } })
+            : JsonSerializer.Serialize(new { profiles = new { http = new { commandName = "Project", applicationUrl, environmentVariables = environment } } });
     }
 }
