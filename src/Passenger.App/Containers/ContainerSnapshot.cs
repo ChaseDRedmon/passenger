@@ -208,7 +208,7 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
         List<ContainerInfo> all = [.. (await containers).Select(ContainerInfo.Read).OrderBy(c => c.Name, StringComparer.Ordinal)];
         if (engine.Known is { IsPodman: true, PodmanCli: false })
         {
-            all = await HealthAsync(engine, all, cancel);
+            all = await InspectedAsync(engine, all, cancel);
         }
         Dictionary<string, string> statuses = (await projects).Where(p => ContainerEngine.Text(p, "Name") is not null)
             .ToDictionary(p => ContainerEngine.Text(p, "Name")!, p => ContainerEngine.Text(p, "Status") ?? string.Empty, StringComparer.Ordinal);
@@ -247,26 +247,61 @@ public sealed record ContainerSnapshot(IReadOnlyList<ComposeProject> Projects, I
         }
     }
 
-    /// <summary>The running containers' health, which Podman's Docker API leaves out of its list's status words: asked of
-    /// inspect, all at once (one removed meanwhile leaves the others answered).</summary>
-    private static async Task<List<ContainerInfo>> HealthAsync(ContainerEngine engine, List<ContainerInfo> all, CancellationToken cancel)
+    /// <summary>The running containers' health and published ports, which Podman's Docker API leaves out of its list (no
+    /// health in the status words, no address on a port, so Docker's CLI shows none published): asked of inspect, all at
+    /// once (one removed meanwhile leaves the others answered).</summary>
+    private static async Task<List<ContainerInfo>> InspectedAsync(ContainerEngine engine, List<ContainerInfo> all, CancellationToken cancel)
     {
-        string[] running = [.. all.Where(c => c.IsRunning && c.Health is null).Select(c => c.Id)];
+        string[] running = [.. all.Where(c => c.IsRunning).Select(c => c.Id)];
         if (running.Length == 0)
         {
             return all;
         }
-        Core.ChildResult said = await engine.RunAsync(["inspect", "--type", "container", "--format", "{{.Id}} {{if .State.Health}}{{.State.Health.Status}}{{end}}", .. running],
-            cancel: cancel);
-        Dictionary<string, string> health = new(StringComparer.Ordinal);
+        Core.ChildResult said = await engine.RunAsync(["inspect", "--type", "container", "--format",
+            "{{.Id}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}\t{{json .NetworkSettings.Ports}}", .. running], cancel: cancel);
+        Dictionary<string, (string Health, IReadOnlyList<ContainerPort> Ports)> read = new(StringComparer.Ordinal);
         foreach (string line in said.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (line.Split(' ', 2) is [{ } id, { Length: > 0 } status])
+            if (line.Split('\t', 3) is [{ } id, { } health, { } ports])
             {
-                health[id] = status;
+                read[id] = (health, PortsOf(ports));
             }
         }
-        return [.. all.Select(c => health.FirstOrDefault(h => c.Id.Length > 0 && h.Key.StartsWith(c.Id, StringComparison.Ordinal)).Value is { } status ? c with { Health = status } : c)];
+        // The list gives a short id, inspect the whole.
+        return [.. all.Select(c => read.Where(r => c.Id.Length > 0 && r.Key.StartsWith(c.Id, StringComparison.Ordinal)).Select(r => r.Value).FirstOrDefault() is { Ports: not null } found
+            ? c with { Health = c.Health ?? (found.Health.Length > 0 ? found.Health : null), Ports = c.Ports.Count > 0 ? c.Ports : found.Ports }
+            : c)];
+
+        // NetworkSettings.Ports: each port inside, its bindings on the host (null where it is not published).
+        static IReadOnlyList<ContainerPort> PortsOf(string json)
+        {
+            List<ContainerPort> ports = [];
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return ports;
+                }
+                foreach (JsonProperty inside in document.RootElement.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Array))
+                {
+                    string[] port = inside.Name.Split('/');
+                    foreach (JsonElement binding in inside.Value.EnumerateArray())
+                    {
+                        if (ContainerEngine.Text(binding, "HostPort") is { Length: > 0 } host
+                            && new ContainerPort(host, port[0], port.Length > 1 ? port[1] : "tcp") is var published && !ports.Contains(published))
+                        {
+                            ports.Add(published);
+                        }
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Not what inspect writes: none read.
+            }
+            return ports;
+        }
     }
 
     private static string ImageName(JsonElement image)

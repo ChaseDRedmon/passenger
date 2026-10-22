@@ -146,6 +146,10 @@ internal static class Docker
         image.StartsWith("docker.io/library/", StringComparison.Ordinal) ? image["docker.io/library/".Length..]
         : image.StartsWith("localhost/", StringComparison.Ordinal) ? image["localhost/".Length..] : image;
 
+    /// <summary>A container's command as Docker's inspect words it: Podman's puts its own init (Compose's init: true) first.</summary>
+    public static string WithoutInit(string command) =>
+        command.StartsWith("/run/podman-init -- ", StringComparison.Ordinal) ? command["/run/podman-init -- ".Length..] : command;
+
     /// <summary>Why no container can run here (no CLI, no engine, Windows containers), or null when one can.</summary>
     public static string? WhyNot => Unusable.Value;
 

@@ -49,7 +49,7 @@ public sealed class ContainerRunsTests(RestoredFolders folders) : IClassFixture<
             Assert.All(states.Values, state => Assert.Equal("running", state));
             // Each .NET service is its project's build on the host, run by dotnet as the container's first process, labelled Passenger's.
             string web = Container(project, "web");
-            Assert.Equal("dotnet /passenger/app/Web.dll", Docker.Run("inspect", "-f", "{{.Path}} {{join .Args \" \"}}", web));
+            Assert.Equal("dotnet /passenger/app/Web.dll", Docker.WithoutInit(Docker.Run("inspect", "-f", "{{.Path}} {{join .Args \" \"}}", web)));
             Assert.Equal(ContainerLabels.StateValue, Docker.Run("inspect", "-f", "{{index .Config.Labels \"net.passenger-ide.state\"}}", web));
             Assert.Equal(ContainerLabels.StateValue, Docker.Run("inspect", "-f", "{{index .Config.Labels \"net.passenger-ide.state\"}}", Container(project, "cache")));
             int webPort = Published(project, "web");
