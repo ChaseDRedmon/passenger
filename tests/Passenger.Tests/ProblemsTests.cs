@@ -10,19 +10,20 @@ namespace Passenger.Tests;
 
 /// <summary>Problems as Rider keeps them without a build: the current file's as they are typed, and with solution-wide
 /// analysis on, every file's, a file nobody has open included, grouped by project and file.</summary>
-public sealed class ProblemsTests : IDisposable
+public sealed class ProblemsTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder = TestFolders.Create("problems-");
+    private readonly string folder;
 
-    public ProblemsTests()
+    /// <summary>Each test's own folder, restored a few at a time with the next tests' rather than each in its turn.</summary>
+    public ProblemsTests(RestoredFolders folders) => folder = folders.Take("problems-", made =>
     {
-        Write("Sample.csproj", TestProjects.Console());
-        Write("Program.cs", "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
-        Write("Helper.cs", "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
-        Write("Caller.cs", "static class Caller\n{\n    public static int Four() => Helper.Twice(2);\n}\n");
-        Write("Bad.cs", "class Bad\n{\n    public int Count = \"none\";\n}\n");
-        TestFolders.Prepare(() => Restore.Run(folder), folder);
-    }
+        TestFolders.Write(made, "Sample.csproj", TestProjects.Console());
+        TestFolders.Write(made, "Program.cs", "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
+        TestFolders.Write(made, "Helper.cs", "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+        TestFolders.Write(made, "Caller.cs", "static class Caller\n{\n    public static int Four() => Helper.Twice(2);\n}\n");
+        TestFolders.Write(made, "Bad.cs", "class Bad\n{\n    public int Count = \"none\";\n}\n");
+        return made;
+    });
 
     public void Dispose() => TestFolders.Delete(folder);
 

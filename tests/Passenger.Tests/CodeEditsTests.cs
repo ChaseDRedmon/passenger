@@ -42,8 +42,11 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         ("using", "        using (resource)\n        {\n            total += 1;\n            total += 2;\n        }\n", "resource"),
     ];
 
+    /// <summary>Surround With wraps the statements chosen in each of Rider's templates and leaves the caret where Rider
+    /// does, each taken back by one Undo; Complete Current Statement closes what is typed and puts the caret where the next
+    /// code goes; and around an expression Surround With offers a cast and parentheses, around types a namespace.</summary>
     [AvaloniaFact]
-    public void Surround_with_wraps_the_statements_chosen_in_each_of_riders_templates_and_leaves_the_caret_where_rider_does()
+    public void Surround_with_and_complete_current_statement_write_rider_s_code_around_and_after_what_is_chosen_or_typed()
     {
         MainWindow window = project.Open("Sum.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -80,57 +83,11 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
             Ui.Run(window, EditorActions.Undo);
             Assert.True(before == editor.Document.Snapshot.ToString(), $"Undo after {template} left:\n{editor.Document.Snapshot}");
         }
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void Surround_with_offers_a_cast_and_parentheses_around_an_expression_and_a_namespace_around_types()
-    {
-        MainWindow window = project.Open("Sum.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Choose(editor, "return total", skip: "return ".Length);
-        editor.Focus();
-        Ui.Run(window, AppActions.SurroundWith);
-        Assert.Equal(["()", "{}", "cast"], window.Assist.Offered);
-        // Its digit chooses it, as in Rider: 0 is the cast, its type to be typed first.
-        Ui.Press(window, "0");
-        Assert.Contains("        return (()total);\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.KeyTextInput("long");
-        Ui.Press(window, "TAB");
-        string text = editor.Document.Snapshot.ToString();
-        Assert.Contains("        return ((long)total);\n", text, StringComparison.Ordinal);
-        Assert.Equal(text.IndexOf("((long)total)", StringComparison.Ordinal) + "((long)total)".Length, editor.Selections.Primary.Caret);
-
-        // 6 is parentheses, the caret after what they wrap.
-        Choose(editor, "total += 1", skip: 0);
-        Ui.Run(window, AppActions.SurroundWith);
-        Ui.Press(window, "6");
-        text = editor.Document.Snapshot.ToString();
-        Assert.Contains("        (total += 1);\n", text, StringComparison.Ordinal);
-        Assert.Equal(text.IndexOf("(total += 1)", StringComparison.Ordinal) + "(total += 1".Length, editor.Selections.Primary.Caret);
-        window.Close();
-
-        window = project.Open("Two.cs");
-        editor = window.EditorArea.CodeEditor;
-        editor.Selections = SelectionSet.Single(new Selection(0, editor.Document.Snapshot.Length));
-        editor.Focus();
-        Ui.Run(window, AppActions.SurroundWith);
-        Assert.Contains("namespace", window.Assist.Offered);
-        Pick(window, "namespace");
-        Assert.Equal("namespace MyNamespace\n{\n    class First\n    {\n    }\n\n    class Second\n    {\n    }\n}\n", editor.Document.Snapshot.ToString());
-        Assert.Equal("MyNamespace", Selected(editor));
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Complete_current_statement_closes_an_if_a_call_a_declaration_and_a_method_and_puts_the_caret_where_the_next_code_goes()
-    {
-        MainWindow window = project.Open("Sum.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
+        // Complete Current Statement closes an if, a call, a declaration and a method and puts the caret where the next code
+        // goes. An if's condition: its parenthesis closed, braces, and the caret in its body.
         string Text() => editor.Document.Snapshot.ToString();
         int After(string code) => Text().IndexOf(code, StringComparison.Ordinal) + code.Length;
-
-        // An if's condition: its parenthesis closed, braces, and the caret in its body.
         Ui.PlaceAfter(editor, "int total = 0;");
         editor.Focus();
         Ui.Press(window, "ENTER");
@@ -160,21 +117,104 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Assert.True(Text().EndsWith("\n    static void Report(int value)\n    {\n        \n    }\n}\n", StringComparison.Ordinal),
             $"The method's signature was not completed as Rider completes it:\n{Text().Insert(editor.Selections.Primary.Caret, "|")}");
         Assert.Equal(After("static void Report(int value)\n    {\n        "), editor.Selections.Primary.Caret);
+
+        // Around an expression Surround With offers a cast and parentheses, around types a namespace.
+        Choose(editor, "return total", skip: "return ".Length);
+        editor.Focus();
+        Ui.Run(window, AppActions.SurroundWith);
+        Assert.Equal(["()", "{}", "cast"], window.Assist.Offered);
+        // Its digit chooses it, as in Rider: 0 is the cast, its type to be typed first.
+        Ui.Press(window, "0");
+        Assert.Contains("        return (()total);\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.KeyTextInput("long");
+        Ui.Press(window, "TAB");
+        string wrapped = editor.Document.Snapshot.ToString();
+        Assert.Contains("        return ((long)total);\n", wrapped, StringComparison.Ordinal);
+        Assert.Equal(wrapped.IndexOf("((long)total)", StringComparison.Ordinal) + "((long)total)".Length, editor.Selections.Primary.Caret);
+
+        // 6 is parentheses, the caret after what they wrap.
+        Choose(editor, "total += 1", skip: 0);
+        Ui.Run(window, AppActions.SurroundWith);
+        Ui.Press(window, "6");
+        wrapped = editor.Document.Snapshot.ToString();
+        Assert.Contains("        (total += 1);\n", wrapped, StringComparison.Ordinal);
+        Assert.Equal(wrapped.IndexOf("(total += 1)", StringComparison.Ordinal) + "(total += 1".Length, editor.Selections.Primary.Caret);
+
+        window.OpenFile(project.PathOf("Two.cs"));
+        Ui.Settle();
+        editor.Selections = SelectionSet.Single(new Selection(0, editor.Document.Snapshot.Length));
+        editor.Focus();
+        Ui.Run(window, AppActions.SurroundWith);
+        Assert.Contains("namespace", window.Assist.Offered);
+        Pick(window, "namespace");
+        Assert.Equal("namespace MyNamespace\n{\n    class First\n    {\n    }\n\n    class Second\n    {\n    }\n}\n", editor.Document.Snapshot.ToString());
+        Assert.Equal("MyNamespace", Selected(editor));
         window.Close();
     }
 
+    /// <summary>The language server's edits under Rider's names, in one window: Optimize Imports removes the usings nothing
+    /// needs and sorts the rest; Introduce Field makes a constant a field of the type and says why not for anything else,
+    /// one Undo taking it back; Introduce Parameter makes an expression a parameter and passes it at every call; and
+    /// Encapsulate Field offers Rider's choice of using the property and makes it.</summary>
     [AvaloniaFact]
-    public void Optimize_imports_removes_the_usings_nothing_needs_and_sorts_the_rest()
+    public void Optimize_imports_introduce_field_and_parameter_and_encapsulate_field_make_their_edits_as_rider_names_them()
     {
         MainWindow window = project.Open("Usings.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
+        string Text() => editor.Document.Snapshot.ToString();
         editor.Focus();
         Ui.Run(window, AppActions.OptimizeUsings);
         Ui.WaitFor(() => window.Status?.StartsWith("Optimize Imports", StringComparison.Ordinal) == true || window.Status == "The usings are already optimized",
             "Optimize Imports to finish");
         Assert.Equal("Optimize Imports removed unused usings and sorted the rest", window.Status);
-        string text = editor.Document.Snapshot.ToString();
-        Assert.StartsWith("using System;\nusing System.Collections.Generic;\n\nstatic class Usings\n", text, StringComparison.Ordinal);
+        Assert.StartsWith("using System;\nusing System.Collections.Generic;\n\nstatic class Usings\n", Text(), StringComparison.Ordinal);
+
+        // Roslyn makes no field of what is not a constant, and the status bar says so.
+        window.OpenFile(project.PathOf("Scale.cs"));
+        Ui.Settle();
+        string scale = Text();
+        editor.Focus();
+        Choose(editor, "value * 1024", skip: 0, length: "value".Length);
+        Ui.Run(window, AppActions.IntroduceField);
+        Ui.WaitFor(() => window.Status?.StartsWith("Introduce Field", StringComparison.Ordinal) == true, "Introduce Field to answer");
+        Assert.Equal("Introduce Field is not available here: the C# language server makes a field only of a constant expression", window.Status);
+
+        // Of the constant, a const field: this occurrence or every one, never a local.
+        Choose(editor, "1024", skip: 0);
+        Ui.Run(window, AppActions.IntroduceField);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Introduce Field's choices");
+        Assert.All(window.Assist.Offered, offered => Assert.DoesNotContain("local", offered, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("Introduce constant for '1024'", window.Assist.Offered);
+        PickTitled(window, "Introduce constant for '1024'");
+        Ui.WaitFor(() => Text().Contains("const int", StringComparison.Ordinal), "the constant field to be made");
+        Assert.Matches(@"\n    private const int \w+ = 1024;\n", Text());
+        Assert.DoesNotContain("value * 1024", Text(), StringComparison.Ordinal);
+        Ui.Run(window, EditorActions.Undo);
+        Assert.True(Text() == scale, $"One Undo did not take the field back:\n{Text()}");
+
+        // Introduce Parameter: the expression a parameter, passed at every call.
+        Choose(editor, "1024", skip: 0);
+        Ui.Run(window, AppActions.IntroduceParameter);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Introduce Parameter's choices");
+        Assert.All(window.Assist.Offered, offered => Assert.StartsWith("Introduce parameter for", offered, StringComparison.Ordinal));
+        PickTitled(window, "Introduce parameter for '1024'");
+        Ui.WaitFor(() => window.Assist.Offered.Any(o => o.Contains("call sites", StringComparison.Ordinal)), "how the parameter is to be passed");
+        PickTitled(window, window.Assist.Offered.First(o => o.Contains("call sites", StringComparison.Ordinal)));
+        Ui.WaitFor(() => Text().Contains("Kilo(2, 1024)", StringComparison.Ordinal), "the call to pass the new parameter");
+        Assert.Matches(@"public static int Kilo\(int value, int \w+\)", Text());
+        Assert.DoesNotContain("value * 1024", Text(), StringComparison.Ordinal);
+
+        window.OpenFile(project.PathOf("Counter.cs"));
+        Ui.Settle();
+        Ui.PlaceAfter(editor, "public int cou");
+        editor.Focus();
+        Ui.Run(window, AppActions.EncapsulateField);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Encapsulate Field's choices");
+        Assert.Equal(["Encapsulate field: 'count' (and use property)", "Encapsulate field: 'count' (but still use field)"], window.Assist.Offered);
+        PickTitled(window, "Encapsulate field: 'count' (and use property)");
+        Ui.WaitFor(() => Text().Contains("public int Count", StringComparison.Ordinal), "the property to be made");
+        Assert.Contains("private int count;", Text(), StringComparison.Ordinal);
+        Assert.Contains("public void Add() => Count++;", Text(), StringComparison.Ordinal);
         window.Close();
     }
 
@@ -318,71 +358,6 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         string after = File.ReadAllText(halve);
         Assert.True(!after.Contains('\n', StringComparison.Ordinal) && after.StartsWith("static class Halve\r{\r", StringComparison.Ordinal) && after.EndsWith("    public static int Two() => 1;\r}\r", StringComparison.Ordinal),
             $"Safe Delete wrote Halve.cs, whose lines end in carriage returns, with other line breaks: {after.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Introduce_field_makes_a_constant_a_field_of_the_type_and_says_why_not_for_anything_else()
-    {
-        MainWindow window = project.Open("Scale.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        string Text() => editor.Document.Snapshot.ToString();
-        editor.Focus();
-
-        // Roslyn makes no field of what is not a constant, and the status bar says so.
-        Choose(editor, "value * 1024", skip: 0, length: "value".Length);
-        Ui.Run(window, AppActions.IntroduceField);
-        Ui.WaitFor(() => window.Status?.StartsWith("Introduce Field", StringComparison.Ordinal) == true, "Introduce Field to answer");
-        Assert.Equal("Introduce Field is not available here: the C# language server makes a field only of a constant expression", window.Status);
-
-        // Of the constant, a const field: this occurrence or every one, never a local.
-        Choose(editor, "1024", skip: 0);
-        Ui.Run(window, AppActions.IntroduceField);
-        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Introduce Field's choices");
-        Assert.All(window.Assist.Offered, offered => Assert.DoesNotContain("local", offered, StringComparison.OrdinalIgnoreCase));
-        Assert.Contains("Introduce constant for '1024'", window.Assist.Offered);
-        PickTitled(window, "Introduce constant for '1024'");
-        Ui.WaitFor(() => Text().Contains("const int", StringComparison.Ordinal), "the constant field to be made");
-        Assert.Matches(@"\n    private const int \w+ = 1024;\n", Text());
-        Assert.DoesNotContain("value * 1024", Text(), StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Introduce_parameter_makes_an_expression_a_parameter_and_passes_it_at_every_call()
-    {
-        MainWindow window = project.Open("Scale.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        string Text() => editor.Document.Snapshot.ToString();
-        Choose(editor, "1024", skip: 0);
-        editor.Focus();
-        Ui.Run(window, AppActions.IntroduceParameter);
-        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Introduce Parameter's choices");
-        Assert.All(window.Assist.Offered, offered => Assert.StartsWith("Introduce parameter for", offered, StringComparison.Ordinal));
-        PickTitled(window, "Introduce parameter for '1024'");
-        Ui.WaitFor(() => window.Assist.Offered.Any(o => o.Contains("call sites", StringComparison.Ordinal)), "how the parameter is to be passed");
-        PickTitled(window, window.Assist.Offered.First(o => o.Contains("call sites", StringComparison.Ordinal)));
-        Ui.WaitFor(() => Text().Contains("Kilo(2, 1024)", StringComparison.Ordinal), "the call to pass the new parameter");
-        Assert.Matches(@"public static int Kilo\(int value, int \w+\)", Text());
-        Assert.DoesNotContain("value * 1024", Text(), StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Encapsulate_field_offers_rider_s_choice_of_using_the_property_and_makes_it()
-    {
-        MainWindow window = project.Open("Counter.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        string Text() => editor.Document.Snapshot.ToString();
-        Ui.PlaceAfter(editor, "public int cou");
-        editor.Focus();
-        Ui.Run(window, AppActions.EncapsulateField);
-        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Encapsulate Field's choices");
-        Assert.Equal(["Encapsulate field: 'count' (and use property)", "Encapsulate field: 'count' (but still use field)"], window.Assist.Offered);
-        PickTitled(window, "Encapsulate field: 'count' (and use property)");
-        Ui.WaitFor(() => Text().Contains("public int Count", StringComparison.Ordinal), "the property to be made");
-        Assert.Contains("private int count;", Text(), StringComparison.Ordinal);
-        Assert.Contains("public void Add() => Count++;", Text(), StringComparison.Ordinal);
         window.Close();
     }
 

@@ -638,39 +638,13 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void After_a_build_the_xaml_compilers_error_is_marked_on_its_line_and_listed_with_its_code()
-    {
-        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        OpenDocument document = window.EditorArea.Active!;
-        // A number the compiler reads: checked by the build alone.
-        Ui.PlaceAfter(editor, "<TextBlock Name=\"Title\"");
-        window.KeyTextInput(" Width=\"wide\"");
-        Ui.Settle();
-        Assert.Empty(document.Markers);
-        Ui.Run(window, AppActions.Build);
-        Ui.Settle();
-        Problem built = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "AVLN1000");
-        Assert.Equal(PathNames.Canonical(app.PathOf("MainWindow.axaml")), built.Path);
-        Assert.Equal(editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("Width=\"wide\"", StringComparison.Ordinal)), built.Position.Line);
-        Marker marked = MarkerOn(editor, document, "Width");
-        Assert.Equal(MarkerKind.Error, marked.Kind);
-        Assert.Equal("AVLN1000: The input string 'wide' was not in a correct format.", marked.Message);
-
-        // The line edited, the build's word on it is the build's, no longer this text's.
-        Replace(editor, "\"wide\"", "\"120\"");
-        Ui.Settle();
-        Assert.Empty(document.Markers);
-        window.Close();
-    }
-
-    /// <summary>Avalonia's XAML compiler counts lines as an XML reader does, ending one at the lone '\r' in the window's tag,
+    /// <summary>After a build the XAML compiler's error (a number only it reads) is marked on its line and listed with its
+    /// code. Avalonia's XAML compiler counts lines as an XML reader does, ending one at the lone '\r' in the window's tag,
     /// which the editor reads inside its line, so below it the compiler's line runs one ahead of the editor's: its error is
     /// listed, marked, said in its message and gone to from the Build window's link at the editor's line, and an agent is
-    /// told that line.</summary>
+    /// told that line. The line edited, the build's word on it is the build's, no longer this text's.</summary>
     [AvaloniaFact]
-    public void Below_a_lone_carriage_return_the_xaml_compilers_error_is_listed_marked_and_gone_to_at_the_editors_line()
+    public void After_a_build_the_xaml_compilers_error_below_a_lone_carriage_return_is_listed_marked_and_gone_to_at_the_editors_line()
     {
         string xaml = app.Write("MainWindow.axaml", Gallery.Window
             .Replace("d:DesignWidth=\"800\" d:DesignHeight", "d:DesignWidth=\"800\"\r d:DesignHeight", StringComparison.Ordinal)
@@ -685,7 +659,9 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Problem built = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "AVLN1000");
         Assert.True(built.Position == width, $"The XAML compiler's error is listed at {built.Where}, not MainWindow.axaml:{width.Line + 1}:{width.Column + 1}");
         Assert.Contains($"Line {width.Line + 1}, position {width.Column + 1}", built.Message, StringComparison.Ordinal);
-        Assert.Equal(MarkerKind.Error, MarkerOn(editor, document, "Width").Kind);
+        Marker marked = MarkerOn(editor, document, "Width");
+        Assert.Equal(MarkerKind.Error, marked.Kind);
+        Assert.StartsWith("AVLN1000: The input string 'wide' was not in a correct format.", marked.Message, StringComparison.Ordinal);
 
         // The compiler's message in the Build window names its own line, one on; its link goes to the editor's.
         Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Build;
@@ -699,6 +675,10 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
 
         Passenger.App.Mcp.ProblemsInfo told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Problems(), "the problems an agent asks for");
         Assert.Equal((width.Line + 1, width.Column + 1), told.Build.Where(f => f.Path == "MainWindow.axaml").Select(f => (f.Line, f.Column)).Single());
+
+        Replace(editor, "\"wide\"", "\"120\"");
+        Ui.Settle();
+        Assert.Empty(document.Markers);
         window.Close();
     }
 

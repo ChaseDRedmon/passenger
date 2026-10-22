@@ -13,7 +13,7 @@ namespace Passenger.Tests;
 /// <summary>Agents making the window's refactorings through refactor, attached to a person's window, which asks before the
 /// first: each kind's dialog described first and then applied with its options, on a small shop of files that call each
 /// other, every caller following; what the agent reads back and what is on disk after, the project still building after
-/// the member moves and the server's refactorings (RefactoringDialogsTests build after each of the dialogs' own), and the
+/// the member moves and the server's refactorings, and the
 /// person's Undo taking each change back whole.</summary>
 [Collection(Alone.Name)]
 public sealed class McpRefactorTests : McpRig, IClassFixture<RestoredFolders>

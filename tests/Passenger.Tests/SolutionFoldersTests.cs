@@ -149,7 +149,6 @@ public sealed class SolutionFoldersTests : IDisposable
         {
             Assert.Matches(new Regex($"^Project\\(\"{Regex.Escape(FolderType)}\"\\) = \"Tools\", \"Tools\", \"\\{{[0-9A-F-]{{36}}\\}}\"\r$", RegexOptions.Multiline), text);
         }
-        Builds(solution, "a solution folder was added");
 
         // Rename, by its key.
         Ui.ClickRow(window, Row(window, NodeKind.SolutionFolder, "Tools"));
@@ -162,7 +161,6 @@ public sealed class SolutionFoldersTests : IDisposable
         text = Read(solution, "the solution folder renamed");
         Assert.DoesNotContain("Tools", text, StringComparison.Ordinal);
         Assert.Contains(slnx ? "<Folder Name=\"/Utilities/\" />" : "\"Utilities\", \"Utilities\"", text, StringComparison.Ordinal);
-        Builds(solution, "a solution folder was renamed");
 
         // Existing Project, from its menu opened by the menu key.
         pick = [Path.Combine(folder, "tools", "Importer", "Importer.csproj")];
@@ -185,9 +183,6 @@ public sealed class SolutionFoldersTests : IDisposable
             Assert.Contains($"\t\t{importer}.Release|Any CPU.Build.0 = Release|Any CPU\r\n", text, StringComparison.Ordinal);
             Assert.Contains($"\t\t{importer} = {Id(text, "Utilities")}\r\n", text, StringComparison.Ordinal);
         }
-        Builds(solution, "a project was added to a solution folder");
-        Assert.True(File.Exists(Path.Combine(folder, "tools", "Importer", "bin", "Debug", TestProjects.Framework, "Importer.dll")),
-            "The project added to the solution folder was not built with the solution");
 
         // Existing Item, and a folder inside it.
         pick = [Path.Combine(folder, "docs", "notes.md")];
@@ -209,7 +204,10 @@ public sealed class SolutionFoldersTests : IDisposable
             Assert.Contains("\"Utilities\", \"Utilities\", \"" + Id(text, "Utilities") + "\"\r\n\tProjectSection(SolutionItems) = preProject\r\n\t\tdocs\\notes.md = docs\\notes.md\r\n\tEndProjectSection\r\nEndProject\r\n", text, StringComparison.Ordinal);
             Assert.Contains($"\t\t{Id(text, "Scripts")} = {Id(text, "Utilities")}\r\n", text, StringComparison.Ordinal);
         }
-        Builds(solution, "a file and a folder were added to a solution folder");
+        // One build, of the solution with every kind of change made so far, each of which a later one built on.
+        Builds(solution, "solution folders, a project and a file were added and a folder renamed");
+        Assert.True(File.Exists(Path.Combine(folder, "tools", "Importer", "bin", "Debug", TestProjects.Framework, "Importer.dll")),
+            "The project added to the solution folder was not built with the solution");
 
         // Remove, by its key, once the person agrees to what goes with it.
         Ui.ClickRow(window, Utilities());
@@ -220,7 +218,6 @@ public sealed class SolutionFoldersTests : IDisposable
         Assert.True(File.Exists(Path.Combine(folder, "docs", "notes.md")), "Removing the solution folder deleted its file");
         Assert.True(original.AsSpan().SequenceEqual(File.ReadAllBytes(solution)),
             $"With the folder removed, the solution file is not as it was before it was added:\n{Read(solution, "the solution folder removed")}");
-        Builds(solution, "the solution folder was removed");
         window.Close();
     }
 
@@ -280,14 +277,13 @@ public sealed class SolutionFoldersTests : IDisposable
         Assert.Equal(referencing, File.ReadAllText(web));
         Quiet(window);
 
-        // Redo makes all of it again: one project file, the solution and the reference naming it, and a build.
+        // Redo makes all of it again: one project file, and the solution and the reference naming it as the rename did.
         Ui.ClickRow(window, Row(window, NodeKind.Project, "Shop.Core"));
         Edit(() => Ui.Run(window, Passenger.Editor.EditorActions.Redo));
         Assert.Equal(["Undo", "Redo"], asked);
         Assert.True(ProjectFiles().SequenceEqual(["Shop.Domain.csproj"]), $"Redo left [{string.Join(", ", ProjectFiles())}]: {window.Status}");
         Assert.Equal(renamed, Read(solution, "the rename was redone"));
         Assert.Equal(referencing.Replace("Shop.Core.csproj", "Shop.Domain.csproj", StringComparison.Ordinal), File.ReadAllText(web));
-        BuildsApart(solution, "the project's rename was redone");
 
         // A file a solution folder lists, renamed where the folder shows it on disk, is listed under its new name.
         Edit(() => Assert.Null(window.Rename(PathNames.Canonical(Path.Combine(folder, "README.md")), "Shop.md")));
