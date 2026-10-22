@@ -185,7 +185,7 @@ public partial class MainWindow
         Task terminals = Task.CompletedTask;
         if (terminal is { Tabs.Count: > 0 })
         {
-            Dock.Hide("terminal");
+            Dock.Hide(ToolWindowIds.Terminal);
             terminals = terminal.CloseAllAsync();
         }
         ending = leaving.LeaveAsync(("the terminal", terminals));
@@ -236,7 +236,7 @@ public partial class MainWindow
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();
         buildRun.ShowBindings();
-        if (Dock["problems"] is { } problemsWindow)
+        if (Dock[ToolWindowIds.Problems] is { } problemsWindow)
         {
             problemsWindow.Title = "Problems";
         }

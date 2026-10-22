@@ -26,15 +26,15 @@ public sealed partial class CodeAssist
     {
         actions.Add(new IdeAction(AppActions.ReformatWithPrettier, "Reformat with Prettier", "Code", context => _ = ReformatWithPrettier())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : context.Editor.IsReadOnly ? "The file is read-only"
-                : Web?.Invoke() is not { } web ? "No folder is open"
+                : Web?.Invoke() is not { } web ? Refusals.NoFolder
                 : web.Prettier.PackageFor(context.File.Path) is null ? $"No prettier package formats {context.File.Name}: install it in the project, or name one in {PrettierService.Place}"
                 : null,
         });
         actions.Add(new IdeAction(AppActions.FixEslintProblems, "Fix ESLint Problems", "Code", context => _ = FixEslintProblems())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : context.Editor.IsReadOnly ? "The file is read-only"
                 : LintOf(context.File) is null ? $"ESLint does not check {context.File.Name}: it needs the project's eslint package and a file Settings' Run for files covers"
                 : null,

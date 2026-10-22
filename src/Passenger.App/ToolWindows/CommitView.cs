@@ -87,8 +87,8 @@ public sealed class CommitView : DockPanel
         };
         ListMenus.Attach(list, () => list.SelectedItem is not CommitRow chosen ? [] : chosen.Change.Kind is ChangeKind.Conflicted ?
         [
-            ListMenus.Item("Merge...", "Enter", () => MergeRequested?.Invoke(this, chosen.Change.Path)),
-            ListMenus.Item("Resolve Conflicts...", null, () => ResolveRequested?.Invoke(this, EventArgs.Empty)),
+            ListMenus.Item("Merge…", "Enter", () => MergeRequested?.Invoke(this, chosen.Change.Path)),
+            ListMenus.Item("Resolve Conflicts…", null, () => ResolveRequested?.Invoke(this, EventArgs.Empty)),
             ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path)),
             new Separator(),
             ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Change.Path)),
@@ -97,8 +97,8 @@ public sealed class CommitView : DockPanel
             ListMenus.Item("Show Diff", "Enter", () => DiffRequested?.Invoke(this, chosen.Change.Path)),
             ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
             new Separator(),
-            ListMenus.Item("Rollback...", null, () => RollbackRequested?.Invoke(this, [.. ChosenChanges(chosen)])),
-            ListMenus.Item("Delete...", null, () => DeleteRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
+            ListMenus.Item("Rollback…", null, () => RollbackRequested?.Invoke(this, [.. ChosenChanges(chosen)])),
+            ListMenus.Item("Delete…", null, () => DeleteRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
             ListMenus.Item("Add to .gitignore", null, () => IgnoreRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is ChangeKind.Unversioned),
             new Separator(),
             ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Change.Path)),
@@ -185,7 +185,7 @@ public sealed class CommitView : DockPanel
         }, RoutingStrategies.Tunnel);
         commit = new Button { Content = "Commit", Classes = { "primary" } };
         commit.Click += (_, _) => _ = CommitAsync(push: false);
-        commitAndPush = new Button { Content = "Commit and Push..." };
+        commitAndPush = new Button { Content = "Commit and Push…" };
         commitAndPush.Click += (_, _) => _ = CommitAsync(push: true);
         StackPanel buttons = new()
         {

@@ -356,7 +356,7 @@ public sealed class ProblemsView : DockPanel
                 {
                     rows.Add(new ProblemRow(0, problem.Message, problem.Where, problem));
                 }
-                empty.Text = fileName is null ? "No file is open" : "No problems in this file";
+                empty.Text = fileName is null ? Refusals.NoFile : "No problems in this file";
                 break;
             case ProblemsTab.Solution:
                 Grouped(solution ?? []);

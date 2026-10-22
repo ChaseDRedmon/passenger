@@ -15,16 +15,16 @@ public partial class MainWindow
 {
     private void AddHistoryActions()
     {
-        Add(AppActions.CompareWithRevision, "Compare with Revision...", context => _ = ShowCompareWithRevisionAsync(Target(context, fileOnly: true)!), 3, fileOnly: true);
-        Add(AppActions.CompareWithBranch, "Compare with Branch or Tag...", context => _ = ShowCompareWithBranchAsync(Target(context, fileOnly: true)!), 4, fileOnly: true);
+        Add(AppActions.CompareWithRevision, "Compare with Revision…", context => _ = ShowCompareWithRevisionAsync(Target(context, fileOnly: true)!), 3, fileOnly: true);
+        Add(AppActions.CompareWithBranch, "Compare with Branch or Tag…", context => _ = ShowCompareWithBranchAsync(Target(context, fileOnly: true)!), 4, fileOnly: true);
         Add(AppActions.ShowHistory, "Show History", context => _ = ShowHistoryAsync(Target(context, fileOnly: false)!), 5, fileOnly: false);
-        actions!.Add(new IdeAction(AppActions.ShowHistoryForSelection, "Show History for Selection...", "Git", context =>
+        actions!.Add(new IdeAction(AppActions.ShowHistoryForSelection, "Show History for Selection…", "Git", context =>
         {
             (int first, int last) = SelectedLines(context.Editor);
             _ = ShowSelectionHistoryAsync(context.File!.Path, first, last);
         })
         {
-            WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : NeedsFile(context)),
+            WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : Refusals.NeedsFile(context)),
             Menus = [new MenuPlace("Git", 2, 6)],
         });
 
@@ -44,7 +44,7 @@ public partial class MainWindow
         {
             return Target(row, fileOnly);
         }
-        if (context.ToolWindow?.Id != "explorer")
+        if (context.ToolWindow?.Id != ToolWindowIds.Explorer)
         {
             return context.File?.Path;
         }
@@ -61,7 +61,7 @@ public partial class MainWindow
 
     private static string? WhyNoTarget(ActionContext context, bool fileOnly) =>
         Target(context, fileOnly) is not null ? null
-        : context.ToolWindow?.Id != "explorer" ? NoFile
+        : context.ToolWindow?.Id != ToolWindowIds.Explorer ? Refusals.NoFile
         : fileOnly ? "Choose a file in the Explorer" : "Choose a file or folder in the Explorer";
 
     /// <summary>The lines a selection covers (the caret's alone with none), less the line it ends at the start of.</summary>
@@ -83,7 +83,7 @@ public partial class MainWindow
             return null;
         }
         // Its commits are read as its tab is first shown, which a screenshot and a test wait for.
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         return GitWindow.ShowHistory(scope, Path.GetFileName(Path.TrimEndingDirectorySeparator(scope.Path)));
     }
 
@@ -95,7 +95,7 @@ public partial class MainWindow
         {
             return null;
         }
-        ShowToolWindow("git");
+        ShowToolWindow(ToolWindowIds.Git);
         string lines = first == last ? $"line {first + 1}" : $"lines {first + 1}–{last + 1}";
         return GitWindow.ShowHistory(scope, $"{Path.GetFileName(path)}, {lines}");
     }

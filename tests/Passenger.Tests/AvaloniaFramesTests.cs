@@ -241,7 +241,7 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
     /// <summary>A line typed into a console, which sends it to the program's input.</summary>
     private static void Type(MainWindow window, OutputView console, string text)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.Settle();
         Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;

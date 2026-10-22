@@ -463,8 +463,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   popups the IDE's through `DockHost.WindowOpened`) are its parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
   `DropOverlay` are the one drag and drop zone, which editor tabs share. The layout is kept in the state store as a
   `DockLayout`, with the folder open and as the one a folder without its own opens on; `DockHost.RestoreDefault` puts
-  each window back where `Dock.Add` put it. A new tool window is a view and
-  one `Dock.Add` in `MainWindow.AddToolWindows`.
+  each window back where `Dock.Add` put it. A new tool window is a view and one `Dock.Add` with an id of
+  `ToolWindowIds` (what a kept layout records it by, so a value there never changes, and what every show, hide and
+  `ToolWindow.Id ==` names): the shell's own (Explorer, Structure, Run, Debug, Unit Tests, Build, Problems) in
+  `MainWindow.AddToolWindows`, a feature's in its `Add…` beside the view's wiring (Git and Commit in `AddVcs`, the
+  profiler in `ProfilerCommands`).
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -1079,7 +1082,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action (`IdeAction.Words` are other names Find Action finds
   it by, as Rider's older names). `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
-  through the registry, so one that cannot run says why; editor actions go to the focused editor. The keys are the main
+  through the registry, so one that cannot run says why (a greyed menu item on hover too); editor actions go to the
+  focused editor. A menu, a toolbar's tip and macOS's application menu take an action's title from the registry
+  (`TitleWhere`), never typing it again; a label that asks more before it acts ends in the one ellipsis, "…", as Rider's
+  titles do (UiRulesTests, `DialogButtonsTests.Check`); and what is missing is said in `Refusals`' words (No file is
+  open, No folder is open, No solution is open, `NeedsFile`, `NeedsLines`), the same want worded the same everywhere. The keys are the main
   window's one keymap in every window the IDE opens but a dialog, each taken in by `IdeKeys.Attach` before it shows (the
   main window, an editor window through `EditorArea.WindowOpened`, a floating or windowed tool window through
   `DockHost.WindowOpened`, a diff's or changes window through `MainWindow.ShowOwn`, the merge window, a test's frame

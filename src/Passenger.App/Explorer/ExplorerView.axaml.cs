@@ -252,7 +252,7 @@ public partial class ExplorerView : UserControl
         {
             return [];
         }
-        MenuItem nesting = new() { Header = "File Nesting..." };
+        MenuItem nesting = new() { Header = "File Nesting…" };
         nesting.Click += (_, _) => NestingAsked?.Invoke(this, EventArgs.Empty);
         return [new MenuItem { Header = "Appearance", Items = { nesting } }];
     }

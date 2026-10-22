@@ -136,7 +136,7 @@ public sealed class SolutionFoldersTests : IDisposable
 
         // New Solution Folder, from the solution's own menu.
         RightClick(window, Row(window, NodeKind.Solution, "Shop"));
-        ChooseFromMenu(window, "Add", "New Solution Folder...");
+        ChooseFromMenu(window, "Add", "New Solution Folder…");
         Edit(() => Name(window, "Tools"));
         ExplorerNode tools = Row(window, NodeKind.SolutionFolder, "Tools");
         Assert.Equal(1, tools.Depth);
@@ -169,7 +169,7 @@ public sealed class SolutionFoldersTests : IDisposable
         pick = [Path.Combine(folder, "tools", "Importer", "Importer.csproj")];
         Choose(window, Utilities());
         Ui.Run(window, AppActions.ShowContextMenu);
-        Edit(() => ChooseFromMenu(window, "Add", "Existing Project..."));
+        Edit(() => ChooseFromMenu(window, "Add", "Existing Project…"));
         Assert.True(Utilities().IsExpanded, "The folder a project was added to stayed closed, hiding it");
         Assert.Equal(2, Row(window, NodeKind.Project, "Importer").Depth);
         text = Read(solution, "a project added to the solution folder");
@@ -193,10 +193,10 @@ public sealed class SolutionFoldersTests : IDisposable
         // Existing Item, and a folder inside it.
         pick = [Path.Combine(folder, "docs", "notes.md")];
         RightClick(window, Utilities());
-        Edit(() => ChooseFromMenu(window, "Add", "Existing Item..."));
+        Edit(() => ChooseFromMenu(window, "Add", "Existing Item…"));
         Assert.Equal(PathNames.Canonical(Path.Combine(folder, "docs", "notes.md")), window.ExplorerView.Selected?.Path);
         RightClick(window, Utilities());
-        ChooseFromMenu(window, "Add", "New Solution Folder...");
+        ChooseFromMenu(window, "Add", "New Solution Folder…");
         Edit(() => Name(window, "Scripts"));
         Assert.Equal(
             ["  Utilities", "    Scripts", "    Importer", "    notes.md"],
@@ -312,7 +312,7 @@ public sealed class SolutionFoldersTests : IDisposable
         window.FolderWatcher!.Changed += (_, changes) => heard |= changes.Paths.Contains(PathNames.Canonical(solution));
 
         RightClick(window, Row(window, NodeKind.Solution, "Shop"));
-        ChooseFromMenu(window, "Add", "New Solution Folder...");
+        ChooseFromMenu(window, "Add", "New Solution Folder…");
         Name(window, "Tools");
         Ui.WaitFor(() => heard, "the folder watcher to hear of the change to the solution");
         Ui.Settle();

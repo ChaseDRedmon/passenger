@@ -48,7 +48,7 @@ public sealed class HistoryTests : IDisposable
         Ui.Landed(() => history.Rows.Count == 4, "the four commits that changed the file, under either name");
         Assert.Equal(["Twice", "Store, not shop", "Long count", "First"], history.Rows.Select(r => r.Commit.Subject));
         Assert.Equal(["Log", "Store.cs"], window.GitWindow.Titles);
-        Assert.True(window.DockHost.IsShown("git"), "Show History left the Git window hidden");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Git), "Show History left the Git window hidden");
 
         // Its first two commits are of the file under the name it had then, and the rename is one.
         Assert.Equal((Full("src/Shop.cs"), ChangeKind.Added), Change(history, "First"));
@@ -114,7 +114,7 @@ public sealed class HistoryTests : IDisposable
         Ui.Settle();
         RightClick(window, window.ExplorerView.Tree.Rows.First(r => r.Name == "Read.md"));
         MenuItem git = window.ExplorerView.OpenMenu!.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "Git");
-        Assert.Equal(["Compare with Revision...", "Compare with Branch or Tag...", "Show History"], git.Items.OfType<MenuItem>().Select(i => i.Header as string));
+        Assert.Equal(["Compare with Revision…", "Compare with Branch or Tag…", "Show History"], git.Items.OfType<MenuItem>().Select(i => i.Header as string));
         window.ExplorerView.OpenMenu.Close();
         window.GitWindow.ShowLog();
         Ui.Landed(() => window.GitLog.Rows.Count == 5, "the Log's five commits");
@@ -144,7 +144,7 @@ public sealed class HistoryTests : IDisposable
         {
             Ui.Press(window, "shift+DOWN");
         }
-        ChooseFromEditorMenu(window, "Git", "Show History for Selection...");
+        ChooseFromEditorMenu(window, "Git", "Show History for Selection…");
         GitLogView history = window.GitWindow.Shown;
         Ui.Landed(() => history.Rows.Count > 0, "the commits that changed the lines");
         Assert.Equal(["Line 6", "Line 5", "First"], history.Rows.Select(r => r.Commit.Subject));

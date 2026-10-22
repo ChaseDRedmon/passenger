@@ -135,7 +135,7 @@ public partial class MainWindow : Window
         Editors.OpenFailed += (_, problem) => status.Text = problem;
         Editors.Opened += (_, document) => session.Attach(document);
         Editors.Closed += (_, document) => session.Detach(document);
-        Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
+        Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow(ToolWindowIds.Problems));
         // IntelliJ's words for its caret limit.
         Editors.ForEachEditor(editor => editor.CaretLimitReached += (_, _) =>
             status.Text = string.Create(CultureInfo.InvariantCulture, $"Cannot create more than {SelectionSet.MaxCount:N0} carets"));
@@ -490,7 +490,7 @@ public partial class MainWindow : Window
     private void ShowStop(string path, TextPosition position)
     {
         NavigateTo(path, position);
-        ShowToolWindow("debug");
+        ShowToolWindow(ToolWindowIds.Debug);
         Bottom.Debug.ShowTab(console: false);
     }
 
@@ -510,7 +510,7 @@ public partial class MainWindow : Window
         ShowHotReloadButtons();
     }
 
-    /// <summary>Opens a tool window in its place ("debug", "build", "tests"...), as its stripe button does.</summary>
+    /// <summary>Opens a tool window in its place (one of <see cref="ToolWindowIds"/>), as its stripe button does.</summary>
     public void ShowToolWindow(string id) => Dock.Show(id);
 
     /// <summary>Shift+Escape: the tool window open last closes, and the editor has the keys again.</summary>
@@ -532,7 +532,7 @@ public partial class MainWindow : Window
     /// <summary>The tool windows, each in the place IntelliJ gives it at first.</summary>
     private void AddToolWindows()
     {
-        Dock.Add(new Docking.ToolWindow("explorer", "Explorer", "Icon.Explorer", Explorer, Docking.ToolAnchor.LeftTop)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Explorer, "Explorer", "Icon.Explorer", Explorer, Docking.ToolAnchor.LeftTop)
         {
             Action = AppActions.FocusExplorer,
             HeaderTools = Explorer.TakeHeaderTools(),
@@ -540,28 +540,28 @@ public partial class MainWindow : Window
             Chosen = () => Explorer.SelectedNodes,
             Activate = () =>
             {
-                Dock.Show("explorer");
+                Dock.Show(ToolWindowIds.Explorer);
                 Explorer.FocusRows();
             },
             OpenAtFirst = true,
         });
         // Shown however it is (its action, its stripe button, a layout), it asks for the file shown then itself.
-        Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
-        Dock.Add(new Docking.ToolWindow("run", "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun, ActionTitle = "Run Tool Window" });
-        Dock.Add(new Docking.ToolWindow("debug", "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Structure, "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Run, "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun, ActionTitle = "Run Tool Window" });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Debug, "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowDebug,
             ActionTitle = "Debug Tool Window",
             HeaderTools = Bottom.Debug.HeaderTools,
         });
-        Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Tests, "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowTests,
             Menus = [new MenuPlace("Tests", 2, 0)],
             Chosen = () => Bottom.Tests.Selected,
         });
-        Dock.Add(new Docking.ToolWindow("build", "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild, ActionTitle = "Build Tool Window" });
-        Dock.Add(new Docking.ToolWindow("problems", "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems, ActionTitle = "Problems" });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Build, "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild, ActionTitle = "Build Tool Window" });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Problems, "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems, ActionTitle = "Problems" });
     }
 
     /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change; and each

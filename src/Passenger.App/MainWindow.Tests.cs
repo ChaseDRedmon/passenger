@@ -61,7 +61,7 @@ public partial class MainWindow
             if (session == next)
             {
                 // Said in the Unit Tests window too, over the run's results, which is where to see more.
-                Say(message, StatusPlace.Window(Dock, "tests"));
+                Say(message, StatusPlace.Window(Dock, ToolWindowIds.Tests));
                 Bottom.Tests.Status = message;
             }
         };
@@ -117,7 +117,7 @@ public partial class MainWindow
         {
             return;
         }
-        ShowToolWindow("tests");
+        ShowToolWindow(ToolWindowIds.Tests);
         _ = Go();
 
         async Task Go()
@@ -135,7 +135,7 @@ public partial class MainWindow
             }
             if (problem is not null)
             {
-                Say(problem, StatusPlace.Window(Dock, "tests"));
+                Say(problem, StatusPlace.Window(Dock, ToolWindowIds.Tests));
                 Bottom.Tests.Status = problem;
             }
         }
@@ -258,7 +258,7 @@ public partial class MainWindow
             WorkingDirectory = start.WorkingDirectory ?? Folder ?? Environment.CurrentDirectory,
             Environment = new Dictionary<string, string>(start.Environment),
         };
-        ShowToolWindow("debug");
+        ShowToolWindow(ToolWindowIds.Debug);
         string? problem = await debug.StartAsync(plan);
         if (debug.SessionNamed(plan.Name) is not { } host)
         {
@@ -282,7 +282,7 @@ public partial class MainWindow
     /// <summary>A test host a runner started itself, attached to: true once the debugger has hold of it.</summary>
     private async Task<bool> AttachTestHost(Debugging.DebugController debug, int processId)
     {
-        ShowToolWindow("debug");
+        ShowToolWindow(ToolWindowIds.Debug);
         await debug.AttachAsync(processId, "Tests");
         if (debug.SessionNamed("Tests") is not { } host)
         {

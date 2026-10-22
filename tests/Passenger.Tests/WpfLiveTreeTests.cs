@@ -73,7 +73,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
         Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
         MainWindow window = Debugged();
         LiveTreeView tree = window.LiveTree;
-        Assert.True(window.DockHost.IsShown("liveTree"), "The Live Visual Tree did not open as the app's window came up");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.LiveTree), "The Live Visual Tree did not open as the app's window came up");
         Assert.Equal("MainWindow", tree.Rows[0].Element.Type);
         Assert.Contains(tree.Rows, r => r.Element is { Type: "StackPanel", Name: "Panel" });
         Assert.Contains(tree.Rows, r => r.Element is { Type: "TextBlock", Name: "Greeting" });
@@ -349,7 +349,7 @@ public sealed class WpfLiveTreeTests : IClassFixture<RestoredFolders>, IDisposab
     /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
     private static void Say(MainWindow window, string line)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.Settle();
         OutputView console = window.BottomPanel.Debug.Console;

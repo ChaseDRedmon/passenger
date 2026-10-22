@@ -158,7 +158,7 @@ public partial class MainWindow
     private Task<TerminalRun> ShowInTerminal(string name, System.Diagnostics.ProcessStartInfo start)
     {
         Task<TerminalRun> starting = terminal!.RunAsync(name, start);
-        ShowToolWindow("terminal");
+        ShowToolWindow(ToolWindowIds.Terminal);
         return starting;
     }
 
@@ -239,7 +239,7 @@ public partial class MainWindow
             menu.Items.Add(new MenuItem { Header = "No executable projects", IsEnabled = false });
         }
         menu.Items.Add(new Separator());
-        MenuItem edit = new() { Header = "Edit Configurations..." };
+        MenuItem edit = new() { Header = "Edit Configurations…" };
         edit.Click += (_, _) => Request(AppActions.EditConfigurations);
         menu.Items.Add(edit);
         Open(menu, RunConfigButton);

@@ -35,8 +35,8 @@ public partial class MainWindow
     /// <summary>Attach to Process and Reattach to Process, in Rider's Run menu before Edit Configurations.</summary>
     private void AddAttaching()
     {
-        Add(A.AttachToProcess, "Attach to Process...", "Debug", _ => ShowAttachToProcess(), menu: ("Run", 0, 3));
-        Add(A.ReattachToProcess, "Reattach to Process...", "Debug", context => _ = Reattach(),
+        Add(A.AttachToProcess, "Attach to Process…", "Debug", _ => ShowAttachToProcess(), menu: ("Run", 0, 3));
+        Add(A.ReattachToProcess, "Reattach to Process…", "Debug", context => _ = Reattach(),
             _ => attachedTo.Count == 0 ? "Nothing has been attached to in this window: Attach to Process chooses a program" : null, ("Run", 0, 4));
     }
 
@@ -126,7 +126,7 @@ public partial class MainWindow
         }
         attachedTo.RemoveAll(p => Same(p, target));
         attachedTo.Add(target);
-        ShowToolWindow("debug");
+        ShowToolWindow(ToolWindowIds.Debug);
         Bottom.Debug.ShowTab(console: false);
         string? refused = await session.Debug.AttachAsync(target.Id, name, hotReload: place is not null && target.HotReload, place: place);
         attachSession = session.Debug.SessionNamed(name);

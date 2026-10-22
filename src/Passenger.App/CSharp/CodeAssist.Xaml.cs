@@ -178,7 +178,7 @@ public sealed partial class CodeAssist
     {
         if (Xaml?.Invoke() is not { } service)
         {
-            return (null, "No folder is open");
+            return (null, Refusals.NoFolder);
         }
         Passenger.Xaml.Metadata.AssemblyTypes? theme = file.Types.Assemblies.Where(a => a.Name.Contains(".Themes.", StringComparison.Ordinal) && a.XamlFiles.Count > 0)
             .OrderBy(a => a.Name.EndsWith(".Fluent", StringComparison.Ordinal) ? 0 : 1).FirstOrDefault();
@@ -535,7 +535,7 @@ public sealed partial class CodeAssist
             }
             else if (await BackgroundWork.Run(() => XamlNavigation.At(file, caret)) is { Named: { } named })
             {
-                refactorings.Add(new Choice("Rename...", named.Value, XamlRefactoring.Rename));
+                refactorings.Add(new Choice("Rename…", named.Value, XamlRefactoring.Rename));
             }
             refactorings.AddRange(await BackgroundWork.Run(() => XamlRefactoringsAt(file, caret)));
         }

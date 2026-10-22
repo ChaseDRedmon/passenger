@@ -82,8 +82,8 @@ public sealed class ProjectLoadTests : IDisposable
         window.DockHost.Hide("problems");
         problems.Shown = ProblemsTab.File;
         ClickStatus(window);
-        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Toolset,
-            $"A click on the status bar's load warning showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Toolset,
+            $"A click on the status bar's load warning showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
         Problem warning = Assert.Single(problems.ToolsetProblems);
         Assert.True(problems.Selected == warning, $"A click on the status bar's load warning chose {problems.Selected?.Message ?? "nothing"} in Problems, not the warning");
         Assert.True(warning is { Severity: ProblemSeverity.Warning, Project: "Web", Message: Warned } && warning.Link == new Uri(Advisory),
@@ -179,8 +179,8 @@ public sealed class ProjectLoadTests : IDisposable
         window.DockHost.Hide("problems");
         problems.Shown = ProblemsTab.File;
         ClickStatus(window);
-        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Toolset,
-            $"A click on the status bar's load error showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Toolset,
+            $"A click on the status bar's load error showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab" : "nothing")}, not Problems' Toolset, Environment");
         Problem error = Assert.Single(problems.ToolsetProblems);
         Assert.True(error is { Severity: ProblemSeverity.Error, Project: "Bad", Message: Reason, Link: null },
             $"Problems lists the load's error as {error.Severity} \"{error.Message}\" under {error.Project}");
@@ -196,7 +196,7 @@ public sealed class ProjectLoadTests : IDisposable
         Assert.True(window.StatusPlace is null && !said.Focusable && said.Cursor is null && ToolTip.GetTip(said) as string == window.Status,
             $"The status bar's next words, which go nowhere, still look like a link (place '{window.StatusPlace?.Name}', cursor {said.Cursor}, tooltip \"{ToolTip.GetTip(said)}\")");
         ClickStatus(window);
-        Assert.True(!window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.File,
+        Assert.True(!window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.File,
             "A click on status bar words that go nowhere showed Problems, as the load error said before them did");
 
         // Going to the error opens the project file.

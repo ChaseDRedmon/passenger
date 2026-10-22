@@ -162,8 +162,8 @@ public sealed class BranchesTests : IDisposable
         Assert.Equal("feature", window.Vcs.Branch);
         Assert.True(File.Exists(Path.Combine(folder, "Feature.cs")), "The checkout left feature's file out");
 
-        // New Branch from 'main'...: named, made at main, checked out.
-        Choose(panel, rows, "main", "New Branch from 'main'...");
+        // New Branch from 'main'…: named, made at main, checked out.
+        Choose(panel, rows, "main", "New Branch from 'main'…");
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         Assert.Equal("main", popup.Text);
         popup.Text = "hotfix";
@@ -174,7 +174,7 @@ public sealed class BranchesTests : IDisposable
         Assert.Equal(Git("rev-parse", "main").Trim(), Git("rev-parse", "HEAD").Trim());
 
         // Rename...: team/login is login under team no more.
-        Choose(panel, rows, "team/login", "Rename...");
+        Choose(panel, rows, "team/login", "Rename…");
         popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = "signin";
         named = popup.SubmitAsync();
@@ -217,7 +217,7 @@ public sealed class BranchesTests : IDisposable
         Assert.Equal(Git("rev-parse", "origin/feature").Trim(), Git("rev-parse", "feature").Trim());
 
         // Push... sends hotfix, which origin lacks, there, and tracks it.
-        Choose(panel, rows, "hotfix", "Push...");
+        Choose(panel, rows, "hotfix", "Push…");
         Assert.Equal(Git("rev-parse", "hotfix").Trim(), TestGit.Run(origin, "rev-parse", "hotfix").Trim());
         Assert.Equal("origin/hotfix", Git("rev-parse", "--abbrev-ref", "hotfix@{upstream}").Trim());
         window.Close();
@@ -328,8 +328,8 @@ public sealed class BranchesTests : IDisposable
         Assert.True(feature.IsSubMenuOpen, "Choosing feature in the branch menu opened no menu of feature's");
         Assert.Equal(
             [
-                "Checkout", "New Branch from 'feature'...", "Checkout and Rebase onto 'main'", "Compare with 'main'", "Show Diff with Working Tree",
-                "Rebase 'main' onto 'feature'", "Merge 'feature' into 'main'", "Update", "Push...", "Rename...", "Delete",
+                "Checkout", "New Branch from 'feature'…", "Checkout and Rebase onto 'main'", "Compare with 'main'", "Show Diff with Working Tree",
+                "Rebase 'main' onto 'feature'", "Merge 'feature' into 'main'", "Update", "Push…", "Rename…", "Delete",
             ], feature.Items.OfType<MenuItem>().Select(i => i.Header as string));
 
         // Its Merge merges, main still checked out.

@@ -47,7 +47,7 @@ public sealed class VcsTests : IDisposable
         CommitView commit = window.CommitView;
         window.Perform(AppActions.Commit);
         Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs" && c.Kind == ChangeKind.Modified), "Shop.cs listed as modified");
-        Assert.True(window.DockHost.IsShown("commit"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Commit));
         commit.Message = "Count with a long";
         Task<bool> committed = commit.CommitAsync(push: false);
         Ui.Landed(() => committed.IsCompleted, "the commit made");
@@ -954,7 +954,7 @@ public sealed class VcsTests : IDisposable
         log.Select(first);
         Ui.ChooseFromMenu(commits, "Copy Revision Number");
         Ui.WaitFor(() => Ui.Clipboard(window) == first.Hash, "the hash on the clipboard");
-        Ui.ChooseFromMenu(commits, "New Branch...");
+        Ui.ChooseFromMenu(commits, "New Branch…");
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = "from-first";
         Task named = popup.SubmitAsync();
@@ -1134,7 +1134,7 @@ public sealed class VcsTests : IDisposable
         commit.Message = "More";
         Ui.Settle();
         Avalonia.Controls.Button[] buttons = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(commit).OfType<Avalonia.Controls.Button>()
-            .Where(b => b.Content is "Commit" or "Commit and Push...")];
+            .Where(b => b.Content is "Commit" or "Commit and Push…")];
         Assert.Equal(2, buttons.Length);
         Assert.All(buttons, b => Assert.True(b.IsEnabled));
 

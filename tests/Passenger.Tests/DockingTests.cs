@@ -20,16 +20,16 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         Click(window, Button(window, "debug"));
-        Assert.True(window.DockHost.IsShown("debug"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Debug));
         Click(window, Button(window, "run"));
-        Assert.True(window.DockHost.IsShown("run"));
-        Assert.False(window.DockHost.IsShown("debug"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Run));
+        Assert.False(window.DockHost.IsShown(ToolWindowIds.Debug));
         Assert.True(Button(window, "run").IsChecked);
         Assert.False(Button(window, "debug").IsChecked);
 
         // Its button again closes it.
         Click(window, Button(window, "run"));
-        Assert.False(window.DockHost.IsShown("run"));
+        Assert.False(window.DockHost.IsShown(ToolWindowIds.Run));
         window.Close();
     }
 
@@ -37,7 +37,7 @@ public sealed class DockingTests
     public void A_stripe_button_dragged_to_the_other_stripe_docks_its_window_on_that_side()
     {
         MainWindow window = Open();
-        window.DockHost.Show("debug");
+        window.DockHost.Show(ToolWindowIds.Debug);
         Ui.Settle();
         ToggleButton debug = Button(window, "debug");
         Point from = Middle(window, debug);
@@ -58,21 +58,21 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Move(dock["hierarchy"]!, ToolAnchor.RightBottom);
-        dock.Move(dock["liveTree"]!, ToolAnchor.LeftBottom);
-        dock.Move(dock["endpoints"]!, ToolAnchor.LeftBottom);
+        dock.Move(dock[ToolWindowIds.Hierarchy]!, ToolAnchor.RightBottom);
+        dock.Move(dock[ToolWindowIds.LiveTree]!, ToolAnchor.LeftBottom);
+        dock.Move(dock[ToolWindowIds.Endpoints]!, ToolAnchor.LeftBottom);
         Ui.Settle();
         Assert.Single(Stripe(window, right: true));
         Point lowest = Middle(window, Button(window, "hierarchy"));
 
         Drag(window, Middle(window, Button(window, "debug")), lowest - new Point(0, 4));
-        Assert.Equal(ToolAnchor.RightTop, dock["debug"]!.Anchor);
+        Assert.Equal(ToolAnchor.RightTop, dock[ToolWindowIds.Debug]!.Anchor);
 
         // Below the middle of the lower group's first button, a drop joins that group.
-        dock.Move(dock["debug"]!, ToolAnchor.BottomLeft);
+        dock.Move(dock[ToolWindowIds.Debug]!, ToolAnchor.BottomLeft);
         Ui.Settle();
         Drag(window, Middle(window, Button(window, "run")), Middle(window, Button(window, "hierarchy")) + new Point(0, 4));
-        Assert.Equal(ToolAnchor.RightBottom, dock["run"]!.Anchor);
+        Assert.Equal(ToolAnchor.RightBottom, dock[ToolWindowIds.Run]!.Anchor);
         window.Close();
     }
 
@@ -80,15 +80,15 @@ public sealed class DockingTests
     public void A_header_dragged_onto_the_bottom_right_docks_the_window_there_beside_the_bottom_left_one()
     {
         MainWindow window = Open();
-        window.DockHost.Show("run");
+        window.DockHost.Show(ToolWindowIds.Run);
         Ui.Settle();
         Control header = Header(window, "Explorer");
         Point from = Middle(window, header);
         Point to = new(window.Bounds.Width * 0.8, window.Bounds.Height * 0.85);
         Drag(window, from, to);
         Assert.Equal(ToolAnchor.BottomRight, window.DockHost["explorer"]!.Anchor);
-        Assert.True(window.DockHost.IsShown("explorer"));
-        Assert.True(window.DockHost.IsShown("run"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Explorer));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Run));
         Assert.Equal(0, window.DockHost.ColumnDefinitions[1].ActualWidth);
         window.Close();
     }
@@ -100,7 +100,7 @@ public sealed class DockingTests
         MainWindow first = Open(settings);
         first.KeepLayout();
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
-        first.DockHost.Show("tests");
+        first.DockHost.Show(ToolWindowIds.Tests);
         first.DockHost.Hide("explorer");
         first.Close();
 
@@ -108,8 +108,8 @@ public sealed class DockingTests
         second.KeepLayout();
         Ui.Settle();
         Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
-        Assert.True(second.DockHost.IsShown("tests"));
-        Assert.False(second.DockHost.IsShown("explorer"));
+        Assert.True(second.DockHost.IsShown(ToolWindowIds.Tests));
+        Assert.False(second.DockHost.IsShown(ToolWindowIds.Explorer));
         second.Close();
     }
 
@@ -118,8 +118,8 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("debug");
-        ToolWindow debug = dock["debug"]!;
+        dock.Show(ToolWindowIds.Debug);
+        ToolWindow debug = dock[ToolWindowIds.Debug]!;
         dock.SetMode(debug, ToolMode.Floating);
         Ui.Settle();
         Window floating = Assert.Single(window.OwnedWindows);
@@ -138,7 +138,7 @@ public sealed class DockingTests
         Ui.Settle();
         Assert.False(debug.IsShown);
         dock.SetMode(debug, ToolMode.Docked);
-        dock.Show("debug");
+        dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
         Assert.True(dock.RowDefinitions[2].ActualHeight > 100);
         Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
@@ -150,7 +150,7 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("debug");
+        dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
         double before = dock.RowDefinitions[2].ActualHeight;
         Ui.Run(window, AppActions.MaximizeToolWindow);
@@ -162,8 +162,8 @@ public sealed class DockingTests
         Ui.Run(window, AppActions.HideAllToolWindows);
         Assert.DoesNotContain(dock.Windows, w => w.IsShown);
         Ui.Run(window, AppActions.HideAllToolWindows);
-        Assert.True(dock.IsShown("debug"));
-        Assert.True(dock.IsShown("explorer"));
+        Assert.True(dock.IsShown(ToolWindowIds.Debug));
+        Assert.True(dock.IsShown(ToolWindowIds.Explorer));
         window.Close();
     }
 
@@ -174,7 +174,7 @@ public sealed class DockingTests
         MainWindow first = Open(settings);
         first.KeepLayout();
         DockHost dock = first.DockHost;
-        dock.Show("build");
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         // The person's own size, dragged above the default.
         Control splitter = dock.Children.First(c => Grid.GetRow(c) == 1).GetVisualDescendants().OfType<GridSplitter>().Single();
@@ -184,7 +184,7 @@ public sealed class DockingTests
         Assert.True(restored > 320, $"The bottom area was not dragged taller: {restored}");
         Ui.Run(first, AppActions.MaximizeToolWindow);
         // A window shown while it is maximised keeps the layout as well.
-        dock.Show("structure");
+        dock.Show(ToolWindowIds.Structure);
         Ui.Settle();
         Assert.True(dock.RowDefinitions[2].ActualHeight > restored + 100);
         first.Close();
@@ -192,7 +192,7 @@ public sealed class DockingTests
         MainWindow second = Open(settings);
         second.KeepLayout();
         Ui.Settle();
-        Assert.True(second.DockHost.IsShown("build"));
+        Assert.True(second.DockHost.IsShown(ToolWindowIds.Build));
         Assert.False(second.DockHost.IsMaximized);
         Assert.True(Math.Abs(second.DockHost.RowDefinitions[2].ActualHeight - restored) < 1,
             $"The Build window opened {second.DockHost.RowDefinitions[2].ActualHeight} tall, the maximised height kept, not the {restored} it had before");
@@ -204,16 +204,16 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("debug");
-        dock.SetMode(dock["debug"]!, ToolMode.Floating);
+        dock.Show(ToolWindowIds.Debug);
+        dock.SetMode(dock[ToolWindowIds.Debug]!, ToolMode.Floating);
         Ui.Settle();
         // Hidden by its stripe button, and closed by the system.
         WeakReference<Window> hidden = Closed(window, () => dock.Toggle("debug"));
         dock.Toggle("debug");
         Ui.Settle();
         WeakReference<Window> closed = Closed(window, () => window.OwnedWindows[0].Close());
-        dock.SetMode(dock["debug"]!, ToolMode.Docked);
-        dock.Show("debug");
+        dock.SetMode(dock[ToolWindowIds.Debug]!, ToolMode.Docked);
+        dock.Show(ToolWindowIds.Debug);
         Ui.Settle();
 
         GC.Collect();
@@ -269,9 +269,9 @@ public sealed class DockingTests
     {
         MainWindow window = Open();
         DockHost dock = window.DockHost;
-        dock.Show("explorer");
-        dock.Show("hierarchy");
-        dock.Show("build");
+        dock.Show(ToolWindowIds.Explorer);
+        dock.Show(ToolWindowIds.Hierarchy);
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         (double left, double right, double bottom) = (dock.ColumnDefinitions[1].ActualWidth, dock.ColumnDefinitions[5].ActualWidth, dock.RowDefinitions[2].ActualHeight);
 
@@ -290,7 +290,7 @@ public sealed class DockingTests
             $"The bottom area was {bottom} tall, and {dock.RowDefinitions[2].ActualHeight} once its divider, grabbed below its line, was dragged 60 px up");
 
         // Closed, the right area leaves the editor's edge to the editor: a drag there opens no empty area.
-        dock.Hide("hierarchy");
+        dock.Hide(ToolWindowIds.Hierarchy);
         Ui.Settle();
         Control center = dock.Center!;
         Point edge = center.TranslatePoint(new Point(center.Bounds.Width - 2, center.Bounds.Height / 2), window)!.Value;
@@ -331,24 +331,24 @@ public sealed class DockingTests
         window.KeepLayout();
         DockHost dock = window.DockHost;
         Dictionary<string, (ToolAnchor Anchor, int Order)> first = dock.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order));
-        dock.Show("build");
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         double bottom = dock.RowDefinitions[2].ActualHeight;
-        dock.Hide("build");
-        dock.Show("explorer");
+        dock.Hide(ToolWindowIds.Build);
+        dock.Show(ToolWindowIds.Explorer);
 
         // Moved, floated, hidden, shown and resized.
         Drag(window, Middle(window, Button(window, "debug")), new Point(window.Bounds.Width - 20, 120));
-        dock.Move(dock["tests"]!, ToolAnchor.LeftBottom, 0);
-        dock.Show("tests");
-        dock.Show("run");
-        dock.SetMode(dock["run"]!, ToolMode.Floating);
-        dock.Hide("explorer");
-        dock.Show("build");
+        dock.Move(dock[ToolWindowIds.Tests]!, ToolAnchor.LeftBottom, 0);
+        dock.Show(ToolWindowIds.Tests);
+        dock.Show(ToolWindowIds.Run);
+        dock.SetMode(dock[ToolWindowIds.Run]!, ToolMode.Floating);
+        dock.Hide(ToolWindowIds.Explorer);
+        dock.Show(ToolWindowIds.Build);
         Ui.Settle();
         Point divider = Middle(window, Divider(dock, c => Grid.GetRow(c) == 1)) + new Point(0, 3);
         Drag(window, divider, divider - new Point(0, 150));
-        Assert.Equal(ToolAnchor.RightTop, dock["debug"]!.Anchor);
+        Assert.Equal(ToolAnchor.RightTop, dock[ToolWindowIds.Debug]!.Anchor);
         Assert.Single(window.OwnedWindows);
         Assert.True(dock.RowDefinitions[2].ActualHeight > bottom + 100, $"The bottom area dragged 150 px taller is {dock.RowDefinitions[2].ActualHeight} tall, from {bottom}");
 
@@ -368,7 +368,7 @@ public sealed class DockingTests
         next.KeepLayout();
         Assert.Equal(first, next.DockHost.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order)));
         Assert.Equal(["explorer"], next.DockHost.Windows.Where(w => w.IsShown).Select(w => w.Id));
-        next.DockHost.Show("build");
+        next.DockHost.Show(ToolWindowIds.Build);
         Ui.Settle();
         Assert.Equal(bottom, next.DockHost.RowDefinitions[2].ActualHeight, 1);
         next.Close();

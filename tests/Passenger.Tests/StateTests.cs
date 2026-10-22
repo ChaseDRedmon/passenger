@@ -190,7 +190,7 @@ public sealed class StateTests : IDisposable
         Ui.Settle();
         Assert.Equal((ThemeChoice.Light, 16), (window.Settings.Theme, window.Settings.EditorFontSize));
         Assert.Equal(ToolAnchor.RightBottom, window.DockHost["tests"]!.Anchor);
-        Assert.True(window.DockHost.IsShown("tests"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Tests));
         Assert.Equal("One.cs", window.EditorArea.Active?.Name);
         Assert.Equal(new TextPosition(2, 4), window.EditorArea.CodeEditor.CaretPosition);
         window.OpenFile(Path.Combine(folder, "Two.cs"));
@@ -252,7 +252,7 @@ public sealed class StateTests : IDisposable
         string other = TestFolders.Create("other-");
         MainWindow first = Keeping(folder);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
-        first.DockHost.Show("tests");
+        first.DockHost.Show(ToolWindowIds.Tests);
         first.OpenFolder(other);
         Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.LeftBottom);
@@ -265,7 +265,7 @@ public sealed class StateTests : IDisposable
         Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
         second.OpenFolder(other);
         Assert.Equal(ToolAnchor.LeftBottom, second.DockHost["tests"]!.Anchor);
-        Assert.True(second.DockHost.IsShown("tests"));
+        Assert.True(second.DockHost.IsShown(ToolWindowIds.Tests));
         second.Close();
     }
 
@@ -297,7 +297,7 @@ public sealed class StateTests : IDisposable
         Assert.Equal(["Debug", "Run"], window.OwnedWindows.Select(w => w.Title).Order());
         // A place or a mode this build does not have is its default: where the window was added, docked.
         Assert.Equal((ToolAnchor.BottomLeft, ToolAnchor.BottomLeft), (window.DockHost["tests"]!.Anchor, window.DockHost["problems"]!.Anchor));
-        Assert.Equal((ToolAnchor.RightTop, ToolMode.Docked, true), (window.DockHost["structure"]!.Anchor, window.DockHost["structure"]!.Mode, window.DockHost.IsShown("structure")));
+        Assert.Equal((ToolAnchor.RightTop, ToolMode.Docked, true), (window.DockHost["structure"]!.Anchor, window.DockHost["structure"]!.Mode, window.DockHost.IsShown(ToolWindowIds.Structure)));
         window.Close();
     }
 

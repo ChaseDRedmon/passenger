@@ -45,7 +45,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
     {
         MainWindow window = Debugged();
         LiveTreeView tree = window.LiveTree;
-        Assert.True(window.DockHost.IsShown("liveTree"), "The Live Visual Tree did not open as the app's windows came up");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.LiveTree), "The Live Visual Tree did not open as the app's windows came up");
         Assert.Equal("MainWindow", tree.Rows[0].Element.Type);
         Assert.Contains(tree.Rows, r => r.Element is { Type: "StackPanel", Name: "Panel" });
         Assert.Contains(tree.Rows, r => r.Element is { Type: "TextBlock", Name: "Greeting" } && r.Element.Classes.Contains("title"));
@@ -217,7 +217,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
     /// <summary>What the person's pointer does in the app, sent as a line of its input from the Debug window's console.</summary>
     private static void Pointer(MainWindow window, string line)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.Settle();
         Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;

@@ -85,7 +85,7 @@ public partial class MainWindow
                 if (text.Contains(words, StringComparison.Ordinal))
                 {
                     // dotnet watch writes the compiler's errors in the Run window.
-                    Say(meaning, result == HotReloadResult.Errors ? StatusPlace.Window(Dock, "run") : null);
+                    Say(meaning, result == HotReloadResult.Errors ? StatusPlace.Window(Dock, ToolWindowIds.Run) : null);
                     last = new HotReloadOutcome(result, meaning);
                     said.TrySetResult();
                     return;
@@ -158,7 +158,7 @@ public partial class MainWindow
                 Bottom.Problems.ShowHotReload(outcome.Said, outcome.Problems);
                 if (outcome.Problems.Any(p => p.Severity == Run.ProblemSeverity.Error))
                 {
-                    Dock.Show("problems");
+                    Dock.Show(ToolWindowIds.Problems);
                 }
                 // The debugger has said it; its edits that could not apply, or warned, are where to see more.
                 if (outcome.Problems.Count > 0)

@@ -178,7 +178,7 @@ public sealed class FileNestingTests : IDisposable
         MenuFlyout menu = window.DockHost.OpenOptions ?? throw new Xunit.Sdk.XunitException("The Explorer's options did not open");
         MenuItem appearance = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == "Appearance")
             ?? throw new Xunit.Sdk.XunitException($"The Explorer's options have no Appearance: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
-        MenuItem nesting = appearance.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "File Nesting...");
+        MenuItem nesting = appearance.Items.OfType<MenuItem>().Single(i => (string?)i.Header == "File Nesting…");
         nesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
         menu.Hide();
         Ui.WaitFor(() => window.Frontmost is FileNestingDialog, "the File Nesting dialog");

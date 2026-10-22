@@ -170,16 +170,16 @@ public sealed class TerminalTests
 
             // Shift+Escape is still the IDE's: it hides the window. The terminal's shortcut brings it back.
             Ui.Press(window, "shift ESCAPE");
-            Assert.False(window.DockHost.IsShown("terminal"));
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal));
             Ui.Run(window, AppActions.ShowTerminal);
-            Assert.True(window.DockHost.IsShown("terminal"));
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Terminal));
 
             // The shell's own exit closes its tab, and with the last one the window.
             Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the terminal focused again");
             window.KeyTextInput("exit");
             Ui.Press(window, "ENTER");
             Ui.WaitFor(() => window.TerminalPanel.Tabs.Count == 0, "the tab to close");
-            Assert.False(window.DockHost.IsShown("terminal"));
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal));
             window.Close();
         }
         finally
@@ -199,7 +199,7 @@ public sealed class TerminalTests
             // Cmd+9 and Ctrl+` in its macOS one. Rider's terminal lets every tool window's shortcut through.
             foreach ((string action, string shown) in new[] { (AppActions.ShowRun, "run"), (AppActions.ShowGit, "git"), (AppActions.ShowBookmarks, "bookmarks") })
             {
-                window.ShowToolWindow("terminal");
+                window.ShowToolWindow(ToolWindowIds.Terminal);
                 window.TerminalPanel.FocusView();
                 Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the terminal");
                 Passenger.Editor.Keystroke keys = window.Actions.Keymap.ShortcutsFor(action).First(s => s.Second is null).First;
@@ -314,7 +314,7 @@ public sealed class TerminalTests
 
             // The window still takes the IDE's keys: Shift+Escape hides the terminal.
             Ui.Press(window, "shift ESCAPE");
-            Assert.False(window.DockHost.IsShown("terminal"), "the terminal is still shown after Shift+Escape");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal), "the terminal is still shown after Shift+Escape");
             window.Close();
         }
         finally
@@ -509,12 +509,12 @@ public sealed class TerminalTests
 
             // Moved to the right side, as a drag of its stripe button moves it, the terminal is a side panel's width.
             DockHost dock = window.DockHost;
-            dock.Move(dock["terminal"]!, ToolAnchor.RightTop);
+            dock.Move(dock[ToolWindowIds.Terminal]!, ToolAnchor.RightTop);
             Ui.WaitFor(() => screen.Columns < wide, "the terminal to narrow on the right side");
             Assert.True(screen.Columns < 100, $"on the right side the terminal has {screen.Columns} columns, room for the whole line");
             Assert.True(Lines(screen).Contains(hundred), $"at {screen.Columns} columns the line of 100 no longer reads whole, its rows joined:\n{Screen(shell)}");
 
-            dock.Move(dock["terminal"]!, ToolAnchor.BottomLeft);
+            dock.Move(dock[ToolWindowIds.Terminal]!, ToolAnchor.BottomLeft);
             Ui.WaitFor(() => screen.Columns == wide, "the terminal to widen back at the bottom");
             Ui.Settle();
             Assert.True(Enumerable.Range(0, screen.Rows).Any(r => screen.Lines[r].Text() == hundred),
@@ -525,7 +525,7 @@ public sealed class TerminalTests
             WaitForLine(shell, "kept", "the command typed before the resizes to run");
 
             // A program laying itself out reads the size the terminal has, narrowed again.
-            dock.Move(dock["terminal"]!, ToolAnchor.RightTop);
+            dock.Move(dock[ToolWindowIds.Terminal]!, ToolAnchor.RightTop);
             Ui.WaitFor(() => screen.Columns < wide, "the terminal to narrow again");
             Run(window, "stty size");
             WaitForLine(shell, $"{screen.Rows} {screen.Columns}", $"stty to count the terminal's {screen.Rows} rows and {screen.Columns} columns");
@@ -628,7 +628,7 @@ public sealed class TerminalTests
         TerminalRun run = Assert.IsType<TerminalRun>(window.RunInTerminal);
         TerminalSession program = run.Session;
         Assert.Equal("Keys", window.TerminalPanel.ActiveTab?.Name);
-        Assert.True(window.DockHost.IsShown("terminal"), "The program runs in the terminal, which is not shown");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Terminal), "The program runs in the terminal, which is not shown");
         Assert.Equal("Running Keys", window.Status);
         Assert.True(window.FindControl<Button>("StopButton")!.IsEnabled, "The toolbar's Stop could not be clicked while the program ran in the terminal");
 

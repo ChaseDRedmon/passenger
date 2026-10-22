@@ -63,7 +63,7 @@ public sealed class ProfilerCommands
     {
         this.parts = parts;
         View = new ProfilerView();
-        parts.Dock.Add(new ToolWindow("profiler", "Performance Profiler", "Icon.Profile", View, ToolAnchor.BottomLeft)
+        parts.Dock.Add(new ToolWindow(ToolWindowIds.Profiler, "Performance Profiler", "Icon.Profile", View, ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowProfiler,
             Menus = [new MenuPlace("Tools", 0, 1)],
@@ -219,7 +219,7 @@ public sealed class ProfilerCommands
         {
             return "The solution was closed";
         }
-        parts.Dock.Show("profiler");
+        parts.Dock.Show(ToolWindowIds.Profiler);
         if ((plan is null ? problem : plan.WhyNot("profile")) is { } why)
         {
             View.Stopped(why);
@@ -321,7 +321,7 @@ public sealed class ProfilerCommands
         using CancellationTokenRegistration killed = stop.Token.Register(work.Cancel);
         starting = stop;
         profiled.ProfileStarting = stop;
-        parts.Dock.Show("profiler");
+        parts.Dock.Show(ToolWindowIds.Profiler);
         View.Starting(chosen.Name);
         ProfilingSession? recording = null;
         string name = chosen.Name;
@@ -385,7 +385,7 @@ public sealed class ProfilerCommands
         profiled.Profiling = running;
         profilingName = name;
         View.Running(name, () => running.Elapsed, killable);
-        parts.Dock.Show("profiler");
+        parts.Dock.Show(ToolWindowIds.Profiler);
         parts.Say($"Profiling {name} from now: Get Snapshot when it has done what is to be measured");
         _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
         {
@@ -479,7 +479,7 @@ public sealed class ProfilerCommands
         {
             return NothingRunning;
         }
-        parts.Dock.Show("profiler");
+        parts.Dock.Show(ToolWindowIds.Profiler);
         if (target.Watched is { } app)
         {
             int? started = await BackgroundWork.Run(() => DotnetProcesses.Under(target.ProcessId).FirstOrDefault(p => p.Program.Equals(app, StringComparison.OrdinalIgnoreCase))?.Id);
@@ -680,7 +680,7 @@ public sealed class ProfilerCommands
     private async Task<SnapshotRead> ReadSnapshotAsync(ProjectSession profiled, ProfilingSession run)
     {
         string name = profilingName;
-        parts.Say($"Reading the snapshot of {name}...");
+        parts.Say($"Reading the snapshot of {name}…");
         using IDisposable held = BackgroundWork.Scope();
         try
         {
@@ -695,7 +695,7 @@ public sealed class ProfilerCommands
             shownProcess = run.Place is null ? run.ProcessId : null;
             Show(snapshot, name);
             // Brought forward over the console or Debug window the run's program was driven from.
-            parts.Dock.Show("profiler");
+            parts.Dock.Show(ToolWindowIds.Profiler);
             await KeepSnapshotsAsync(trim: true);
             parts.Say(read);
             return new SnapshotRead(snapshot, read);
@@ -730,7 +730,7 @@ public sealed class ProfilerCommands
             parts.Say("A memory snapshot needs a program being profiled");
             return null;
         }
-        parts.Say($"Taking a memory snapshot of {profilingName}...");
+        parts.Say($"Taking a memory snapshot of {profilingName}…");
         using IDisposable held = BackgroundWork.Scope();
         try
         {
@@ -750,8 +750,8 @@ public sealed class ProfilerCommands
     /// <summary>Opens a snapshot written before (a .nettrace file, Passenger's or dotnet-trace's) in the profiler window.</summary>
     public async Task<Snapshot?> OpenSnapshotAsync(string path)
     {
-        parts.Dock.Show("profiler");
-        parts.Say($"Reading {Path.GetFileName(path)}...");
+        parts.Dock.Show(ToolWindowIds.Profiler);
+        parts.Say($"Reading {Path.GetFileName(path)}…");
         try
         {
             Snapshot snapshot = await BackgroundWork.Run(() => Snapshot.Read(path));

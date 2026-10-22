@@ -460,7 +460,7 @@ public sealed partial class PassengerTools
         {
             return running;
         }
-        window.ShowToolWindow("terminal");
+        window.ShowToolWindow(ToolWindowIds.Terminal);
         TerminalSession shell = window.TerminalPanel.Active is { IsRunning: true } started ? started : await window.TerminalPanel.NewSessionAsync();
         // Its first prompt before anything is typed: output alone is not it, since ConPTY clears the screen before the shell starts.
         DateTime limit = DateTime.UtcNow.AddSeconds(20);

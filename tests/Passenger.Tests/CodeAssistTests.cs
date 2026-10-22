@@ -107,7 +107,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.OpenFile("Program.cs");
         Ui.WaitFor(() => window.CSharpService?.IsReady == true, "the language server to load the project", TimeSpan.FromMinutes(2));
         ClickStripe(window, "structure");
-        Assert.True(window.DockHost.IsShown("structure"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Structure));
         Assert.True(window.StructureView.Rows.Select(r => r.Name).SequenceEqual(["Program", "Main()"]),
             $"Structure opened from its stripe showed [{string.Join(", ", window.StructureView.Rows.Select(r => r.Name))}], not the file's members");
 
@@ -359,7 +359,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Ui.Run(window, AppActions.FindUsages);
         Ui.WaitFor(() => find.Rows.Count > 0, "the usages in the Find window");
         Assert.True(Rules().Length > 0, "A search's tab has no row of its own over the usages");
-        Assert.True(window.DockHost.IsShown("find"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Find));
         Assert.Equal(["Declaration", "Write access", "Read access"], find.Rows.Where(r => r.Depth == 0).Select(r => r.Label));
         Assert.All(find.Rows.Where(r => r.Depth == 1), r => Assert.Equal("Sample", r.Label));
         Assert.All(find.Rows.Where(r => r.Depth == 2), r => Assert.Equal("Loop.cs", r.Label));
@@ -575,7 +575,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             int call = editor.Document.Snapshot.ToString().IndexOf("Twice", StringComparison.Ordinal) + 2;
             RightClick(window, editor, call);
             Assert.InRange(editor.Selections.Primary.Caret, call - 1, call + 1);
-            Choose(window, "Refactor", "Rename...");
+            Choose(window, "Refactor", "Rename…");
             window.KeyTextInput("Double");
             Ui.Press(window, "ENTER");
             Ui.Settle();
@@ -1055,7 +1055,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Ui.Settle();
         PlaceAfter(editor, "static class Hel");
         Ui.Run(window, AppActions.Move);
-        Ui.WaitFor(() => window.Assist.Offered.Contains("Move to Another File..."), "Move's list");
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Move to Another File…"), "Move's list");
         Assert.Equal(before + 1, Trackers(helper));
         Ui.Run(window, AppActions.PreviousTab);
         Ui.Settle();
@@ -2155,7 +2155,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Task<string?> calls = window.ShowCallHierarchyAsync();
         Ui.WaitFor(() => calls.IsCompleted, "the call hierarchy");
         Assert.Null(calls.Result);
-        Assert.True(window.DockHost.IsShown("hierarchy"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Hierarchy));
         Assert.Equal(2, window.Hierarchy.Rows.Count);
         Assert.Contains("Twice", window.Hierarchy.Rows[0].Node.Item.Name, StringComparison.Ordinal);
         Assert.Contains("Main", window.Hierarchy.Rows[1].Node.Item.Name, StringComparison.Ordinal);

@@ -303,7 +303,7 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
 
     internal static ContainersView Shown(MainWindow window)
     {
-        window.ShowToolWindow("containers");
+        window.ShowToolWindow(ToolWindowIds.Containers);
         Ui.Settle();
         return window.ContainersWindow;
     }

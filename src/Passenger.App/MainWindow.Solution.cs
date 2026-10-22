@@ -176,7 +176,7 @@ public partial class MainWindow
     {
         if (Solution is not { } solution)
         {
-            return "No solution is open";
+            return Refusals.NoSolution;
         }
         string? problem = SaveBeforeWriting([solution.Path]) is { } unsaved ? $"{solution.Name} could not be changed: {unsaved}" : Change(() => edit(solution.Path), solution.Name);
         FollowWritten([solution.Path]);

@@ -110,6 +110,13 @@ public sealed class DialogButtonsTests : IDisposable
                 $"{Name(button)} in {title} has its words {left:0.#} px from its left edge and {right:0.#} px from its right: they are not centred in the button");
         }
 
+        // A button that asks more before it acts ends in the one ellipsis, as every label does (#392): never three dots.
+        Assert.False(title.Contains("...", StringComparison.Ordinal), $"The dialog's title '{title}' ends in three dots, where every label has the one ellipsis, '…'");
+        foreach (Button button in shown.Where(b => b.Content is string words && words.Contains("...", StringComparison.Ordinal)))
+        {
+            Assert.Fail($"{Name(button)} in {title} has three dots, where every label has the one ellipsis, '…'");
+        }
+
         Button[] text = [.. shown.Where(b => b.Content is string && b.Classes.Where(c => !c.StartsWith(':')).All(c => c == "primary"))];
         foreach (Button button in text.Skip(1))
         {

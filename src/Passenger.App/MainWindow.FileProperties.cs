@@ -58,7 +58,7 @@ public partial class MainWindow
 
     /// <summary>Why the file's line separator and encoding cannot change: none is open, or it is read-only.</summary>
     private static string? Unchangeable(ActionContext context) =>
-        context.File is not { } file ? NoFile : file.IsReadOnly ? $"{file.Name} is read-only" : null;
+        context.File is not { } file ? Refusals.NoFile : file.IsReadOnly ? $"{file.Name} is read-only" : null;
 
     /// <summary>The status bar's line separator and encoding widgets for the file shown: Rider's names, and tips that say
     /// what the file's .editorconfig asks.</summary>

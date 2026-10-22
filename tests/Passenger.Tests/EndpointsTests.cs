@@ -26,7 +26,7 @@ public sealed class EndpointsTests : IDisposable
     public void The_window_lists_each_request_of_the_folders_http_files_with_its_method_and_name()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the .http file's three requests");
         Assert.Equal(["GET", "POST", "GET"], window.Endpoints.Requests.Select(r => r.Method));
         Assert.Equal(["All items", "Add an item", "{{base}}/missing"], window.Endpoints.Requests.Select(r => r.Title));
@@ -38,7 +38,7 @@ public sealed class EndpointsTests : IDisposable
     public void Test_sends_the_request_as_written_and_holds_its_answer_to_the_files_criteria()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         EndpointRequest all = window.Endpoints.Requests[0];
 
@@ -67,7 +67,7 @@ public sealed class EndpointsTests : IDisposable
     public void Every_test_is_sent_on_a_client_of_its_own_that_is_gone_when_the_test_is_done()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         for (int i = 0; i < 3; i++)
         {
@@ -85,7 +85,7 @@ public sealed class EndpointsTests : IDisposable
     public void Interactive_test_sends_the_request_as_changed_in_its_dialog_and_checks_the_criteria_given_there()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         EndpointRequest add = window.Endpoints.Requests[1];
         Click(window, RowButton(window, add, "endpointInteractive"));
@@ -139,7 +139,7 @@ public sealed class EndpointsTests : IDisposable
     public void The_urls_query_and_the_params_table_follow_each_other_and_a_param_turned_off_is_not_sent()
     {
         MainWindow window = Open(Folder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointInteractive"));
         InteractiveTestDialog dialog = window.InteractiveTest!;
@@ -185,7 +185,7 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.WriteAllText(Path.Combine(folder, "http-client.env.json"), """{ "prod": { "base": "https://example.invalid" } }""");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3 && window.Endpoints.Environment == "prod", "the requests in prod");
         window.Endpoints.ChooseEnvironment("No environment");
         Ui.Settle();
@@ -200,7 +200,7 @@ public sealed class EndpointsTests : IDisposable
     {
         string folder = Folder();
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         File.WriteAllText(Path.Combine(folder, "more.rest"), "DELETE {{base}}/items/1\n");
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the new file's request");
@@ -210,7 +210,7 @@ public sealed class EndpointsTests : IDisposable
         window.DockHost.Hide("endpoints");
         Ui.Settle();
         File.WriteAllText(Path.Combine(folder, "later.http"), "PATCH {{base}}/items/1\n");
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the request of the file written while the window was closed");
         window.Close();
     }
@@ -221,7 +221,7 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.WriteAllText(Path.Combine(folder, "huge.http"), "GET {{base}}/huge\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
         Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Url.EndsWith("/huge", StringComparison.Ordinal)), "endpointTest"));
         Ui.WaitFor(() => window.Endpoints.Response.Response is not null, "the huge answer");
@@ -249,7 +249,7 @@ public sealed class EndpointsTests : IDisposable
         file.Append("@v10 = x\n\nGET {{base}}/items?q={{v0}}\n");
         File.WriteAllText(Path.Combine(folder, "laughs.http"), file.ToString());
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
 
         Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.File.EndsWith("laughs.http", StringComparison.Ordinal)), "endpointTest"));
@@ -262,7 +262,7 @@ public sealed class EndpointsTests : IDisposable
     public void A_request_that_reads_the_persons_environment_asks_first_naming_the_host_and_each_variable_and_sends_nothing_unless_allowed()
     {
         MainWindow window = Open(SecretsFolder());
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
         EndpointRequest whoami = window.Endpoints.Requests.Single(r => r.Name == "Who am I");
         string set = System.Environment.GetEnvironmentVariable("PASSENGER_SETTINGS")!;
@@ -305,7 +305,7 @@ public sealed class EndpointsTests : IDisposable
         string folder = SecretsFolder();
         string settings = TestFolders.Create("endpoints-settings-");
         MainWindow window = Open(folder, settings);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
         Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
         EndpointQuestionDialog question = window.Endpoints.Question ?? throw new Xunit.Sdk.XunitException("A request reading the person's environment was sent unasked");
@@ -318,7 +318,7 @@ public sealed class EndpointsTests : IDisposable
         Assert.Contains($"127.0.0.1:{api.Port} env PASSENGER_SETTINGS", kept);
 
         MainWindow again = Open(folder, settings);
-        again.ShowToolWindow("endpoints");
+        again.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => again.Endpoints.Requests.Count == 4, "the requests in the next window");
         Click(again, RowButton(again, again.Endpoints.Requests.Single(r => r.Name == "Who am I"), "endpointTest"));
         Assert.True(again.Endpoints.Question is null, "Always for this folder was not kept: the next window asked again");
@@ -368,7 +368,7 @@ public sealed class EndpointsTests : IDisposable
             < ./linked.json
             """);
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 6, "the requests");
 
         Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Inside"), "endpointTest"));
@@ -399,7 +399,7 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Slow\nGET {{base}}/slow\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 4, "the requests");
         Button slow = RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Slow"), "endpointTest");
         Button other = RowButton(window, window.Endpoints.Requests[0], "endpointTest");
@@ -426,7 +426,7 @@ public sealed class EndpointsTests : IDisposable
         string folder = Folder();
         File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Moved\nGET {{base}}/moved\nX-Trace: {{trace}}\n\n### Elsewhere\nGET {{base}}/elsewhere\nX-Trace: {{trace}}\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the requests");
 
         Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Moved"), "endpointTest"));
@@ -455,7 +455,7 @@ public sealed class EndpointsTests : IDisposable
         File.AppendAllText(Path.Combine(folder, "api.http"), "\n\n### Other port\nGET {{base}}/other-port\nX-Secret: {{$env.PASSENGER_SETTINGS}}\n"
             + "\n### Posted to another port\nPOST {{base}}/other-port\nContent-Type: application/json\n\n{\"secret\":\"posted\"}\n");
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 5, "the requests");
 
         Click(window, RowButton(window, window.Endpoints.Requests.Single(r => r.Name == "Other port"), "endpointTest"));
@@ -482,7 +482,7 @@ public sealed class EndpointsTests : IDisposable
     {
         string folder = Folder();
         MainWindow window = Open(folder);
-        window.ShowToolWindow("endpoints");
+        window.ShowToolWindow(ToolWindowIds.Endpoints);
         Ui.WaitFor(() => window.Endpoints.Requests.Count == 3, "the requests");
         Click(window, RowButton(window, window.Endpoints.Requests[0], "endpointTest"));
         Click(window, RowButton(window, window.Endpoints.Requests[2], "endpointTest"));

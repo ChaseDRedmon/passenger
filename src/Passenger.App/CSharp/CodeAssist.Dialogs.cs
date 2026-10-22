@@ -69,7 +69,7 @@ public sealed partial class CodeAssist
             return;
         }
         ShowModal(new ChoicePopup($"Move {type.Kind} '{type.Name}'",
-            [new Choice("Move to Another File...", string.Empty, true, Mnemonic: '1'), new Choice("Move to Namespace...", string.Empty, false, Mnemonic: '2')]),
+            [new Choice("Move to Another File…", string.Empty, true, Mnemonic: '1'), new Choice("Move to Namespace…", string.Empty, false, Mnemonic: '2')]),
             caret.Offset, name, chosen =>
             {
                 if (chosen?.Value is not bool toFile)

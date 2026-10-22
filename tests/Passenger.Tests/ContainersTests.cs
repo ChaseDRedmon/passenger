@@ -964,7 +964,7 @@ public sealed class ContainersTests
 
     private static ContainersView Shown(MainWindow window)
     {
-        window.ShowToolWindow("containers");
+        window.ShowToolWindow(ToolWindowIds.Containers);
         Ui.Settle();
         return window.ContainersWindow;
     }

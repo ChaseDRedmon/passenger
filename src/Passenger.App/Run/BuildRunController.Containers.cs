@@ -261,7 +261,7 @@ public sealed partial class BuildRunController
         session.InTerminal = null;
         parts.Views.Run.Links.Forget();
         parts.Views.Run.SetRunning(true);
-        parts.Dock.Show(how == ContainerStart.Debug ? "debug" : "run");
+        parts.Dock.Show(how == ContainerStart.Debug ? ToolWindowIds.Debug : ToolWindowIds.Run);
         if (how == ContainerStart.Debug)
         {
             parts.Views.Debug.ShowTab(console: true);
@@ -341,7 +341,7 @@ public sealed partial class BuildRunController
             + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Plural.Of(plan.Backing.Count, "other service")}; Stop takes them down"
             + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty),
             // What dev-certs said of a certificate that did not come is in the Run window.
-            unexported ? StatusPlace.Window(parts.Dock, "run") : null);
+            unexported ? StatusPlace.Window(parts.Dock, ToolWindowIds.Run) : null);
         parts.Reveal?.Invoke(plan.ProjectName);
         if (plan.BrowserUrl is not null && await run.BrowserUrlAsync(CancellationToken.None) is { } url)
         {
@@ -764,7 +764,7 @@ public sealed partial class BuildRunController
         Choose(run, name, debug: true);
         run.AttachedRunning.Remove(name);
         await run.HoldAsync(name, ContainerStart.Debug, work.Stopping);
-        parts.Dock.Show("debug");
+        parts.Dock.Show(ToolWindowIds.Debug);
         parts.Views.Debug.ShowTab(console: true);
         return Done(await RestartServicesAsync(run, [service], work, "to debug it from its start"),
             $"Debugging {name} of {run.Plan.Name} from its start; the rest run on as they were");
@@ -776,7 +776,7 @@ public sealed partial class BuildRunController
     {
         await EndSessionsAsync(run, [service]);
         run.AttachedRunning.Add(name);
-        parts.Dock.Show("debug");
+        parts.Dock.Show(ToolWindowIds.Debug);
         List<string> notes = [];
         string? refused = await AttachAsync(run, service, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
         if (refused is not null || session.Debug.SessionNamed(name) is not { State: not Debugging.DebugState.Ended })

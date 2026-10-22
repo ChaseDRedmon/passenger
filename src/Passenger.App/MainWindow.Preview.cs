@@ -34,7 +34,7 @@ public partial class MainWindow
     {
         actions!.Add(new IdeAction(A.XamlPreview, "XAML Preview", "Editor", _ => TogglePreview())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : session.Xaml.For(context.File) is null ? "The previewer is for the XAML of an Avalonia or WPF project" : null,
             IsChecked = _ => previewing,
             Menus = [new MenuPlace("View", 4, 0)],

@@ -414,7 +414,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         {
             AwaitEvaluated(window);
             RightClick(window, Row(window, NodeKind.Project, "Api"));
-            ChooseFromMenu(window, "Add", "Docker Support...");
+            ChooseFromMenu(window, "Add", "Docker Support…");
             DockerSupportDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<DockerSupportDialog>()));
             Assert.Equal(DockerSupportKind.Dockerfile, dialog.Chosen);
             dialog.Accept();
@@ -458,7 +458,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
             AwaitEvaluated(window);
             string worker = app.PathOf("Worker/Worker.csproj");
             RightClick(window, Row(window, NodeKind.Project, "Worker"));
-            ChooseFromMenu(window, "Add", "Docker Support...");
+            ChooseFromMenu(window, "Add", "Docker Support…");
             DockerSupportDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<DockerSupportDialog>()));
             dialog.Chosen = DockerSupportKind.Sdk;
             dialog.Accept();
@@ -489,7 +489,7 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         {
             AwaitEvaluated(window);
             RightClick(window, Row(window, NodeKind.Solution, "Shop"));
-            ChooseFromMenu(window, "Add", "Docker Compose...");
+            ChooseFromMenu(window, "Add", "Docker Compose…");
             DockerComposeDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<DockerComposeDialog>()));
             Assert.Equal([("Api", "no Dockerfile: Docker Support adds one"), ("Worker", "no Dockerfile: Docker Support adds one")],
                 dialog.Projects.Select(p => (p.Name, p.Detail)));

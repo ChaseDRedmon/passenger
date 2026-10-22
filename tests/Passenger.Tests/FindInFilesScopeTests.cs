@@ -64,7 +64,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     public void The_Solution_views_Edit_menu_finds_in_a_folder_a_project_or_a_file_and_nowhere_else()
     {
         MainWindow window = Open();
-        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Find in Files...");
+        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Find in Files…");
         Assert.Equal((SearchScopeKind.Directory, Full("App/Models"), true), (popup.ScopeKind, popup.Directory, popup.Recursive));
         Search(popup, "total");
         string[] models = Found(popup);
@@ -76,14 +76,14 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
         Assert.Equal(["notes.md", "Order.cs"], Found(popup));
         Ui.Press(window, "ESCAPE");
 
-        popup = FromMenu(window, window.ExplorerView.Tree.Rows.First(r => r.Kind == NodeKind.Project && r.Name == "Lib"), "Find in Files...");
+        popup = FromMenu(window, window.ExplorerView.Tree.Rows.First(r => r.Kind == NodeKind.Project && r.Name == "Lib"), "Find in Files…");
         Assert.Equal((SearchScopeKind.Project, Full("Lib/Lib.csproj")), (popup.ScopeKind, popup.Project));
         Search(popup, "total");
         Assert.Equal(["Money.cs", "Money.g.cs"], Found(popup));
         Ui.Press(window, "ESCAPE");
 
         // A file is a scope of its own, named after it as Rider names a selection.
-        popup = FromMenu(window, Reveal(window, "Lib/Money.g.cs"), "Find in Files...");
+        popup = FromMenu(window, Reveal(window, "Lib/Money.g.cs"), "Find in Files…");
         Assert.Equal((SearchScopeKind.Scope, "Money.g.cs"), (popup.ScopeKind, popup.NamedScope));
         Search(popup, "total");
         Assert.Equal(["Money.g.cs"], Found(popup));
@@ -142,7 +142,7 @@ public sealed class FindInFilesScopeTests : IClassFixture<FindInFilesScopeTests.
     {
         MainWindow window = Open();
         window.Confirm = (_, _, _) => Task.FromResult(true);
-        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Replace in Files...");
+        FindInFilesPopup popup = FromMenu(window, Reveal(window, "App/Models"), "Replace in Files…");
         Assert.Equal(SearchScopeKind.Directory, popup.ScopeKind);
         popup.Words = true;
         Search(popup, "total");

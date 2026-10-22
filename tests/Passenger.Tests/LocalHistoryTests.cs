@@ -53,8 +53,8 @@ public sealed class LocalHistoryTests : IDisposable
         File.WriteAllText(shop, elsewhere);
         Ui.WaitFor(() => Text(window) == elsewhere, "the open file to take the change made elsewhere");
 
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
-        Assert.True(window.DockHost.IsShown("localHistory"), "Show History left the Local History window hidden");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.LocalHistory), "Show History left the Local History window hidden");
         Assert.Equal(["Shop.cs"], window.LocalHistoryWindow.Titles);
         Ui.Landed(() => history.Rows.Count == 4, "the four versions: three saves and the change made elsewhere");
         Assert.Equal(["External change", "Change", "Change", "Change"], history.Rows.Select(r => r.Title));
@@ -75,7 +75,7 @@ public sealed class LocalHistoryTests : IDisposable
         SaveThree(window);
 
         // From the editor's menu, Local History, as Rider's has it.
-        ChooseFromEditorMenu(window, "Local History", "Show History...");
+        ChooseFromEditorMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 3, "the three saves");
         history.Select(history.Rows[^1]);
@@ -98,11 +98,11 @@ public sealed class LocalHistoryTests : IDisposable
         MainWindow window = Open("Notes.cs");
         Save(window, 17, 3, "changed ");
         Save(window, 18, 3, "changed ");
-        ChooseFromEditorMenu(window, "Local History", "Show History...");
+        ChooseFromEditorMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 2, "the two saves");
         // Maximized, the window has room for the whole file; the older version's diff opens in that room.
-        window.DockHost.ToggleMaximize(window.DockHost.Windows.Single(w => w.Id == "localHistory"));
+        window.DockHost.ToggleMaximize(window.DockHost.Windows.Single(w => w.Id == ToolWindowIds.LocalHistory));
         Ui.Settle();
         history.Select(history.Rows[1]);
         Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == lines, "the file before its first save");
@@ -121,7 +121,7 @@ public sealed class LocalHistoryTests : IDisposable
         string shop = Write("Shop.cs", Original);
         MainWindow window = Open("Shop.cs");
         SaveThree(window);
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
         Ui.Landed(() => history.Rows.Count == 3, "the three saves");
 
         // The version after the first save comes back, written to the file, under Rider's name for a revert.
@@ -163,7 +163,7 @@ public sealed class LocalHistoryTests : IDisposable
         Assert.Equal(System.Text.Encoding.Latin1.GetBytes(Cafe), File.ReadAllBytes(path));
 
         // The version before the conversion was UTF-8: it comes back as the text it held, written in UTF-8 again.
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
         Ui.Landed(() => history.Rows.Count == 2, "the save and the conversion");
         history.Select(history.Rows[0]);
         Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Cafe, "the version before the conversion");
@@ -201,7 +201,7 @@ public sealed class LocalHistoryTests : IDisposable
         Ui.Settle();
         Assert.True(window.EditorArea.Active is { IsBinary: true }, "notes.dat, now binary, did not open as its bytes' text");
 
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
         Ui.Landed(() => history.Rows.Count == 1, "the change made elsewhere while it was text");
         history.Select(history.Rows[0]);
         Ui.Settle();
@@ -219,7 +219,7 @@ public sealed class LocalHistoryTests : IDisposable
         Write("Shop.cs", Original);
         MainWindow window = Open("Shop.cs");
         Save(window, 2, 4, "long ");
-        ChooseFromEditorMenu(window, "Local History", "Put Label...");
+        ChooseFromEditorMenu(window, "Local History", "Put Label…");
         Assert.IsType<NamePopup>(window.Popup);
         window.KeyTextInput("Before cleanup");
         Ui.Press(window, "ENTER");
@@ -227,7 +227,7 @@ public sealed class LocalHistoryTests : IDisposable
         Assert.Equal("Label Before cleanup created", window.Status);
         Save(window, 6, 8, "count++; ");
 
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
         Ui.Landed(() => history.Rows.Count == 3, "the two saves and the label between them");
         Assert.Equal(["Change", "Before cleanup", "Change"], history.Rows.Select(r => r.Title));
         Assert.True(history.Rows[1].IsLabel, "The label is listed as a change, not a label");
@@ -251,7 +251,7 @@ public sealed class LocalHistoryTests : IDisposable
         Task<VcsOutcome> checkout = window.Vcs.CheckoutAsync("side");
         Ui.WaitFor(() => checkout.IsCompleted && Text(window) == Saved1, "side checked out and the open file following it");
         Assert.True(checkout.Result.Succeeded, checkout.Result.Message);
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
         Ui.WaitFor(() => history.Rows.Count == 1, "the checkout's change to the file");
         Assert.Equal("Git checkout", history.Rows[0].Title);
         Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Original, "the file as main had it");
@@ -276,12 +276,12 @@ public sealed class LocalHistoryTests : IDisposable
         // Deleted from the Explorer, as a person deletes it.
         window.Confirm = (_, _, _) => Task.FromResult(true);
         RightClick(window, Show(window, b));
-        ChooseFromMenu(window, "Edit", "Delete...");
+        ChooseFromMenu(window, "Edit", "Delete…");
         Ui.WaitFor(() => !File.Exists(b), "B.cs deleted");
 
         // The folder's history from its row: its files' changes only, the newest first.
         RightClick(window, Show(window, Path.Combine(folder, "src")));
-        ChooseFromMenu(window, "Local History", "Show History...");
+        ChooseFromMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Assert.Equal("src", window.LocalHistoryWindow.Titles.Single());
         Ui.Landed(() => history.Rows.Count == 3, "A.cs's save, B.cs's save and B.cs's deletion");
@@ -312,7 +312,7 @@ public sealed class LocalHistoryTests : IDisposable
         Save(window, 2, 4, "long ");
 
         RightClick(window, Show(window, order));
-        ChooseFromMenu(window, "Edit", "Rename...");
+        ChooseFromMenu(window, "Edit", "Rename…");
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = string.Empty;
         window.KeyTextInput("Purchase.cs");
@@ -323,7 +323,7 @@ public sealed class LocalHistoryTests : IDisposable
         Save(window, 6, 8, "count++; ");
 
         RightClick(window, Show(window, purchase));
-        ChooseFromMenu(window, "Local History", "Show History...");
+        ChooseFromMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count == 3, "the saves under both names and the rename between them");
         Assert.Equal(["Change", "Rename Order.cs to Purchase.cs", "Change"], history.Rows.Select(r => r.Title));
@@ -365,7 +365,7 @@ public sealed class LocalHistoryTests : IDisposable
 
         // Its first version is what it held before the edit made it anew.
         RightClick(window, Show(window, notes));
-        ChooseFromMenu(window, "Local History", "Show History...");
+        ChooseFromMenu(window, "Local History", "Show History…");
         HistoryTab history = window.LocalHistoryWindow.Shown!;
         Ui.Landed(() => history.Rows.Count > 1, "the file's versions");
         history.Select(history.Rows[^1]);
@@ -402,12 +402,12 @@ public sealed class LocalHistoryTests : IDisposable
             Set(Now() + TimeSpan.FromHours(6));
             SaveEdit(window, new TextEdit(0, 0, $"// {save}\n"));
         }
-        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        HistoryTab history = ShowFromFileMenu(window, "Show History…");
         Ui.Landed(() => history.Rows.Count is > 0 and < 12, "the oldest saves pruned as the days turned");
         window.Close();
 
         MainWindow again = Open("Shop.cs", kept, day);
-        history = ShowFromFileMenu(again, "Show History...");
+        history = ShowFromFileMenu(again, "Show History…");
         Ui.Landed(() => history.Rows.Count == 4, "the last day's four saves");
         history.Select(history.Rows[^1]);
         string eighth = string.Concat(Enumerable.Range(1, 8).Reverse().Select(n => $"// {n}\n")) + Original;
@@ -427,7 +427,7 @@ public sealed class LocalHistoryTests : IDisposable
             string noise = Convert.ToHexString(random.GetItems<byte>(Enumerable.Range(0, 256).Select(i => (byte)i).ToArray(), 3000));
             SaveEdit(third, new TextEdit(0, third.EditorArea.CodeEditor.Document.Snapshot.Length, $"// {save}\n{noise}\n"));
         }
-        history = ShowFromFileMenu(third, "Show History...");
+        history = ShowFromFileMenu(third, "Show History…");
         Ui.Landed(() => history.Rows.Count is >= 1 and < 8, "the oldest versions pruned past the store's limit");
         Assert.StartsWith("// 7\n", Version(history, 0), StringComparison.Ordinal);
         third.Close();

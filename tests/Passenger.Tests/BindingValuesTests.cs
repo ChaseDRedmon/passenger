@@ -164,7 +164,7 @@ public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDispos
     /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
     private static void Say(MainWindow window, string line)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.Settle();
         Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;

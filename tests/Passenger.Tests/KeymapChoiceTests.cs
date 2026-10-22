@@ -208,7 +208,7 @@ public sealed class KeymapChoiceTests : IDisposable
             // So is a Ctrl+letter the keymap gives a tool window's action (Hide Active Tool Window's Ctrl+J, the Mac's Next
             // Project Window's Ctrl+W): the shell reads it as a control character, ^W deleting a word.
             Ui.Press(window, "control J");
-            Assert.True(window.DockHost.IsShown("terminal") && window.TerminalPanel.View.IsFocused, "Ctrl+J, pressed in the terminal, hid it rather than going to the shell");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Terminal) && window.TerminalPanel.View.IsFocused, "Ctrl+J, pressed in the terminal, hid it rather than going to the shell");
             if (!OperatingSystem.IsWindows())
             {
                 window.KeyTextInput("echo one two");
@@ -219,7 +219,7 @@ public sealed class KeymapChoiceTests : IDisposable
             }
 
             Ui.Press(window, "control BACK_QUOTE");
-            Assert.False(window.DockHost.IsShown("terminal"), "Ctrl+`, pressed in the terminal, went to the shell rather than closing it");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal), "Ctrl+`, pressed in the terminal, went to the shell rather than closing it");
             Assert.True(window.EditorArea.CodeEditor.IsFocused, "Ctrl+`, pressed in the terminal, left the keys away from the editor");
         }
         finally
@@ -239,8 +239,8 @@ public sealed class KeymapChoiceTests : IDisposable
         try
         {
             Passenger.App.Docking.DockHost dock = window.DockHost;
-            dock.Show("tests");
-            dock.SetMode(dock["tests"]!, Passenger.App.Docking.ToolMode.Floating);
+            dock.Show(ToolWindowIds.Tests);
+            dock.SetMode(dock[ToolWindowIds.Tests]!, Passenger.App.Docking.ToolMode.Floating);
             Ui.Settle();
             Window floating = Assert.Single(window.OwnedWindows);
             TextBox search = window.BottomPanel.Tests.GetVisualDescendants().OfType<TextBox>().Single(b => b.Classes.Contains("search"));
@@ -290,7 +290,7 @@ public sealed class KeymapChoiceTests : IDisposable
             window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
             Passenger.App.Docking.DockHost dock = window.DockHost;
-            dock.SetMode(dock["terminal"]!, Passenger.App.Docking.ToolMode.Floating);
+            dock.SetMode(dock[ToolWindowIds.Terminal]!, Passenger.App.Docking.ToolMode.Floating);
             Ui.Settle();
             window.EditorArea.CodeEditor.Focus();
             Ui.Press(window, "control BACK_QUOTE");
@@ -306,7 +306,7 @@ public sealed class KeymapChoiceTests : IDisposable
             Ui.WaitFor(() => window.TerminalPanel.Active!.Screen.ScreenText().Contains("\nfloated", StringComparison.Ordinal), "what was typed run in the floating terminal");
 
             Ui.Press(floating, "control BACK_QUOTE");
-            Assert.False(window.DockHost.IsShown("terminal"), "Ctrl+`, pressed in the floating terminal, went to the shell rather than closing it");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Terminal), "Ctrl+`, pressed in the floating terminal, went to the shell rather than closing it");
         }
         finally
         {
@@ -321,7 +321,7 @@ public sealed class KeymapChoiceTests : IDisposable
         MainWindow window = Open();
         try
         {
-            window.ShowToolWindow("debug");
+            window.ShowToolWindow(ToolWindowIds.Debug);
             Ui.Settle();
             Button breakpoints = window.BottomPanel.Debug.GetVisualDescendants().OfType<Button>()
                 .Single(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("View Breakpoints and Exceptions", StringComparison.Ordinal));
@@ -329,11 +329,11 @@ public sealed class KeymapChoiceTests : IDisposable
             // Containers' actions have no keys of either keymap's: Refresh is given one over VS Code's alone.
             string refreshKeys = $"{Cmd} alt shift J";
             window.ApplySettings(window.Settings with { VSCodeShortcuts = new() { [AppActions.ContainersRefresh] = [refreshKeys] } });
-            window.ShowToolWindow("containers");
+            window.ShowToolWindow(ToolWindowIds.Containers);
             Ui.Settle();
             Button refresh = window.ContainersWindow.GetVisualDescendants().OfType<Button>().Single(b => b.Name == AppActions.ContainersRefresh);
             Assert.Equal("Refresh", ToolTip.GetTip(refresh));
-            window.ShowToolWindow("debug");
+            window.ShowToolWindow(ToolWindowIds.Debug);
             Ui.Settle();
 
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
@@ -341,7 +341,7 @@ public sealed class KeymapChoiceTests : IDisposable
             string vsCodes = Shortcut.Parse($"{Cmd} shift F8").Display();
             Assert.Equal($"View Breakpoints and Exceptions ({vsCodes})", ToolTip.GetTip(breakpoints));
             // The Containers window, hidden as the keymap changed, names the key once it is shown, and follows a change while shown.
-            window.ShowToolWindow("containers");
+            window.ShowToolWindow(ToolWindowIds.Containers);
             Ui.Settle();
             Assert.Equal($"Refresh ({Shortcut.Parse(refreshKeys).Display()})", ToolTip.GetTip(refresh));
             window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VisualStudio });

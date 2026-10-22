@@ -218,7 +218,7 @@ public sealed class SolutionViewTests : IDisposable
 
         // Add, Reference... on the project: the other project offered, checked with Space, OK with Enter.
         RightClick(window, Row(window, NodeKind.Project, "Shop.App"));
-        ChooseFromMenu(window, "Add", "Reference...");
+        ChooseFromMenu(window, "Add", "Reference…");
         AddReferenceDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<AddReferenceDialog>()));
         ReferenceChoice offered = Assert.Single(dialog.Choices);
         Assert.Equal(("Shop.Core", core, false), (offered.Name, offered.Path, offered.IsChosen));
@@ -259,7 +259,7 @@ public sealed class SolutionViewTests : IDisposable
         // The dialog, from the Dependencies' own menu, offers what references the project back as nothing to check.
         Heard(window, core, () => Assert.Null(window.SetReferences(core, [app])));
         RightClick(window, Dependencies(window, "Shop.App"));
-        ChooseFromMenu(window, null, "Add Reference...");
+        ChooseFromMenu(window, null, "Add Reference…");
         dialog = Assert.Single(window.OwnedWindows.OfType<AddReferenceDialog>());
         Assert.False(Assert.Single(dialog.Choices).CanChoose, "A project that references this one was offered, which would make a cycle");
         dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
@@ -390,7 +390,7 @@ public sealed class SolutionViewTests : IDisposable
         for (int kind = 0; kind < names.Length; kind++)
         {
             RightClick(window, Show(window, models));
-            ChooseFromMenu(window, "Add", "Class/Interface...");
+            ChooseFromMenu(window, "Add", "Class/Interface…");
             NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
             Assert.Equal("Class", popup.Kind);
             for (int down = 0; down < kind; down++)
@@ -417,7 +417,7 @@ public sealed class SolutionViewTests : IDisposable
         ExplorerNode row = Show(window, models);
         using (Unwritable(models))
         {
-            foreach ((string item, string name, string made) in new[] { ("New File...", "Notes.txt", "Notes.txt"), ("New Folder...", "Drafts", "Drafts"), ("Class/Interface...", "Invoice", "Invoice.cs") })
+            foreach ((string item, string name, string made) in new[] { ("New File…", "Notes.txt", "Notes.txt"), ("New Folder…", "Drafts", "Drafts"), ("Class/Interface…", "Invoice", "Invoice.cs") })
             {
                 RightClick(window, row);
                 ChooseFromMenu(window, "Add", item);

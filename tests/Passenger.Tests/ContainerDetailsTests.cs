@@ -70,7 +70,7 @@ public sealed class ContainerDetailsTests
         window.Show();
         window.OpenFolder(TestFolders.Create("ctr-details-window-"));
         Ui.Settle();
-        window.ShowToolWindow("containers");
+        window.ShowToolWindow(ToolWindowIds.Containers);
         Ui.Settle();
         ContainersView view = window.ContainersWindow;
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == "app"), "the app service's row");
@@ -142,7 +142,7 @@ public sealed class ContainerDetailsTests
             Ui.Settle();
             Assert.Equal(PathNames.Canonical(old), window.EditorArea.Active?.Path);
 
-            window.ShowToolWindow("containers");
+            window.ShowToolWindow(ToolWindowIds.Containers);
             Ui.Settle();
             Assert.False(File.Exists(old), "Inspect's copy written before masking, holding a password, is still on disk");
             Assert.True(File.Exists(masked), "Inspect's copy written masked was removed with the old one");

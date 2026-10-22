@@ -65,7 +65,7 @@ public sealed class NewProjectDialog : Window
     private readonly StackPanel working;
     private readonly TextBlock problem = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button create = new() { Content = "Create", IsDefault = true, Classes = { "primary" }, IsEnabled = false };
-    private readonly Button browse = new() { Content = "Browse...", Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button browse = new() { Content = "Browse…", Margin = new Thickness(8, 0, 0, 0) };
 
     /// <summary>The shown options' values, and those the person set, which another template with the option keeps.</summary>
     private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
@@ -124,7 +124,7 @@ public sealed class NewProjectDialog : Window
         };
         search.TextChanged += (_, _) => Filter(searched: true);
         search.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
-        loading = new TextBlock { Classes = { "muted" }, Text = "Loading templates...", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12) };
+        loading = new TextBlock { Classes = { "muted" }, Text = "Loading templates…", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12) };
         DockPanel leftPanel = new();
         DockPanel.SetDock(search, Dock.Top);
         leftPanel.Children.Add(search);
@@ -402,13 +402,13 @@ public sealed class NewProjectDialog : Window
             Directory.CreateDirectory(plan.Root);
             if (plan.Solution is not null && !template.IsSolution)
             {
-                progress.Text = $"Creating the solution {SolutionName}...";
+                progress.Text = $"Creating the solution {SolutionName}…";
                 if (!await MakeSolutionAsync(plan, existed, cancel.Token))
                 {
                     return;
                 }
             }
-            progress.Text = $"Creating {NameGiven} from {template.Name} (dotnet new {template.ShortName})...";
+            progress.Text = $"Creating {NameGiven} from {template.Name} (dotnet new {template.ShortName})…";
             ChildResult made = await RunAsync(Arguments(plan.ProjectFolder), plan.Root, cancel.Token);
             if (!made.Succeeded)
             {
@@ -427,7 +427,7 @@ public sealed class NewProjectDialog : Window
                 // The template's own restore, after the take-out; one that fails, as its own may, leaves the build to say why.
                 foreach (string project in projects)
                 {
-                    progress.Text = $"Restoring {Path.GetFileNameWithoutExtension(project)}...";
+                    progress.Text = $"Restoring {Path.GetFileNameWithoutExtension(project)}…";
                     Task<ChildResult> restore = ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["restore", project], plan.Root), limit: TimeSpan.FromMinutes(10), cancel: cancel.Token);
                     BackgroundWork.Track(restore);
                     await restore;
@@ -440,7 +440,7 @@ public sealed class NewProjectDialog : Window
                 madeSolution = SolutionIn(plan.Root);
                 if (madeSolution is null)
                 {
-                    progress.Text = $"Creating the solution {SolutionName}...";
+                    progress.Text = $"Creating the solution {SolutionName}…";
                     if (!await MakeSolutionAsync(plan, existed, cancel.Token))
                     {
                         return;
@@ -490,7 +490,7 @@ public sealed class NewProjectDialog : Window
         using CancellationTokenSource cancel = new();
         installing = cancel;
         Fail(null);
-        progress.Text = $"Installing {pack.Id} (dotnet new install {pack.Id})...";
+        progress.Text = $"Installing {pack.Id} (dotnet new install {pack.Id})…";
         Busy(true);
         installOutput.Clear();
         installOutput.IsVisible = true;
@@ -518,7 +518,7 @@ public sealed class NewProjectDialog : Window
                 return;
             }
             ProjectTemplates.Forget();
-            progress.Text = "Reading the templates...";
+            progress.Text = "Reading the templates…";
             // The Type offered stays chosen, now the one installed.
             await RefreshAsync();
             if (template is { Pack: not null })

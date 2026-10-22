@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Input;
 
 namespace Passenger.App;
 
@@ -27,11 +26,12 @@ public partial class MainWindow
     /// runs in the window in front.</summary>
     public NativeMenu ApplicationMenu()
     {
-        NativeMenuItem about = new("About Passenger") { Command = new MenuCommand(() => InFront().Request(AppActions.About)) };
-        NativeMenuItem updates = new("Check for Updates...") { Command = new MenuCommand(() => InFront().Request(AppActions.CheckForUpdates)) };
-        NativeMenuItem settings = new("Settings...")
+        // Each item is its action, titled as the action is; macOS's application menu names the application after About.
+        NativeMenuItem about = new($"{actions![AppActions.About]!.Title} Passenger") { Command = new MenuCommand(() => InFront().Request(AppActions.About)) };
+        NativeMenuItem updates = new(actions[AppActions.CheckForUpdates]!.Title) { Command = new MenuCommand(() => InFront().Request(AppActions.CheckForUpdates)) };
+        NativeMenuItem settings = new(actions[AppActions.ShowSettings]!.Title)
         {
-            Gesture = new KeyGesture(Key.OemComma, KeyModifiers.Meta),
+            Gesture = actions.Gesture(AppActions.ShowSettings),
             Command = new MenuCommand(() => InFront().Request(AppActions.ShowSettings)),
         };
         return new NativeMenu { Items = { about, updates, new NativeMenuItemSeparator(), settings } };

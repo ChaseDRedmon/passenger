@@ -65,7 +65,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
             Ui.WaitFor(() => shown.Text == "Waits (running)", $"the toolbar to say Waits runs: {shown.Text}");
             Click(window.FindControl<Button>("RunConfigButton")!);
             ContextMenu chooser = Assert.IsType<ContextMenu>(window.OpenContextMenu);
-            Assert.Equal(["Waits (running)", "Edit Configurations..."], chooser.Items.OfType<MenuItem>().Select(i => i.Header as string));
+            Assert.Equal(["Waits (running)", "Edit Configurations…"], chooser.Items.OfType<MenuItem>().Select(i => i.Header as string));
             Click(chooser.Items.OfType<MenuItem>().Last());
             chooser.Close();
             RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);
@@ -95,7 +95,7 @@ public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDi
         // The toolbar's chooser lists the configurations, and Edit Configurations below them opens the dialog.
         Click(window.FindControl<Button>("RunConfigButton")!);
         ContextMenu chooser = Assert.IsType<ContextMenu>(window.OpenContextMenu);
-        Assert.Equal(["Hello", "Edit Configurations..."], chooser.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
+        Assert.Equal(["Hello", "Edit Configurations…"], chooser.Items.OfType<MenuItem>().Select(i => (string?)i.Header));
         Click(chooser.Items.OfType<MenuItem>().Last());
         chooser.Close();
         RunConfigurationsDialog dialog = Assert.IsType<RunConfigurationsDialog>(window.RunConfigurationsDialog);

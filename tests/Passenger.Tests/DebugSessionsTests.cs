@@ -406,7 +406,7 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
     /// greyed, its button and its ×.</summary>
     private static List<(string Name, bool Chosen, bool Greyed, ToggleButton Button, Button Close)> Tabs(MainWindow window)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         Ui.Settle();
         return [.. window.BottomPanel.Debug.HeaderTools.GetVisualDescendants().OfType<ToggleButton>().Select(button =>
         {

@@ -46,7 +46,7 @@ public sealed class LiveTreeController
     {
         this.parts = parts;
         View = new LiveTreeView();
-        window = new ToolWindow("liveTree", "Live Visual Tree", "Icon.LiveTree", View, ToolAnchor.RightTop) { Action = AppActions.ShowLiveTree };
+        window = new ToolWindow(ToolWindowIds.LiveTree, "Live Visual Tree", "Icon.LiveTree", View, ToolAnchor.RightTop) { Action = AppActions.ShowLiveTree };
         parts.Dock.Add(window);
         window.PropertyChanged += OnWindowChanged;
         parts.Actions.Add(new IdeAction(AppActions.SelectElement, "Select Element", "Debug", context => _ = PickAsync(View.SelectElement.IsChecked != true))

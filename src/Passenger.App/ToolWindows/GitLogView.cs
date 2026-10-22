@@ -78,14 +78,14 @@ public sealed class GitLogView : DockPanel
             ListMenus.Item("Copy Revision Number", null, () => _ = ListMenus.CopyAsync(this, commit.Hash)),
             new Separator(),
             ListMenus.Item("Checkout Revision", null, () => _ = vcs.CheckoutRevisionAsync(commit.Hash)),
-            ListMenus.Item("New Branch...", null, () => NewBranchRequested?.Invoke(this, commit)),
+            ListMenus.Item("New Branch…", null, () => NewBranchRequested?.Invoke(this, commit)),
             new Separator(),
             ListMenus.Item("Cherry-Pick", null, () => _ = vcs.CherryPickAsync(commit.Hash)),
             ListMenus.Item("Revert Commit", null, () => _ = vcs.RevertAsync(commit.Hash)),
             ListMenus.Sub("Reset Current Branch to Here",
                 ListMenus.Item("Soft: the changes since kept staged", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Soft))),
                 ListMenus.Item("Mixed: the changes since kept in the files", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Mixed))),
-                ListMenus.Item("Hard: the changes since dropped...", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Hard)))),
+                ListMenus.Item("Hard: the changes since dropped…", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Hard)))),
         ]);
         fileList = new ListBox
         {

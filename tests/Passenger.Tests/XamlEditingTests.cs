@@ -133,7 +133,7 @@ public sealed class XamlEditingTests : IClassFixture<XamlEditingTests.AvaloniaGa
         PlaceAfter(editor, "<StackPanel Margin=\"1");
         Ui.Run(window, AppActions.RefactorThis);
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "Refactor This's list on the panel's margin");
-        Assert.Equal(["Extract Resource...", "Extract Style..."], window.Assist.Offered);
+        Assert.Equal(["Extract Resource…", "Extract Style…"], window.Assist.Offered);
         Ui.Press(window, "ESCAPE");
         Assert.True(window.RunFromMenu(AppActions.ExtractResource), window.Status);
         ExtractResourceDialog resource = Shown<ExtractResourceDialog>(window, "Extract Resource");

@@ -966,8 +966,8 @@ public sealed class DebugController : IDisposable
             {
                 d.Breakpoints.Toggle(c.File!.Path, c.Caret.Line);
             }
-        }, (_, c) => NeedsFile(c), new("Run", 2, 0));
-        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", (d, c) => d.Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), (_, c) => NeedsFile(c), new("Run", 2, 1));
+        }, (_, c) => Refusals.NeedsLines(c), new("Run", 2, 0));
+        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", (d, c) => d.Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), (_, c) => Refusals.NeedsLines(c), new("Run", 2, 1));
         Add(AppActions.Resume, "Resume Program", (d, c) =>
         {
             if (!d.IsDebugging)
@@ -989,15 +989,15 @@ public sealed class DebugController : IDisposable
         Add(AppActions.SmartStepInto, "Smart Step Into", (d, c) => _ = d.SmartStepIntoAsync(), (d, _) => d.NotPaused(), new("Run", 1, 4));
         Add(AppActions.StepOut, "Step Out", (d, c) => _ = d.ResumeAsync(session => session.StepOutAsync(), "step out"), (d, _) => d.NotPaused(), new("Run", 1, 5));
         Add(AppActions.RunToCursor, "Run to Cursor", (d, c) => _ = d.ResumeAsync(session => session.RunToCursorAsync(c.File!.Path, c.Caret.Line), "run to the cursor"),
-            (d, c) => NeedsFile(c) ?? d.NotPaused(), new("Run", 1, 6));
+            (d, c) => Refusals.NeedsLines(c) ?? d.NotPaused(), new("Run", 1, 6));
         Add(AppActions.SetNextStatement, "Set Next Statement", (d, c) => _ = d.SetNextStatementAsync(d.Session!, c.File!.Path, c.Caret.Line),
-            (d, c) => NeedsFile(c) ?? d.NotPaused(), new("Run", 1, 7));
+            (d, c) => Refusals.NeedsLines(c) ?? d.NotPaused(), new("Run", 1, 7));
         Add(AppActions.ShowExecutionPoint, "Show Execution Point", (d, _) =>
         {
             (string path, int line) = d.executionPoint!.Value;
             d.Navigate?.Invoke(d, (path, new TextPosition(d.Current(path, line), 0)));
         }, (d, _) => d.NotPaused() ?? (d.executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 8));
-        Add(AppActions.Evaluate, "Evaluate Expression...", (d, c) => d.view.FocusEvaluate(c.Symbol ?? string.Empty), (d, _) => d.NotPaused(), new("Run", 1, 9));
+        Add(AppActions.Evaluate, "Evaluate Expression…", (d, c) => d.view.FocusEvaluate(c.Symbol ?? string.Empty), (d, _) => d.NotPaused(), new("Run", 1, 9));
         Add(AppActions.AddToWatches, "Add to Watches", (d, c) => _ = d.Evaluate(c.Symbol!, watch: true),
             (d, c) => d.NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
         // In Rider's Run menu after Stop, and on the Debug window's toolbar after it.
@@ -1014,10 +1014,6 @@ public sealed class DebugController : IDisposable
     }
 
     private const string NothingDebugged = "Nothing is being debugged";
-
-    /// <summary>Why the caret's line has nothing to stop at: no file is open, or its tab holds no lines (a preview, a workbook).</summary>
-    private static string? NeedsFile(ActionContext context) => context.File is not { } file ? "No file is open"
-        : file.HoldsText ? null : $"{file.Name} is {file.ShownAs}, with no lines";
 
     /// <summary>The Avalonia XAML attribute the caret is on, whose own breakpoint Toggle Breakpoint sets; null elsewhere.</summary>
     public static string? AttributeAtCaret(ActionContext context) =>

@@ -865,7 +865,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             said = string.Concat(commit.Content.OfType<TextContentBlock>().Select(t => t.Text));
             Assert.True(commit.IsError == true, $"Commit in a folder with no repository was answered as run: {said}");
             Assert.Contains("not in a Git repository", said, StringComparison.Ordinal);
-            Assert.False(window.DockHost.IsShown("commit"), "Commit, refused for want of a repository, opened the Commit window anyway");
+            Assert.False(window.DockHost.IsShown(ToolWindowIds.Commit), "Commit, refused for want of a repository, opened the Commit window anyway");
         }
         finally
         {

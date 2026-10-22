@@ -19,16 +19,16 @@ public partial class MainWindow
         hierarchy = new HierarchyView();
         hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
         hierarchy.Failed += (_, why) => status.Text = why;
-        Dock.Add(new Docking.ToolWindow("hierarchy", "Hierarchy", "Icon.Hierarchy", hierarchy, Docking.ToolAnchor.RightTop));
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Hierarchy, "Hierarchy", "Icon.Hierarchy", hierarchy, Docking.ToolAnchor.RightTop));
         // What the server finds at the caret, or why it found nothing, the status bar says as it answers.
         actions!.Add(new IdeAction(AppActions.CallHierarchy, "Call Hierarchy", "IDE", context => _ = ShowCallHierarchyAsync())
         {
-            WhyNot = NeedsFile,
+            WhyNot = Refusals.NeedsFile,
             Menus = [new MenuPlace("Navigate", 2, 6)],
         });
         actions.Add(new IdeAction(AppActions.TypeHierarchy, "Type Hierarchy", "IDE", context => _ = ShowTypeHierarchyAsync())
         {
-            WhyNot = NeedsFile,
+            WhyNot = Refusals.NeedsFile,
             Menus = [new MenuPlace("Navigate", 2, 7)],
         });
     }
@@ -41,7 +41,7 @@ public partial class MainWindow
         {
             return why;
         }
-        ShowToolWindow("hierarchy");
+        ShowToolWindow(ToolWindowIds.Hierarchy);
         await Hierarchy.ShowAsync($"Calls of {item.Name}", Node(item, ServerPlaces.Texts(Editors)), new HierarchyDirection("Callers", async of =>
             Nodes(await RunningServer().IncomingCallsAsync(of), (call, texts) => Node(call.From, texts, call.FromRanges.FirstOrDefault()))),
             new HierarchyDirection("Callees", async of => Nodes(await RunningServer().OutgoingCallsAsync(of), (call, texts) => Node(call.To, texts))));
@@ -56,7 +56,7 @@ public partial class MainWindow
         {
             return why;
         }
-        ShowToolWindow("hierarchy");
+        ShowToolWindow(ToolWindowIds.Hierarchy);
         await Hierarchy.ShowAsync($"Hierarchy of {item.Name}", Node(item, ServerPlaces.Texts(Editors)),
             new HierarchyDirection("Supertypes", async of => Nodes(await RunningServer().SupertypesAsync(of), (t, texts) => Node(t, texts))),
             new HierarchyDirection("Subtypes", async of => Nodes(await RunningServer().SubtypesAsync(of), (t, texts) => Node(t, texts))));

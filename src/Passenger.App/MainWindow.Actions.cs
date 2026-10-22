@@ -13,9 +13,6 @@ namespace Passenger.App;
 /// windows' frame). However an action is asked for, it runs through the registry, so one that cannot run says why.</summary>
 public partial class MainWindow
 {
-    private const string NoFile = "No file is open";
-    private const string NoFolder = "No folder is open";
-
     private ActionRegistry? actions;
 
     /// <summary>What the window's actions are doing that takes a while, which the toolbar's buttons and the status bar show:
@@ -78,18 +75,12 @@ public partial class MainWindow
         return new ActionContext(Editors.Active, Editors.CodeEditor, focused, tool, session.Debug.IsDebugging ? session.Debug.Session?.State : null);
     }
 
-    private static string? NeedsFile(ActionContext context) => context.File is null ? NoFile : null;
-
-    /// <summary>Why a line of the file shown cannot be acted on: none is shown, or its tab holds no lines (a preview, a workbook).</summary>
-    private static string? NeedsLines(ActionContext context) =>
-        NeedsFile(context) ?? (context.File is { HoldsText: false } file ? $"{file.Name} is {file.ShownAs}, with no lines" : null);
-
-    private string? NeedsFolder(ActionContext _) => Folder is null ? NoFolder : null;
+    private string? NeedsFolder(ActionContext _) => Folder is null ? Refusals.NoFolder : null;
 
     /// <summary>The scope of the rows chosen in the Explorer while it has the keys, as Rider's Find in Files takes the
     /// Solution view's selection; null elsewhere, for the scope kept.</summary>
     private Workspace.SearchScope? ExplorerScope(ActionContext context) =>
-        context.ToolWindow?.Id == "explorer" && Explorer.SelectedNodes is { Count: > 0 } rows ? ScopeOf(rows) : null;
+        context.ToolWindow?.Id == ToolWindowIds.Explorer && Explorer.SelectedNodes is { Count: > 0 } rows ? ScopeOf(rows) : null;
 
     /// <summary>The window's own actions; each feature's partial or controller adds its own beside them.</summary>
     private void AddActions()
@@ -108,22 +99,22 @@ public partial class MainWindow
             ShowStop();
         };
         AddEditing();
-        Add(A.Open, "Open...", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
+        Add(A.Open, "Open…", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
         actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 2, 0)] });
-        Add(A.Save, "Save", "IDE", context => _ = SaveExplicitly(all: false), NeedsFile, ("File", 1, 0));
+        Add(A.Save, "Save", "IDE", context => _ = SaveExplicitly(all: false), Refusals.NeedsFile, ("File", 1, 0));
         Add(A.SaveAll, "Save All", "IDE", context => _ = SaveExplicitly(all: true), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
         // Quit is the application menu's on macOS; either closes every window, as Rider's does.
         Add(A.Exit, "Exit", "IDE", _ => PassengerApp.Quit(), menu: OperatingSystem.IsMacOS() ? null : ("File", 4, 0));
-        Add(A.FindAction, "Find Action...", "IDE", _ => ShowFindAction(), menu: ("Help", 0, 0));
+        Add(A.FindAction, "Find Action…", "IDE", _ => ShowFindAction(), menu: ("Help", 0, 0));
 
         // Rider's Unit Tests window takes Find's keys for its search while it has them.
         Add(A.Find, "Find", "IDE", c =>
         {
-            if (c.ToolWindow?.Id == "tests")
+            if (c.ToolWindow?.Id == ToolWindowIds.Tests)
             {
                 Bottom.Tests.FocusSearch();
             }
-            else if (c.ToolWindow?.Id == "containers")
+            else if (c.ToolWindow?.Id == ToolWindowIds.Containers)
             {
                 ContainersWindow.Log.OpenFind();
             }
@@ -131,22 +122,22 @@ public partial class MainWindow
             {
                 Editors.ShowFind(replace: false);
             }
-        }, c => c.ToolWindow?.Id is "tests" or "containers" ? null : NeedsFile(c), ("Edit/Find", 0, 0));
-        Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), NeedsFile, ("Edit/Find", 0, 1));
-        Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), NeedsFile, ("Edit/Find", 0, 2));
-        Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), NeedsFile, ("Edit/Find", 0, 3));
-        Add(A.FindInFiles, "Find in Files...", "IDE", c => ShowFindInFiles(replace: false, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 0));
-        Add(A.ReplaceInFiles, "Replace in Files...", "IDE", c => ShowFindInFiles(replace: true, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 1));
-        Add(A.ExtendSelection, "Extend Selection", "Editor", _ => ExtendSelection(), NeedsFile, ("Edit", 2, 1));
-        Add(A.ShrinkSelection, "Shrink Selection", "Editor", _ => ShrinkSelection(), NeedsFile, ("Edit", 2, 2));
+        }, c => c.ToolWindow?.Id is ToolWindowIds.Tests or ToolWindowIds.Containers ? null : Refusals.NeedsFile(c), ("Edit/Find", 0, 0));
+        Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), Refusals.NeedsFile, ("Edit/Find", 0, 1));
+        Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), Refusals.NeedsFile, ("Edit/Find", 0, 2));
+        Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), Refusals.NeedsFile, ("Edit/Find", 0, 3));
+        Add(A.FindInFiles, "Find in Files…", "IDE", c => ShowFindInFiles(replace: false, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 0));
+        Add(A.ReplaceInFiles, "Replace in Files…", "IDE", c => ShowFindInFiles(replace: true, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 1));
+        Add(A.ExtendSelection, "Extend Selection", "Editor", _ => ExtendSelection(), Refusals.NeedsFile, ("Edit", 2, 1));
+        Add(A.ShrinkSelection, "Shrink Selection", "Editor", _ => ShrinkSelection(), Refusals.NeedsFile, ("Edit", 2, 2));
 
         Add(A.Back, "Back", "Navigate", _ => navigator.StepHistory(-1), menu: ("Navigate", 0, 0));
         Add(A.Forward, "Forward", "Navigate", _ => navigator.StepHistory(1), menu: ("Navigate", 0, 1));
         Add(A.GoToEverything, "Search Everywhere", "Navigate", _ => navigator.ShowGoToEverything(), NeedsFolder, ("Navigate", 1, 0));
         Add(A.GoToFile, "Go to File", "Navigate", _ => navigator.ShowGoToFile(), NeedsFolder, ("Navigate", 1, 1));
         Add(A.GoToSymbol, "Go to Symbol", "Navigate", _ => navigator.ShowGoToSymbol(), NeedsFolder, ("Navigate", 1, 2));
-        Add(A.GoToLine, "Go to Line:Column", "Navigate", _ => navigator.ShowGoToLine(), NeedsLines, ("Navigate", 1, 3));
-        Add(A.FileStructure, "File Structure", "Navigate", _ => navigator.ShowFileStructure(), NeedsFile, ("Navigate", 1, 4));
+        Add(A.GoToLine, "Go to Line:Column", "Navigate", _ => navigator.ShowGoToLine(), Refusals.NeedsLines, ("Navigate", 1, 3));
+        Add(A.FileStructure, "File Structure", "Navigate", _ => navigator.ShowFileStructure(), Refusals.NeedsFile, ("Navigate", 1, 4));
 
         AddBuilding();
         AddPublishing();
@@ -160,7 +151,7 @@ public partial class MainWindow
         actions.Add(new IdeAction(A.MaximizeToolWindow, "Maximize Tool Window", "Tool Windows", _ => Dock.ToggleMaximize()) { Menus = [new("View", 3, 0)], FromTerminal = true });
         actions.Add(new IdeAction(A.HideAllToolWindows, "Hide All Tool Windows", "Tool Windows", _ => Dock.ToggleHideAll()) { Menus = [new("View", 3, 1)], FromTerminal = true });
         actions.Add(new IdeAction(A.HideToolWindow, "Hide Active Tool Window", "Tool Windows", _ => HideToolWindow()) { Menus = [new("View", 3, 2)], FromTerminal = true });
-        Add(A.FocusEditor, "Focus Editor", "IDE", _ => FocusEditor(), NeedsFile);
+        Add(A.FocusEditor, "Focus Editor", "IDE", _ => FocusEditor(), Refusals.NeedsFile);
         Add(A.ToggleSolutionAnalysis, "Toggle Solution-Wide Analysis", "IDE", _ => ToggleSolutionAnalysis(),
             _ => session.CSharp is null ? "No C# language server runs for this folder" : null, ("Code", 4, 0));
     }
@@ -201,7 +192,7 @@ public partial class MainWindow
             {
                 InEditor = true,
                 WhyNot = context => ExplorerEdits(id, context) ? WhyNotOnRow(id, context)
-                    : context.File is null && context.Focused is not (TextBox or CodeEditor) ? NoFile : null,
+                    : context.File is null && context.Focused is not (TextBox or CodeEditor) ? Refusals.NoFile : null,
                 TitleIn = id == E.Delete ? context => DeleteTitle(context) ?? title : null,
                 Menus = menus.GetValueOrDefault(id, []),
             });
@@ -247,7 +238,7 @@ public partial class MainWindow
         Add(A.RunProgram, "Run", "Run", _ => RunSelected(), _ => Unconfigured("run"), ("Run", 0, 0));
         Add(A.Debug, "Debug", "Run", _ => DebugSelected(), _ => Unconfigured("debug"), ("Run", 0, 1));
         // Rider's Run menu has it after Run, Debug and Attach to Process, with no key in its Visual Studio keymaps.
-        Add(A.EditConfigurations, "Edit Configurations...", "Run", _ => ShowRunConfigurations(), NeedsFolder, ("Run", 0, 5));
+        Add(A.EditConfigurations, "Edit Configurations…", "Run", _ => ShowRunConfigurations(), NeedsFolder, ("Run", 0, 5));
         // Rerun runs the last session again, under the debugger when that is how it runs, attached again when it was attached:
         // as Rider's, one still running is stopped first, where Run said it was already running.
         Add(A.Rerun, "Rerun", "Run", c =>
@@ -268,7 +259,7 @@ public partial class MainWindow
         Add(A.Stop, "Stop", "Run", _ => buildRun.Stop(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
         // Every program debugged, where Stop ends the one chosen in the Debug window.
         Add(A.StopAll, "Stop All", "Run", context => _ = buildRun.StopAllAsync(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
-        Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
+        Add(A.EditBreakpoint, "Edit Breakpoint…", "Debug", c =>
         {
             int line = c.Caret.Line;
             string? attribute = Debugging.DebugController.AttributeAtCaret(c);
@@ -287,8 +278,8 @@ public partial class MainWindow
                 editing = session.Debug.Breakpoints.In(c.File.Path).First(b => b.Line == line && b.Attribute == attribute);
             }
             ShowBreakpointPopup(editing);
-        }, NeedsFile, ("Run", 2, 2));
-        Add(A.ViewBreakpoints, "View Breakpoints and Exceptions...", "Debug", _ => ShowBreakpoints(null), menu: ("Run", 2, 3));
+        }, Refusals.NeedsFile, ("Run", 2, 2));
+        Add(A.ViewBreakpoints, "View Breakpoints and Exceptions…", "Debug", _ => ShowBreakpoints(null), menu: ("Run", 2, 3));
 
         string? Unbuildable(ActionContext _) => Folder is null ? "Nothing to build: no folder is open" : IsBuilding ? "Another build is running" : null;
 
@@ -319,12 +310,12 @@ public partial class MainWindow
 
     /// <summary>The projects chosen in the Explorer, a solution folder's those under it, while it has the keys.</summary>
     private IReadOnlyList<string>? ChosenProjects(ActionContext context) =>
-        context.ToolWindow?.Id == "explorer" && context.Row is IReadOnlyList<Explorer.ExplorerNode> rows
+        context.ToolWindow?.Id == ToolWindowIds.Explorer && context.Row is IReadOnlyList<Explorer.ExplorerNode> rows
             && rows.SelectMany(Explorer.Tree.ProjectsOf).Distinct().ToList() is { Count: > 0 } projects ? projects : null;
 
     /// <summary>The Unit Tests window's chosen rows, while it has the keys.</summary>
     private static IReadOnlyList<Testing.TestNode>? ChosenTests(ActionContext context) =>
-        context.ToolWindow?.Id == "tests" && context.Row is IReadOnlyList<Testing.TestNode> { Count: > 0 } chosen ? chosen : null;
+        context.ToolWindow?.Id == ToolWindowIds.Tests && context.Row is IReadOnlyList<Testing.TestNode> { Count: > 0 } chosen ? chosen : null;
 
     private static (string Type, string? Method)? TestAtCaret(ActionContext context) =>
         context.File?.Syntax is { } syntax ? Testing.TestsAtCaret.At(syntax.Current, context.Caret.Line) : null;

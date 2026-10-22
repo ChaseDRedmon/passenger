@@ -20,7 +20,7 @@ public partial class MainWindow
         commitView.MergeRequested += (_, path) => _ = MergeAsync(path);
         commitView.Confirm = (title, text, yes) => Confirm(title, text, yes);
 
-        Add(AppActions.ResolveConflicts, "Resolve Conflicts...", _ => ShowConflicts(), 5,
+        Add(AppActions.ResolveConflicts, "Resolve Conflicts…", _ => ShowConflicts(), 5,
             () => session.Vcs.Conflicts.Count == 0 ? "No conflicts found" : null);
         Add(AppActions.ContinueRebase, "Continue Rebase", context => _ = session.Vcs.ContinueRebaseAsync(), 6, NoRebase);
         Add(AppActions.AbortRebase, "Abort Rebase", context => _ = AbortAsync("Abort Rebase", $"Abort rebase in {Path.GetFileName(session.Vcs.Repository?.Root)}?"), 7, NoRebase);

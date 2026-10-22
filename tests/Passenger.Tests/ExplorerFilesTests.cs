@@ -322,9 +322,9 @@ public sealed class ExplorerFilesTests : IDisposable
         try
         {
             // From the row's menu.
-            ChooseFromMenu(window, Row(window, "One.txt"), "Edit", "Rename...");
+            ChooseFromMenu(window, Row(window, "One.txt"), "Edit", "Rename…");
             Renamed(window, "Uno.txt");
-            ChooseFromMenu(window, Row(window, "Uno.txt"), "Edit", "Delete...");
+            ChooseFromMenu(window, Row(window, "Uno.txt"), "Edit", "Delete…");
             Gone(window, "Uno.txt", "the delete from the row's menu");
             ChooseFromMenu(window, Row(window, "Four.txt"), "Open In", FileManager.Name);
             Assert.Equal([Row(window, "Four.txt").Path!], window.ShownInFileManager);
@@ -393,7 +393,7 @@ public sealed class ExplorerFilesTests : IDisposable
         window.ExplorerView.Choose(row);
         window.ExplorerView.FocusRows();
         Ui.Settle();
-        Assert.True(window.Actions.Context().ToolWindow?.Id == "explorer", $"The Explorer did not take the keys on {row.Name}");
+        Assert.True(window.Actions.Context().ToolWindow?.Id == ToolWindowIds.Explorer, $"The Explorer did not take the keys on {row.Name}");
     }
 
     /// <summary>Opens a row's menu as a right click does and clicks an item of one of its submenus.</summary>

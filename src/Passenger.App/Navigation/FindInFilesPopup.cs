@@ -421,7 +421,7 @@ public sealed class FindInFilesPopup : UserControl
             Show([], problem, (asked, where));
             return;
         }
-        status.Text = "Searching...";
+        status.Text = "Searching…";
         try
         {
             IReadOnlyList<SearchMatch> found = await search(asked, where, cancel.Token);

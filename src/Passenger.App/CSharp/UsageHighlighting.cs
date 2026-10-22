@@ -65,7 +65,7 @@ public sealed class UsageHighlighting
     public void AddActions(ActionRegistry actions) =>
         actions.Add(new IdeAction(AppActions.HighlightUsages, "Highlight Usages in File", "Code", context => _ = HighlightInFile())
         {
-            WhyNot = context => context.File is null ? "No file is open"
+            WhyNot = context => context.File is null ? Refusals.NoFile
                 : service()?.For(context.File) is not null ? null
                 : service() is null ? "No C# language server runs for this folder"
                 : "The file is not C#",

@@ -70,10 +70,10 @@ public sealed partial class McpTests
 
         // The panel's margin to a resource of the window's, under a name of the agent's, among the places the dialog offers.
         Dictionary<string, object?> margin = At(window, "MainWindow.axaml", "<StackPanel Margin=\"1");
-        Assert.Equal(["Extract Resource... [refactor.extract], choices: MainWindow.axaml <Window.Resources>; App.axaml <Application.Resources>; Palette.axaml <ResourceDictionary>",
-            "Extract Style... [refactor.extract], choices: MainWindow.axaml <Window.Styles>; App.axaml <Application.Styles>"], Strings(await Call(client, "code_actions", margin)));
+        Assert.Equal(["Extract Resource… [refactor.extract], choices: MainWindow.axaml <Window.Resources>; App.axaml <Application.Resources>; Palette.axaml <ResourceDictionary>",
+            "Extract Style… [refactor.extract], choices: MainWindow.axaml <Window.Styles>; App.axaml <Application.Styles>"], Strings(await Call(client, "code_actions", margin)));
         Assert.Equal("Extracted resource 'PanelMargin' to MainWindow.axaml <Window.Resources>", (await Call(client, "apply_code_action",
-            new(margin) { ["title"] = "Extract Resource...", ["choice"] = "MainWindow.axaml <Window.Resources>", ["name"] = "PanelMargin" })).GetString());
+            new(margin) { ["title"] = "Extract Resource…", ["choice"] = "MainWindow.axaml <Window.Resources>", ["name"] = "PanelMargin" })).GetString());
         window = File.ReadAllText(Path.Combine(gallery, "MainWindow.axaml"));
         Assert.True(window.Contains("<Thickness x:Key=\"PanelMargin\">12</Thickness>", StringComparison.Ordinal)
             && window.Contains("<StackPanel Margin=\"{StaticResource PanelMargin}\"", StringComparison.Ordinal), $"Extract Resource did not reach the file on disk:\n{window}");
@@ -118,15 +118,15 @@ public sealed partial class McpTests
             $"The button's name was not found where its file and its code-behind use it: {string.Join(" | ", named)}");
 
         Dictionary<string, object?> margin = At(window, "MainWindow.xaml", "<StackPanel Margin=\"1");
-        Assert.Contains("Extract Resource... [refactor.extract], choices: MainWindow.xaml <Window.Resources>; App.xaml <Application.Resources>; Brushes.xaml <ResourceDictionary>",
+        Assert.Contains("Extract Resource… [refactor.extract], choices: MainWindow.xaml <Window.Resources>; App.xaml <Application.Resources>; Brushes.xaml <ResourceDictionary>",
             Strings(await Call(client, "code_actions", margin)));
         // A choice the action does not offer is refused, naming those it does.
-        CallToolResult nowhere = await Result(client, "apply_code_action", new(margin) { ["title"] = "Extract Resource...", ["choice"] = "Elsewhere" });
+        CallToolResult nowhere = await Result(client, "apply_code_action", new(margin) { ["title"] = "Extract Resource…", ["choice"] = "Elsewhere" });
         Assert.True(nowhere.IsError == true && Text(nowhere).Contains("it can go in: MainWindow.xaml <Window.Resources>", StringComparison.Ordinal),
             $"Extract Resource to a place it does not offer answered: {Text(nowhere)}");
         Dictionary<string, object?> button = At(window, "MainWindow.xaml", "<Butt");
         Assert.Equal("Extracted 2 properties of Button (Content, Background) to style 'ButtonStyle' in MainWindow.xaml <Window.Resources>",
-            (await Call(client, "apply_code_action", new(button) { ["title"] = "Extract Style...", ["choice"] = "MainWindow.xaml <Window.Resources>" })).GetString());
+            (await Call(client, "apply_code_action", new(button) { ["title"] = "Extract Style…", ["choice"] = "MainWindow.xaml <Window.Resources>" })).GetString());
         Assert.Contains("<Style x:Key=\"ButtonStyle\" TargetType=\"Button\">", File.ReadAllText(Path.Combine(gallery, "MainWindow.xaml")), StringComparison.Ordinal);
 
         string renamed = (await Call(client, "rename", new(At(File.ReadAllText(Path.Combine(gallery, "MainWindow.xaml")), "MainWindow.xaml", "x:Name=\"G")) { ["newName"] = "Start" })).GetString()!;

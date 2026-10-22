@@ -143,7 +143,7 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
         List<(string Title, string Text)> asked = Answer(window);
         PlaceAfter(window, "class Circ");
         Ui.Run(window, AppActions.Move);
-        Assert.Equal(["Move to Another File...", "Move to Namespace..."], window.Assist.Offered);
+        Assert.Equal(["Move to Another File…", "Move to Namespace…"], window.Assist.Offered);
         Ui.Press(window, "ENTER");
         MoveTypeDialog dialog = Shown<MoveTypeDialog>(window, "Move to Another File");
         Assert.Equal("Circle.cs", dialog.TargetBox.Text);

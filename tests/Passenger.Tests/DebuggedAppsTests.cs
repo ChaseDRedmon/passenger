@@ -128,7 +128,7 @@ public sealed class DebuggedAppsTests : IClassFixture<RestoredFolders>, IDisposa
     /// <summary>A click on a program's tab in the Debug window's header, as a person picks the one shown.</summary>
     private static void ChooseTab(MainWindow window, string name)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         Ui.Settle();
         ToggleButton tab = window.BottomPanel.Debug.HeaderTools.GetVisualDescendants().OfType<ToggleButton>()
             .First(button => button.GetVisualDescendants().OfType<TextBlock>().First().Text == name);

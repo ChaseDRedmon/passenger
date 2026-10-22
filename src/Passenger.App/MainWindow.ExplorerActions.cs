@@ -22,23 +22,23 @@ public partial class MainWindow
     private void AddExplorerActions()
     {
         Explorer.MenuFor = ExplorerMenu;
-        Row(A.NewFile, "New File...", row => AskName("New File", string.Empty, name => CreateFile(NewGoesIn(row)!, name, string.Empty)), Holds);
-        Row(A.NewFolder, "New Folder...", row => AskName("New Folder", string.Empty, name => CreateFolder(NewGoesIn(row)!, name)), Holds);
+        Row(A.NewFile, "New File…", row => AskName("New File", string.Empty, name => CreateFile(NewGoesIn(row)!, name, string.Empty)), Holds);
+        Row(A.NewFolder, "New Folder…", row => AskName("New Folder", string.Empty, name => CreateFolder(NewGoesIn(row)!, name)), Holds);
         // Rider's C# file templates share this place: Class, Interface, Record, Struct and Enum, chosen in its popup.
-        Row(A.NewType, "Class/Interface...", row => AskType(NewGoesIn(row)!), Holds);
-        Row(A.NewSolutionFolder, "New Solution Folder...", row => AskName("New Solution Folder", string.Empty, name => AddSolutionFolder(row.SolutionPath, name)),
+        Row(A.NewType, "Class/Interface…", row => AskType(NewGoesIn(row)!), Holds);
+        Row(A.NewSolutionFolder, "New Solution Folder…", row => AskName("New Solution Folder", string.Empty, name => AddSolutionFolder(row.SolutionPath, name)),
             row => row.Kind is NodeKind.Solution or NodeKind.SolutionFolder ? null : "A solution folder goes in the solution or one of its folders");
-        Row(A.AddExistingProject, "Add Existing Project...", row => _ = AddExistingProjectsAsync(row.SolutionPath),
-            row => row.Kind is NodeKind.Solution or NodeKind.SolutionFolder ? null : "A project is added to the solution or one of its folders", _ => "Existing Project...");
-        Row(A.AddExistingItem, "Add Existing Item...", row => _ = AddExistingItemsAsync(row.SolutionPath!),
-            row => row is { Kind: NodeKind.SolutionFolder, SolutionPath: not null } ? null : "An existing item is added to a solution folder", _ => "Existing Item...");
-        Row(A.AddReference, "Add Reference...", row => ShowAddReference(Referencing(row)!),
-            row => Referencing(row) is null ? $"{row.Name} takes no reference" : null, row => row.Kind == NodeKind.Project ? "Reference..." : "Add Reference...");
-        Row(A.AddDockerSupport, "Add Docker Support...", row => ShowDockerSupport(row.Path!),
-            row => row is { Kind: NodeKind.Project, Path: not null } ? null : "Docker support is added to a project", _ => "Docker Support...");
-        Row(A.AddDockerCompose, "Add Docker Compose...", _ => ShowDockerCompose(),
-            row => row.Kind == NodeKind.Solution ? null : "Docker Compose is added to the solution", _ => "Docker Compose...");
-        Row(A.ManageNuGet, "Manage NuGet Packages", _ => ShowToolWindow("nuget"),
+        Row(A.AddExistingProject, "Add Existing Project…", row => _ = AddExistingProjectsAsync(row.SolutionPath),
+            row => row.Kind is NodeKind.Solution or NodeKind.SolutionFolder ? null : "A project is added to the solution or one of its folders", _ => "Existing Project…");
+        Row(A.AddExistingItem, "Add Existing Item…", row => _ = AddExistingItemsAsync(row.SolutionPath!),
+            row => row is { Kind: NodeKind.SolutionFolder, SolutionPath: not null } ? null : "An existing item is added to a solution folder", _ => "Existing Item…");
+        Row(A.AddReference, "Add Reference…", row => ShowAddReference(Referencing(row)!),
+            row => Referencing(row) is null ? $"{row.Name} takes no reference" : null, row => row.Kind == NodeKind.Project ? "Reference…" : "Add Reference…");
+        Row(A.AddDockerSupport, "Add Docker Support…", row => ShowDockerSupport(row.Path!),
+            row => row is { Kind: NodeKind.Project, Path: not null } ? null : "Docker support is added to a project", _ => "Docker Support…");
+        Row(A.AddDockerCompose, "Add Docker Compose…", _ => ShowDockerCompose(),
+            row => row.Kind == NodeKind.Solution ? null : "Docker Compose is added to the solution", _ => "Docker Compose…");
+        Row(A.ManageNuGet, "Manage NuGet Packages", _ => ShowToolWindow(ToolWindowIds.NuGet),
             row => row is { Kind: NodeKind.Project } or { Kind: NodeKind.Dependencies, Owner: not null } ? null : $"{row.Name} has no packages");
         Row(A.EditProjectFile, "Edit Project File", row => OpenFile(row.Path!), row => row is { Kind: NodeKind.Project, Path: not null } ? null : $"{row.Name} is not a project");
         Row(A.UnloadProject, "Unload Project", row => SetUnloaded(row.Path!, true),
@@ -49,7 +49,7 @@ public partial class MainWindow
         actions!.Add(new IdeAction(A.CompareFiles, "Compare Files", ExplorerGroup, c => _ = CompareAsync(RowOf(c)!))
         {
             WhyNot = c => RowOf(c) is not { } row ? NoRow : row is { Kind: NodeKind.File, IsSolutionItem: false, Path: not null } ? null : "Choose a file in the Explorer",
-            TitleIn = c => RowOf(c) is { } row && Explorer.SelectedNodes.Contains(row) && Explorer.SelectedNodes.Count(n => n.IsFile) == 2 ? "Compare Files" : "Compare With...",
+            TitleIn = c => RowOf(c) is { } row && Explorer.SelectedNodes.Contains(row) && Explorer.SelectedNodes.Count(n => n.IsFile) == 2 ? "Compare Files" : "Compare With…",
             // Rider's CompareTwoFiles is $default's Ctrl+D: the editor's Duplicate keys in Visual Studio's keymap off macOS,
             // Cmd+D of its own on macOS (AppActions), none in VS Code's.
             KeysOf = () => AppActions.Preset == KeymapPreset.VisualStudio && !OperatingSystem.IsMacOS() ? E.Duplicate : null,
@@ -59,7 +59,7 @@ public partial class MainWindow
         OnDisk(A.RevealInFileManager, FileManager.Showing, ShowInFileManager, FileManager.Name);
         OnDisk(A.OpenInTerminal, "Open in Terminal", path => _ = OpenTerminalAt(Directory.Exists(path) ? path : Path.GetDirectoryName(path)!), "Terminal");
         // Rider's RenameElement: the Explorer's row where its menu or keys ask, else what is at the editor's caret.
-        actions.Add(new IdeAction(A.Rename, "Rename...", "Code", c =>
+        actions.Add(new IdeAction(A.Rename, "Rename…", "Code", c =>
         {
             if (RowOf(c) is { } row)
             {
@@ -91,7 +91,7 @@ public partial class MainWindow
     private void OnDisk(string id, string title, Action<string> run, string? titleInMenu = null) =>
         actions!.Add(new IdeAction(id, title, ExplorerGroup, c => run(PathOnDisk(c)!))
         {
-            WhyNot = c => PathOnDisk(c) is not null ? null : RowOf(c) is { } row ? $"{row.Name} is in no folder on disk" : NoFile,
+            WhyNot = c => PathOnDisk(c) is not null ? null : RowOf(c) is { } row ? $"{row.Name} is in no folder on disk" : Refusals.NoFile,
             TitleIn = titleInMenu is null ? null : c => c.ExplorerRow is null ? title : titleInMenu,
         });
 
@@ -104,7 +104,7 @@ public partial class MainWindow
     private ExplorerNode? RowOf(ActionContext context) => context.ExplorerRow ?? (ExplorerHasKeys(context) ? Explorer.Selected : null);
 
     private static bool ExplorerHasKeys(ActionContext context) =>
-        context.ExplorerRow is not null || context.ToolWindow?.Id == "explorer" && context.Focused is not TextBox;
+        context.ExplorerRow is not null || context.ToolWindow?.Id == ToolWindowIds.Explorer && context.Focused is not TextBox;
 
     /// <summary>Where something new goes from a row: into a folder or a project's folder, beside a file; nothing for what
     /// is the solution's own (made in a solution folder by its own actions) and the dependencies.</summary>
@@ -301,7 +301,7 @@ public partial class MainWindow
 
         IReadOnlyList<Control> Made(IReadOnlyList<MenuEntry> made)
         {
-            ActionContext context = new(Editors.Active, Editors.CodeEditor, FocusManager?.GetFocusedElement(), Dock["explorer"],
+            ActionContext context = new(Editors.Active, Editors.CodeEditor, FocusManager?.GetFocusedElement(), Dock[ToolWindowIds.Explorer],
                 session.Debug.IsDebugging ? session.Debug.Session?.State : null)
             {
                 ExplorerRow = node,

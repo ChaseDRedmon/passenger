@@ -397,9 +397,9 @@ public sealed partial class PassengerTools
         return offered;
     }
 
-    private const string ExtractResource = "Extract Resource...";
+    private const string ExtractResource = "Extract Resource…";
 
-    private const string ExtractStyle = "Extract Style...";
+    private const string ExtractStyle = "Extract Style…";
 
     /// <summary>A XAML fix or refactoring made as choosing it in the window makes it, as one command, and the files saved:
     /// Extract Resource and Extract Style take the dialog's defaults (every use replaced; the element's properties that are

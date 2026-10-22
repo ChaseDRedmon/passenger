@@ -296,7 +296,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         Assert.True(dialog.FocusManager?.GetFocusedElement() is TextBox { Text: { } typed } && typed == dialog.Folder,
             $"Tab from the URL went to {dialog.FocusManager?.GetFocusedElement()?.GetType().Name ?? "nothing"} rather than the directory to clone into");
         Ui.Press(dialog, "Tab");
-        Assert.True(dialog.FocusManager?.GetFocusedElement() is Button { Content: "Browse..." }, "Tab from the directory did not go on to Browse...");
+        Assert.True(dialog.FocusManager?.GetFocusedElement() is Button { Content: "Browse…" }, "Tab from the directory did not go on to Browse…");
         dialog.Close();
         window.Close();
     }

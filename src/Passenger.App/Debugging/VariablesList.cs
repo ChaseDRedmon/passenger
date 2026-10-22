@@ -164,7 +164,7 @@ public sealed class VariablesList : ListBox
         }
         List<Control> items =
         [
-            ListMenus.Item("Set Value...", "F2", () => EditSelectedValue(), node.Expression is not null),
+            ListMenus.Item("Set Value…", "F2", () => EditSelectedValue(), node.Expression is not null),
             ListMenus.Item("Copy Value", null, () => _ = ListMenus.CopyAsync(this, node.Value)),
             ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, node.Name)),
             new Separator(),

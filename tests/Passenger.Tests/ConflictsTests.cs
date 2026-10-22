@@ -73,7 +73,7 @@ public sealed class ConflictsTests : IDisposable
 
         // Merge... opens the three-way window over the dialog: yours, the result (as both began) and theirs.
         dialog.Chosen = [dialog.Rows.Single()];
-        Press(dialog, "Merge...");
+        Press(dialog, "Merge…");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
         MergeWindow merge = DialogButtonsTests.Check((MergeWindow)window.Frontmost);
         MergeView view = merge.View;
@@ -163,7 +163,7 @@ public sealed class ConflictsTests : IDisposable
 
         // Prices.cs, which yours deleted, by the menu's Merge...: Accept Yours deletes it, rather than writing it empty.
         changes.SelectedItem = Row(commit, "Prices.cs");
-        Ui.ChooseFromMenu(changes, "Merge...");
+        Ui.ChooseFromMenu(changes, "Merge…");
         dialog = Chosen(window, "Prices.cs", "Deleted Modified");
         Assert.Equal("Prices.cs is only in theirs, so there is nothing to merge: Accept Theirs keeps it, Accept Yours deletes it", window.Status);
         Press(dialog, "Accept Yours");
@@ -254,7 +254,7 @@ public sealed class ConflictsTests : IDisposable
         ConflictsDialog dialog = window.ShowConflicts()!;
         Ui.Settle();
         dialog.Chosen = [dialog.Rows.Single()];
-        Press(dialog, "Merge...");
+        Press(dialog, "Merge…");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
         MergeWindow merge = (MergeWindow)window.Frontmost;
         MergeView view = merge.View;
@@ -334,7 +334,7 @@ public sealed class ConflictsTests : IDisposable
 
         // Yours is the commit being rebased, git's "theirs", on the left.
         dialog.Chosen = [dialog.Rows.Single()];
-        Press(dialog, "Merge...");
+        Press(dialog, "Merge…");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
         MergeWindow merge = (MergeWindow)window.Frontmost;
         Assert.Matches("^Rebasing [0-9a-f]{8} from main$", merge.View.Texts.Sides.LeftTitle);
@@ -434,8 +434,8 @@ public sealed class ConflictsTests : IDisposable
         Assert.True(window.Frontmost == dialog, $"The Conflicts dialog is not in front of the window, {window.Frontmost?.Title} is");
         ConflictRow row = Assert.Single(dialog.Chosen);
         Assert.Equal($"{name} {sides}", $"{row.Conflict.Name} {row.Yours} {row.Theirs}");
-        Button merge = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Button>().First(b => (b.Content as string) == "Merge...");
-        Assert.False(merge.IsEffectivelyEnabled, $"The Conflicts dialog offers Merge... for {name}, which a side lacks");
+        Button merge = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Button>().First(b => (b.Content as string) == "Merge…");
+        Assert.False(merge.IsEffectivelyEnabled, $"The Conflicts dialog offers Merge… for {name}, which a side lacks");
         return dialog;
     }
 

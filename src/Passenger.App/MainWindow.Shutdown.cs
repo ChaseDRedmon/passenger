@@ -19,7 +19,7 @@ public partial class MainWindow
         Closed += (_, _) => EndChildren();
         actions!.Add(new IdeAction(AppActions.CloseSolution, "Close Solution", "IDE", _ => CloseSolution())
         {
-            WhyNot = _ => Folder is null ? "No solution is open" : null,
+            WhyNot = _ => Folder is null ? Refusals.NoFolder : null,
             Menus = [new MenuPlace("File", 0, 5)],
         });
     }
@@ -43,7 +43,7 @@ public partial class MainWindow
         UiThread.Check();
         if (Folder is null)
         {
-            return "No solution is open";
+            return Refusals.NoFolder;
         }
         if (!Autosave())
         {

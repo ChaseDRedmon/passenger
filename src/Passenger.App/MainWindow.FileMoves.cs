@@ -311,7 +311,7 @@ public partial class MainWindow
 
     /// <summary>The editor's Delete as the Explorer's menu names it: Remove for what only leaves the solution, as Rider's.</summary>
     private string? DeleteTitle(ActionContext context) =>
-        ExplorerEdits(E.Delete, context) && RowOf(context) is { } row ? row.LeavesFilesBehind ? "Remove..." : "Delete..." : null;
+        ExplorerEdits(E.Delete, context) && RowOf(context) is { } row ? row.LeavesFilesBehind ? "Remove…" : "Delete…" : null;
 
     /// <summary>The editor's Cut, Copy, Paste or Delete run on the Explorer's row; its Undo and Redo on the last command
     /// that renamed or moved files.</summary>

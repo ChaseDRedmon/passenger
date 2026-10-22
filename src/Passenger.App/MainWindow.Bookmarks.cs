@@ -18,7 +18,7 @@ public partial class MainWindow
         bookmarksView = new(session.Bookmarks, (path, line) =>
             Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount ? open.Text.Snapshot.GetLineText(line) : string.Empty);
         bookmarksView.GoToRequested += (_, bookmark) => NavigateTo(bookmark.Path, new TextPosition(bookmark.Line, 0));
-        Dock.Add(new Docking.ToolWindow("bookmarks", "Bookmarks", "Icon.Bookmark", bookmarksView, Docking.ToolAnchor.LeftBottom)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Bookmarks, "Bookmarks", "Icon.Bookmark", bookmarksView, Docking.ToolAnchor.LeftBottom)
         {
             Action = AppActions.ShowBookmarks,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, 3)],
@@ -57,7 +57,7 @@ public partial class MainWindow
     {
         actions!.Add(new IdeAction(AppActions.ToggleBookmark, "Toggle Bookmark", "Bookmarks", context => session.Bookmarks.Toggle(context.File!.Path, context.Caret.Line))
         {
-            WhyNot = NeedsLines,
+            WhyNot = Refusals.NeedsLines,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, 0)],
         });
         Step(AppActions.NextBookmark, "Next Bookmark", 1);

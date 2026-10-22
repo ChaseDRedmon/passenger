@@ -425,7 +425,7 @@ public sealed class ProfilerView : DockPanel
             Fill(whole);
             return;
         }
-        status.Text = $"{snapshotName}: reading {span.From - whole.StartMs:N0} to {span.To - whole.StartMs:N0} ms...";
+        status.Text = $"{snapshotName}: reading {span.From - whole.StartMs:N0} to {span.To - whole.StartMs:N0} ms…";
         Snapshot within = await BackgroundWork.Run(() => whole.Within(span.From, span.To));
         if (chosen == choosing)
         {

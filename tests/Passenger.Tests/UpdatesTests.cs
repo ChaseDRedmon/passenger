@@ -647,15 +647,15 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         NativeMenuItem item;
         if (OperatingSystem.IsMacOS())
         {
-            Assert.DoesNotContain("Check for Updates...", helpItems);
+            Assert.DoesNotContain("Check for Updates…", helpItems);
             string[] application = [.. window.ApplicationMenu().Items.Select(i => (i as NativeMenuItem)?.Header ?? "-")];
-            Assert.Equal(["About Passenger", "Check for Updates...", "-", "Settings..."], application);
-            item = window.ApplicationMenu().Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
+            Assert.Equal(["About Passenger", "Check for Updates…", "-", "Settings…"], application);
+            item = window.ApplicationMenu().Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates…");
         }
         else
         {
-            Assert.Equal(["Check for Updates...", "About"], helpItems[^2..]);
-            item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates...");
+            Assert.Equal(["Check for Updates…", "About"], helpItems[^2..]);
+            item = help.Items.OfType<NativeMenuItem>().First(i => i.Header == "Check for Updates…");
         }
         item.Command!.Execute(null);
         Ui.Settle();

@@ -21,7 +21,7 @@ public partial class MainWindow
     private void AddFind()
     {
         find = new FindView(path => TextOf(path)?.ToString());
-        Dock.Add(new Docking.ToolWindow("find", "Find", "Icon.Search", find, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowFind, ActionTitle = "Find Tool Window" });
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Find, "Find", "Icon.Search", find, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowFind, ActionTitle = "Find Tool Window" });
         find.GoToRequested += (_, usage) => NavigateTo(usage.Path, new TextPosition(usage.Line, usage.Column));
         assist.UsagesFound += (_, found) => ShowUsages(found.Title, found.Usages);
     }
@@ -76,7 +76,7 @@ public partial class MainWindow
             return;
         }
         Find.Show(title, usages);
-        ShowToolWindow("find");
+        ShowToolWindow(ToolWindowIds.Find);
         status.Text = $"{title}: {usages.Count} found";
     }
 }

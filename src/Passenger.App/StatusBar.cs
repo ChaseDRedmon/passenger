@@ -19,7 +19,7 @@ public sealed record StatusPlace(string Name, Action Go)
     public static StatusPlace Problems(DockHost dock, ProblemsView problems, ProblemsTab tab, Func<Problem, bool>? which = null) =>
         new($"see it in Problems, {ProblemsView.TitleOf(tab)}", () =>
         {
-            dock.Show("problems");
+            dock.Show(ToolWindowIds.Problems);
             problems.Reveal(tab, which);
         });
 

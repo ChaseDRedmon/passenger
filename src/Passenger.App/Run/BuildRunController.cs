@@ -131,7 +131,7 @@ public sealed partial class BuildRunController
         {
             parts.Views.Run.SetRunning(false);
             RunningChanged?.Invoke(this, EventArgs.Empty);
-            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, "run"));
+            parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
         };
     }
 
@@ -253,7 +253,7 @@ public sealed partial class BuildRunController
         parts.Views.Build.SetRunning(true);
         if (OpensBuildWindow(cause))
         {
-            parts.Dock.Show("build");
+            parts.Dock.Show(ToolWindowIds.Build);
         }
         building = new TaskCompletionSource();
         BackgroundWork.Track(building.Task);
@@ -396,7 +396,7 @@ public sealed partial class BuildRunController
         parts.Say(outcome.Message, Place(outcome));
         if (ShowsBuildResults(outcome))
         {
-            parts.Dock.Show("build");
+            parts.Dock.Show(ToolWindowIds.Build);
         }
         try
         {
@@ -415,7 +415,7 @@ public sealed partial class BuildRunController
         ended is { Succeeded: true, Published: { } folder } && parts.ShowFolder is { } show
             ? new StatusPlace($"open {Path.GetFileName(folder)} in {FileManager.Name}", () => show(folder))
         : ended.Problems.Count > 0 ? StatusPlace.Problems(parts.Dock, parts.Views.Problems, ProblemsTab.Build, _ => true)
-        : ended.Status == BuildStatus.Failed ? StatusPlace.Window(parts.Dock, "build")
+        : ended.Status == BuildStatus.Failed ? StatusPlace.Window(parts.Dock, ToolWindowIds.Build)
         : null;
 
     /// <summary>The last build's problems in the Problems window, its title counting them.</summary>
@@ -423,7 +423,7 @@ public sealed partial class BuildRunController
     {
         List<Problem> problems = session.Problems;
         parts.Views.Problems.Show(problems);
-        if (parts.Dock["problems"] is { } problemsWindow)
+        if (parts.Dock[ToolWindowIds.Problems] is { } problemsWindow)
         {
             problemsWindow.Title = problems.Count == 0 ? "Problems" : $"Problems {problems.Count}";
         }
@@ -555,7 +555,7 @@ public sealed partial class BuildRunController
             }
             session.InTerminal = null;
             parts.Views.Run.SetRunning(true);
-            parts.Dock.Show("run");
+            parts.Dock.Show(ToolWindowIds.Run);
             parts.Say(running);
             WatchBindings(inspected, parts.Views.Run);
             string? notStarted = Started(watched
@@ -636,7 +636,7 @@ public sealed partial class BuildRunController
             RunningChanged?.Invoke(this, EventArgs.Empty);
             if (session.InTerminal == run)
             {
-                parts.Say(RunEnded(name, code), StatusPlace.Window(parts.Dock, "terminal"));
+                parts.Say(RunEnded(name, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Terminal));
             }
         }
     }
@@ -736,7 +736,7 @@ public sealed partial class BuildRunController
             return why;
         }
         work.Say($"Starting {chosen.Name} under the debugger…");
-        parts.Dock.Show("debug");
+        parts.Dock.Show(ToolWindowIds.Debug);
         parts.Views.Debug.ShowTab(console: true);
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);

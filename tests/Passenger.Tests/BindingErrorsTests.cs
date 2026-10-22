@@ -74,7 +74,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
             problems.Rows.Single(r => r.Problem is not null).Detail);
 
         // Failing again, it is counted, not listed again, and the console says so.
-        window.ShowToolWindow("run");
+        window.ShowToolWindow(ToolWindowIds.Run);
         Ui.Settle();
         Type(window, run, "rebind");
         Ui.WaitFor(() => problems.BindingProblems.SingleOrDefault()?.Failure.Count == 2, "the caption's failure to be counted twice");
@@ -225,11 +225,11 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Says(window, $"paused on a binding error at MainWindow.axaml:{Misspelt.Line + 1}: TextBlock#Caption.Text to Nmae (DataContext MainViewModel): "
             + "Could not find a matching property accessor for 'Nmae' on 'BindingErrorsApp.MainViewModel'");
         // Which the status bar's words go to see in Problems' Bindings.
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         Click(window, window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
-        Assert.True(window.DockHost.IsShown("problems") && window.BottomPanel.Problems.Shown == ProblemsTab.Bindings,
-            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown("problems") ? $"Problems' {window.BottomPanel.Problems.Shown} tab" : "nothing")}, not Problems' Bindings");
-        window.ShowToolWindow("debug");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && window.BottomPanel.Problems.Shown == ProblemsTab.Bindings,
+            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {window.BottomPanel.Problems.Shown} tab" : "nothing")}, not Problems' Bindings");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         Assert.Contains(window.EditorArea.CodeEditor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception && a.Text.StartsWith("Binding error at MainWindow.axaml", StringComparison.Ordinal));
         // $bindingError above the frame's values, as $exception is, opening into the failure.
         Assert.Equal("\"Nmae\"", Member(window, "$bindingError", "Path"));
@@ -366,7 +366,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         Assert.DoesNotContain(LiveApp.NotAnswered(window.LiveApp!.Name), tree.StatusLine, StringComparison.Ordinal);
 
         // Calmed, the app says how many failures Avalonia logged in all.
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.PumpUntil(() => console.Editor.IsEffectivelyVisible && console.Editor.Bounds.Width > 0, "the Debug window's console to show");
         console.Editor.Focus();
@@ -472,7 +472,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
     /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
     private static void Say(MainWindow window, string line)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.Settle();
         Type(window, window.BottomPanel.Debug.Console, line);

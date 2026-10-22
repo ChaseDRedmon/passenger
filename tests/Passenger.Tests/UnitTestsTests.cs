@@ -277,19 +277,19 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
     {
         MainWindow window = Open();
         Assert.True(window.Perform(AppActions.RunAllTests));
-        Assert.True(window.IsBuilding && window.DockHost.IsShown("tests"), "Run All's build took the Unit Tests window's place as it started");
+        Assert.True(window.IsBuilding && window.DockHost.IsShown(ToolWindowIds.Tests), "Run All's build took the Unit Tests window's place as it started");
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
-        Assert.True(window.DockHost.IsShown("tests"), "After Run All the Unit Tests window was no longer in front, so its results had to be shown again");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Tests), "After Run All the Unit Tests window was no longer in front, so its results had to be shown again");
         // What the run came to, in the status bar, is a link back to its results.
-        window.ShowToolWindow("problems");
+        window.ShowToolWindow(ToolWindowIds.Problems);
         Click(window, window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage"));
-        Assert.True(window.DockHost.IsShown("tests"), $"A click on \"{window.Status}\" in the status bar did not bring the Unit Tests window back");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Tests), $"A click on \"{window.Status}\" in the status bar did not bring the Unit Tests window back");
 
         Write("Broken.cs", "namespace Sums.Tests;\n\npublic static class Broken\n{\n    public static int Count => \"none\";\n}\n");
         Assert.True(window.Perform(AppActions.RunAllTests));
         Ui.WaitFor(() => !window.Tests.IsBusy, "the run to end at its build", TimeSpan.FromSeconds(120));
         Assert.StartsWith("Build failed", window.Status, StringComparison.Ordinal);
-        Assert.True(window.DockHost.IsShown("build"), "The tests' build failed, but the Build window did not come forward with its error as Rider's does");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "The tests' build failed, but the Build window did not come forward with its error as Rider's does");
         // The run says the build's words again, which still go to the build's errors.
         Assert.True(window.StatusPlace?.Name == "see it in Problems, Build", $"\"{window.Status}\" in the status bar goes to '{window.StatusPlace?.Name}', not to the build's errors in Problems");
         Assert.Contains("Broken.cs(5,32): error CS0029", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);

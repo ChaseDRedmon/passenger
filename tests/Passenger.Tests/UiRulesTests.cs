@@ -515,6 +515,77 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         }
     }
 
+    /// <summary>A label that asks more before it acts ends in one ellipsis everywhere, Rider's own "…" (#392), where 101
+    /// labels had three dots and 37 the one character: every action's title, as the menus, Find Action and the keymap list
+    /// it and as a menu opened where it runs words it, macOS's application menu, a row's menu in the Explorer, and every
+    /// button and menu item the tool windows show. A dialog's buttons are held to it by DialogButtonsTests.Check.</summary>
+    [AvaloniaFact]
+    public void Every_label_that_asks_more_ends_in_the_one_ellipsis_never_three_dots()
+    {
+        MainWindow window = Open(1400, 880);
+        try
+        {
+            window.OpenFile(project.PathOf("Program.cs"));
+            Ui.Settle();
+            List<string> dotted = [];
+            void Check(string where, string? words)
+            {
+                if (words?.Contains("...", StringComparison.Ordinal) == true)
+                {
+                    dotted.Add($"{where}: '{words}'");
+                }
+            }
+            ActionContext here = window.Actions.Context();
+            foreach (IdeAction action in window.Actions.All)
+            {
+                Check(action.Id, action.Title);
+                Check($"{action.Id} in the editor", action.TitleWhere(here));
+            }
+            foreach (NativeMenuItem item in Native(window.ApplicationMenu()))
+            {
+                Check("the application menu", item.Header);
+            }
+            // A project's row: its menu has the most of the Explorer's.
+            window.ExplorerView.Reveal(Passenger.Core.PathNames.Canonical(project.PathOf("Hello.csproj")));
+            Ui.Settle();
+            window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows)).RaiseEvent(new ContextRequestedEventArgs());
+            Ui.Settle();
+            ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new Xunit.Sdk.XunitException("No menu opened on the project's row");
+            foreach (MenuItem item in Items(menu.Items.OfType<MenuItem>()))
+            {
+                Check("the Explorer's menu", item.Header as string);
+            }
+            menu.Close();
+            Ui.Settle();
+            foreach (Passenger.App.Docking.ToolWindow tool in window.DockHost.Windows.ToList())
+            {
+                window.DockHost.Show(tool.Id);
+                Ui.Settle();
+                foreach (Visual part in ToolWindowParts(window))
+                {
+                    Check($"{tool.Title}'s window", part switch
+                    {
+                        Button { Content: string words } => words,
+                        MenuItem { Header: string words } => words,
+                        Control control => ToolTip.GetTip(control) as string,
+                        _ => null,
+                    });
+                }
+            }
+            Assert.True(dotted.Count == 0, $"Labels with three dots, where every label has the one ellipsis, '…': {string.Join("; ", dotted)}");
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        static IEnumerable<NativeMenuItem> Native(NativeMenu menu) =>
+            menu.Items.OfType<NativeMenuItem>().SelectMany(i => (IEnumerable<NativeMenuItem>)[i, .. i.Menu is { } sub ? Native(sub) : []]);
+
+        static IEnumerable<MenuItem> Items(IEnumerable<MenuItem> items) =>
+            items.SelectMany(i => (IEnumerable<MenuItem>)[i, .. Items(i.Items.OfType<MenuItem>())]);
+    }
+
     [AvaloniaFact]
     public void At_the_smallest_width_the_status_bars_path_never_draws_under_its_widgets()
     {

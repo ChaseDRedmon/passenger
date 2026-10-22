@@ -220,11 +220,11 @@ public sealed partial class CodeAssist
         List<Choice> offered = [];
         if (XamlRefactorings.ValueAt(file, caret).Value is { } value)
         {
-            offered.Add(new Choice("Extract Resource...", value.Property, XamlRefactoring.Resource));
+            offered.Add(new Choice("Extract Resource…", value.Property, XamlRefactoring.Resource));
         }
         if (XamlRefactorings.StyleAt(file, caret).Source is { } source)
         {
-            offered.Add(new Choice("Extract Style...", source.ElementName, XamlRefactoring.Style));
+            offered.Add(new Choice("Extract Style…", source.ElementName, XamlRefactoring.Style));
         }
         return offered;
     }

@@ -236,7 +236,7 @@ public sealed class NewSolutionTests : IDisposable
         MainWindow window = Open();
         object? server = window.CSharpService;
         RightClick(window, Row(window, NodeKind.SolutionFolder, "src"));
-        ChooseFromMenu(window, "Add", "New Project...");
+        ChooseFromMenu(window, "Add", "New Project…");
         NewProjectDialog dialog = Templates(window);
         // The solution folder src is named after the folder on disk the new project goes in.
         Assert.Equal(PathNames.Canonical(Path.Combine(place, "src")), dialog.Folder);

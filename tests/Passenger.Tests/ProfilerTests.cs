@@ -90,7 +90,7 @@ public sealed class ProfilerTests : IDisposable
 
         Task<string?> started = window.ProfileAsync();
         Ui.Launched(window, started, "the build and the start", TimeSpan.FromMinutes(3));
-        Assert.True(window.DockHost.IsShown("profiler"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Profiler));
         Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
         Ui.Settle();
 
@@ -631,7 +631,7 @@ public sealed class ProfilerTests : IDisposable
         string gone = Path.Combine(window.Folder!, "gone");
         Assert.Equal($"Could not profile Spinner: its working folder {gone} does not exist", started.Result);
         Assert.Null(window.Profiling);
-        Assert.True(window.DockHost.IsShown("profiler"));
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Profiler));
         Assert.Equal(started.Result, window.ProfilerView.Status);
         Assert.Equal(started.Result, window.ProfilerView.Placeholder);
         Assert.Equal(before, Ports());
@@ -722,7 +722,7 @@ public sealed class ProfilerTests : IDisposable
     /// <summary>A line typed into a console, which sends it to the program's input.</summary>
     private static void Type(MainWindow window, Passenger.App.ToolWindows.OutputView console, string text)
     {
-        window.ShowToolWindow("run");
+        window.ShowToolWindow(ToolWindowIds.Run);
         Ui.Settle();
         Point inside = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
         window.MouseDown(inside, Avalonia.Input.MouseButton.Left);

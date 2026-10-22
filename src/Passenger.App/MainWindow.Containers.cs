@@ -24,23 +24,9 @@ public partial class MainWindow
 
     private void AddContainers()
     {
-        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder));
-        containersView = view;
-        view.ActionRequested += (_, action) => Request(action);
-        view.LinkClicked += (_, link) => OpenLink(link);
-        view.StateRead += (_, state) => ShowEngine(state);
-        view.Files.Opened += (_, copy) => OpenCopy(copy);
-        view.Files.Problem += (_, problem) => status.Text = problem;
-        // The window's first use of it: Inspect's copies an earlier Passenger wrote unmasked go before anything reads them.
-        view.AttachedToVisualTree += (_, _) => _ = ForgetUnmaskedCopiesAsync();
-        Dock.Add(new Docking.ToolWindow("containers", "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
-        {
-            Action = AppActions.ShowContainers,
-            Menus = [new MenuPlace("Tools", 0, 4)],
-            Chosen = () => view.Chosen,
-        });
-        ActionButtons.ShowMarked(view, actions!);
-        string? OneContainer(ActionContext _) => view.Chosen?.Container is null ? "No container is chosen in the Containers window" : null;
+        // The actions first: the window's toolbar and menu take their titles, and they act on its row chosen.
+        ContainerRow? Chosen() => containersView?.Chosen;
+        string? OneContainer(ActionContext _) => Chosen()?.Container is null ? "No container is chosen in the Containers window" : null;
         foreach ((string id, string title, string action) in (ReadOnlySpan<(string, string, string)>)[
             (AppActions.ContainerStart, "Start", "start"),
             (AppActions.ContainerStop, "Stop", "stop"),
@@ -49,28 +35,45 @@ public partial class MainWindow
             (AppActions.ContainerRemove, "Remove", "remove"),
             (AppActions.ContainerPull, "Pull", "pull")])
         {
-            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(view.Chosen!) : ContainerActAsync(id, action, view.Chosen!))
+            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(Chosen()!) : ContainerActAsync(id, action, Chosen()!))
             {
-                WhyNot = _ => ContainerCommands.For(action, view.Chosen) is { Words: null } refused ? refused.WhyNot ?? $"{view.Chosen?.Name} cannot {action}" : null,
+                WhyNot = _ => ContainerCommands.For(action, Chosen()) is { Words: null } refused ? refused.WhyNot ?? $"{Chosen()?.Name} cannot {action}" : null,
                 Works = id,
             });
         }
-        actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = view.RefreshAsync()));
-        actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(view.Chosen!))
+        actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = containersView!.RefreshAsync()));
+        actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(Chosen()!))
         {
-            WhyNot = _ => view.Chosen is { Kind: ContainerRowKind.Service, Project: not null } ? null : "No Compose service is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } ? null : "No Compose service is chosen in the Containers window",
             Works = AppActions.ContainerScale,
         });
-        actions.Add(new IdeAction(AppActions.ContainerPrune, "Prune…", "Containers", context => _ = PruneAsync(view.Chosen))
+        actions.Add(new IdeAction(AppActions.ContainerPrune, "Prune…", "Containers", context => _ = PruneAsync(Chosen()))
         {
             WhyNot = _ => Engine.Known is { IsReady: true } ? null : "The container engine is not running",
             Works = AppActions.ContainerPrune,
         });
-        actions.Add(new IdeAction(AppActions.ContainerInspect, "Inspect", "Containers", context => _ = InspectAsync(view.Chosen!))
+        actions.Add(new IdeAction(AppActions.ContainerInspect, "Inspect", "Containers", context => _ = InspectAsync(Chosen()!))
         {
-            WhyNot = _ => view.Chosen is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project } ? null : "No container, image, volume or network is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project } ? null : "No container, image, volume or network is chosen in the Containers window",
         });
-        actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(view.Chosen!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
+        actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(Chosen()!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
+
+        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title));
+        containersView = view;
+        view.ActionRequested += (_, action) => Request(action);
+        view.LinkClicked += (_, link) => OpenLink(link);
+        view.StateRead += (_, state) => ShowEngine(state);
+        view.Files.Opened += (_, copy) => OpenCopy(copy);
+        view.Files.Problem += (_, problem) => status.Text = problem;
+        // The window's first use of it: Inspect's copies an earlier Passenger wrote unmasked go before anything reads them.
+        view.AttachedToVisualTree += (_, _) => _ = ForgetUnmaskedCopiesAsync();
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Containers, "Containers", "Icon.Containers", view, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowContainers,
+            Menus = [new MenuPlace("Tools", 0, 4)],
+            Chosen = () => view.Chosen,
+        });
+        ActionButtons.ShowMarked(view, actions);
         AddServiceActions(view);
     }
 

@@ -321,7 +321,7 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal("Tools is a library: set IsPublishable to true in it to publish it", MenuItem(window, "Tools").Tip);
             Assert.Equal("Checks is a test project, which is run rather than published", MenuItem(window, "Checks").Tip);
             Assert.Equal((true, null), (MenuItem(window, "Hello").Enabled, MenuItem(window, "Hello").Tip));
-            Assert.Equal("Nothing has been published here yet: Publish... first", window.Actions.WhyNot(AppActions.PublishAgain, window.Actions.Context()));
+            Assert.Equal("Nothing has been published here yet: Publish… first", window.Actions.WhyNot(AppActions.PublishAgain, window.Actions.Context()));
 
             // A library that asks to be published is offered.
             Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n"
@@ -342,8 +342,8 @@ public sealed class PublishTests : IClassFixture<RestoredFolders>, IDisposable
         window.MouseUp(at, MouseButton.Right);
         Ui.Settle();
         ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException($"No menu opened on {project}");
-        Avalonia.Controls.MenuItem publish = menu.Items.OfType<Avalonia.Controls.MenuItem>().FirstOrDefault(i => (string?)i.Header == "Publish...")
-            ?? throw new InvalidOperationException($"{project}'s menu has no Publish...: [{string.Join(", ", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header))}]");
+        Avalonia.Controls.MenuItem publish = menu.Items.OfType<Avalonia.Controls.MenuItem>().FirstOrDefault(i => (string?)i.Header == "Publish…")
+            ?? throw new InvalidOperationException($"{project}'s menu has no Publish…: [{string.Join(", ", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header))}]");
         (bool, string?) found = (publish.IsEnabled, ToolTip.GetTip(publish) as string);
         menu.Close();
         Ui.Settle();

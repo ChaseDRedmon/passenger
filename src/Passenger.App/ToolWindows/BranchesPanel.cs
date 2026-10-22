@@ -119,7 +119,7 @@ public sealed class BranchesPanel : DockPanel
             Margin = new Thickness(2, 4, 2, 0),
             Children =
             {
-                ToolButtons.Of("Icon.Add", "New Branch...", () => Request(NewBranchRequested)),
+                ToolButtons.Of("Icon.Add", "New Branch…", () => Request(NewBranchRequested)),
                 ToolButtons.Of("Icon.Update", "Update Selected", () =>
                 {
                     if (Selected is { Branch: { Kind: RefKind.Local } branch })
@@ -199,7 +199,7 @@ public sealed class BranchesPanel : DockPanel
         {
             Add("Checkout", () => _ = vcs.CheckoutRefAsync(branch, Branches));
         }
-        Add($"New Branch from {it}...", () => NewBranchRequested?.Invoke(this, branch));
+        Add($"New Branch from {it}…", () => NewBranchRequested?.Invoke(this, branch));
         if (branch.Kind == RefKind.Local && !isCurrent)
         {
             Add(current is null ? "Checkout and Rebase onto Current" : $"Checkout and Rebase onto {here}", () => _ = vcs.CheckoutAndRebaseAsync(branch), current is not null);
@@ -223,9 +223,9 @@ public sealed class BranchesPanel : DockPanel
         if (branch.Kind == RefKind.Local)
         {
             Add("Update", () => _ = vcs.UpdateBranchAsync(branch), isCurrent || branch.UpstreamRemote is not null);
-            Add("Push...", () => _ = vcs.PushBranchAsync(branch));
+            Add("Push…", () => _ = vcs.PushBranchAsync(branch));
             Separate();
-            Add("Rename...", () => RenameRequested?.Invoke(this, branch));
+            Add("Rename…", () => RenameRequested?.Invoke(this, branch));
         }
         if (!isCurrent)
         {
@@ -239,7 +239,7 @@ public sealed class BranchesPanel : DockPanel
     }
 
     /// <summary>A name as Rider's menus quote it.</summary>
-    private static string Quoted(string name) => $"'{(name.Length > 40 ? name[..37] + "..." : name)}'";
+    private static string Quoted(string name) => $"'{(name.Length > 40 ? name[..39] + "…" : name)}'";
 
     /// <summary>Lists another folder's branches from now on, its session's working tree in place of the last's.</summary>
     public void Bind(VcsController next) => vcs = next;

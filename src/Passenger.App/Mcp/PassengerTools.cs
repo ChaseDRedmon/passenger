@@ -665,7 +665,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         [Description("Part of a test's full name (Namespace.Class.Method)")] string? filter = null,
         bool debug = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        string folder = Session.Folder ?? throw new InvalidOperationException("No folder is open");
+        string folder = Session.Folder ?? throw new InvalidOperationException(Refusals.NoFolder);
         Testing.TestController tests = Session.Tests;
         List<Testing.TestNode> Matching() =>
             [.. tests.Tree.Methods.Where(m => m.FullName is { } name && name.Contains(filter!, StringComparison.Ordinal))];
@@ -1204,7 +1204,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         if (Editors.Active is null)
         {
-            throw new InvalidOperationException("No file is open in the editor");
+            throw new InvalidOperationException(Refusals.NoFile);
         }
         Editors.CodeEditor.Type(text);
         return Task.FromResult($"Typed at {Editors.CodeEditor.CaretPosition.Line + 1}:{Editors.CodeEditor.CaretPosition.Column + 1}");

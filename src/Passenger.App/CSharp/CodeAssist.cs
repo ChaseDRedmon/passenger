@@ -336,9 +336,9 @@ public sealed partial class CodeAssist
         });
         // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
         // overrides).
-        Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
+        Code(AppActions.Generate, "Generate…", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
             new("Code", 0, 2));
-        Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
+        Code(AppActions.SurroundWith, "Surround With…", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
         // A file Prettier formats (Run on 'Reformat Code' action) needs no language server.
         actions.Add(new IdeAction(AppActions.Reformat, "Reformat Code", "Code", context => _ = Reformat())
         {
@@ -348,33 +348,33 @@ public sealed partial class CodeAssist
         AddLintingActions(actions);
         Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1), markup: true);
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
-        Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
+        Code(AppActions.RefactorThis, "Refactor This…", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
             new("Refactor", 0, 0), xaml: true);
         // IntelliJ's RefactoringMenu: Rename (the window's, Rider's RenameElement, an Explorer row's too: Rename and
         // WhyNotRename here) and Change Signature, the Extract and Introduce actions, Inline; Move and Safe Delete; Pull
         // Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
-        Code(AppActions.ChangeSignature, "Change Signature...", context => _ = ChangeSignature(), new("Refactor", 1, 1));
-        Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
+        Code(AppActions.ChangeSignature, "Change Signature…", context => _ = ChangeSignature(), new("Refactor", 1, 1));
+        Code(AppActions.ExtractMethod, "Extract Method…", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
             new("Refactor", 1, 2));
-        Code(AppActions.IntroduceVariable, "Introduce Variable...",
+        Code(AppActions.IntroduceVariable, "Introduce Variable…",
             context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 3));
-        Code(AppActions.IntroduceField, "Introduce Field...", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
-        Code(AppActions.IntroduceParameter, "Introduce Parameter...", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
-        Code(AppActions.ExtractInterface, "Extract Interface...", context => _ = ExtractInterface(), new("Refactor", 1, 6));
-        Code(AppActions.Inline, "Inline...",
+        Code(AppActions.IntroduceField, "Introduce Field…", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
+        Code(AppActions.IntroduceParameter, "Introduce Parameter…", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
+        Code(AppActions.ExtractInterface, "Extract Interface…", context => _ = ExtractInterface(), new("Refactor", 1, 6));
+        Code(AppActions.Inline, "Inline…",
             context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 7));
-        Code(AppActions.Move, "Move...", context => _ = Move(), new("Refactor", 2, 0));
-        Code(AppActions.SafeDelete, "Safe Delete...", context => _ = SafeDelete(), new("Refactor", 2, 1));
-        Code(AppActions.PullMembersUp, "Pull Members Up...", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
-        Code(AppActions.PushMembersDown, "Push Members Down...", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
-        Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
+        Code(AppActions.Move, "Move…", context => _ = Move(), new("Refactor", 2, 0));
+        Code(AppActions.SafeDelete, "Safe Delete…", context => _ = SafeDelete(), new("Refactor", 2, 1));
+        Code(AppActions.PullMembersUp, "Pull Members Up…", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
+        Code(AppActions.PushMembersDown, "Push Members Down…", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
+        Code(AppActions.EncapsulateField, "Encapsulate Field…", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
         // Rider's XAML refactorings, which ask their options in a dialog, in their own group.
-        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource...", "Code", context => _ = ExtractResource())
+        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource…", "Code", context => _ = ExtractResource())
         {
             WhyNot = context => WhyNotXaml(context),
             Menus = [new("Refactor", 4, 0)],
         });
-        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style...", "Code", context => _ = ExtractStyle())
+        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style…", "Code", context => _ = ExtractStyle())
         {
             WhyNot = context => WhyNotXaml(context),
             Menus = [new("Refactor", 4, 1)],
@@ -421,7 +421,7 @@ public sealed partial class CodeAssist
     /// <summary>Why an action of a XAML file's alone cannot run: no file, a file not XAML of a project Passenger reads, or
     /// one that cannot be edited.</summary>
     private string? WhyNotXaml(ActionContext context) =>
-        context.File is null ? "No file is open"
+        context.File is null ? Refusals.NoFile
         : XamlOf(context.File) is not { } markup || (markup.Loaded.IsCompleted && !markup.IsLoaded) ? "The file is not XAML of an Avalonia or WPF project"
         : context.Editor.IsReadOnly ? "The file is read-only"
         : null;
@@ -430,7 +430,7 @@ public sealed partial class CodeAssist
     /// the file's syntax, a file not C# or one that cannot be edited. One that also edits XAML (<paramref name="markup"/>)
     /// takes any XAML file that can be edited; XAML and MSBuild files answer those they say they do.</summary>
     private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
-        context.File is null ? "No file is open"
+        context.File is null ? Refusals.NoFile
         : markup && XamlService.IsXaml(context.File.Path) ? (context.Editor.IsReadOnly ? "The file is read-only" : null)
         : xaml && XamlOf(context.File) is { } markupFile && (markupFile.IsLoaded || !markupFile.Loaded.IsCompleted) ? null
         : msbuild && MSBuildOf(context.File) is not null ? null

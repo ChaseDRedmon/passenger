@@ -305,7 +305,7 @@ public sealed class NuGetView : DockPanel
             }
             else
             {
-                status.Text = $"Searching {feed.Name}...";
+                status.Text = $"Searching {feed.Name}…";
                 FeedSearch answer = feed is FeedSet set
                     ? await set.SearchEachAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token)
                     : new FeedSearch(await feed.SearchAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token), [], 0);
@@ -545,7 +545,7 @@ public sealed class NuGetView : DockPanel
         }
         busy = true;
         changing = stage;
-        status.Text = "Working...";
+        status.Text = "Working…";
         using IDisposable held = BackgroundWork.Scope();
         using Working? working = Work?.Begin(Changing, stage, stoppable: false);
         List<string> said = [];

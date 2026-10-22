@@ -89,15 +89,15 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         // The status bar's word that it failed is a link to its errors in Problems' Build, the first chosen.
         Assert.StartsWith("Build failed: 1 error", window.Status, StringComparison.Ordinal);
         ProblemsView problems = window.BottomPanel.Problems;
-        window.ShowToolWindow("build");
+        window.ShowToolWindow(ToolWindowIds.Build);
         problems.Shown = ProblemsTab.File;
         Button said = window.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "StatusMessage");
         Point at = said.TranslatePoint(new Point(said.Bounds.Width / 2, said.Bounds.Height / 2), window)!.Value;
         window.MouseDown(at, Avalonia.Input.MouseButton.Left);
         window.MouseUp(at, Avalonia.Input.MouseButton.Left);
         Ui.Settle();
-        Assert.True(window.DockHost.IsShown("problems") && problems.Shown == ProblemsTab.Build && problems.Selected == problem,
-            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown("problems") ? $"Problems' {problems.Shown} tab, {problems.Selected?.Code ?? "nothing"} chosen" : "nothing")}, "
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && problems.Shown == ProblemsTab.Build && problems.Selected == problem,
+            $"A click on \"{window.Status}\" in the status bar showed {(window.DockHost.IsShown(ToolWindowIds.Problems) ? $"Problems' {problems.Shown} tab, {problems.Selected?.Code ?? "nothing"} chosen" : "nothing")}, "
             + "not the build's error in Problems' Build");
         window.Close();
     }
@@ -742,7 +742,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     public void The_consoles_menu_copies_and_clears_its_output()
     {
         MainWindow window = Open();
-        window.ShowToolWindow("run");
+        window.ShowToolWindow(ToolWindowIds.Run);
         Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
         run.Append("first line\nsecond line\n");
         Ui.Settle();
@@ -883,7 +883,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         window.Perform(AppActions.Build);
         Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
-        window.ShowToolWindow("build");
+        window.ShowToolWindow(ToolWindowIds.Build);
         Ui.Settle();
         OutputView build = window.BottomPanel.Build;
         string output = build.Document.Snapshot.ToString();
@@ -904,36 +904,36 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         try
         {
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
-            Assert.True(window.IsBuilding && window.DockHost.IsShown("build"), "Build Solution started without opening the Build window, which Rider's opens by default");
+            Assert.True(window.IsBuilding && window.DockHost.IsShown(ToolWindowIds.Build), "Build Solution started without opening the Build window, which Rider's opens by default");
             BuildToEnd(window, "Build succeeded");
-            Assert.True(window.DockHost.IsShown("build"), "The Build window Build Solution opened went away as the build ended");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "The Build window Build Solution opened went away as the build ended");
 
             // Explicit builds not opening it, one that succeeds leaves the bottom panel as it was, and one that fails does not.
             window.ApplySettings(window.Settings with { OpenBuildWindowOnBuild = false });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
-            Assert.True(window.IsBuilding && window.DockHost.IsShown("problems"), "With Rider's \"when build is explicitly invoked\" off, Build Solution still opened the Build window");
+            Assert.True(window.IsBuilding && window.DockHost.IsShown(ToolWindowIds.Problems), "With Rider's \"when build is explicitly invoked\" off, Build Solution still opened the Build window");
             BuildToEnd(window, "Build succeeded");
-            Assert.True(window.DockHost.IsShown("problems"), "A build that succeeded brought the Build window forward, which Rider does only for errors by default");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems), "A build that succeeded brought the Build window forward, which Rider does only for errors by default");
             Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
             window.Perform(AppActions.Build);
             BuildToEnd(window, "Build failed");
-            Assert.True(window.DockHost.IsShown("build"), "A build that failed left the Build window behind the Problems window, where Rider brings it forward with its errors");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "A build that failed left the Build window behind the Problems window, where Rider brings it forward with its errors");
 
             window.ApplySettings(window.Settings with { ShowBuildResults = Passenger.App.Settings.BuildResultsMode.Never });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
             BuildToEnd(window, "Build failed");
-            Assert.True(window.DockHost.IsShown("problems"), "With build results shown never, a failed build still brought the Build window forward");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems), "With build results shown never, a failed build still brought the Build window forward");
 
             Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\n");
             window.ApplySettings(window.Settings with { ShowBuildResults = Passenger.App.Settings.BuildResultsMode.Always });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.Build);
             BuildToEnd(window, "Build succeeded");
-            Assert.True(window.DockHost.IsShown("build"), "With build results shown always, a build that succeeded did not bring the Build window forward");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "With build results shown always, a build that succeeded did not bring the Build window forward");
         }
         finally
         {
@@ -951,21 +951,21 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         try
         {
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.RunProgram);
             Ui.PumpUntil(() => window.IsBuilding, "the run's build to start", TimeSpan.FromMinutes(1));
-            Assert.True(window.DockHost.IsShown("problems"), "Run's build took the bottom panel, which Rider leaves as it was for a build before a run");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems), "Run's build took the bottom panel, which Rider leaves as it was for a build before a run");
             Assert.StartsWith("Building Hello", window.Status, StringComparison.Ordinal);
             Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
-            Assert.True(window.DockHost.IsShown("run"), "The program ran, but its Run window is not in front");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Run), "The program ran, but its Run window is not in front");
 
             window.ApplySettings(window.Settings with { OpenBuildWindowOnImplicitBuild = true });
-            window.ShowToolWindow("problems");
+            window.ShowToolWindow(ToolWindowIds.Problems);
             window.Perform(AppActions.RunProgram);
             Ui.PumpUntil(() => window.IsBuilding, "the second run's build to start", TimeSpan.FromMinutes(1));
-            Assert.True(window.DockHost.IsShown("build"), "With Rider's \"even when the build is invoked implicitly\" on, Run's build did not open the Build window");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "With Rider's \"even when the build is invoked implicitly\" on, Run's build did not open the Build window");
             Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the second program to finish", TimeSpan.FromMinutes(2));
-            Assert.True(window.DockHost.IsShown("run"), "The program ran after a build in the Build window, but its Run window is not in front");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Run), "The program ran after a build in the Build window, but its Run window is not in front");
         }
         finally
         {
@@ -979,10 +979,10 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     {
         Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
         MainWindow window = Open();
-        window.ShowToolWindow("problems");
+        window.ShowToolWindow(ToolWindowIds.Problems);
         string? refused = Ui.Await(window.RunAsync(), "the run's build", TimeSpan.FromMinutes(2));
         Assert.StartsWith("Build failed: 1 error", refused, StringComparison.Ordinal);
-        Assert.True(window.DockHost.IsShown("build"), "The build before the run failed, but the Build window did not come forward with its error as Rider's does");
+        Assert.True(window.DockHost.IsShown(ToolWindowIds.Build), "The build before the run failed, but the Build window did not come forward with its error as Rider's does");
         Assert.Contains("Program.cs(2,13): error CS0029", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
         Assert.False(window.Runner.IsRunning);
         Assert.Equal(string.Empty, Output(window));

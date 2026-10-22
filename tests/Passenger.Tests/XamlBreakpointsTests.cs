@@ -148,7 +148,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
         Assert.Equal(new TextPosition(save, background), window.Debugger.PlaceOf(stop.Top));
         Assert.Contains(new LineMark(save, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Assert.Contains(editor.LineMarks, m => m.Line == save && m.Kind == LineMarkKind.BreakpointBound);
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: false);
         Ui.WaitFor(() => FrameRows(window).Contains($"MainWindow.axaml:{save + 1}"), $"the frame's row to name Save's line, not {string.Join(", ", FrameRows(window))}");
         Passenger.App.Mcp.DebugSnapshot told = Ui.Await(new Passenger.App.Mcp.PassengerTools(window).GetDebugState(), "the stop as an agent is told it");
@@ -331,7 +331,7 @@ public sealed class XamlBreakpointsTests : IClassFixture<RestoredFolders>, IDisp
     /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
     private static void Say(MainWindow window, string line)
     {
-        window.ShowToolWindow("debug");
+        window.ShowToolWindow(ToolWindowIds.Debug);
         window.BottomPanel.Debug.ShowTab(console: true);
         Ui.Settle();
         Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;

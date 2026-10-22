@@ -78,7 +78,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
         // Narrowed in a side pane, the frames and the variables share the Debug window, neither cut off at its edge.
         Passenger.App.Docking.DockHost dock = window.DockHost;
-        dock.Move(dock["debug"]!, Passenger.App.Docking.ToolAnchor.RightTop);
+        dock.Move(dock[ToolWindowIds.Debug]!, Passenger.App.Docking.ToolAnchor.RightTop);
         Ui.Settle();
         Passenger.App.ToolWindows.DebugView debug = window.BottomPanel.Debug;
         Point origin = debug.TranslatePoint(default, window)!.Value;
@@ -90,7 +90,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Assert.True(list.Bounds.Width >= debug.Bounds.Width / 4 && at.X + list.Bounds.Width <= origin.X + debug.Bounds.Width + 0.5,
                 $"A list of the {debug.Bounds.Width:0.#} px Debug window is {list.Bounds.Width:0.#} px wide, ending at {at.X + list.Bounds.Width:0.#} where the window ends at {origin.X + debug.Bounds.Width:0.#}");
         }
-        dock.Move(dock["debug"]!, Passenger.App.Docking.ToolAnchor.BottomLeft);
+        dock.Move(dock[ToolWindowIds.Debug]!, Passenger.App.Docking.ToolAnchor.BottomLeft);
         Ui.Settle();
         // Each line of the method down to the stop shows the values it names, as Rider's inline values do.
         Assert.Contains(new LineAnnotation(0, "total: 0", LineAnnotationKind.InlineValue), editor.LineAnnotations);
@@ -137,7 +137,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Ui.WaitFor(() => Value(window, "i") == "1", "the locals at the first stop");
 
         Passenger.App.Docking.DockHost dock = window.DockHost;
-        dock.SetMode(dock["debug"]!, Passenger.App.Docking.ToolMode.Floating);
+        dock.SetMode(dock[ToolWindowIds.Debug]!, Passenger.App.Docking.ToolMode.Floating);
         Ui.Settle();
         Window floating = Assert.Single(window.OwnedWindows);
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
@@ -1598,7 +1598,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             dialog.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
             Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the debugger to attach to the program");
             Assert.Empty(window.OwnedWindows.OfType<AttachToProcessDialog>());
-            Assert.True(window.DockHost.IsShown("debug"), "Attaching left the Debug window closed");
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Debug), "Attaching left the Debug window closed");
             Assert.Equal("ReadsInputConsoleApp: running", window.Status);
 
             // Let go while it waits, it goes on waiting; Reattach to Process takes hold of the same program again.
@@ -1803,7 +1803,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         // Let go, it reads what is typed into its tab, and ends with its own exit code.
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => TerminalText(program).Contains("key?", StringComparison.Ordinal), "the program to ask for a key in its tab");
-        window.ShowToolWindow("terminal");
+        window.ShowToolWindow(ToolWindowIds.Terminal);
         window.TerminalPanel.FocusView();
         Ui.WaitFor(() => window.TerminalPanel.View.IsFocused && window.TerminalPanel.ActiveTab?.Run == program, "the keys to go to the program's tab");
         window.KeyTextInput("q");
