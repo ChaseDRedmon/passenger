@@ -149,7 +149,7 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>The loaded project a file or folder (a canonical path) belongs to, the nearest one holding it; null outside
     /// them all.</summary>
-    public ProjectModel? ProjectOf(string path) => ProjectModel.Owning(Projects, path);
+    public ProjectModel? ProjectOf(string path) => Workspace is null ? null : ProjectModel.Owning(Workspace.Projects.Where(p => !Unloaded.Contains(p.Path)), path);
 
     /// <summary>The name of the project a file belongs to, as Find and Problems group by it; outside them all, Rider's
     /// Miscellaneous Files.</summary>

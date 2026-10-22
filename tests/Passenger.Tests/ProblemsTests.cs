@@ -54,11 +54,17 @@ public sealed class ProblemsTests : IDisposable
         Ui.WaitFor(() => problems.SolutionProblems?.Any(p => p.Path?.EndsWith("Caller.cs", StringComparison.Ordinal) == true) == true,
             "the broken caller's error", TimeSpan.FromMinutes(1));
         Assert.Empty(problems.FileProblems);
+        // The Solution tab, shown all along, put the caller's rows in their place among the files'.
+        Assert.Equal(["Sample", "Bad.cs", "Caller.cs"], problems.Rows.Where(r => r.Problem is null).Select(r => r.Label));
+        ListedAsAfresh(problems, "once the caller broke");
 
-        // The open file's own problems are the File tab's, as they are typed.
+        // The open file's own problems are the File tab's, as they are typed, and the Solution tab's as its pull lands.
         window.KeyTextInput(" x");
         Ui.WaitFor(() => problems.FileProblems.Any(p => p.Severity == ProblemSeverity.Error), "the open file's error");
         Assert.Empty(problems.Problems);
+        string helper = window.EditorArea.Active!.Path;
+        Ui.WaitFor(() => problems.Rows.Any(r => r.Problem?.Path == helper), "the open file's error in the Solution tab");
+        ListedAsAfresh(problems, "once the open file had an error");
 
         // A problem's menu copies its message.
         window.Perform(AppActions.ShowProblems);
@@ -69,10 +75,32 @@ public sealed class ProblemsTests : IDisposable
         Ui.ChooseFromMenu(rows, "Copy Message");
         Ui.WaitFor(() => Ui.Clipboard(window) == chosen.Problem!.Message, "the message on the clipboard");
 
+        // The open file mended: its rows leave the Solution tab, the caller's staying.
+        problems.Shown = ProblemsTab.Solution;
+        int typed = window.EditorArea.CodeEditor.Document.Snapshot.ToString().IndexOf(" x", StringComparison.Ordinal);
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(new Selection(typed, typed + " x".Length));
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Press(window, "BACK_SPACE");
+        Ui.WaitFor(() => !problems.Rows.Any(r => r.Problem?.Path == helper), "the open file's rows to leave the Solution tab");
+        Assert.Equal(["Sample", "Bad.cs", "Caller.cs"], problems.Rows.Where(r => r.Problem is null).Select(r => r.Label));
+        ListedAsAfresh(problems, "once the open file was mended");
+
         window.Perform(AppActions.ToggleSolutionAnalysis);
         Assert.Null(problems.SolutionProblems);
         Assert.Equal(ProblemsTab.File, problems.Shown);
         window.Close();
+    }
+
+    /// <summary>The Solution tab's rows, as the pulls since it was shown left them, are those it lists afresh.</summary>
+    private static void ListedAsAfresh(ProblemsView problems, string when)
+    {
+        string[] Listed() => [.. problems.Rows.Select(r => $"{new string(' ', r.Depth * 2)}{r.Label}  {r.Detail}")];
+        string[] kept = Listed();
+        problems.Shown = ProblemsTab.File;
+        problems.Shown = ProblemsTab.Solution;
+        string[] afresh = Listed();
+        Assert.True(kept.SequenceEqual(afresh),
+            $"The Solution tab's rows {when} are not those it lists afresh:\n{string.Join('\n', kept)}\n\nAfresh:\n{string.Join('\n', afresh)}");
     }
 
     /// <summary>A pull the server refuses or cuts short (Roslyn cancels one a change made stale) is asked again, so the
@@ -203,6 +231,78 @@ public sealed class ProblemsTests : IDisposable
         Assert.Equal(new TextPosition(4 + Keys, 12), problems.FileProblems[0].Position);
         Assert.Equal(new TextPosition(4 + Keys + 2999, 12), problems.FileProblems[^1].Position);
         window.Close();
+    }
+
+    /// <summary>A typing pause lists again only the problems it changed, the open file's as its pull lands, however many the
+    /// solution has: with 4,000 warnings in twenty files nobody has open, the Solution tab shown, a pause allocates on the UI
+    /// thread under 8 bytes a problem more than with one in each, where it allocated 1,700, making every problem and row again,
+    /// each file's URI a path by asking the disk and each problem's project found from a fresh list of the projects.</summary>
+    [AvaloniaFact]
+    public void A_typing_pause_lists_again_only_the_open_files_problems_however_many_the_solution_has()
+    {
+        (long few, int fewListed) = UiBytesPerPause(warnings: 1);
+        (long many, int manyListed) = UiBytesPerPause(warnings: 200);
+        int more = manyListed - fewListed;
+        long each = (many - few) / more;
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"A typing pause allocated {many:N0} bytes on the UI thread with {manyListed} problems in the solution, {few:N0} with {fewListed}: {each} bytes a problem.");
+        Assert.True(each < 8,
+            $"A typing pause allocated {many / 1024:N0} KB on the UI thread with {manyListed} problems in the solution, {few / 1024:N0} KB with {fewListed}: {each} bytes for each problem, which the window listed again");
+    }
+
+    /// <summary>What a key typed in an open file and its pause allocate on the UI thread (the least of a few), with solution-wide
+    /// analysis on, the Solution tab shown and twenty files nobody has open each with <paramref name="warnings"/> warnings;
+    /// and how many problems the solution has.</summary>
+    private (long Bytes, int Listed) UiBytesPerPause(int warnings)
+    {
+        const int Files = 20;
+        for (int i = 0; i < Files; i++)
+        {
+            System.Text.StringBuilder warned = new($"static class Warned{i}\n{{\n    static void All()\n    {{\n");
+            for (int j = 0; j < warnings; j++)
+            {
+                warned.Append(System.Globalization.CultureInfo.InvariantCulture, $"        int unused{j};\n");
+            }
+            Write($"Warned{i}.cs", warned.Append("    }\n}\n").ToString());
+        }
+        const string Typed = "static class Typed\n{\n    static int Count()\n    {\n        int value = 1; int unused;\n        return value;\n    }\n}\n";
+        Write("Typed.cs", Typed);
+        string typed = Passenger.Core.PathNames.Canonical(Path.Combine(folder, "Typed.cs"));
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("Typed.cs");
+        window.Perform(AppActions.ShowProblems);
+        ProblemsView problems = window.BottomPanel.Problems;
+        Ui.Settle();
+        window.Perform(AppActions.ToggleSolutionAnalysis);
+        Assert.True(window.Settings.SolutionWideAnalysis);
+        // Each file's warnings, Bad.cs's error and the open file's warning.
+        int listed = (Files * warnings) + 2;
+        Ui.WaitFor(() => problems.SolutionProblems?.Count == listed && problems.SolutionProblems.Any(p => p.Path == typed),
+            $"the solution's {listed} problems", TimeSpan.FromMinutes(2));
+        problems.Shown = ProblemsTab.Solution;
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.Selections = SelectionSet.Single(Typed.IndexOf("= 1", StringComparison.Ordinal) + 3);
+        editor.Focus();
+        Ui.Settle();
+
+        long least = long.MaxValue;
+        const int Keys = 5;
+        for (int i = 1; i <= Keys; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("1");
+            Ui.Settle();
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+            // The open file's warning moved with the key, as the Solution tab lists it once the pause's pull landed.
+            Problem moved = Assert.Single(problems.SolutionProblems!, p => p.Path == typed);
+            Assert.True(moved.Position == new TextPosition(4, 27 + i), $"After {i} keys the open file's warning is listed at {moved.Where}, not Typed.cs:5:{28 + i}");
+            Assert.Equal($"Typed.cs:5:{28 + i}", Assert.Single(problems.Rows, r => r.Problem?.Path == typed).Detail);
+        }
+        Assert.Equal(listed, problems.SolutionProblems!.Count);
+        window.Close();
+        return (least, listed);
     }
 
     /// <summary>Roslyn's compiler ends a line at each break in Separated.cs's comment, as its language server does, where the

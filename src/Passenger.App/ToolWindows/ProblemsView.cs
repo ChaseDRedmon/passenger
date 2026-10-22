@@ -67,7 +67,14 @@ public sealed class ProblemsView : DockPanel
     private readonly TextBlock empty;
     private readonly Dictionary<ProblemsTab, ToggleButton> tabs = [];
     private IReadOnlyList<Problem> file = [];
-    private IReadOnlyList<Problem>? solution;
+
+    /// <summary>The solution's problems by file, each file's in order; null with solution-wide analysis off.</summary>
+    private Dictionary<string, Problem[]>? solution;
+
+    /// <summary>The solution's problems in order, made when first asked for after a change.</summary>
+    private IReadOnlyList<Problem>? solutionOrdered;
+    private int solutionCount;
+    private int solutionErrors;
     private IReadOnlyList<Problem> toolset = [];
     private IReadOnlyList<BindingProblem> bindings = [];
     private IReadOnlyList<(string Said, string Why)> bindingsUntold = [];
@@ -140,7 +147,13 @@ public sealed class ProblemsView : DockPanel
     public IReadOnlyList<Problem> FileProblems => file;
 
     /// <summary>The solution's problems, or null with solution-wide analysis off.</summary>
-    public IReadOnlyList<Problem>? SolutionProblems => solution;
+    public IReadOnlyList<Problem>? SolutionProblems => solution is null ? null : solutionOrdered ??= [.. Ordered(solution.Values.SelectMany(p => p))];
+
+    /// <summary>Whether the solution's problems are listed: solution-wide analysis is on.</summary>
+    public bool ListsSolution => solution is not null;
+
+    /// <summary>How many of the solution's problems are errors.</summary>
+    public int SolutionErrors => solutionErrors;
 
     /// <summary>The warnings and errors the projects loaded with.</summary>
     public IReadOnlyList<Problem> ToolsetProblems => toolset;
@@ -266,13 +279,168 @@ public sealed class ProblemsView : DockPanel
     /// <summary>The solution's problems, or null to take the tab away when solution-wide analysis goes off.</summary>
     public void ShowSolution(IReadOnlyList<Problem>? problems)
     {
-        solution = problems is null ? null : [.. Ordered(problems)];
+        solution = problems?.GroupBy(p => p.Path ?? string.Empty, Core.PathNames.Comparer)
+            .ToDictionary(g => g.Key, g => (Problem[])[.. Ordered(g)], Core.PathNames.Comparer);
+        solutionOrdered = null;
+        solutionCount = problems?.Count ?? 0;
+        solutionErrors = problems?.Count(p => p.Severity == ProblemSeverity.Error) ?? 0;
         if (solution is null && Shown == ProblemsTab.Solution)
         {
             Shown = ProblemsTab.File;
             return;
         }
         Refresh();
+    }
+
+    /// <summary>One file's problems in the solution's, as the analysis or the file's own pull changed them: the Solution tab
+    /// makes that file's rows again, or moves them when they are the same problems in other places, the rest left as they
+    /// are, so a typing pause costs what it changed however many problems the solution has.</summary>
+    public void ShowSolutionFile(string path, IReadOnlyList<Problem> problems)
+    {
+        if (solution is null)
+        {
+            return;
+        }
+        Problem[] fresh = [.. Ordered(problems)];
+        Problem[] old = solution.GetValueOrDefault(path) ?? [];
+        if (old.AsSpan().SequenceEqual(fresh))
+        {
+            return;
+        }
+        if (fresh.Length > 0)
+        {
+            solution[path] = fresh;
+        }
+        else
+        {
+            solution.Remove(path);
+        }
+        solutionOrdered = null;
+        solutionCount += fresh.Length - old.Length;
+        solutionErrors += fresh.Count(p => p.Severity == ProblemSeverity.Error) - old.Count(p => p.Severity == ProblemSeverity.Error);
+        if (Shown != ProblemsTab.Solution)
+        {
+            Titles();
+            return;
+        }
+        if (old.Length > 0 && Moved(old, fresh) && FileRowOf(path) is int at and >= 0)
+        {
+            for (int i = 0; i < fresh.Length; i++)
+            {
+                rows[at + 1 + i].MoveTo(fresh[i]);
+            }
+            return;
+        }
+        if (old.Length > 0)
+        {
+            RowsOut(path, ProjectOf(old[0]));
+        }
+        if (fresh.Length > 0)
+        {
+            RowsIn(path, ProjectOf(fresh[0]), fresh);
+        }
+        Titles();
+        empty.IsVisible = rows.Count == 0;
+    }
+
+    /// <summary>The project a problem is listed under in the Solution tab.</summary>
+    private static string ProjectOf(Problem problem) => problem.Project ?? "Solution";
+
+    /// <summary>Where a file's row is in the Solution tab; -1 when it has none.</summary>
+    private int FileRowOf(string path)
+    {
+        for (int i = 0; i + 1 < rows.Count; i++)
+        {
+            if (rows[i] is { Depth: 1, Problem: null } && rows[i + 1].Problem?.Path is { } at && at == path)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>The project's row in the Solution tab, or where it goes among the others, and whether it is there.</summary>
+    private (int At, bool There) ProjectRow(string project)
+    {
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (rows[i].Depth == 0 && string.CompareOrdinal(rows[i].Label, project) is int order and >= 0)
+            {
+                return (i, order == 0);
+            }
+        }
+        return (rows.Count, false);
+    }
+
+    /// <summary>A file's row among its project's, or where it goes among them, and whether it is there.</summary>
+    private (int At, bool There) FileRow(string path, int project)
+    {
+        int i = project + 1;
+        for (; i < rows.Count && rows[i].Depth != 0; i++)
+        {
+            if (rows[i] is { Depth: 1, Problem: null } && i + 1 < rows.Count && rows[i + 1].Problem?.Path is { } at
+                && string.CompareOrdinal(at, path) is int order and >= 0)
+            {
+                return (i, order == 0);
+            }
+        }
+        return (i, false);
+    }
+
+    /// <summary>A file's rows taken out of the Solution tab, and its project's row with them once it has none left.</summary>
+    private void RowsOut(string path, string project)
+    {
+        (int projectAt, bool listed) = ProjectRow(project);
+        (int fileAt, bool there) = listed ? FileRow(path, projectAt) : (0, false);
+        if (!there)
+        {
+            return;
+        }
+        int end = fileAt + 1;
+        while (end < rows.Count && rows[end].Depth == 2)
+        {
+            end++;
+        }
+        for (int i = end - 1; i >= fileAt; i--)
+        {
+            rows.RemoveAt(i);
+        }
+        Recount(projectAt, project);
+    }
+
+    /// <summary>A file's rows put in the Solution tab in their place under its project's, made for it if need be.</summary>
+    private void RowsIn(string path, string project, Problem[] problems)
+    {
+        (int projectAt, bool listed) = ProjectRow(project);
+        if (!listed)
+        {
+            rows.Insert(projectAt, new ProblemRow(0, project, null, null));
+        }
+        (int fileAt, _) = FileRow(path, projectAt);
+        rows.Insert(fileAt, new ProblemRow(1, System.IO.Path.GetFileName(path), Count(problems.Length), null));
+        for (int i = 0; i < problems.Length; i++)
+        {
+            rows.Insert(fileAt + 1 + i, new ProblemRow(2, problems[i].Message, problems[i].Where, problems[i]));
+        }
+        Recount(projectAt, project);
+    }
+
+    /// <summary>A project's row in the Solution tab made to say how many problems its files have, or taken out with none.</summary>
+    private void Recount(int projectAt, string project)
+    {
+        int count = 0;
+        for (int i = projectAt + 1; i < rows.Count && rows[i].Depth != 0; i++)
+        {
+            count += rows[i].Problem is null ? 0 : 1;
+        }
+        if (count == 0)
+        {
+            rows.RemoveAt(projectAt);
+        }
+        else if (rows[projectAt].Detail != Count(count))
+        {
+            rows[projectAt] = new ProblemRow(0, project, Count(count), null);
+        }
     }
 
     /// <summary>The container engine's problems, in Containers, its tab there while it has any.</summary>
@@ -328,7 +496,7 @@ public sealed class ProblemsView : DockPanel
     private void Titles()
     {
         tabs[ProblemsTab.File].Content = Titled(fileName is null ? TitleOf(ProblemsTab.File) : $"File: {fileName}", file.Count);
-        tabs[ProblemsTab.Solution].Content = Titled(TitleOf(ProblemsTab.Solution), solution?.Count ?? 0);
+        tabs[ProblemsTab.Solution].Content = Titled(TitleOf(ProblemsTab.Solution), solutionCount);
         tabs[ProblemsTab.Solution].IsVisible = solution is not null;
         tabs[ProblemsTab.Toolset].Content = Titled(TitleOf(ProblemsTab.Toolset), toolset.Count);
         tabs[ProblemsTab.Build].Content = Titled(TitleOf(ProblemsTab.Build), Problems.Count);
@@ -359,7 +527,7 @@ public sealed class ProblemsView : DockPanel
                 empty.Text = fileName is null ? Refusals.NoFile : "No problems in this file";
                 break;
             case ProblemsTab.Solution:
-                Grouped(solution ?? []);
+                Grouped(SolutionProblems ?? []);
                 empty.Text = "No problems in the solution";
                 break;
             case ProblemsTab.Toolset:

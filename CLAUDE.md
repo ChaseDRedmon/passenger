@@ -882,7 +882,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows (Problems' File tab lists markers moved by keys once typing
-  pauses, 250 ms, and fresh markers for the text already shown at once; its solution-wide list asks a refused
+  pauses, 250 ms, and fresh markers for the text already shown at once; its solution-wide list keeps each report by its
+  URI's path, made once off the UI thread as it comes with its problems placed, and lists again only the files a pull
+  changed, an open file's as its own pull lands (`CSharpService.SolutionProblemsChanged` names them,
+  `ProblemsView.ShowSolutionFile` makes or moves only their rows), so a typing pause costs what it changed; it asks a refused
   workspace pull again after a pause, 1 s doubling to 30 s, and `LanguageServer.RefuseNext(method, n)` refuses one for a
   test; Roslyn holds a workspace pull open until the next change, so an answer lost after it was sent waits for another). Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past

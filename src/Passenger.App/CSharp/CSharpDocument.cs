@@ -208,7 +208,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
             return;
         }
         document.Markers = diagnostics.Take(found, DiagnosticMarks.Marker);
-        service.FileProblemsChanged();
+        service.FileProblemsChanged(document);
         (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
         if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
         {

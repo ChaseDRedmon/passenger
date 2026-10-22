@@ -743,6 +743,7 @@ public partial class MainWindow : Window
         session.Configurations.Configure(Projects);
         status.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
         FindTests();
+        ShowSolutionProblems();
         KeepWorkspace();
     }
 

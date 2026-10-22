@@ -317,6 +317,8 @@ public partial class MainWindow
                 Explorer.Reload(next.Workspace!);
                 ShowWorkspaceName();
                 FindTests();
+                // Each file's project, which Problems lists the solution's under, as the projects now are.
+                ShowSolutionProblems();
             }
         };
         next.ProjectsEvaluated += (_, evaluated) =>

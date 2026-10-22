@@ -53,11 +53,11 @@ public partial class MainWindow
     private void WatchProblems(CSharpService service)
     {
         service.SolutionWide = settings.SolutionWideAnalysis;
-        service.SolutionProblemsChanged += (_, _) =>
+        service.SolutionProblemsChanged += (_, files) =>
         {
             if (session.CSharp == service)
             {
-                ShowSolutionProblems();
+                ShowSolutionProblems(files);
             }
         };
         service.ProjectProblemsChanged += (_, _) =>
@@ -138,27 +138,44 @@ public partial class MainWindow
         Bottom.Problems.ShowFile(file.Name, problems);
     }
 
-    private void ShowSolutionProblems()
+    /// <summary>Problems' Solution tab made to list the solution's problems: every file's, or only those of the files named,
+    /// as a typing pause changes the open file's, each file's project found once.</summary>
+    private void ShowSolutionProblems(IReadOnlyCollection<string>? files = null)
     {
-        IReadOnlyList<(string Path, Diagnostic Diagnostic, TextPosition At)>? found = session.CSharp?.SolutionProblems;
-        Bottom.Problems.ShowSolution(found?.Select(p => new Problem(
-            p.Diagnostic.Severity == 1 ? ProblemSeverity.Error : ProblemSeverity.Warning,
-            p.Diagnostic.Message,
-            p.Diagnostic.Code?.ValueKind == System.Text.Json.JsonValueKind.String ? p.Diagnostic.Code.Value.GetString() : p.Diagnostic.Code?.ToString(),
-            p.Path,
-            p.At,
-            ProjectNameOf(p.Path))).ToList());
+        if (files is not null && session.CSharp is { } service && Bottom.Problems.ListsSolution)
+        {
+            foreach (string path in files)
+            {
+                IReadOnlyList<SolutionProblem> found = service.SolutionProblemsOf(path);
+                string? project = found.Count > 0 ? ProjectNameOf(path) : null;
+                Bottom.Problems.ShowSolutionFile(path, [.. found.Select(p => ProblemOf(p, project!))]);
+            }
+        }
+        else
+        {
+            Dictionary<string, string> projects = new(Passenger.Core.PathNames.Comparer);
+            Bottom.Problems.ShowSolution(session.CSharp?.SolutionProblems?.Select(p => ProblemOf(p,
+                projects.TryGetValue(p.Path, out string? project) ? project : projects[p.Path] = ProjectNameOf(p.Path))).ToList());
+        }
         ShowAnalysis();
     }
+
+    /// <summary>One of the solution's problems as Problems lists it, under its file's project.</summary>
+    private static Problem ProblemOf(SolutionProblem problem, string project) => new(
+        problem.Diagnostic.Severity == 1 ? ProblemSeverity.Error : ProblemSeverity.Warning,
+        problem.Diagnostic.Message,
+        problem.Diagnostic.Code?.ValueKind == System.Text.Json.JsonValueKind.String ? problem.Diagnostic.Code.Value.GetString() : problem.Diagnostic.Code?.ToString(),
+        problem.Path,
+        problem.At,
+        project);
 
     /// <summary>The status bar's analysis icon: grey and off, a green tick, or the solution's error count in red.</summary>
     private void ShowAnalysis()
     {
-        IReadOnlyList<Problem>? found = Bottom.Problems.SolutionProblems;
-        int errors = found?.Count(p => p.Severity == ProblemSeverity.Error) ?? 0;
+        int errors = Bottom.Problems.SolutionErrors;
         (string icon, string brush, string text, string tip) = !settings.SolutionWideAnalysis
             ? ("Icon.Problems", "Passenger.TextMuted", string.Empty, "Solution-wide analysis is off: click to analyse every file of the solution")
-            : found is null || errors == 0
+            : !Bottom.Problems.ListsSolution || errors == 0
                 ? ("Icon.Check", "Passenger.Test.Passed", string.Empty, "Solution-wide analysis: no errors. Click to turn it off")
                 : ("Icon.Error", "Passenger.Error", errors.ToString(), $"Solution-wide analysis: {Plural.Of(errors, "error")}; Problems lists them. Click to turn it off");
         AnalysisIcon.Bind(PathIcon.DataProperty, AnalysisIcon.GetResourceObservable(icon));

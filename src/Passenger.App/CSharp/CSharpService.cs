@@ -110,8 +110,9 @@ public sealed class CSharpService : IAsyncDisposable
     /// says to see the log is about.</summary>
     private (string Text, long At)? unsaid;
 
-    /// <summary>The solution's problems changed (solution-wide analysis, or an open file's); raised on the UI thread.</summary>
-    public event EventHandler? SolutionProblemsChanged;
+    /// <summary>The solution's problems changed (solution-wide analysis, or an open file's), with the files whose problems
+    /// changed, or null for every file (the analysis turned on or off, or its first answer); raised on the UI thread.</summary>
+    public event EventHandler<IReadOnlyCollection<string>?>? SolutionProblemsChanged;
 
     /// <summary>The scope Roslyn's analyzers and compiler run over with solution-wide analysis on: every document.</summary>
     private static readonly IReadOnlyDictionary<string, object?> FullSolution = new Dictionary<string, object?>
@@ -120,9 +121,15 @@ public sealed class CSharpService : IAsyncDisposable
         ["dotnet_compiler_diagnostics_scope"] = "fullSolution",
     };
 
-    /// <summary>Each file's last report by source, with the file's lines as the server counts them where they are not the
-    /// editor's (<see cref="ServerPlaces.Differing"/>), read as the report came.</summary>
-    private readonly Dictionary<(string? Source, string Uri), (string? ResultId, IReadOnlyList<Diagnostic> Items, ServerLines? Lines)> solutionReports = [];
+    /// <summary>Each file's last report by source, its URI made a path and its errors and warnings placed on the editor's
+    /// lines off the UI thread as the report came (<see cref="Placed"/>).</summary>
+    private readonly Dictionary<(string? Source, string Uri), WorkspaceReport> solutionReports = [];
+
+    /// <summary>The keys of <see cref="solutionReports"/> by file, so a pull merges again only the files it changed.</summary>
+    private readonly Dictionary<string, List<(string? Source, string Uri)>> reportsOf = new(PathNames.Comparer);
+
+    /// <summary>The errors and warnings of each file the reports have any in, every source's merged, each once.</summary>
+    private readonly Dictionary<string, IReadOnlyList<SolutionProblem>> analysed = new(PathNames.Comparer);
     private CancellationTokenSource? analysing;
     private bool solutionWide;
 
@@ -153,7 +160,7 @@ public sealed class CSharpService : IAsyncDisposable
                 return;
             }
             solutionWide = value;
-            solutionReports.Clear();
+            ForgetReports();
             analysing?.Cancel();
             if (session is { } running)
             {
@@ -163,7 +170,7 @@ public sealed class CSharpService : IAsyncDisposable
                 }
             }
             StartAnalysis();
-            SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+            SolutionProblemsChanged?.Invoke(this, null);
         }
     }
 
@@ -193,8 +200,8 @@ public sealed class CSharpService : IAsyncDisposable
     };
 
     /// <summary>Every error and warning the solution-wide analysis has found, by file, each where it starts as the editor
-    /// counts the file's lines; null with it off.</summary>
-    public IReadOnlyList<(string Path, Diagnostic Diagnostic, TextPosition At)>? SolutionProblems
+    /// counts the file's lines; null with it off. An open file's are its own pull's, as they stand.</summary>
+    public IReadOnlyList<SolutionProblem>? SolutionProblems
     {
         get
         {
@@ -202,30 +209,123 @@ public sealed class CSharpService : IAsyncDisposable
             {
                 return null;
             }
-            Dictionary<string, (IReadOnlyList<Diagnostic> Items, ServerLines? Lines)> byPath = [];
-            foreach (((string? _, string uri), (string? _, IReadOnlyList<Diagnostic> items, ServerLines? lines)) in solutionReports)
+            List<SolutionProblem> all = [];
+            foreach ((string path, IReadOnlyList<SolutionProblem> problems) in analysed)
             {
-                string path = DocumentUris.ToPath(uri);
-                byPath[path] = byPath.TryGetValue(path, out (IReadOnlyList<Diagnostic> Items, ServerLines? Lines) before) ? ([.. before.Items, .. items], lines ?? before.Lines) : (items, lines);
+                if (OpenAt(path) is null)
+                {
+                    all.AddRange(problems);
+                }
             }
-            // An open file's problems are its own pull's, which the workspace's leave out and which follow typing.
             foreach ((OpenDocument open, CSharpDocument features) in documents)
             {
-                byPath[open.Path] = (features.Diagnostics, ServerLines.Of(open.Text.Snapshot));
+                all.AddRange(OpenProblems(open, features));
             }
-            return [.. byPath.SelectMany(p => p.Value.Items
-                .Where(d => d.Severity is 1 or 2)
-                .DistinctBy(d => (d.Range, d.Message))
-                .Select(d => (p.Key, d, ServerPlaces.PositionOf(p.Value.Lines, d.Range.Start))))];
+            return all;
         }
     }
 
+    /// <summary>One file's errors and warnings as <see cref="SolutionProblems"/> has them, for a file it said changed.</summary>
+    public IReadOnlyList<SolutionProblem> SolutionProblemsOf(string path) =>
+        !solutionWide ? [] : OpenAt(path) is { } open ? OpenProblems(open.Key, open.Value) : analysed.GetValueOrDefault(path) ?? [];
+
+    /// <summary>The open C# or Razor file at a path, with its features; null when it is not open.</summary>
+    private KeyValuePair<OpenDocument, CSharpDocument>? OpenAt(string path)
+    {
+        foreach (KeyValuePair<OpenDocument, CSharpDocument> open in documents)
+        {
+            if (PathNames.Same(open.Key.Path, path))
+            {
+                return open;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>An open file's errors and warnings: its own pull's, which the workspace's leave out and which follow typing.</summary>
+    private static List<SolutionProblem> OpenProblems(OpenDocument open, CSharpDocument features)
+    {
+        List<SolutionProblem> problems = [];
+        HashSet<(LspRange, string)>? seen = null;
+        ServerLines? lines = null;
+        foreach (Diagnostic diagnostic in features.Diagnostics)
+        {
+            if (diagnostic.Severity is 1 or 2 && (seen ??= []).Add((diagnostic.Range, diagnostic.Message)))
+            {
+                lines ??= ServerLines.Of(open.Text.Snapshot);
+                problems.Add(new SolutionProblem(open.Path, diagnostic, ServerPlaces.PositionOf(lines, diagnostic.Range.Start)));
+            }
+        }
+        return problems;
+    }
+
     /// <summary>An open file's own diagnostics arrived: the solution's problems include them.</summary>
-    internal void FileProblemsChanged()
+    internal void FileProblemsChanged(OpenDocument document)
     {
         if (solutionWide)
         {
-            SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+            SolutionProblemsChanged?.Invoke(this, [document.Path]);
+        }
+    }
+
+    /// <summary>The reports let go of: the analysis turned on or off, or the server gone.</summary>
+    private void ForgetReports()
+    {
+        solutionReports.Clear();
+        reportsOf.Clear();
+        analysed.Clear();
+    }
+
+    /// <summary>The reports a pull changed, each URI made a path once and each file with problems read as the server read it
+    /// (a file not open is the disk's), its problems placed on the editor's lines: off the UI thread, as they come.</summary>
+    private static List<WorkspaceReport> Placed(IReadOnlyList<WorkspaceDocumentDiagnosticReport> changed)
+    {
+        Dictionary<string, string> paths = DocumentUris.ToPaths(changed.Select(r => r.Uri));
+        Dictionary<string, ServerLines?> lines = new(PathNames.Comparer);
+        List<WorkspaceReport> placed = new(changed.Count);
+        foreach (WorkspaceDocumentDiagnosticReport report in changed)
+        {
+            string path = paths[report.Uri];
+            List<SolutionProblem> problems = [];
+            foreach (Diagnostic diagnostic in report.Items ?? [])
+            {
+                if (diagnostic.Severity is not (1 or 2))
+                {
+                    continue;
+                }
+                if (!lines.TryGetValue(path, out ServerLines? counted))
+                {
+                    lines[path] = counted = ServerPlaces.Differing(ServerPlaces.Read(path));
+                }
+                problems.Add(new SolutionProblem(path, diagnostic, ServerPlaces.PositionOf(counted, diagnostic.Range.Start)));
+            }
+            placed.Add(new WorkspaceReport(report.Uri, path, report.ResultId is { } id ? new PreviousResultId(report.Uri, id) : null, problems));
+        }
+        return placed;
+    }
+
+    /// <summary>A file's problems merged again from every source's report of it, each once.</summary>
+    private void Merge(string path)
+    {
+        List<SolutionProblem> merged = [];
+        HashSet<(LspRange, string)> seen = [];
+        foreach ((string? Source, string Uri) key in reportsOf.GetValueOrDefault(path) ?? [])
+        {
+            foreach (SolutionProblem problem in solutionReports[key].Problems)
+            {
+                if (seen.Add((problem.Diagnostic.Range, problem.Diagnostic.Message)))
+                {
+                    merged.Add(problem);
+                }
+            }
+        }
+        if (merged.Count > 0)
+        {
+            analysed[path] = merged;
+        }
+        else
+        {
+            analysed.Remove(path);
         }
     }
 
@@ -261,8 +361,8 @@ public sealed class CSharpService : IAsyncDisposable
             while (!cancel.IsCancellationRequested)
             {
                 List<PreviousResultId> previous = [.. solutionReports
-                    .Where(r => r.Key.Source == source && r.Value.ResultId is not null)
-                    .Select(r => new PreviousResultId(r.Key.Uri, r.Value.ResultId!))];
+                    .Where(r => r.Key.Source == source && r.Value.Previous is not null)
+                    .Select(r => r.Value.Previous!)];
                 DateTime asked = DateTime.UtcNow;
                 IReadOnlyList<WorkspaceDocumentDiagnosticReport> reports;
                 try
@@ -282,23 +382,32 @@ public sealed class CSharpService : IAsyncDisposable
                     return;
                 }
                 List<WorkspaceDocumentDiagnosticReport> changed = [.. reports.Where(r => r.Kind != "unchanged")];
-                // The files with problems read off the UI thread, as the server read them: a file not open is the disk's.
-                Dictionary<string, ServerLines?> lines = await BackgroundWork.Run(() => changed
-                    .Where(r => r.Items?.Any(d => d.Severity is 1 or 2) == true)
-                    .Select(r => r.Uri)
-                    .Distinct(StringComparer.Ordinal)
-                    .ToDictionary(u => u, u => ServerPlaces.Differing(ServerPlaces.Read(DocumentUris.ToPath(u))), StringComparer.Ordinal), cancel);
+                List<WorkspaceReport> placed = changed.Count == 0 ? [] : await BackgroundWork.Run(() => Placed(changed), cancel);
                 if (cancel.IsCancellationRequested)
                 {
                     return;
                 }
-                foreach (WorkspaceDocumentDiagnosticReport report in changed)
+                HashSet<string> files = new(PathNames.Comparer);
+                foreach (WorkspaceReport report in placed)
                 {
-                    solutionReports[(source, report.Uri)] = (report.ResultId, report.Items ?? [], lines.GetValueOrDefault(report.Uri));
+                    if (!solutionReports.ContainsKey((source, report.Uri)))
+                    {
+                        if (!reportsOf.TryGetValue(report.Path, out List<(string? Source, string Uri)>? keys))
+                        {
+                            reportsOf[report.Path] = keys = [];
+                        }
+                        keys.Add((source, report.Uri));
+                    }
+                    solutionReports[(source, report.Uri)] = report;
+                    files.Add(report.Path);
                 }
-                if (changed.Count > 0 || first)
+                foreach (string path in files)
                 {
-                    SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+                    Merge(path);
+                }
+                if (files.Count > 0 || first)
+                {
+                    SolutionProblemsChanged?.Invoke(this, first ? null : files);
                 }
                 if (first)
                 {
@@ -849,7 +958,7 @@ public sealed class CSharpService : IAsyncDisposable
         unsaid = null;
         ForgetLoadProblems();
         analysing?.Cancel();
-        solutionReports.Clear();
+        ForgetReports();
         _ = lost.DisposeAsync();
         foreach (OpenDocument open in documents.Keys.ToList())
         {
@@ -903,3 +1012,10 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>What the status bar says when a command (<paramref name="what"/>) asks the server before it is ready.</summary>
     public string Unready(string what) => $"{what} needs the C# language server: {State}";
 }
+
+/// <summary>One error or warning of the solution's, in its file, where it starts as the editor counts the file's lines.</summary>
+public readonly record struct SolutionProblem(string Path, Diagnostic Diagnostic, TextPosition At);
+
+/// <summary>A file's last report from one source of the solution-wide analysis: its URI, made a path once, the result id
+/// to give back on the next pull, and its errors and warnings placed.</summary>
+internal sealed record WorkspaceReport(string Uri, string Path, PreviousResultId? Previous, IReadOnlyList<SolutionProblem> Problems);
