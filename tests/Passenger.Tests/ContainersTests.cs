@@ -277,8 +277,11 @@ public sealed class ContainersTests
             labels: { $LABEL }
         """;
 
+    /// <summary>A Compose project the test brought up: listed with its services, ports and health, the port a link the browser
+    /// opens; a container's log streaming into its console with links; and the project's log merging its services, each a
+    /// toggle, which Find searches by a regular expression.</summary>
     [AvaloniaFact]
-    public void The_window_lists_a_compose_project_the_test_brought_up_with_its_services_ports_and_health()
+    public void A_compose_project_is_listed_with_its_services_ports_and_health_and_its_logs_stream_with_links_and_merge_its_services()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         (string folder, string project) = Docker.ComposeUp("list", Shop);
@@ -300,17 +303,8 @@ public sealed class ContainersTests
             "web's port link");
         Ui.Click(link!);
         Assert.Contains(new Uri($"http://localhost:{port.HostPort}/"), window.Browsed);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_containers_log_streams_into_its_console_with_links_and_a_projects_log_merges_its_services()
-    {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        (string folder, string project) = Docker.ComposeUp("log", Shop);
-        MainWindow window = Ui.OpenFolder(folder);
-        ContainersView view = Shown(window);
-        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Service && r.Project?.Name == project && r.Service == "web"), "web's row");
+        // Web's row chosen, its log streams into the console, its address a link.
         OutputView console = view.Log.Console;
         Ui.WaitFor(() => Text(console).Contains("web listening on http://localhost:8080/", StringComparison.Ordinal), "web's first line in its log");
         string line = Text(console).Split('\n').First(l => l.Contains("web listening", StringComparison.Ordinal));
@@ -337,14 +331,37 @@ public sealed class ContainersTests
         static int Ticks(OutputView console) => Text(console).Split('\n').Count(l => l.Contains("worker tick", StringComparison.Ordinal));
     }
 
+    /// <summary>One busy container chosen in the window: its Stats show the engine's numbers while that tab shows, and nothing
+    /// streams once it is hidden; its Files tab opens a file of its read-only; and Stop, Start, Restart and Remove act on it,
+    /// asking nothing.</summary>
     [AvaloniaFact]
-    public void Stop_start_restart_and_remove_act_on_the_chosen_container()
+    public void A_containers_stats_show_its_numbers_its_files_open_read_only_and_stop_start_restart_and_remove_act_on_it()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string name = Docker.Container("solo", "trap 'exit 0' TERM; while true; do sleep 1; done");
+        string name = Docker.Container("solo", "trap 'exit 0' TERM; echo 'from inside' > /tmp/note.txt; while true; do :; done");
         MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-solo-"));
         ContainersView view = Shown(window);
         Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
+
+        view.ShowTab("Stats");
+        Ui.WaitFor(() => view.Stats.Latest.Count == 1 && view.Stats.Latest[0].Memory.Length > 0 && view.Stats.Latest[0].Cpu > 0, "the engine's numbers for the busy container");
+        ContainerStatsSample sample = view.Stats.Latest[0];
+        Assert.Equal(name, sample.Name);
+        Assert.Contains("/", sample.Memory, StringComparison.Ordinal);
+        // Hidden, nothing streams.
+        view.ShowTab("Log");
+        Ui.Settle();
+        Assert.Empty(view.Stats.Latest);
+
+        view.ShowTab("Files");
+        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp" && f.IsFolder), "the container's root listed");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp"));
+        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp/note.txt"), "/tmp's files listed under it");
+        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp/note.txt"));
+        Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith("note.txt", StringComparison.Ordinal) == true, "note.txt open in the editor");
+        Passenger.App.Workspace.OpenDocument note = window.EditorArea.Active!;
+        Assert.True(note.IsReadOnly, "A container's file opened editable");
+        Assert.Equal("from inside\n", note.Text.Snapshot.ToString());
 
         Assert.True(window.Perform(AppActions.ContainerStop), "Stop did not run");
         Ui.WaitFor(() => Docker.State(name) == "exited" && Row(view, name)?.Container?.State == "exited", $"{name} stopped, and shown so");
@@ -418,26 +435,6 @@ public sealed class ContainersTests
         static string[] Texts(Window dialog) => [.. dialog.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
     }
 
-    [AvaloniaFact]
-    public void Stats_show_a_running_containers_numbers()
-    {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string name = Docker.Container("busy", "while true; do :; done");
-        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-stats-"));
-        ContainersView view = Shown(window);
-        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
-        view.ShowTab("Stats");
-        Ui.WaitFor(() => view.Stats.Latest.Count == 1 && view.Stats.Latest[0].Memory.Length > 0 && view.Stats.Latest[0].Cpu > 0, "the engine's numbers for the busy container");
-        ContainerStatsSample sample = view.Stats.Latest[0];
-        Assert.Equal(name, sample.Name);
-        Assert.Contains("/", sample.Memory, StringComparison.Ordinal);
-        // Hidden, nothing streams.
-        view.ShowTab("Log");
-        Ui.Settle();
-        Assert.Empty(view.Stats.Latest);
-        window.Close();
-    }
-
     /// <summary>A container's stats come though its CLI says much on its standard error first, more than a pipe holds unread,
     /// and once the stream ends the pane says why, in the CLI's own words, where the numbers were.</summary>
     [AvaloniaFact]
@@ -471,26 +468,6 @@ public sealed class ContainersTests
         {
             window.Close();
         }
-    }
-
-    [AvaloniaFact]
-    public void A_containers_file_opens_read_only_from_its_files_tab()
-    {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        string name = Docker.Container("files", "echo 'from inside' > /tmp/note.txt; sleep 600");
-        MainWindow window = Ui.OpenFolder(TestFolders.Create("ctr-files-"));
-        ContainersView view = Shown(window);
-        Ui.WaitFor(() => view.Choose(r => r.Kind == ContainerRowKind.Container && r.Label == name), $"{name}'s row");
-        view.ShowTab("Files");
-        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp" && f.IsFolder), "the container's root listed");
-        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp"));
-        Ui.WaitFor(() => view.Files.Entries.Any(f => f.Path == "/tmp/note.txt"), "/tmp's files listed under it");
-        _ = view.Files.ActivateAsync(view.Files.Entries.First(f => f.Path == "/tmp/note.txt"));
-        Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith("note.txt", StringComparison.Ordinal) == true, "note.txt open in the editor");
-        Passenger.App.Workspace.OpenDocument note = window.EditorArea.Active!;
-        Assert.True(note.IsReadOnly, "A container's file opened editable");
-        Assert.Equal("from inside\n", note.Text.Snapshot.ToString());
-        window.Close();
     }
 
     [AvaloniaFact]
