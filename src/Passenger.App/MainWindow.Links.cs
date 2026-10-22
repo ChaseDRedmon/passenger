@@ -1,3 +1,4 @@
+using Avalonia.Platform.Storage;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
@@ -108,6 +109,21 @@ public partial class MainWindow
         UiThread.Check();
         browsed.Add(address);
         _ = Launcher.LaunchUriAsync(address);
+    }
+
+    private readonly List<string> shownFolders = [];
+
+    /// <summary>Every folder the window opened in the file manager, in order (where a publish landed): what a test reads, as
+    /// the headless platform's launcher opens nothing.</summary>
+    public IReadOnlyList<string> ShownFolders => shownFolders;
+
+    /// <summary>Opens a folder in the person's file manager, showing what it holds, through the system's launcher as a link's
+    /// address opens: the file manager is the person's, never ended with the IDE.</summary>
+    public void ShowInFileManager(string folder)
+    {
+        UiThread.Check();
+        shownFolders.Add(folder);
+        _ = Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(folder));
     }
 
     /// <summary>Rider's Open browser after launch: the plan's browser URL opens once its program listens there, as

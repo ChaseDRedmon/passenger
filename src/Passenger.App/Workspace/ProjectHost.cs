@@ -156,6 +156,13 @@ public sealed class ProjectHost : IAsyncDisposable
         (await AskAsync(HostMethods.Inspect, new InspectParams(project, properties, texts), null, cancel)).Deserialize<ProjectInsight>(HostJson.Options)
             ?? throw new ProjectHostFailed("the project host gave no answer for the project's evaluation");
 
+    /// <summary>Some properties of one project as a build with these global properties sees them (a publish profile's,
+    /// imported by PublishProfile), each that has a value; or why the project did not evaluate.</summary>
+    public async Task<PropertiesAnswer> PropertiesAsync(string project, IReadOnlyDictionary<string, string> properties, IReadOnlyList<string> names,
+        CancellationToken cancel = default) =>
+        (await AskAsync(HostMethods.Properties, new PropertiesParams(project, properties, names), null, cancel)).Deserialize<PropertiesAnswer>(HostJson.Options)
+            ?? throw new ProjectHostFailed("the project host gave no answer for the project's properties");
+
     /// <summary>Holds the host's design-time builds of WPF projects off for a build of the IDE's own: done once none runs,
     /// those still running named to <paramref name="waiting"/> first (on the reader's thread), and none starts again until
     /// <paramref name="release"/> is cancelled.</summary>

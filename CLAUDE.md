@@ -349,7 +349,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   design-time builds also run with `UseAppHost=false`, so a build's apphost is created and signed by the build alone) and `inspect` (one project evaluated for the code help
   in its MSBuild files, `Inspection.cs`: the open files' unsaved text fed to MSBuild in place of the disk's; properties
   with the places that set them, items, targets, imports, the SDK's frameworks and the evaluation's errors (a skipped
-  import as MSB4019), places by a file table, answered from its cache while the inputs hold). Off Windows a project
+  import as MSB4019), places by a file table, answered from its cache while the inputs hold), and `properties`
+  (`Properties.cs`: a few properties of one project evaluated afresh with the global properties given, which is how
+  Publish reads a publish profile, the SDK importing it by PublishProfile). Off Windows a project
   that references a framework the SDK marks Windows-only and leaves EnableWindowsTargeting unset is loaded again with it
   as a global property (`WindowsTargeting.cs`), in evaluate, build and inspect alike; Passenger's builds follow
   (`BuildOutput.WindowsTargeting`, `-p:EnableWindowsTargeting=true`), and Roslyn's server has it in its environment off
@@ -423,7 +425,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`, `containers.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, Find in Files' scope, `localHistory/`, the
+  configurations, Find in Files' scope, each project's last publish profile (`publish.json`), `localHistory/`, the
   profiler's `snapshots/`), with the debugger's decompiled
   symbols in `cache/symbols/` at the root. A Passenger that Run, Debug or
   Profile launch (Passenger.App, or any program named Passenger) keeps its state in the launcher's `sandbox/`
@@ -868,6 +870,27 @@ window or takes the focus; it shows everything but the system's own window chrom
   stack frames, compiler messages; in the terminal also paths to any file, hidden until Cmd/Ctrl), drawn by
   `CodeEditor.Links` and `TerminalView.Links`; `MainWindow.Browse` is the only way the IDE opens a browser (recording
   `Browsed` for tests), and Run and Debug open a plan's `BrowserUrl` once its port answers (`Run/BrowserLaunch`).
+- Publish (`Run/Publishing.cs`, `Run/PublishDialog.cs`, `Run/BuildRunController.Publish.cs`, `MainWindow.Publish.cs`): a
+  project to a folder through `dotnet publish` with a publish profile, the SDK's own `Properties/PublishProfiles/NAME.pubxml`,
+  so `dotnet publish -c CONFIG -p:PublishProfile=NAME` does the same (the CLI takes no configuration from a profile, and
+  a multi-targeted project's outer build never reads one, so Passenger always gives `-c`, and `-f` for one with several
+  frameworks). Publish... (the Build menu, a project's menu in the Solution view, Find Action) is greyed with why by
+  `PublishProfiles.WhyNot` (a test project, a library that does not set IsPublishable true, IsPublishable false, a Windows
+  desktop app off Windows) and opens `PublishDialog`: a profile there (one that publishes otherwise than to a folder is
+  listed, never chosen) or a new one, its options read through the project host's `properties` with the profile as a
+  global property (`PublishProfiles.EvaluateAsync`), never from the file's text, the folder MSBuild's default until
+  named, and the command that does the same. Save and Publish write the profile through `FileText.Save` as one command of
+  global undo (`MainWindow.SaveProfileAsync`), `PubXml.Apply` changing only what changed and keeping the rest of the file,
+  after asking (`Confirm`) before changing a file there or putting a new profile in one's place. The publish is a build
+  of the Build window's (`BuildKind.Publish`, its `Working` under `AppActions.Publish`, Stop ending it, Problems listing
+  what it found, the Build window's Rerun publishing again), its folder resolved by MSBuild before it starts
+  (`PublishProfiles.ResolveAsync`: PublishDir; a Visual Studio web profile's PublishUrl, where Visual Studio copies the
+  app on with DeployOnBuild and dotnet publish does not, is only said in the dialog), said in the Build window and
+  the status bar, whose word opens it (`MainWindow.ShowInFileManager`, the system's launcher, recorded as `ShownFolders`
+  for tests). Publish Again publishes a project with the profile it last published with (`PublishMemory`, the folder's
+  `publish.json`); agents' `publish` takes a project and a profile. Remote targets (Web Deploy, FTP, Azure) come as
+  kinds of `PublishProfileFile.Remote`: a page of their own in the dialog and a deploy after the folder's publish, their
+  credentials in the system's store, never in a .pubxml.
 - `src/Passenger.App/Testing`: unit testing works in Passenger's own `TestItem` (its id the project and full name, plus
   a data row's name) and `TestOutcome`, behind `ITestRunner`; `VsTestRunner` is the only file that knows VSTest's
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
@@ -1672,7 +1695,10 @@ make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per 
 programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
 Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests.WpfApp.cs` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
-`DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
+`PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
+the self-contained one at the tests' own target, whose runtime pack for this system the tests' project downloads
+(`Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)` at the SDK's bundled version), so its restore finds it
+in the package cache. `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
 a callback from List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
 values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
 (`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`

@@ -120,6 +120,11 @@ public static class AppActions
     public const string BuildSelected = "app.build.selected";
     public const string RebuildSelected = "app.build.rebuildSelected";
     public const string CleanSelected = "app.build.cleanSelected";
+
+    // Publish of the chosen project to a folder through a profile, and again with the profile it last published with: no
+    // keys of Rider's.
+    public const string Publish = "app.build.publish";
+    public const string PublishAgain = "app.build.publishAgain";
     public const string RunProgram = "app.run";
     public const string Debug = "app.debug";
     public const string Stop = "app.stop";

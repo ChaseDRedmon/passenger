@@ -122,7 +122,7 @@ public static partial class McpHost
         "Change Signature (every call updated), Move, Safe Delete, Extract Interface, Pull Members Up, Push Members Down, Introduce Field or " +
         "Parameter, Encapsulate Field, Optimize Imports and Code Cleanup; refactor with describe true answers what its dialog offers and the " +
         "options to send back, changing nothing. Each change is one step of the IDE's Undo.\n\n" +
-        "build, run, tests_list and tests_run build, run and test. To debug: breakpoint_set, then debug_start (or debug_attach), debug_step, " +
+        "build, run, tests_list, tests_run and publish build, run, test and publish. To debug: breakpoint_set, then debug_start (or debug_attach), debug_step, " +
         "debug_evaluate, debug_variables and debug_continue, each waiting for the program to stop and saying where, with the top frame's " +
         "locals. An Avalonia or WPF app that run or debug_start starts is looked at and used as a person tests it: app_windows, app_tree, " +
         "app_screenshot, app_click, app_type, app_key, app_scroll, app_binding_errors. Also version control (vcs_status, vcs_diff, " +

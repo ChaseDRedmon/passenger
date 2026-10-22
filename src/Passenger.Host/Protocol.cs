@@ -48,6 +48,11 @@ public static class HostMethods
     /// compilation or Avalonia's resources starts until the request is cancelled; a <see cref="HoldState"/> partial says it is held once none runs,
     /// after one naming those still running, if any.</summary>
     public const string Hold = "hold";
+
+    /// <summary><see cref="PropertiesParams"/> to <see cref="PropertiesAnswer"/>: the values of some properties of one project
+    /// evaluated with the global properties given (a publish profile's, which the SDK imports by PublishProfile), as a build
+    /// with those properties would see them.</summary>
+    public const string Properties = "properties";
 }
 
 public static class HostJson
@@ -133,10 +138,13 @@ public static class CarriedProperties
     public const string DockerDefaultTargetOS = "DockerDefaultTargetOS";
     public const string UserSecretsId = "UserSecretsId";
 
+    /// <summary>Whether Publish offers the project: an executable's unless it says false, a library's only when it says true.</summary>
+    public const string IsPublishable = "IsPublishable";
+
     public static readonly IReadOnlyList<string> Names =
     [
         EnableSdkContainerSupport, ContainerRepository, ContainerImageName, ContainerBaseImage, DockerfileFile, DockerfileContext,
-        DockerfileFastModeStage, ContainerDevelopmentMode, DockerDefaultTargetOS, UserSecretsId,
+        DockerfileFastModeStage, ContainerDevelopmentMode, DockerDefaultTargetOS, UserSecretsId, IsPublishable,
     ];
 }
 
@@ -232,6 +240,13 @@ public sealed record ProjectInsight
 
     public double Seconds { get; init; }
 }
+
+/// <summary>A project to evaluate with these global properties (the solution's, and what a build would be given), and the
+/// properties whose values are wanted.</summary>
+public sealed record PropertiesParams(string Project, IReadOnlyDictionary<string, string> Properties, IReadOnlyList<string> Names);
+
+/// <summary>Each property asked for that has a value, as evaluated, or why the project did not evaluate.</summary>
+public sealed record PropertiesAnswer(IReadOnlyDictionary<string, string> Values, string? Problem);
 
 /// <summary>A place in a file of <see cref="ProjectInsight.Files"/>, its line and column from 1 as MSBuild counts them.</summary>
 public sealed record InsightPlace(int File, int Line, int Column);

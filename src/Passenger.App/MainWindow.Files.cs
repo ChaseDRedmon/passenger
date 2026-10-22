@@ -107,6 +107,9 @@ public partial class MainWindow
             case ExplorerAction.AddDockerCompose when node.Kind == NodeKind.Solution:
                 ShowDockerCompose();
                 break;
+            case ExplorerAction.Publish when node.Kind == NodeKind.Project && path is not null:
+                ShowPublish(path);
+                break;
             case ExplorerAction.Delete when node is { Kind: NodeKind.ProjectReference, Owner: { } owner, Referenced: { } referenced }:
                 await RemoveReferenceAsync(owner, referenced);
                 break;

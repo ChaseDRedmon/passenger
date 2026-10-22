@@ -341,6 +341,9 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>What the folder's .http requests may take from the person's computer to a host, as they answered.</summary>
     public Endpoints.EndpointGrants EndpointGrants { get; } = new();
 
+    /// <summary>The profile each project last published with, which Publish Again publishes it with.</summary>
+    public PublishMemory Publishing { get; } = new();
+
     /// <summary>The language server on the folder's projects, or null for a folder with none (or no folder).</summary>
     public CSharpService? CSharp { get; private set; }
 
@@ -475,6 +478,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Debug.Breakpoints.Restore(kept.Breakpoints.Value);
         Bookmarks.Restore(kept.Bookmarks.Value);
         EndpointGrants.Keep(kept.Endpoints);
+        Publishing.Keep(kept.Publish);
         FindScope = kept.Find.Value;
         WorkspaceState workspace = kept.Workspace.Value;
         foreach (string project in workspace.UnloadedProjects)

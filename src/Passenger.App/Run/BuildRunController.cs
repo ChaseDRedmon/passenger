@@ -45,6 +45,9 @@ public sealed record BuildRunParts(
     /// (false) once the start is stopped.</summary>
     public Func<string, string, bool, CancellationToken, Task<bool>>? AskCertificate { get; init; }
 
+    /// <summary>Opens a folder in the file manager: where a publish put the app, from the status bar's word that it did.</summary>
+    public Action<string>? ShowFolder { get; init; }
+
     /// <summary>Asks the person whether a container run may replace containers of its Compose project Passenger did not make
     /// (true), given the configuration, the project and those containers' names; closed unanswered (false) once the start is
     /// stopped.</summary>
@@ -116,6 +119,10 @@ public sealed partial class BuildRunController
             {
                 builtLines.Dequeue();
             }
+            if (publishing is { } publish)
+            {
+                PublishStage(publish, line);
+            }
         };
         session.Builder.Exited += (_, code) => OnBuilt(code);
         session.Runner.Exited += (_, code) =>
@@ -179,8 +186,16 @@ public sealed partial class BuildRunController
         return built.Task;
     }
 
-    /// <summary>The Build window's Rerun: the last build, rebuild or clean again, of what it built.</summary>
-    public void Rebuild() => Build(buildKind, lastProjects, framework: buildFramework);
+    /// <summary>The Build window's Rerun: the last build, rebuild, clean or publish again, of what it built.</summary>
+    public void Rebuild()
+    {
+        if (buildKind == BuildKind.Publish && published is { } again)
+        {
+            _ = PublishAsync(again with { Folder = null });
+            return;
+        }
+        Build(buildKind, lastProjects, framework: buildFramework);
+    }
 
     /// <summary>Builds, rebuilds or cleans the solution, or the projects given one after another (stopping at the first
     /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, which opens as it
@@ -188,15 +203,25 @@ public sealed partial class BuildRunController
     /// <paramref name="then"/> always hears how it ended, a build refused or never started included. A framework given
     /// builds the projects for it alone, as a run configuration's build before launch does.</summary>
     public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null, string? framework = null,
-        BuildCause cause = BuildCause.Explicit)
+        BuildCause cause = BuildCause.Explicit) => Start(kind, projects, then, framework, cause, null, null);
+
+    /// <summary>Starts a build, or the publish given (its work begun already, which the build holds until it ends).</summary>
+    private void Start(BuildKind kind, IReadOnlyList<string>? projects, Action<BuildOutcome>? then, string? framework, BuildCause cause, PublishRequest? publish,
+        Working? work)
     {
         UiThread.Check();
         if (session.Folder is null || IsBuilding || session.IsEnded)
         {
             BuildOutcome refused = new(BuildStatus.Refused, session.Folder is null || session.IsEnded ? "Nothing to build: no folder is open" : "Another build is running");
+            work?.Dispose();
             parts.Say(refused.Message);
             then?.Invoke(refused);
             return;
+        }
+        publishing = publish;
+        if (publish is not null)
+        {
+            published = publish;
         }
         buildKind = kind;
         lastProjects = projects;
@@ -210,6 +235,8 @@ public sealed partial class BuildRunController
         if (buildQueue.Count == 0)
         {
             BuildOutcome nothing = new(BuildStatus.Refused, "Nothing to build: every project is unloaded");
+            publishing = null;
+            work?.Dispose();
             parts.Say(nothing.Message);
             then?.Invoke(nothing);
             return;
@@ -229,7 +256,7 @@ public sealed partial class BuildRunController
         building = new TaskCompletionSource();
         BackgroundWork.Track(building.Task);
         // A build is a start Stop ends, as the Build window's Stop does; held until it ends, whoever began it.
-        buildWork = parts.Work.Begin(AppActions.Build, $"Building {Path.GetFileName(buildQueue.Peek())}…");
+        buildWork = work ?? parts.Work.Begin(AppActions.Build, $"Building {Path.GetFileName(buildQueue.Peek())}…");
         BuildNext(first: true);
     }
 
@@ -262,11 +289,13 @@ public sealed partial class BuildRunController
     private void BuildNext(bool first = false)
     {
         string target = buildQueue.Dequeue();
-        string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
-        parts.Say($"{verb} {Path.GetFileName(target)}…");
-        buildWork?.Say($"{verb} {Path.GetFileName(target)}…");
-        if (session.Builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework, BuildOutput.WindowsTargeting(target, session.Projects)), session.Folder!,
-            after: first ? HoldDesignTimeBuildsAsync : null) is { } problem)
+        string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", BuildKind.Publish => "Publishing", _ => "Building" };
+        string what = publishing is { } shown ? shown.Shown : Path.GetFileName(target);
+        parts.Say($"{verb} {what}…");
+        buildWork?.Say($"{verb} {what}…");
+        bool windows = BuildOutput.WindowsTargeting(target, session.Projects);
+        IReadOnlyList<string> arguments = publishing is { } publish ? publish.Arguments(windows) : BuildOutput.Arguments(target, buildKind, buildFramework, windows);
+        if (session.Builder.StartDotnet(arguments, session.Folder!, after: first ? HoldDesignTimeBuildsAsync : null) is { } problem)
         {
             FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
         }
@@ -318,10 +347,13 @@ public sealed partial class BuildRunController
         List<Problem> problems = session.Problems;
         int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
         int warnings = problems.Count - errors;
-        string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", _ => "Build" };
+        string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", BuildKind.Publish => "Publish", _ => "Build" };
+        string warned = warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "";
         FinishBuild(session.Builder.WasStopped ? new BuildOutcome(BuildStatus.Stopped, $"{noun} stopped")
-            : code == 0 ? new BuildOutcome(BuildStatus.Succeeded, $"{noun} succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}")
-            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}; Problems lists them"));
+            : code == 0 && publishing is { } publish ? Published(publish, warned)
+            : code == 0 ? new BuildOutcome(BuildStatus.Succeeded, $"{noun} succeeded{warned}")
+            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}; "
+                + (errors > 0 ? "Problems lists them" : $"dotnet exited with code {code}, the Build window says why")));
     }
 
     /// <summary>The one way a build that began ends: its window, Problems and the status bar say how, its caller hears it
@@ -335,6 +367,7 @@ public sealed partial class BuildRunController
         afterBuild = null;
         TaskCompletionSource? held = building;
         building = null;
+        publishing = null;
         buildWork?.Dispose();
         buildWork = null;
         builtTexts = null;
@@ -361,7 +394,9 @@ public sealed partial class BuildRunController
     /// <summary>Where a build's end has more to see: its problems in Problems' Build, the first chosen, or the Build window's
     /// output when it failed with none read; nowhere for a build that succeeded cleanly, was stopped or never started.</summary>
     private StatusPlace? Place(BuildOutcome ended) =>
-        ended.Problems.Count > 0 ? StatusPlace.Problems(parts.Dock, parts.Views.Problems, ProblemsTab.Build, _ => true)
+        ended is { Succeeded: true, Published: { } folder } && parts.ShowFolder is { } show
+            ? new StatusPlace($"open {Path.GetFileName(folder)} in {ChildProcesses.FileManager}", () => show(folder))
+        : ended.Problems.Count > 0 ? StatusPlace.Problems(parts.Dock, parts.Views.Problems, ProblemsTab.Build, _ => true)
         : ended.Status == BuildStatus.Failed ? StatusPlace.Window(parts.Dock, "build")
         : null;
 

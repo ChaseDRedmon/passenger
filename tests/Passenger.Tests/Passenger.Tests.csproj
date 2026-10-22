@@ -45,6 +45,11 @@
     <AssemblyMetadata Include="WindowsDesktopRefVersion" Value="$(WindowsDesktopRefVersion)" />
     <AssemblyMetadata Include="TargetFramework" Value="$(TargetFramework)" />
   </ItemGroup>
+  <!-- This machine's .NET runtime pack at the SDK's own version, for the self-contained app PublishTests publish for this
+       system at the tests' own target: its restore finds the pack in the package cache, never reaching nuget.org. -->
+  <ItemGroup>
+    <PackageDownload Include="Microsoft.NETCore.App.Runtime.$(NETCoreSdkRuntimeIdentifier)" Version="[$(BundledNETCoreAppPackageVersion)]" />
+  </ItemGroup>
   <Target Name="SdkWindowsDesktopRefVersion" BeforeTargets="GetAssemblyAttributes">
     <ItemGroup>
       <AssemblyMetadata Include="SdkWindowsDesktopRefVersion"

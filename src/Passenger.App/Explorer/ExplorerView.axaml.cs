@@ -47,6 +47,7 @@ public enum ExplorerAction
     ReplaceInFiles,
     AddDockerSupport,
     AddDockerCompose,
+    Publish,
 }
 
 /// <summary>Files and folders dragged onto a row: moved into the folder it stands for, or copied with the platform's
@@ -101,6 +102,9 @@ public partial class ExplorerView : UserControl
 
     /// <summary>The window's actions, whose keymap gives the menu's items their shortcuts, as the main menu shows them.</summary>
     public ActionRegistry? Actions { get; set; }
+
+    /// <summary>Why a project does not publish, which greys its Publish...; null when it does.</summary>
+    public Func<string, string?>? WhyNotPublish { get; set; }
 
     /// <summary>Whether Git has a path's history (it is in the folder's working tree), for a row's Git items.</summary>
     public Func<string, bool> IsVersioned { get; set; } = _ => false;
@@ -207,6 +211,18 @@ public partial class ExplorerView : UserControl
             menu.Items.Add(Action($"Build {what}", ExplorerAction.Build, solution ? AppActions.Build : AppActions.BuildSelected));
             menu.Items.Add(Action($"Rebuild {what}", ExplorerAction.Rebuild, solution ? AppActions.RebuildSolution : AppActions.RebuildSelected));
             menu.Items.Add(Action($"Clean {what}", ExplorerAction.Clean, solution ? AppActions.CleanSolution : AppActions.CleanSelected));
+            if (node is { Kind: NodeKind.Project, Path: { } project })
+            {
+                // Greyed, with why, for a project that does not publish (a library, a test project, WPF off Windows).
+                MenuItem publish = Action("Publish...", ExplorerAction.Publish, AppActions.Publish);
+                if (WhyNotPublish?.Invoke(project) is { } why)
+                {
+                    publish.IsEnabled = false;
+                    ToolTip.SetTip(publish, why);
+                    ToolTip.SetShowOnDisabled(publish, true);
+                }
+                menu.Items.Add(publish);
+            }
             menu.Items.Add(new Separator());
         }
         if (node.Kind is NodeKind.Project or NodeKind.SolutionFolder)

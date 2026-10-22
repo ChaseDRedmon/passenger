@@ -57,14 +57,19 @@ public sealed record BuildOutcome(BuildStatus Status, string Message)
 
     /// <summary>The last lines the build wrote.</summary>
     public IReadOnlyList<string> Output { get; init; } = [];
+
+    /// <summary>The folder a publish that succeeded put the app in.</summary>
+    public string? Published { get; init; }
 }
 
-/// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean.</summary>
+/// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean, and
+/// Publish, dotnet publish of one project (<see cref="PublishRequest"/>).</summary>
 public enum BuildKind
 {
     Build,
     Rebuild,
     Clean,
+    Publish,
 }
 
 /// <summary>What started a build, which decides whether the Build window opens as it begins, as Rider decides.</summary>

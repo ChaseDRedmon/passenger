@@ -61,6 +61,7 @@ public partial class MainWindow
         AskCertificate = AskCertificateAsync,
         AskReplace = AskReplaceAsync,
         AsksNoOne = AgentsOwn,
+        ShowFolder = ShowInFileManager,
     };
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what

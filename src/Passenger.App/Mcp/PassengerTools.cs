@@ -566,6 +566,22 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             built.Succeeded ? null : string.Join('\n', built.Output));
     });
 
+    [McpServerTool(Name = "publish", Title = "Publish", Destructive = true), Description(
+        "Publishes a project (its name or .csproj) to a folder with dotnet publish, as Publish does: with a profile of its own " +
+        "(Properties/PublishProfiles/NAME.pubxml; by default the one it last published with, else Release and MSBuild's defaults). " +
+        "Returns as build does, with the folder the app is in.")]
+    public Task<PublishResult> Publish(string project, string? profile = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        ProjectModel chosen = Project(project);
+        AgentCall.Follow(window.Actions.Work, AppActions.Publish);
+        // The publish goes on without an agent that gives up on it, shown in the Build window.
+        BuildOutcome published = await Builds.PublishAsync(new PublishRequest(chosen.Path, profile ?? Session.Publishing.ProfileOf(chosen.Path))).WaitAsync(cancel);
+        IReadOnlyList<Finding> problems = [.. published.Problems.Select(p => new Finding(
+            p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
+        return new PublishResult(published.Succeeded, published.Message, published.Published, problems.Count(p => p.Severity == "error"),
+            problems.Count(p => p.Severity == "warning"), problems, published.Succeeded ? null : string.Join('\n', published.Output));
+    });
+
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
         "Runs a run configuration (the chosen one by default) as Run does, built first when it says so, and waits up to " +
         "waitSeconds for it to end or an Avalonia or WPF app's UI to be up. Returns its output so far and its exit code once " +
@@ -1695,6 +1711,9 @@ public sealed record HierarchyEntry(string Name, string? Detail, string Path, in
 /// <summary>A build's answer: MSBuild's last lines only when it failed, since a build that succeeded has nothing in them
 /// an agent acts on (build_output has them).</summary>
 public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string? OutputTail);
+
+/// <summary>A publish as an agent reads it: a build's outcome, with the folder the app landed in once it did.</summary>
+public sealed record PublishResult(bool Succeeded, string Outcome, string? Folder, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string? OutputTail);
 
 public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 
