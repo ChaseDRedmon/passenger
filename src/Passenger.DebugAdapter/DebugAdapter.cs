@@ -11,7 +11,7 @@ namespace Passenger.DebugAdapter;
 /// an event; a read of the stop (<see cref="Read{T}(Func{T})"/>) waits behind every other request, and the read under way
 /// gives way as one that leaves the stop comes (<see cref="Leave"/>). Each engine event goes out as the protocol's.
 /// Lines and columns are the client's choice of base, the engine's own counting from one.</summary>
-public sealed class DebugAdapter
+public sealed partial class DebugAdapter
 {
     private readonly ManagedDebugger debugger;
     private readonly DapConnection connection;
@@ -183,7 +183,15 @@ public sealed class DebugAdapter
         {
             // The expression compiler compiles an assignment as it does any expression, and the interpreter writes it
             // through to the frame, the object or the array; the value is then read back as it now is.
-            VariableInfo assigned = await Locked(() => debugger.Evaluate($"{arguments.Expression} = {arguments.Value}", arguments.FrameId));
+            string value = arguments.Value;
+            if (RealLiteral().IsMatch(value))
+            {
+                // A float's or a decimal's value is shown as C# writes a double's (3.14), which C# assigns to neither:
+                // the text shown takes the suffix its type's literal has, so it sets back what was shown.
+                VariableInfo target = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId));
+                value += target.Type switch { "float" or "float?" => "f", "decimal" or "decimal?" => "m", _ => string.Empty };
+            }
+            VariableInfo assigned = await Locked(() => debugger.Evaluate($"{arguments.Expression} = {value}", arguments.FrameId));
             if (assigned.PresentationHint?.Attributes == AttributesValue.FailedEvaluation)
             {
                 throw new InvalidOperationException(assigned.Value.StartsWith("error: ", StringComparison.Ordinal) ? assigned.Value["error: ".Length..] : assigned.Value);
@@ -764,4 +772,8 @@ public sealed class DebugAdapter
     private int ColumnIn(int column) => columnsStartAt1 ? column : column + 1;
 
     private int ColumnOut(int column) => columnsStartAt1 ? column : column - 1;
+
+    /// <summary>A real number as the debugger shows a float's, a double's or a decimal's: a point or an exponent, no suffix.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"^-?\d+(\.\d+([eE][+-]?\d+)?|[eE][+-]?\d+)$")]
+    private static partial System.Text.RegularExpressions.Regex RealLiteral();
 }

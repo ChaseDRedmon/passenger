@@ -11,6 +11,10 @@ public static class AdapterProgram
     /// something other than what was asked. <paramref name="usage"/> is how the help names the command.</summary>
     public static async Task<int> RunAsync(string[] args, string usage)
     {
+        // Every value the engine writes (a double's 3.14, a decimal's, a date's) reads as C# reads it, so a value shown is
+        // one Set Value takes back, whatever the machine's culture: the runtime's threads calling into the engine included.
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
         string? logPath = null;
         string? symbolCache = null;
         bool remote = false;

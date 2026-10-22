@@ -32,7 +32,7 @@ public sealed class DebugSession : IDisposable
     private readonly string engineLog;
     private readonly bool ownLog;
 
-    private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee, string? symbolCache = null)
+    private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee, string? symbolCache = null, IReadOnlyDictionary<string, string>? environment = null)
     {
         this.debuggee = debuggee;
         this.terminateDebuggee = terminateDebuggee;
@@ -54,6 +54,10 @@ public sealed class DebugSession : IDisposable
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
+        foreach ((string variable, string value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[variable] = value;
+        }
         adapter = ChildProcesses.Start(start);
         adapter.ErrorDataReceived += (_, e) =>
         {
@@ -99,8 +103,9 @@ public sealed class DebugSession : IDisposable
     public static DebugSession ForAttach(ITestOutputHelper output, Process program) => new(output, program, terminateDebuggee: false);
 
     /// <summary>The adapter alone, to launch a program itself; the program ends with the session. Decompiled symbols go to
-    /// <paramref name="symbolCache"/> when given.</summary>
-    public static DebugSession ForLaunch(ITestOutputHelper output, string? symbolCache = null) => new(output, null, terminateDebuggee: true, symbolCache);
+    /// <paramref name="symbolCache"/> when given, and the adapter has <paramref name="environment"/> over the run's.</summary>
+    public static DebugSession ForLaunch(ITestOutputHelper output, string? symbolCache = null, IReadOnlyDictionary<string, string>? environment = null) =>
+        new(output, null, terminateDebuggee: true, symbolCache, environment);
 
     /// <summary>Kills the adapter and the program it launched, as a crash or the IDE's own kill of an adapter that never
     /// answered a disconnect does.</summary>

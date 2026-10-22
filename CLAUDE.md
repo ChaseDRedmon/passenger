@@ -1313,7 +1313,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   header to 64 KB and a body to 256 MB, `MostHeader` and `MostBody`, past which the conversation ends as at a message that
   does not read, its requests failed) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`; its flags
-  and loop are `AdapterProgram`). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
+  and loop are `AdapterProgram`, which runs it in the invariant culture, so every value reads as C# writes it whatever the
+  machine's, and setExpression gives a real literal its target's suffix, a float's f or a decimal's m, so a value shown
+  sets back). `src/Passenger.ContainerTools` is `passenger-tools`, what runs inside a Linux
   container: `dap` (`AdapterProgram` and `DebugAdapter.cs` compiled in, the one engine), `processes` (the container's
   .NET programs as JSON, `DotnetProcesses.List` plus those mapping libcoreclr.so with no debugger pipe, each with
   whether it was started for Hot Reload, built optimized, and why it cannot be attached to), the profiler's `trace
