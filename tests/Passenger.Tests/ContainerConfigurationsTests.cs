@@ -217,6 +217,60 @@ public sealed class ContainerConfigurationsTests
         }
     }
 
+    /// <summary>A Docker Compose project's (.dcproj) properties and launch profiles are its configurations, read with no engine
+    /// needed, and it is never loaded or built as a .NET project.</summary>
+    [AvaloniaFact]
+    public void A_Docker_Compose_projects_properties_and_launch_profiles_are_its_configurations_and_it_is_never_built_as_a_project()
+    {
+        (string folder, _) = ContainerRunsTests.Shop("dcproj");
+        File.Move(Path.Combine(folder, "compose.yaml"), Path.Combine(folder, "docker-compose.yml"));
+        ContainerRunsTests.Write(folder, "docker-compose.override.yml", "services:\n  web:\n    environment: { GREETING: hi }\n");
+        ContainerRunsTests.Write(folder, "docker-compose.dcproj", """
+            <?xml version="1.0" encoding="utf-8"?>
+            <Project ToolsVersion="15.0" Sdk="Microsoft.Docker.Sdk">
+              <PropertyGroup Label="Globals">
+                <ProjectVersion>2.1</ProjectVersion>
+                <DockerTargetOS>Linux</DockerTargetOS>
+                <DockerLaunchAction>LaunchBrowser</DockerLaunchAction>
+                <DockerServiceUrl>{Scheme}://localhost:{ServicePort}/</DockerServiceUrl>
+                <DockerServiceName>web</DockerServiceName>
+              </PropertyGroup>
+              <ItemGroup>
+                <None Include="docker-compose.override.yml"><DependentUpon>docker-compose.yml</DependentUpon></None>
+                <None Include="docker-compose.yml" />
+              </ItemGroup>
+            </Project>
+            """);
+        ContainerRunsTests.Write(folder, "Properties/launchSettings.json", """
+            {
+              "profiles": {
+                "Web only": {
+                  "commandName": "DockerCompose",
+                  "composeLaunchServiceName": "web",
+                  "serviceActions": { "web": "StartDebugging", "api": "DoNotStart", "cache": "StartWithoutDebugging" }
+                }
+              }
+            }
+            """);
+        ContainerRunsTests.Write(folder, "Shop.slnx", "<Solution>\n  <Project Path=\"Web/Web.csproj\" />\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"docker-compose.dcproj\" />\n</Solution>\n");
+        MainWindow window = ContainerRunsTests.Open(folder);
+        // Never loaded as a project: Visual Studio's SDK is not .NET's, and building the solution would fail on it.
+        Assert.DoesNotContain(window.Projects, p => p.Path.EndsWith(".dcproj", StringComparison.Ordinal));
+        RunConfiguration own = window.Configurations.Single(c => c.Name == "docker-compose");
+        Assert.Equal(RunKind.Compose, own.Kind);
+        Assert.Equal([Path.Combine(folder, "docker-compose.yml"), Path.Combine(folder, "docker-compose.override.yml")], own.ComposeFiles);
+        Assert.Equal("web", own.LaunchService);
+        Assert.True(own.LaunchBrowser, "The .dcproj's LaunchBrowser action was not taken");
+        Assert.Equal("{Scheme}://localhost:{ServicePort}/", own.BrowserUrl);
+        RunConfiguration profile = window.Configurations.Single(c => c.Name == "docker-compose: Web only");
+        Assert.Equal(ServiceStart.Debug, profile.ServiceActions["web"]);
+        Assert.Equal(ServiceStart.DontStart, profile.ServiceActions["api"]);
+        Assert.Equal(ServiceStart.Run, profile.ServiceActions["cache"]);
+        // A plain compose configuration of the same files is not listed beside the project's own.
+        Assert.DoesNotContain(window.Configurations, c => c.Name.StartsWith("Compose:", StringComparison.Ordinal));
+        window.Close();
+    }
+
     /// <summary>A folder with a solution of console projects, each named in it, their framework and output type from a
     /// Directory.Build.props that also holds <paramref name="more"/>.</summary>
     private static string Solution(string prefix, string[] projects, string more)

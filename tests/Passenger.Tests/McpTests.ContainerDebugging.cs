@@ -5,17 +5,23 @@ using ModelContextProtocol.Client;
 namespace Passenger.Tests;
 
 /// <summary>An agent debugging in containers on a real engine: debug_start on a compose configuration debugs each .NET
-/// service in a session of its own, answering with each one's state; debug_processes lists a program in a container
-/// Passenger did not start, and debug_attach attaches to it there. Skipped, saying why, where no Linux engine runs.</summary>
+/// service in a session of its own, answering with each one's state, and its container_action on a debugged service goes
+/// through the run; debug_processes lists a program in a container Passenger did not start, and debug_attach attaches to
+/// it there. Skipped, saying why, where no Linux engine runs.</summary>
 public sealed partial class McpTests
 {
+    /// <summary>debug_start of a compose configuration debugs each service; container_action's restart of a debugged one
+    /// ends its session, restarts it held and attaches again, so it stops in Main again, and its stop ends the session
+    /// before the container goes; then a program in a container Passenger did not start is listed and attached to.</summary>
     [Fact]
-    public async Task An_agents_debug_start_debugs_each_service_of_a_compose_configuration_and_debug_attach_reaches_a_program_in_a_container()
+    public async Task An_agents_debug_start_debugs_each_service_of_a_compose_configuration_its_container_action_goes_through_the_run_and_debug_attach_reaches_a_program_in_a_container()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        ContainerPrograms.Publish($"linux-{(Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64")}");
+        CancellationToken test = TestContext.Current.CancellationToken;
+        await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
         madeFolders.Add(shop);
+        string Started(string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));
         await using McpClient client = await Start(["--mcp", shop]);
         foreach (string app in (string[])["Web", "Api"])
         {
@@ -31,6 +37,32 @@ public sealed partial class McpTests
                 $"debug_start answered: {stop}");
             Assert.Equal("paused", stop.GetProperty("state").GetString());
             Assert.Contains("Program.cs:1:", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
+
+            // Each let go from Main's breakpoint once it has stopped there.
+            foreach (string service in (string[])["web", "api"])
+            {
+                JsonElement paused = default;
+                Assert.True(await Waiting.UntilAsync(async () => (paused = await Call(client, "debug_state", new() { ["session"] = service })).GetProperty("state").GetString() == "paused",
+                    TimeSpan.FromMinutes(1), test), $"{service} did not stop in Main: {paused}");
+                await Call(client, "debug_continue", new() { ["session"] = service, ["waitSeconds"] = 2 });
+            }
+            string before = await Task.Run(() => Started("web"), test);
+
+            // Restart through the run: web held again and attached again, so Main's breakpoint stops it once more.
+            Assert.Equal($"{project}/web: restart done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/web", ["action"] = "restart" })));
+            Assert.NotEqual(before, await Task.Run(() => Started("web"), test));
+            JsonElement again = default;
+            Assert.True(await Waiting.UntilAsync(async () => (again = await Call(client, "debug_state", new() { ["session"] = "web" })).GetProperty("state").GetString() == "paused",
+                TimeSpan.FromMinutes(1), test), $"web, restarted through the run, did not stop in Main again: {again}");
+            Assert.Contains("Program.cs:1:", again.GetProperty("location").GetString(), StringComparison.Ordinal);
+
+            // Stop through the run: api's session ends before its container goes, which an adapter losing it would make an error.
+            Assert.Equal($"{project}/api: stop done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/api", ["action"] = "stop" })));
+            Assert.Equal("exited", ContainerRunsTests.States(project)["api"]);
+            JsonElement state = await Call(client, "debug_state");
+            Assert.True(!state.TryGetProperty("sessions", out JsonElement live) || !live.EnumerateArray().Any(s => s.GetString()!.StartsWith("api:", StringComparison.Ordinal)
+                && !s.GetString()!.Contains("ended", StringComparison.Ordinal)), $"api is still debugged after its container stopped: {state}");
+
             Assert.Equal("Stopped", Text(await Call(client, "stop")));
             Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
@@ -56,54 +88,6 @@ public sealed partial class McpTests
             }
             await Call(client, "stop");
             // The headless IDE's state is not the run's, whose end removes only its own images: these go here.
-            foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                Docker.Run("rmi", "-f", image);
-            }
-        }
-    }
-
-    /// <summary>An agent's container_action on a service of the run it debugs goes through the run: restart ends its session,
-    /// restarts it held and attaches again, so it stops in Main again; stop ends its session before its container goes.</summary>
-    [Fact]
-    public async Task An_agents_container_action_on_a_debugged_service_goes_through_the_run()
-    {
-        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
-        CancellationToken test = TestContext.Current.CancellationToken;
-        await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
-        (string shop, string project) = ContainerRunsTests.Shop("agentact");
-        madeFolders.Add(shop);
-        string Started(string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));
-        await using McpClient client = await Start(["--mcp", shop]);
-        try
-        {
-            await Call(client, "breakpoint_set", new() { ["path"] = "Web/Program.cs", ["line"] = 1 });
-            JsonElement stop = await Call(client, "debug_start", new() { ["configuration"] = "Compose: compose.yaml", ["waitSeconds"] = 120 });
-            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.Contains("Program.cs:1:", StringComparison.Ordinal),
-                $"debug_start did not stop in web's Main: {stop}");
-            await Call(client, "debug_continue", new() { ["session"] = "web", ["waitSeconds"] = 2 });
-            string before = await Task.Run(() => Started("web"), test);
-
-            // Restart through the run: web held again and attached again, so Main's breakpoint stops it once more.
-            Assert.Equal($"{project}/web: restart done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/web", ["action"] = "restart" })));
-            Assert.NotEqual(before, await Task.Run(() => Started("web"), test));
-            JsonElement again = default;
-            Assert.True(await Waiting.UntilAsync(async () => (again = await Call(client, "debug_state", new() { ["session"] = "web" })).GetProperty("state").GetString() == "paused",
-                TimeSpan.FromMinutes(1), test), $"web, restarted through the run, did not stop in Main again: {again}");
-            Assert.Contains("Program.cs:1:", again.GetProperty("location").GetString(), StringComparison.Ordinal);
-
-            // Stop through the run: api's session ends before its container goes, which an adapter losing it would make an error.
-            Assert.Equal($"{project}/api: stop done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/api", ["action"] = "stop" })));
-            Assert.Equal("exited", ContainerRunsTests.States(project)["api"]);
-            JsonElement state = await Call(client, "debug_state");
-            Assert.True(!state.TryGetProperty("sessions", out JsonElement sessions) || !sessions.EnumerateArray().Any(s => s.GetString()!.StartsWith("api:", StringComparison.Ordinal)
-                && !s.GetString()!.Contains("ended", StringComparison.Ordinal)), $"api is still debugged after its container stopped: {state}");
-        }
-        finally
-        {
-            await Call(client, "stop");
-            Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2), test),
-                "stop left the configuration's containers behind");
             foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 Docker.Run("rmi", "-f", image);
