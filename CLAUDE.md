@@ -411,7 +411,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   editor's target framework switcher (`CodeEditor.ContextLabel`, `MainWindow.TargetFramework.cs`), its requests naming
   the chosen context (`LspDocument.Context`, Roslyn's `_vs_projectContext`).
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
-  folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
+  folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; an open file's diagnostics from any
+  server (C#'s, a web language's, ESLint's) are a `ServerDiagnostics` (one pull at a time after a pause, as background
+  work, what each asks of its server its own; the reports carried with the text), drawn by `DiagnosticMarks`; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
   over the editor; `WorkspaceEdits` applies renames and fixes across files (a code action through `ApplyAsCommand`, one
   command of global undo, which keeps a command that changed a file not open). `UsageHighlighting` asks the server's

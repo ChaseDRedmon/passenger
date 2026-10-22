@@ -1,3 +1,5 @@
+using Avalonia.Threading;
+using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Text;
@@ -22,13 +24,7 @@ internal static class DiagnosticMarks
     public static Marker? Marker(Diagnostic diagnostic, TextRange range)
     {
         bool unnecessary = diagnostic.Tags?.Contains(1) == true;
-        MarkerKind? kind = diagnostic.Severity switch
-        {
-            1 => MarkerKind.Error,
-            2 => unnecessary ? MarkerKind.Unnecessary : MarkerKind.Warning,
-            3 => unnecessary ? MarkerKind.Unnecessary : MarkerKind.Info,
-            _ => unnecessary ? MarkerKind.Unnecessary : null,
-        };
+        MarkerKind? kind = Kind(diagnostic.Severity) is MarkerKind.Error || !unnecessary ? Kind(diagnostic.Severity) : MarkerKind.Unnecessary;
         if (kind is not { } k)
         {
             return null;
@@ -36,6 +32,16 @@ internal static class DiagnosticMarks
         string code = diagnostic.Code?.ToString() is { Length: > 0 } c ? $"{c}: " : string.Empty;
         return new Marker(range, k, code + diagnostic.Message);
     }
+
+    /// <summary>What a severity draws as: errors, warnings and information squiggled, the server's quieter hints left off
+    /// the page.</summary>
+    public static MarkerKind? Kind(int? severity) => severity switch
+    {
+        1 => MarkerKind.Error,
+        2 => MarkerKind.Warning,
+        3 => MarkerKind.Info,
+        _ => null,
+    };
 
     /// <summary>A range of the server's as offsets in the text it was given for, never ending before it starts.</summary>
     public static TextRange Offsets(ServerLines lines, LspRange range)
@@ -67,5 +73,98 @@ internal static class DiagnosticMarks
             };
         }
         return moved;
+    }
+}
+
+/// <summary>An open file's diagnostics from one server (C#'s, a web language's, ESLint's): pulled after a pause, each pull
+/// ending the one before it and held as background work a screenshot waits for, or taken as pushed, and carried with the
+/// text between reports, so a squiggle never drifts off its code. What each asks of its server is its own.</summary>
+internal sealed class ServerDiagnostics(OpenDocument document, bool holdsChecks)
+{
+    private CancellationTokenSource? pulling;
+
+    /// <summary>The diagnostics as reported, and each one's range in the text as it stands, moved with every edit since.</summary>
+    private Diagnostic[] found = [];
+    private TextRange[] ranges = [];
+
+    /// <summary>The diagnostics placed on the server's lines of the text as it stands, made when first asked for after an
+    /// edit, so a key costs a move of each range rather than a line table of the file.</summary>
+    private IReadOnlyList<Diagnostic>? placed = [];
+
+    /// <summary>The diagnostics last reported, moved with the text since, so their lines are the text's as it is now.</summary>
+    public IReadOnlyList<Diagnostic> Placed => placed ??= DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
+
+    /// <summary>Carries the diagnostics' ranges through an edit.</summary>
+    public void Move(DocumentChangedEventArgs e)
+    {
+        if (ranges.Length == 0)
+        {
+            return;
+        }
+        for (int i = 0; i < ranges.Length; i++)
+        {
+            ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
+        }
+        placed = null;
+    }
+
+    /// <summary>Takes diagnostics reported for the text as it stands, and gives the markers they draw as.</summary>
+    public IReadOnlyList<Marker> Take(IReadOnlyList<Diagnostic> diagnostics, Func<Diagnostic, TextRange, Marker?> marker)
+    {
+        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
+        found = [.. diagnostics];
+        ranges = [.. found.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
+        placed = diagnostics;
+        return [.. found.Select((d, i) => marker(d, ranges[i])).OfType<Marker>()];
+    }
+
+    /// <summary>Asks the server again after <paramref name="delay"/>, ending the ask under way: <paramref name="ask"/> pulls
+    /// (<see cref="PulledAsync"/>) and shows what answers, a server that fails or a later ask leaving the markers as they
+    /// stand; when it <c>holdsChecks</c>, the file's checks are held until the ask ends.</summary>
+    public void Pull(TimeSpan delay, Func<CancellationToken, Task> ask)
+    {
+        pulling?.Cancel();
+        CancellationTokenSource cancel = new();
+        pulling = cancel;
+        BackgroundWork.Begin();
+        _ = PullAsync(delay, ask, cancel.Token, holdsChecks ? document.Checking() : null);
+    }
+
+    /// <summary>The server's diagnostics of the file, when they answer the text as it stands and no later ask has begun.</summary>
+    public async Task<IReadOnlyList<Diagnostic>?> PulledAsync(LspDocument lsp, CancellationToken cancel)
+    {
+        (IReadOnlyList<Diagnostic> diagnostics, int version) = await lsp.DiagnosticsAsync(cancel);
+        return !cancel.IsCancellationRequested && version == document.Text.Version ? diagnostics : null;
+    }
+
+    /// <summary>Ends the ask under way: the file was let go.</summary>
+    public void Stop() => pulling?.Cancel();
+
+    private static async Task PullAsync(TimeSpan delay, Func<CancellationToken, Task> ask, CancellationToken cancel, IDisposable? checking)
+    {
+        try
+        {
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancel);
+            }
+            await ask(cancel);
+        }
+        catch (OperationCanceledException)
+        {
+            // Typing went on, or the file was let go.
+        }
+        catch (LanguageServerFailed)
+        {
+            // The markers stand until the server answers again, or a server started again does.
+        }
+        finally
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                checking?.Dispose();
+                BackgroundWork.End();
+            });
+        }
     }
 }

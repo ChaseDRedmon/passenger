@@ -450,15 +450,14 @@ public sealed class EslintDocument : IDisposable
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(400);
 
     private readonly OpenDocument document;
+    private readonly ServerDiagnostics diagnostics;
     private LanguageSession? session;
-    private CancellationTokenSource? pulling;
-    private Diagnostic[] found = [];
-    private TextRange[] ranges = [];
     private bool disposed;
 
     internal EslintDocument(OpenDocument document, WebDocument web)
     {
         this.document = document;
+        diagnostics = new ServerDiagnostics(document, holdsChecks: true);
         Web = web;
         document.Text.Changed += OnChanged;
         document.Saved += OnSaved;
@@ -469,7 +468,7 @@ public sealed class EslintDocument : IDisposable
     public LspDocument? Lsp { get; private set; }
 
     /// <summary>The problems last reported, on the server's lines of the text as it stands.</summary>
-    public IReadOnlyList<Diagnostic> Diagnostics => DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
+    public IReadOnlyList<Diagnostic> Diagnostics => diagnostics.Placed;
 
     internal void Connect(LanguageSession started)
     {
@@ -555,7 +554,7 @@ public sealed class EslintDocument : IDisposable
             return;
         }
         disposed = true;
-        pulling?.Cancel();
+        diagnostics.Stop();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
         Lsp?.Dispose();
@@ -569,10 +568,7 @@ public sealed class EslintDocument : IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        for (int i = 0; i < ranges.Length; i++)
-        {
-            ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
-        }
+        diagnostics.Move(e);
         Pull(Settle);
     }
 
@@ -584,65 +580,20 @@ public sealed class EslintDocument : IDisposable
         {
             return;
         }
-        pulling?.Cancel();
-        CancellationTokenSource cancel = new();
-        pulling = cancel;
-        BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token, document.Checking());
-    }
-
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel, IDisposable checking)
-    {
-        try
+        diagnostics.Pull(delay, async cancel =>
         {
-            if (delay > TimeSpan.Zero)
+            if (await diagnostics.PulledAsync(lsp, cancel) is { } pulled && lsp == Lsp)
             {
-                await Task.Delay(delay, cancel);
+                Web.ShowLint(diagnostics.Take(pulled, Marker));
             }
-            (IReadOnlyList<Diagnostic> diagnostics, int version) = await lsp.DiagnosticsAsync(cancel);
-            if (!cancel.IsCancellationRequested && lsp == Lsp && version == document.Text.Version)
-            {
-                Show(diagnostics);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Typing went on, or the file was let go.
-        }
-        catch (LanguageServerFailed)
-        {
-            // The problems stand until the server answers again, or one started again does.
-        }
-        finally
-        {
-            Dispatcher.UIThread.Post(() =>
-            {
-                checking.Dispose();
-                BackgroundWork.End();
-            });
-        }
-    }
-
-    private void Show(IReadOnlyList<Diagnostic> diagnostics)
-    {
-        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-        found = [.. diagnostics];
-        ranges = [.. found.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
-        Web.ShowLint([.. found.Select((d, i) => Marker(d, ranges[i])).OfType<Marker>()]);
+        });
     }
 
     /// <summary>A problem as Rider shows ESLint's: "ESLint: message (rule)", the rule's name its page's link, at the
-    /// severity the configuration gives the rule.</summary>
+    /// severity the configuration gives the rule, never faded as unnecessary (the server tags no-unused-vars so).</summary>
     private static Marker? Marker(Diagnostic diagnostic, TextRange range)
     {
-        MarkerKind? kind = diagnostic.Severity switch
-        {
-            1 => MarkerKind.Error,
-            2 => MarkerKind.Warning,
-            3 => MarkerKind.Info,
-            _ => null,
-        };
-        if (kind is not { } k)
+        if (DiagnosticMarks.Kind(diagnostic.Severity) is not { } k)
         {
             return null;
         }

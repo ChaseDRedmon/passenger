@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
@@ -23,21 +22,14 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
 
     private readonly CSharpService service;
     private readonly OpenDocument document;
+    private readonly ServerDiagnostics diagnostics;
     private SemanticHighlighter? semantic;
-    private CancellationTokenSource? pulling;
-
-    /// <summary>The diagnostics as pulled, and each one's range in the text as it stands, moved with every edit since.</summary>
-    private Diagnostic[] pulled = [];
-    private TextRange[] ranges = [];
-
-    /// <summary>The diagnostics placed on the server's lines of the text as it stands, made when first asked for after an
-    /// edit, so a key costs a move of each range rather than a line table of the file.</summary>
-    private IReadOnlyList<Diagnostic>? placed = [];
 
     internal CSharpDocument(CSharpService service, OpenDocument document)
     {
         this.service = service;
         this.document = document;
+        diagnostics = new ServerDiagnostics(document, holdsChecks: false);
         document.Text.Changed += OnChanged;
         document.Saved += OnSaved;
     }
@@ -45,7 +37,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
     public LspDocument? Lsp { get; private set; }
 
     /// <summary>The diagnostics last pulled, moved with the text since, so their lines are the text's as it is now.</summary>
-    public IReadOnlyList<Diagnostic> Diagnostics => placed ??= Placed();
+    public IReadOnlyList<Diagnostic> Diagnostics => diagnostics.Placed;
 
     internal void Connect(RoslynSession session)
     {
@@ -162,7 +154,7 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
 
     public void Dispose()
     {
-        pulling?.Cancel();
+        diagnostics.Stop();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
         if (semantic is not null)
@@ -178,15 +170,8 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (ranges.Length > 0)
-        {
-            // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
-            for (int i = 0; i < ranges.Length; i++)
-            {
-                ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
-            }
-            placed = null;
-        }
+        // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
+        diagnostics.Move(e);
         if (document.Markers.Count > 0)
         {
             document.Markers = document.Markers
@@ -206,58 +191,28 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
 
-    /// <summary>The diagnostics pulled, each on the server's lines where its range has been carried to.</summary>
-    private Diagnostic[] Placed() => DiagnosticMarks.Placed(document.Text.Snapshot, pulled, ranges);
-
     private void Pull(TimeSpan delay)
     {
         if (Lsp is not { } lsp || !service.IsReady && delay > TimeSpan.Zero)
         {
             return;
         }
-        pulling?.Cancel();
-        CancellationTokenSource cancel = new();
-        pulling = cancel;
-        BackgroundWork.Begin();
-        _ = PullAsync(lsp, delay, cancel.Token);
+        diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    private async Task PullAsync(LspDocument lsp, TimeSpan delay, CancellationToken cancel)
+    /// <summary>The file's diagnostics, then its inlay hints, each for the text as it stands.</summary>
+    private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
-        try
+        if (await diagnostics.PulledAsync(lsp, cancel) is not { } found)
         {
-            if (delay > TimeSpan.Zero)
-            {
-                await Task.Delay(delay, cancel);
-            }
-            (IReadOnlyList<Diagnostic> found, int version) = await lsp.DiagnosticsAsync(cancel);
-            if (cancel.IsCancellationRequested || version != document.Text.Version)
-            {
-                return;
-            }
-            ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-            pulled = [.. found];
-            ranges = [.. pulled.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
-            placed = found;
-            document.Markers = pulled.Select((d, i) => DiagnosticMarks.Marker(d, ranges[i])).OfType<Marker>().ToList();
-            service.FileProblemsChanged();
-            (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
-            if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
-            {
-                document.InlayHints = Shown(lsp, hints);
-            }
+            return;
         }
-        catch (OperationCanceledException)
+        document.Markers = diagnostics.Take(found, DiagnosticMarks.Marker);
+        service.FileProblemsChanged();
+        (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
+        if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
         {
-            // Typing went on, or the file was let go.
-        }
-        catch (LanguageServerFailed)
-        {
-            // The markers stand until the server answers again, or a server started again does.
-        }
-        finally
-        {
-            Dispatcher.UIThread.Post(() => BackgroundWork.End());
+            document.InlayHints = Shown(lsp, hints);
         }
     }
 
