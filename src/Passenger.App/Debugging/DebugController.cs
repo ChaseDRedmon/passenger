@@ -504,6 +504,11 @@ public sealed class DebugController : IDisposable
             try
             {
                 await StopAsync(tab);
+                if (opening is not null)
+                {
+                    // The start ends before its caller hears it was given up, so what the start says of its end is said first.
+                    await ((Task)opening).ConfigureAwait(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.SuppressThrowing);
+                }
             }
             finally
             {

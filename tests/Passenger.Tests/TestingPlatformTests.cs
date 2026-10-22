@@ -173,9 +173,14 @@ public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisp
             Assert.True(running.Count == 0, $"A run stopped as its test host started left these shown as running: {string.Join(", ", running)}");
             Assert.Equal(TestState.NotRun, four.State);
             Assert.DoesNotContain(editor.TestMarks, m => m.Kind == TestMarkKind.Running);
-            const string Why = "The tests could not run: Debugging Tests was stopped as it started";
-            Assert.Equal(Why, window.BottomPanel.Tests.Status);
-            Assert.Equal(Why, window.Status);
+            // Stopped, as a run Stop ends at any other moment, said after the debugger's word that its test host was stopped.
+            string? why = window.BottomPanel.Tests.Status;
+            Assert.True(why is not null && System.Text.RegularExpressions.Regex.IsMatch(why, @"^Tests passed: 0, failed: 0 of 0 in \d+\.\d s, stopped$"),
+                $"A debugged run Stop ended as its test host started did not say it was stopped, but '{why}' (the status bar '{window.Status}')");
+            Assert.True(window.Status == why, $"The status bar's last word on the stopped run is '{window.Status}', where the Unit Tests window says '{why}'");
+            string debugged = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+            Assert.True(debugged.Contains("Debugging Tests was stopped as it started", StringComparison.Ordinal),
+                $"The Debug window does not say its test host was stopped as it started: '{debugged}'");
             Assert.Null(window.Debugger.Session);
         }
         finally
