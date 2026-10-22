@@ -109,8 +109,8 @@ public sealed partial class DebugAdapter
         connection.Handle<SetDataBreakpointsArguments, SetDataBreakpointsResponse>("setDataBreakpoints", SetDataBreakpoints);
         connection.Handle<DapEmpty, ThreadsResponse>("threads", async _ =>
         {
-            List<(int id, string name)> threads = await Read(() => debugger.GetThreads());
-            return new ThreadsResponse([.. threads.Select(t => new DapThread(t.id, t.name))]);
+            List<(int id, string name, bool main)> threads = await Read(() => debugger.GetThreads());
+            return new ThreadsResponse([.. threads.Select(t => new DapThread(t.id, t.name) { IsMain = t.main ? true : null })]);
         });
         connection.Handle<StackTraceArguments, StackTraceResponse>("stackTrace", async arguments =>
         {

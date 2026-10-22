@@ -1415,7 +1415,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`BindingValues.cs`, protocol v4 `values`): each element by its XamlSourceInfo place (a root by x:Class), of several
   instances the one nearest the element chosen in the Live Visual Tree, each binding's path walked from Avalonia's
   binding expression nodes. Paused, the IDE evaluates `Wire.ReadValues` on the UI thread (the stop's, else the main
-  thread; the startup hook's copy forwards to the inspector's own), the answer an array whose slots the debugger shows
+  thread, known by the engine's mark in its threads answer, Passenger's own `DapThread.IsMain`, whatever the app named it;
+  the startup hook's copy forwards to the inspector's own), the answer an array whose slots the debugger shows
   as Variables does; running, only for the control chosen, read again on `valuesChanged`.
   `App/LiveTree/BindingValuesController` shows them after the lines (`OpenDocument.LiveValues`,
   `LineAnnotationKind.Failed`) and on hover. The runtime evaluates nothing on a UI thread waiting outside .NET, so a

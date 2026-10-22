@@ -59,6 +59,13 @@ if (args is ["finally"])
 	Finally.Run();
 	return;
 }
+if (args is ["named main"])
+{
+	// Main's thread named as an app may name its UI thread: the debugger still knows it for Main's.
+	Thread.CurrentThread.Name = "UI";
+	Threads.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();

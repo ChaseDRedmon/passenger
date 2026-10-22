@@ -334,9 +334,10 @@ public sealed class BindingValuesController
         try
         {
             IReadOnlyList<DapThread> threads = await debugged.ThreadsAsync();
+            // The thread running Main is known by the debugger's mark, as an app may name it anything; the first listed
+            // stands in only where the debugger knows none.
             List<int> tried = [stop.Thread];
-            tried.AddRange(threads.Where(t => t.Name == "Main Thread").Select(t => t.Id));
-            tried.AddRange(threads.Take(1).Select(t => t.Id));
+            tried.AddRange((threads.Any(t => t.IsMain == true) ? threads.Where(t => t.IsMain == true) : threads.Take(1)).Select(t => t.Id));
             foreach (int thread in tried.Distinct())
             {
                 if ((await debugged.StackTraceAsync(thread)).FirstOrDefault() is not { } top)

@@ -15,7 +15,8 @@ namespace Passenger.Tests;
 /// <summary>A debugged Avalonia app's binding values in its .axaml file, after each binding and on hover:
 /// tests/Debuggees/BindingValuesApp, written into a folder of its own with a project file on the tests' own Avalonia,
 /// headless, "rename" typed into the Debug window's console having its code-behind change the customer's name on the UI
-/// thread. Debugged through the window, so run alone.</summary>
+/// thread, which it names UI, as an app may (the debugger marks Main's thread whatever its name). Debugged through the
+/// window, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class BindingValuesTests : IClassFixture<RestoredFolders>, IDisposable
 {

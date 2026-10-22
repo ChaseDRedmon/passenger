@@ -572,9 +572,11 @@ public partial class ManagedDebugger
         return result;
     }
 
-    public List<(int id, string name)> GetThreads()
+    /// <summary>The threads running managed code, each with its name (the program's, else the engine's) and whether it is the
+    /// thread that runs Main (<see cref="NoteMainThread"/>), whatever the program named it.</summary>
+    public List<(int id, string name, bool main)> GetThreads()
     {
-        List<(int, string)> result = new List<(int, string)>();
+        List<(int, string, bool)> result = new List<(int, string, bool)>();
         if (_process is null)
         {
             return result;
@@ -591,7 +593,7 @@ public partial class ManagedDebugger
                     continue;
                 }
                 threadInfo.Name ??= threadInfo.Thread.GetThreadNameOrNull();
-                result.Add((id, threadInfo.Name ?? (id == _mainThreadId ? "Main Thread" : "<No Name>")));
+                result.Add((id, threadInfo.Name ?? (id == _mainThreadId ? "Main Thread" : "<No Name>"), id == _mainThreadId));
             }
         }
         catch (Exception ex)

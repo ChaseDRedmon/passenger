@@ -172,6 +172,7 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
         IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
         Assert.Equal("Main Thread", Assert.Single(threads, t => t.Id == stopped.ThreadId).Name);
         Assert.Single(threads, t => t.Name == "Main Thread");
+        Assert.Equal(stopped.ThreadId, Assert.Single(threads, t => t.IsMain == true).Id);
     }
 
     /// <summary>A program the client starts in its terminal starts held, and the debugger has hold of it before any of it

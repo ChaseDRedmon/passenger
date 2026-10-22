@@ -157,6 +157,27 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
         Assert.All(threads, t => Assert.NotEmpty(host.Request<StackTraceResponse>("stackTrace", new StackTraceArguments(t.Id)).StackFrames));
     }
 
+    /// <summary>The thread running Main is marked as Main's whatever the program named it, as an app names its UI thread:
+    /// what reads an app's binding values at a stop looked for it by the name the debugger gives one left unnamed.</summary>
+    [Fact]
+    public async Task The_thread_running_Main_is_marked_as_Mains_under_the_name_the_program_gave_it()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true, arguments: ["named main"])
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest(Line("Console.WriteLine(\"both workers are waiting\");"), Source)
+            .WithConfigurationDoneRequest();
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+
+        IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
+        DapThread main = Assert.Single(threads, t => t.IsMain == true);
+        Assert.True(main.Id == stop.ThreadId && main.Name == "UI",
+            $"Main's thread, named UI, was to be the one marked; the threads are {string.Join(", ", threads.Select(t => $"{t.Id} {t.Name}{(t.IsMain == true ? " (main)" : "")}"))}, stopped on {stop.ThreadId}");
+        Assert.DoesNotContain(threads, t => t.Name == "Main Thread");
+    }
+
     private Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters) =>
         DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases", breakpointLine, exceptionFilters);
 }
