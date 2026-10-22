@@ -8,6 +8,7 @@
     "HotReloadTests": 180,
     "HotReloadEditsTests": 240,
     "BuildRunTests": 300,
+    "PublishTests": 240,
     "UnitTestsTests": 240,
     "McpTests": 540,
     "ContainersTests": 150,
