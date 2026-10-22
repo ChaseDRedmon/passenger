@@ -19,7 +19,7 @@ public partial class MainWindow
         {
             return await CompareFilesAsync(files[0], files[1]);
         }
-        IReadOnlyList<string> picked = await PickFiles("Select File to Compare", null);
+        IReadOnlyList<string> picked = await PickFiles("Select File to Compare", null, true);
         return picked.Count == 0 ? null : await CompareFilesAsync(node.Path!, PathNames.Canonical(picked[0]));
     }
 

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Dialogs;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
@@ -22,18 +21,11 @@ namespace Passenger.Tests;
 /// a desktop.</summary>
 public static class TestApp
 {
-    public static AppBuilder BuildAvaloniaApp()
-    {
-        AppBuilder builder = AppBuilder.Configure<Passenger.App.App>()
-            .UseSkia()
-            .UseHarfBuzz()
-            .WithInterFont();
-        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
-        {
-            builder.UseManagedSystemDialogs();
-        }
-        return builder.UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
-    }
+    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<Passenger.App.App>()
+        .UseSkia()
+        .UseHarfBuzz()
+        .WithInterFont()
+        .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
 }
 
 /// <summary>What the whole run shares, set before anything reads it and never changed: a folder of the run's own in the

@@ -471,7 +471,7 @@ public sealed class SolutionViewTests : IDisposable
         string a = Path.Combine(folder, "Shop.App", "Notes", "a.txt");
         string b = Path.Combine(folder, "Shop.App", "Notes", "b.txt");
         MainWindow window = Open();
-        window.PickFiles = (_, _) => Task.FromResult<IReadOnlyList<string>>([b]);
+        window.PickFiles = (_, _, _) => Task.FromResult<IReadOnlyList<string>>([b]);
 
         Keymap keymap = window.Actions.Keymap;
         Ui.RightClick(Ui.Row(window.ExplorerView, Row(window, NodeKind.Solution, "Shop")));

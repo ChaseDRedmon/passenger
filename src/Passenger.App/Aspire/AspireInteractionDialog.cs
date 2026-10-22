@@ -21,7 +21,7 @@ public sealed class AspireInteractionDialog : Window
     private readonly Dictionary<string, InteractionInput> inputs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Control> controls = new(StringComparer.Ordinal);
     private readonly Func<WatchInteractionsRequestUpdate, Task> respond;
-    private readonly Func<InteractionInput, IStorageFile, Task<string>> upload;
+    private readonly Func<InteractionInput, string, Task<string>> upload;
     private readonly CancellationToken cancel;
     private WatchInteractionsResponseUpdate interaction;
     private bool applying;
@@ -33,7 +33,7 @@ public sealed class AspireInteractionDialog : Window
 
     public AspireInteractionDialog(WatchInteractionsResponseUpdate interaction,
         Func<WatchInteractionsRequestUpdate, Task> respond,
-        Func<InteractionInput, IStorageFile, Task<string>> upload, CancellationToken cancel)
+        Func<InteractionInput, string, Task<string>> upload, CancellationToken cancel)
     {
         UiThread.Check();
         this.interaction = interaction;
@@ -298,26 +298,12 @@ public sealed class AspireInteractionDialog : Window
                     {
                         throw new InvalidOperationException("The file input changed. Choose the file again.");
                     }
-                    IReadOnlyList<IStorageFile> selected = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-                    {
-                        Title = input.Label,
-                        AllowMultiple = input.AllowMultipleFiles,
-                        FileTypeFilter = FileFilters(input.FileFilter),
-                    });
-                    if (selected.Count == 0)
-                    {
-                        return;
-                    }
-                    try
+                    // The window's own picker, which tests answer for, as they do for every file the IDE asks for.
+                    MainWindow window = Owner as MainWindow ?? throw new InvalidOperationException("The AppHost's prompt has no window to choose a file in.");
+                    IReadOnlyList<string> selected = await window.PickFiles(input.Label, FileFilters(input.FileFilter), input.AllowMultipleFiles);
+                    if (selected.Count > 0)
                     {
                         await UploadFilesCoreAsync(input.Name, selected, version);
-                    }
-                    finally
-                    {
-                        foreach (IStorageFile picked in selected)
-                        {
-                            picked.Dispose();
-                        }
                     }
                 });
                 control = file;
@@ -343,14 +329,7 @@ public sealed class AspireInteractionDialog : Window
         }
     }
 
-    public Task UploadFilesAsync(string inputName, IReadOnlyList<IStorageFile> files)
-    {
-        UiThread.Check();
-        int version = inputGeneration;
-        return RunActionAsync(() => UploadFilesCoreAsync(inputName, files, version));
-    }
-
-    private async Task UploadFilesCoreAsync(string inputName, IReadOnlyList<IStorageFile> files, int version)
+    private async Task UploadFilesCoreAsync(string inputName, IReadOnlyList<string> files, int version)
     {
         InteractionInput input = CurrentUploadInput(inputName, version);
         if (input.Disabled || input.Loading || files.Count > 100 || (!input.AllowMultipleFiles && files.Count > 1))
@@ -362,11 +341,11 @@ public sealed class AspireInteractionDialog : Window
             return;
         }
         List<object> references = [];
-        foreach (IStorageFile file in files)
+        foreach (string file in files)
         {
             string id = await upload(CurrentUploadInput(inputName, version), file);
             CurrentUploadInput(inputName, version);
-            references.Add(new { Id = id, Name = file.Name });
+            references.Add(new { Id = id, Name = Path.GetFileName(file) });
         }
         InteractionInput latest = CurrentUploadInput(inputName, version);
         Changed(latest, JsonSerializer.Serialize(references));

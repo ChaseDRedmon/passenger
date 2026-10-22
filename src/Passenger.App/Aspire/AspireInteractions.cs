@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Google.Protobuf;
 using Grpc.Core;
@@ -223,16 +222,15 @@ public sealed partial class AspireInteractions : IDisposable, IAsyncDisposable
         }
     }
 
-    private async Task<string> UploadAsync(int interactionId, InteractionInput input, IStorageFile file, CancellationToken cancel)
+    private async Task<string> UploadAsync(int interactionId, InteractionInput input, string file, CancellationToken cancel)
     {
         long limit = input.MaxFileSize > 0 ? Math.Min(input.MaxFileSize, FileLimit) : FileLimit;
-        StorageItemProperties properties = await file.GetBasicPropertiesAsync().ConfigureAwait(false);
-        if (properties.Size > (ulong)limit)
+        if (new FileInfo(file).Length > limit)
         {
             throw new InvalidDataException($"The selected file exceeds the {limit} byte upload limit.");
         }
         using AsyncClientStreamingCall<UploadFileChunk, UploadFileResponse> upload = client.UploadFile(headers, cancellationToken: cancel);
-        await using Stream stream = await file.OpenReadAsync().ConfigureAwait(false);
+        await using FileStream stream = new(file, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
         byte[] buffer = new byte[64 * 1024];
         long total = 0;
         bool first = true;
@@ -251,7 +249,7 @@ public sealed partial class AspireInteractions : IDisposable, IAsyncDisposable
             UploadFileChunk chunk = new() { Data = ByteString.CopyFrom(buffer, 0, count) };
             if (first)
             {
-                chunk.FileName = file.Name;
+                chunk.FileName = Path.GetFileName(file);
                 chunk.InteractionId = interactionId;
                 chunk.InputName = input.Name;
             }

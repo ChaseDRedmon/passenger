@@ -11,24 +11,25 @@ namespace Passenger.App;
 /// <see cref="SolutionEdits"/>, and the Explorer, Build, Run and the language server read the solution again.</summary>
 public partial class MainWindow
 {
-    /// <summary>Asks the person for files to add (Existing Project, Existing Item), by a title and the patterns it takes
-    /// (any file with none), in the system's own dialog; tests answer for them.</summary>
-    public Func<string, IReadOnlyList<string>?, Task<IReadOnlyList<string>>> PickFiles
+    /// <summary>Asks the person for files (Existing Project, Existing Item, Compare With, an Aspire AppHost's file input), by
+    /// a title, the types it takes (any file with none) and whether it takes several, in the system's own dialog; tests
+    /// answer for them.</summary>
+    public Func<string, IReadOnlyList<FilePickerFileType>?, bool, Task<IReadOnlyList<string>>> PickFiles
     {
         get => pickFiles ?? PickFilesAsync;
         set => pickFiles = value;
     }
 
-    private Func<string, IReadOnlyList<string>?, Task<IReadOnlyList<string>>>? pickFiles;
+    private Func<string, IReadOnlyList<FilePickerFileType>?, bool, Task<IReadOnlyList<string>>>? pickFiles;
 
-    private async Task<IReadOnlyList<string>> PickFilesAsync(string title, IReadOnlyList<string>? patterns)
+    private async Task<IReadOnlyList<string>> PickFilesAsync(string title, IReadOnlyList<FilePickerFileType>? types, bool several)
     {
         IReadOnlyList<IStorageFile> picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = title,
-            AllowMultiple = true,
+            AllowMultiple = several,
             SuggestedStartLocation = Folder is null ? null : await StorageProvider.TryGetFolderFromPathAsync(Folder),
-            FileTypeFilter = patterns is null ? null : [new FilePickerFileType("Projects") { Patterns = patterns }],
+            FileTypeFilter = types,
         });
         return [.. picked.Select(f => f.TryGetLocalPath()).OfType<string>()];
     }
@@ -106,7 +107,8 @@ public partial class MainWindow
     public async Task AddExistingProjectsAsync(string? into)
     {
         string where = into is null ? "the Solution" : $"Solution Folder '{FolderName(into)}'";
-        IReadOnlyList<string> picked = await PickFiles($"Add Existing Project to {where}", ["*.csproj", "*.fsproj", "*.vbproj"]);
+        IReadOnlyList<string> picked = await PickFiles($"Add Existing Project to {where}",
+            [new FilePickerFileType("Projects") { Patterns = ["*.csproj", "*.fsproj", "*.vbproj"] }], true);
         if (AddEach(picked, (solution, project) => SolutionEdits.AddProject(solution, into, project), Path.GetFileNameWithoutExtension) is { } last)
         {
             Reveal(into, last);
@@ -116,7 +118,7 @@ public partial class MainWindow
     /// <summary>Rider's Add Existing Item: the files the person picks, listed in a solution folder.</summary>
     public async Task AddExistingItemsAsync(string into)
     {
-        IReadOnlyList<string> picked = await PickFiles($"Add Existing Item to '{FolderName(into)}'", null);
+        IReadOnlyList<string> picked = await PickFiles($"Add Existing Item to '{FolderName(into)}'", null, true);
         if (AddEach(picked, (solution, file) => SolutionEdits.AddFile(solution, into, file), Path.GetFileName) is { } last)
         {
             Reveal(into, last);

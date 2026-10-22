@@ -120,7 +120,7 @@ public sealed class SolutionFoldersTests : IDisposable
         MainWindow window = Open();
         List<string> asked = Answer(window);
         IReadOnlyList<string> pick = [];
-        window.PickFiles = (_, _) => Task.FromResult(pick);
+        window.PickFiles = (_, _, _) => Task.FromResult(pick);
         ExplorerTree tree = window.ExplorerView.Tree;
         // The folder watcher hears of each change to the file and reads the solution again, making new rows: that lands
         // before the next step finds one.

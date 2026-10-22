@@ -8,7 +8,6 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Dialogs;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input.Platform;
@@ -1428,9 +1427,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         {
             backend.Push(FileForm());
             AspireInteractionDialog dialog = Interaction(window, "Upload API settings");
-            Window firstPicker = PickUploadFile(dialog, project.ApiProgram);
-            Ui.PumpUntil(() => backend.FirstUpload.Entered.Task.IsCompleted, "the real file picker upload to reach the held server reply");
-            Assert.False(firstPicker.IsVisible);
+            PickUploadFile(window, dialog, project.ApiProgram);
+            Ui.PumpUntil(() => backend.FirstUpload.Entered.Task.IsCompleted, "the chosen file's upload to reach the held server reply");
             UploadFileChunk[] oldUpload = Assert.Single(backend.Uploads);
             Assert.Equal(3, oldUpload[0].InteractionId);
             Assert.Equal("attachment", oldUpload[0].InputName);
@@ -1451,10 +1449,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>
             Assert.Equal(string.Empty, Assert.Single(rejected.InputsDialog.InputItems).Value);
             Assert.DoesNotContain("stale-file-id", rejected.ToString(), StringComparison.Ordinal);
 
-            Window nextPicker = PickUploadFile(dialog, project.WebProgram);
-            Ui.WaitFor(() => Equals(((Button)dialog.InputControls["attachment"]).Content, "1 file(s) uploaded"), "a fresh picker upload to finish");
-            Assert.NotSame(firstPicker, nextPicker);
-            Assert.False(nextPicker.IsVisible);
+            PickUploadFile(window, dialog, project.WebProgram);
+            Ui.WaitFor(() => Equals(((Button)dialog.InputControls["attachment"]).Content, "1 file(s) uploaded"), "a fresh upload to finish");
             Assert.Equal(2, backend.Uploads.Length);
             Assert.Equal(File.ReadAllBytes(project.WebProgram), backend.Uploads[1].SelectMany(chunk => chunk.Data.ToByteArray()).ToArray());
             Ui.Click(dialog.Primary);
@@ -1486,27 +1482,19 @@ public sealed class AspireTests : IClassFixture<AspireApp>
         };
     }
 
-    private static Window PickUploadFile(AspireInteractionDialog dialog, string path)
+    /// <summary>Chooses a file for the prompt's file input as a person does in the window's file dialog, which the test
+    /// answers for (<see cref="MainWindow.PickFiles"/>): one file, asked for by the input's label.</summary>
+    private static void PickUploadFile(MainWindow window, AspireInteractionDialog dialog, string path)
     {
-        Ui.Click(dialog.InputControls["attachment"], settle: false);
-        Ui.PumpUntil(() => dialog.OwnedWindows.Any(window => window.IsVisible
-            && window.GetVisualDescendants().OfType<ManagedFileChooser>().Any()), "the real managed file chooser");
-        Window picker = Assert.Single(dialog.OwnedWindows, window => window.IsVisible
-            && window.GetVisualDescendants().OfType<ManagedFileChooser>().Any());
-        Assert.Same(dialog, picker.Owner);
-        Ui.PumpUntil(() => picker.GetVisualDescendants().OfType<TextBox>().Any(box => box.Name == "Location" && box.IsEffectivelyVisible),
-            "the managed chooser's location field");
-        TextBox location = picker.GetVisualDescendants().OfType<TextBox>().Single(box => box.Name == "Location" && box.IsEffectivelyVisible);
-        Ui.Click(location, settle: false);
-        ReplaceDuringWork(picker, path);
-        Assert.Equal(path, location.Text);
-        picker.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
-        if (picker.IsVisible)
+        List<(string Title, bool Several)> asked = [];
+        window.PickFiles = (title, _, several) =>
         {
-            picker.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
-        }
-        Ui.PumpUntil(() => !picker.IsVisible, "the managed chooser to accept the real source file");
-        return picker;
+            asked.Add((title, several));
+            return Task.FromResult<IReadOnlyList<string>>([path]);
+        };
+        Ui.Click(dialog.InputControls["attachment"], settle: false);
+        Ui.PumpUntil(() => asked.Count == 1, "the file input to ask for a file");
+        Assert.Equal(("Settings file", false), asked[0]);
     }
 
     private MainWindow OpenRunning()
