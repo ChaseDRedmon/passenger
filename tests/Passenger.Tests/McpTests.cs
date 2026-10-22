@@ -1810,7 +1810,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     /// a minute for any other.</summary>
     private static TimeSpan Limit(string tool) => tool switch
     {
-        "build" or "publish" or "debug_start" or "run" or "tests_run" or "profile" or "nuget_install" or "nuget_remove" => TimeSpan.FromMinutes(5),
+        "build" or "debug_start" or "run" or "tests_run" or "profile" or "nuget_install" or "nuget_remove" => TimeSpan.FromMinutes(5),
         "diagnostics" or "symbol_info" or "definition" or "usages" or "hierarchy" or "implementations" or "rename" or "code_actions"
             or "apply_code_action" or "format" or "find_symbol" or "outline" or "refactor" => TimeSpan.FromMinutes(3),
         _ => TimeSpan.FromMinutes(1),

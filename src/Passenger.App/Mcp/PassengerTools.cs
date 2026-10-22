@@ -551,35 +551,26 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     // Build and run
 
+    // Publish is build's, as the Build window's: a tool of its own cost every session's list more than the budget has.
     [McpServerTool(Name = "build", Title = "Build", Destructive = true), Description(
-        "Builds the solution (or the folder's project) as Build does and returns whether it succeeded, how it ended (failed, " +
-        "stopped, refused while another build runs, unable to start) and every error and warning, with MSBuild's last lines " +
-        "(outputTail) when it did not succeed; build_output has them always.")]
-    public Task<BuildResult> Build(CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "Builds the solution (or the folder's project); with publish (a project) publishes it to a folder with profile, else its " +
+        "last. Returns whether it succeeded, how it ended (failed, stopped, refused, unable to start), the folder it published to, " +
+        "every error and warning, and MSBuild's last lines (outputTail) when it did not succeed; build_output has them always.")]
+    public Task<BuildResult> Build(string? publish = null, string? profile = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        AgentCall.Follow(window.Actions.Work, AppActions.Build);
-        // The build goes on without an agent that gives up on it, shown in the Build window.
-        BuildOutcome built = await Builds.BuildAsync(BuildCause.Explicit, CancellationToken.None).WaitAsync(cancel);
+        if (publish is null && profile is not null)
+        {
+            throw new ArgumentException($"{profile} is a publish profile: give publish the project it is one of");
+        }
+        ProjectModel? published = publish is null ? null : Project(publish);
+        AgentCall.Follow(window.Actions.Work, published is null ? AppActions.Build : AppActions.Publish);
+        // The build or publish goes on without an agent that gives up on it, shown in the Build window.
+        BuildOutcome built = await (published is null ? Builds.BuildAsync(BuildCause.Explicit, CancellationToken.None)
+            : Builds.PublishAsync(new PublishRequest(published.Path, profile ?? Session.Publishing.ProfileOf(published.Path)))).WaitAsync(cancel);
         IReadOnlyList<Finding> problems = [.. built.Problems.Select(p => new Finding(
             p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
         return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems,
-            built.Succeeded ? null : string.Join('\n', built.Output));
-    });
-
-    [McpServerTool(Name = "publish", Title = "Publish", Destructive = true), Description(
-        "Publishes a project (its name or .csproj) to a folder with dotnet publish, as Publish does: with a profile of its own " +
-        "(Properties/PublishProfiles/NAME.pubxml; by default the one it last published with, else Release and MSBuild's defaults). " +
-        "Returns as build does, with the folder the app is in.")]
-    public Task<PublishResult> Publish(string project, string? profile = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
-    {
-        ProjectModel chosen = Project(project);
-        AgentCall.Follow(window.Actions.Work, AppActions.Publish);
-        // The publish goes on without an agent that gives up on it, shown in the Build window.
-        BuildOutcome published = await Builds.PublishAsync(new PublishRequest(chosen.Path, profile ?? Session.Publishing.ProfileOf(chosen.Path))).WaitAsync(cancel);
-        IReadOnlyList<Finding> problems = [.. published.Problems.Select(p => new Finding(
-            p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
-        return new PublishResult(published.Succeeded, published.Message, published.Published, problems.Count(p => p.Severity == "error"),
-            problems.Count(p => p.Severity == "warning"), problems, published.Succeeded ? null : string.Join('\n', published.Output));
+            built.Succeeded ? null : string.Join('\n', built.Output)) { Folder = built.Published };
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
@@ -1710,10 +1701,11 @@ public sealed record HierarchyEntry(string Name, string? Detail, string Path, in
 
 /// <summary>A build's answer: MSBuild's last lines only when it failed, since a build that succeeded has nothing in them
 /// an agent acts on (build_output has them).</summary>
-public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string? OutputTail);
-
-/// <summary>A publish as an agent reads it: a build's outcome, with the folder the app landed in once it did.</summary>
-public sealed record PublishResult(bool Succeeded, string Outcome, string? Folder, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string? OutputTail);
+public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string? OutputTail)
+{
+    /// <summary>The folder a publish landed in, once it did.</summary>
+    public string? Folder { get; init; }
+}
 
 public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 

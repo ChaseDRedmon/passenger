@@ -888,7 +888,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   app on with DeployOnBuild and dotnet publish does not, is only said in the dialog), said in the Build window and
   the status bar, whose word opens it (`MainWindow.ShowInFileManager`, the system's launcher, recorded as `ShownFolders`
   for tests). Publish Again publishes a project with the profile it last published with (`PublishMemory`, the folder's
-  `publish.json`); agents' `publish` takes a project and a profile. Remote targets (Web Deploy, FTP, Azure) come as
+  `publish.json`); an agent's `build` publishes given `publish` (a project) and `profile`, folded into build since a
+  tool of its own took the list past McpTests' budget, and answers the folder. Remote targets (Web Deploy, FTP, Azure) come as
   kinds of `PublishProfileFile.Remote`: a page of their own in the dialog and a deploy after the folder's publish, their
   credentials in the system's store, never in a .pubxml.
 - `src/Passenger.App/Testing`: unit testing works in Passenger's own `TestItem` (its id the project and full name, plus
