@@ -171,137 +171,21 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         window.Close();
     }
 
+    /// <summary>A profiled program that has not reached the profiler (its diagnostics off, so it runs on without ever coming
+    /// to the profiler's port): Profile pressed again starts no second program, which neither Kill nor a snapshot could reach;
+    /// Kill ends it at once, rather than when the profiler gives up on it 30 s later; a configuration whose working folder is
+    /// gone, and one that ends before it reaches the profiler, are said to in the profiler window; and Close Solution ends a
+    /// start under way with the folder's other programs, which ended only the run handed over. None leaves a port listening.</summary>
     [AvaloniaFact]
-    public void A_configuration_that_ends_before_it_reaches_the_profiler_is_said_to_and_leaves_no_port_listening()
-    {
-        // Built, then its runtime's settings taken away: the .NET host ends at once, before any runtime starts to reach
-        // the profiler's port, as a program that is not .NET does.
-        string project = Project("Spinner", "Console.WriteLine(\"ran\");\n",
-            "<Target Name=\"Unrunnable\" AfterTargets=\"Build\" Condition=\"'$(DesignTimeBuild)' != 'true'\"><Delete Files=\"$(TargetDir)$(TargetName).runtimeconfig.json\" /></Target>");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
-        IReadOnlyList<string> before = Ports();
-
-        Task<string?> started = window.ProfileAsync();
-        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-        Assert.StartsWith("Spinner never reached the profiler: it ended first, with exit code ", started.Result, StringComparison.Ordinal);
-        Assert.Null(window.Profiling);
-        Assert.Equal(started.Result, window.ProfilerView.Status);
-        Assert.Equal(before, Ports());
-        window.Close();
-    }
-
-    /// <summary>Kill is there while a profiled program starts, as Stop is while the debugger waits for one: a program that
-    /// never reaches the profiler (its diagnostics turned off, so it runs on without ever coming to the profiler's port) is
-    /// ended at once, rather than when the profiler gives up on it 30 s later, and the profiler window says so.</summary>
-    [AvaloniaFact]
-    public void Kill_ends_a_profiled_program_that_has_not_reached_the_profiler_at_once()
-    {
-        string pids = TestFolders.Create("pids-");
-        MainWindow window = OpenWaits("Unreached: Undiagnosed", pids, undiagnosed: true);
-        IReadOnlyList<string> before = Ports();
-        Task<string?> started = window.ProfileAsync();
-        int program = 0;
-        try
-        {
-            program = Started(pids, "the program to run as the profiler waits for it");
-            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
-            Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
-                .Single(b => b.Content as string == "Kill");
-            Assert.False(started.IsCompleted, $"The profiler gave up on the program before it was killed: {(started.IsCompleted ? started.Result : null)}");
-            Assert.True(kill.IsVisible, "The profiler window had no Kill while the program it started had not reached it");
-
-            Ui.Click(kill, settle: false);
-            Ui.PumpUntil(() => started.IsCompleted, "Kill to end the profile's start", TimeSpan.FromSeconds(10));
-            Assert.Equal("Profiling Unreached: Undiagnosed was stopped as it started", started.Result);
-            Assert.True(Processes.Gone(program), $"Kill left the program running: {Processes.Describe(program)}");
-            Assert.Null(window.Profiling);
-            Assert.Equal(started.Result, view.Status);
-            Assert.False(kill.IsVisible, "Kill stayed once the start was ended");
-            Assert.Equal(before, Ports());
-            window.Close();
-        }
-        finally
-        {
-            Processes.Kill(program);
-        }
-    }
-
-    /// <summary>Close Solution while a profiled program starts ends it with the folder's other programs, rather than when the
-    /// profiler gives up on it 30 s later: the folder ended only the run handed over, which a start is not yet.</summary>
-    [AvaloniaFact]
-    public void Closing_the_folder_ends_a_profiled_program_that_has_not_reached_the_profiler()
-    {
-        string pids = TestFolders.Create("pids-");
-        MainWindow window = OpenWaits("Closed: Undiagnosed", pids, undiagnosed: true);
-        IReadOnlyList<string> before = Ports();
-        Task<string?> started = window.ProfileAsync();
-        int program = 0;
-        try
-        {
-            program = Started(pids, "the program to run as the profiler waits for it");
-            Assert.False(started.IsCompleted, $"The profiler gave up on the program before the folder was closed: {(started.IsCompleted ? started.Result : null)}");
-
-            Assert.Null(window.CloseSolution());
-            Ui.PumpUntil(() => started.IsCompleted, "the profile's start to end with its folder", TimeSpan.FromSeconds(10));
-            Assert.Equal("The solution was closed", started.Result);
-            Assert.True(Processes.Gone(program), $"Closing the folder left the program being profiled running: {Processes.Describe(program)}");
-            Assert.Equal(before, Ports());
-            window.Close();
-        }
-        finally
-        {
-            Processes.Kill(program);
-        }
-    }
-
-    /// <summary>Close Solution while a run is profiled ends it whole: the program killed, the profiler's port gone with its
-    /// listener, and the profiler window no longer following the run, its time no longer counting and its Kill and Get
-    /// Snapshot gone, rather than all left until the IDE quits.</summary>
-    [AvaloniaFact]
-    public void Leaving_the_folder_while_a_program_is_profiled_ends_the_program_its_port_and_the_window_s_run()
-    {
-        string pids = TestFolders.Create("pids-");
-        MainWindow window = OpenWaits("Left", pids);
-        IReadOnlyList<string> before = Ports();
-        int program = 0;
-        try
-        {
-            Ui.Launched(window, window.ProfileAsync(), "the build and the start", TimeSpan.FromMinutes(3));
-            program = Started(pids, "the profiled program to start");
-            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
-            Assert.True(view.IsFollowing, "The profiler window does not follow the run");
-            Assert.NotEqual(before, Ports());
-
-            Assert.Null(window.CloseSolution());
-            Assert.True(Processes.Gone(program), $"Closing the folder left the program being profiled running: {Processes.Describe(program)}");
-            Ui.WaitFor(() => Ports().SequenceEqual(before), "the profiler's port to go with its folder");
-            Assert.False(view.IsFollowing, "The profiler window went on timing the run of the folder left");
-            Assert.False(view.CanKill, "The profiler window kept Kill for the program of the folder left");
-            Assert.Equal("Profiling Left ended with its folder", view.Status);
-            Ui.Hold(TimeSpan.FromMilliseconds(500), "the profiler window's clock to tick, were it still counting");
-            Assert.Equal("Profiling Left ended with its folder", view.Status);
-            window.Close();
-        }
-        finally
-        {
-            Processes.Kill(program);
-        }
-    }
-
-    /// <summary>Profile is refused while a profiled program is still starting, as it is while one runs: pressed again (the
-    /// program's window slow to come), it started the program a second time, and the first, no longer the window's run,
-    /// could be neither snapshotted nor killed until the profiler gave up on it.</summary>
-    [AvaloniaFact]
-    public void Profile_again_while_a_profiled_program_starts_starts_no_second_program()
+    public void A_profiled_program_that_has_not_reached_the_profiler_is_started_once_and_Kill_or_closing_the_folder_ends_it()
     {
         string pids = TestFolders.Create("pids-");
         MainWindow window = OpenWaits("Starting: Undiagnosed", pids, undiagnosed: true);
         IReadOnlyList<int> Programs() => ProfilerTests.Programs(pids);
+        IReadOnlyList<string> before = Ports();
         Task<string?> started = window.ProfileAsync();
         Task<string?>? again = null;
+        int closed = 0;
         try
         {
             Ui.PumpUntil(() => Programs().Count > 0, "the program to run as the profiler waits for it", TimeSpan.FromMinutes(2));
@@ -313,14 +197,54 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Assert.Single(Programs());
             Assert.False(started.IsCompleted, $"The first profile's start ended: {(started.IsCompleted ? started.Result : null)}");
 
-            // Kill still ends the one program there is.
-            Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.ProfilerView).OfType<Avalonia.Controls.Button>()
+            // Kill is there while the program starts, as Stop is while the debugger waits for one, and ends it at once.
+            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+            Avalonia.Controls.Button kill = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
                 .Single(b => b.Content as string == "Kill");
+            Assert.True(kill.IsVisible, "The profiler window had no Kill while the program it started had not reached it");
             Ui.Click(kill, settle: false);
             Ui.PumpUntil(() => started.IsCompleted, "Kill to end the profile's start", TimeSpan.FromSeconds(10));
             Assert.Equal("Profiling Starting: Undiagnosed was stopped as it started", started.Result);
             Assert.True(Processes.Gone(Programs()[0]), $"Kill left the program running: {Processes.Describe(Programs()[0])}");
+            Assert.Null(window.Profiling);
+            Assert.Equal(started.Result, view.Status);
+            Assert.False(kill.IsVisible, "Kill stayed once the start was ended");
+            Assert.Equal(before, Ports());
             Assert.Null(window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
+
+            // A working folder that is gone is said in the profiler window, nothing started.
+            Configure(window, "Elsewhere", pids, workingDirectory: "gone");
+            started = window.ProfileAsync();
+            Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+            string gone = Path.Combine(window.Folder!, "gone");
+            Assert.Equal($"Could not profile Waits: its working folder {gone} does not exist", started.Result);
+            Assert.Null(window.Profiling);
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Profiler));
+            Assert.Equal(started.Result, view.Status);
+            Assert.Equal(started.Result, view.Placeholder);
+            Assert.Equal(before, Ports());
+
+            // A program that ends before it reaches the profiler (no folder to write its id into, it exits at once, its
+            // diagnostics off as a program that is not .NET never comes) is said to.
+            Configure(window, "Ends first", pids: null, undiagnosed: true);
+            started = window.ProfileAsync();
+            Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+            Assert.StartsWith("Ends first never reached the profiler: it ended first, with exit code ", started.Result, StringComparison.Ordinal);
+            Assert.Null(window.Profiling);
+            Assert.Equal(started.Result, view.Status);
+            Assert.Equal(before, Ports());
+
+            // Close Solution while a profiled program starts ends it with the folder's other programs.
+            string closing = TestFolders.Create("pids-");
+            Configure(window, "Closed: Undiagnosed", closing, undiagnosed: true);
+            started = window.ProfileAsync();
+            closed = Started(closing, "the program to run as the profiler waits for it");
+            Assert.False(started.IsCompleted, $"The profiler gave up on the program before the folder was closed: {(started.IsCompleted ? started.Result : null)}");
+            Assert.Null(window.CloseSolution());
+            Ui.PumpUntil(() => started.IsCompleted, "the profile's start to end with its folder", TimeSpan.FromSeconds(10));
+            Assert.Equal("The solution was closed", started.Result);
+            Assert.True(Processes.Gone(closed), $"Closing the folder left the program being profiled running: {Processes.Describe(closed)}");
+            Assert.Equal(before, Ports());
             window.Close();
         }
         finally
@@ -329,6 +253,7 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             {
                 Processes.Kill(program);
             }
+            Processes.Kill(closed);
             if (again is { IsCompleted: false })
             {
                 Ui.PumpUntil(() => again.IsCompleted, "the second profile's start to give up", TimeSpan.FromSeconds(60));
@@ -336,29 +261,53 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         }
     }
 
+    /// <summary>A memory snapshot of a program being profiled counts its heap by type and it runs on; then Close Solution
+    /// ends the run whole: the program killed, the profiler's port gone with its listener, and the profiler window no longer
+    /// following the run, its time no longer counting and its Kill and Get Snapshot gone, rather than all left until the
+    /// IDE quits.</summary>
     [AvaloniaFact]
-    public void A_memory_snapshot_of_a_program_being_profiled_counts_its_heap_by_type_and_it_runs_on()
+    public void A_memory_snapshot_of_a_program_being_profiled_counts_its_heap_by_type_and_leaving_the_folder_then_ends_the_run()
     {
-        MainWindow window = OpenWaits("Waits for its input", TestFolders.Create("pids-"));
-        Task<string?> started = window.ProfileAsync();
-        Ui.Launched(window, started, "the build and the start", TimeSpan.FromMinutes(3));
-        Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
-        Ui.PumpUntil(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("waiting", StringComparison.Ordinal), "the program to wait on its input");
+        string pids = TestFolders.Create("pids-");
+        MainWindow window = OpenWaits("Waits for its input", pids);
+        IReadOnlyList<string> before = Ports();
+        int program = 0;
+        try
+        {
+            Ui.Launched(window, window.ProfileAsync(), "the build and the start", TimeSpan.FromMinutes(3));
+            program = Started(pids, "the profiled program to start");
+            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+            Assert.True(view.IsFollowing, "The profiler window does not follow the run");
+            Assert.NotEqual(before, Ports());
+            Ui.PumpUntil(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("waiting", StringComparison.Ordinal), "the program to wait on its input");
 
-        // Get Memory Snapshot while it waits: the heap by type on the Memory page, the program still there.
-        Avalonia.Controls.Button take = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
-            .Single(b => b.Content as string == "Get Memory Snapshot");
-        Ui.Click(take, settle: false);
-        // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails here, not the run.
-        Ui.WaitFor(() => view.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
-            "the memory snapshot", TimeSpan.FromMinutes(2));
-        Assert.True(view.Memory is not null, window.Status);
-        HeapType strings = Assert.Single(view.HeapTypes, t => t.Name == "System.String");
-        Assert.True(strings.Count > 10, $"{strings.Count} strings");
-        Assert.Equal(view.Memory.Bytes, view.HeapTypes.Sum(t => t.Bytes));
-        Assert.True(window.Profiling is { HasExited: false }, "The program being profiled ended with its memory snapshot");
-        window.Profiling.Kill();
-        window.Close();
+            // Get Memory Snapshot while it waits: the heap by type on the Memory page, the program still there.
+            Avalonia.Controls.Button take = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
+                .Single(b => b.Content as string == "Get Memory Snapshot");
+            Ui.Click(take, settle: false);
+            // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails here, not the run.
+            Ui.WaitFor(() => view.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
+                "the memory snapshot", TimeSpan.FromMinutes(2));
+            Assert.True(view.Memory is not null, window.Status);
+            HeapType strings = Assert.Single(view.HeapTypes, t => t.Name == "System.String");
+            Assert.True(strings.Count > 10, $"{strings.Count} strings");
+            Assert.Equal(view.Memory.Bytes, view.HeapTypes.Sum(t => t.Bytes));
+            Assert.True(window.Profiling is { HasExited: false }, "The program being profiled ended with its memory snapshot");
+
+            Assert.Null(window.CloseSolution());
+            Assert.True(Processes.Gone(program), $"Closing the folder left the program being profiled running: {Processes.Describe(program)}");
+            Ui.WaitFor(() => Ports().SequenceEqual(before), "the profiler's port to go with its folder");
+            Assert.False(view.IsFollowing, "The profiler window went on timing the run of the folder left");
+            Assert.False(view.CanKill, "The profiler window kept Kill for the program of the folder left");
+            Assert.Equal("Profiling Waits for its input ended with its folder", view.Status);
+            Ui.Hold(TimeSpan.FromMilliseconds(500), "the profiler window's clock to tick, were it still counting");
+            Assert.Equal("Profiling Waits for its input ended with its folder", view.Status);
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program);
+        }
     }
 
     /// <summary>Get Snapshot ends the run, not the program Profile started: it goes on, read from and typed to in the Run
@@ -461,44 +410,41 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
     }
 
     /// <summary>Attach Profiler where its snapshot cannot be written says so and leaves the program as it was, running and
-    /// recorded by nothing: the recording it began there ended, which the program's frames provider hears as turned off.
-    /// The snapshot's file failed only once the recording had begun, which was left going on in the program.</summary>
+    /// recorded by nothing: the recording it began there ended (EventPipe released), which the program's frames provider
+    /// hears as turned off; the snapshot's file had failed only once the recording had begun, which was left going on in the
+    /// program. Once a snapshot can be written, Attach Profiler records it.</summary>
     [AvaloniaFact]
-    public void Attach_Profiler_that_cannot_write_its_snapshot_says_why_and_leaves_the_program_running_unrecorded()
+    public void Attach_Profiler_that_cannot_write_its_snapshot_says_why_releases_EventPipe_and_leaves_the_program_running_unrecorded()
     {
-        string project = Project("Unwritten", """
-            using System.Diagnostics.Tracing;
-            using Frames frames = new();
-            Console.WriteLine("ready");
-            while (Console.ReadLine() is not null) { frames.Tick(); }
-            sealed class Frames : EventSource
-            {
-                public Frames() : base("Passenger-Avalonia") { }
-                [Event(1)] public void Tick() => WriteEvent(1);
-                protected override void OnEventCommand(EventCommandEventArgs command) => Console.WriteLine($"frames {command.Command}");
-            }
-            """);
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
+        MainWindow window = OpenWaits("Attached", TestFolders.Create("pids-"));
         try
         {
             Ui.Launched(window, window.RunAsync(), "the program", TimeSpan.FromMinutes(3));
             Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
-            Ui.WaitFor(() => Shows(run, "ready"), "the program to start");
+            Ui.WaitFor(() => Shows(run, "waiting"), "the program to start");
             // A folder in the place of each name the snapshot could take for the next while: the recording begins, its file cannot.
             DateTime now = DateTime.Now;
+            List<string> blocked = [];
             for (int second = -1; second <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; second++)
             {
                 string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
-                Directory.CreateDirectory(Path.Combine(window.SnapshotFolder, $"Unwritten-{stamp}.nettrace"));
+                string path = Path.Combine(window.SnapshotFolder, $"Waits-{stamp}.nettrace");
+                Directory.CreateDirectory(path);
+                blocked.Add(path);
             }
             string? refused = Ui.Await(window.AttachProfilerAsync(), "Attach Profiler's answer");
-            Assert.StartsWith("Could not profile Unwritten: no snapshot can be written in ", refused, StringComparison.Ordinal);
+            Assert.StartsWith("Could not profile Waits: no snapshot can be written in ", refused, StringComparison.Ordinal);
             Assert.Null(window.Profiling);
             Assert.True(window.Runner.IsRunning, "Attach Profiler ended the program it could not record");
             Ui.WaitFor(() => Shows(run, "frames Enable") && Shows(run, "frames Disable"), "the recording begun in the program to end");
+
+            foreach (string path in blocked)
+            {
+                Directory.Delete(path);
+            }
+            Assert.Null(Ui.Await(window.AttachProfilerAsync(), "the recovered trace attachment"));
+            Assert.NotNull(Ui.Await(window.SnapshotAsync(), "the recovered attachment's snapshot").Snapshot);
+            Assert.True(window.Runner.IsRunning);
         }
         finally
         {
@@ -510,60 +456,6 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
     /// <summary>Attach Profiler profiles the program the person runs wherever Run started it: one in a tab of the terminal,
     /// and under Hot Reload the app dotnet watch started, never dotnet watch's own process, whose threads it took for the
     /// app's.</summary>
-    [AvaloniaFact]
-    public void An_attachment_that_cannot_write_its_trace_releases_EventPipe_and_leaves_the_program_running()
-    {
-        string project = Project("Blocked", """
-            using System.Diagnostics.Tracing;
-            using Frames frames = new();
-            Console.WriteLine("ready");
-            while (Console.ReadLine() is not null) { frames.Tick(); }
-            sealed class Frames : EventSource
-            {
-                public Frames() : base("Passenger-Avalonia") { }
-                [Event(1)] public void Tick() => WriteEvent(1);
-                protected override void OnEventCommand(EventCommandEventArgs command) => Console.WriteLine($"frames {command.Command}");
-            }
-            """);
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
-        try
-        {
-            Ui.Launched(window, window.RunAsync(), "the test-owned program", TimeSpan.FromMinutes(3));
-            Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
-            Ui.WaitFor(() => Shows(run, "ready"), "the program's EventSource");
-            DateTime now = DateTime.Now;
-            List<string> blocked = [];
-            for (int second = -1; second <= TimeSpan.FromMinutes(2).Scaled().TotalSeconds; second++)
-            {
-                string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
-                string path = Path.Combine(window.SnapshotFolder, $"Blocked-{stamp}.nettrace");
-                Directory.CreateDirectory(path);
-                blocked.Add(path);
-            }
-            string? refused = Ui.Await(window.AttachProfilerAsync(), "the refused trace attachment");
-            Assert.Contains("no snapshot can be written", refused, StringComparison.Ordinal);
-            Assert.Null(window.Profiling);
-            Assert.True(window.Runner.IsRunning);
-            Ui.WaitFor(() => Shows(run, "frames Enable") && Shows(run, "frames Disable"), "the failed attachment's EventPipe session to be released");
-            foreach (string path in blocked)
-            {
-                Directory.Delete(path);
-            }
-            Assert.Null(Ui.Await(window.AttachProfilerAsync(), "the recovered trace attachment"));
-            Ui.WaitFor(() => Shows(run, "frames Enable"), "the recovered EventPipe session");
-            Assert.NotNull(Ui.Await(window.SnapshotAsync(), "the recovered attachment's snapshot").Snapshot);
-            Assert.True(window.Runner.IsRunning);
-        }
-        finally
-        {
-            Ui.Run(window, AppActions.Stop);
-            window.Close();
-        }
-    }
-
     [AvaloniaFact]
     public void Attach_Profiler_profiles_the_program_run_in_the_terminal_and_the_app_dotnet_watch_runs()
     {
@@ -637,32 +529,6 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
     }
 
     [AvaloniaFact]
-    public void Profiling_a_configuration_whose_working_folder_is_gone_says_why_in_the_profiler_window()
-    {
-        string project = Project("Spinner", "Console.WriteLine(\"ran\");\n");
-        Directory.CreateDirectory(Path.Combine(project, "Properties"));
-        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
-            "{ \"profiles\": { \"Elsewhere\": { \"commandName\": \"Project\", \"workingDirectory\": \"gone\" } } }");
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(project);
-        Ui.Settle();
-        Assert.Equal("Spinner: Elsewhere", window.Configuration?.Name);
-        IReadOnlyList<string> before = Ports();
-
-        Task<string?> started = window.ProfileAsync();
-        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-        string gone = Path.Combine(window.Folder!, "gone");
-        Assert.Equal($"Could not profile Spinner: its working folder {gone} does not exist", started.Result);
-        Assert.Null(window.Profiling);
-        Assert.True(window.DockHost.IsShown(ToolWindowIds.Profiler));
-        Assert.Equal(started.Result, window.ProfilerView.Status);
-        Assert.Equal(started.Result, window.ProfilerView.Placeholder);
-        Assert.Equal(before, Ports());
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void The_frames_median_of_an_even_count_is_halfway_between_the_middle_two()
     {
         // A snapshot of an Avalonia app's two frames, of 10 and 30 ms, as its inspector tells them.
@@ -723,27 +589,36 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             WriteEvent(3, frame, durationMs, endedMsAgo, measurePasses, arrangePasses, measureMs, arrangeMs, renderMs, measures, arranges);
     }
 
-    /// <summary>A window on <see cref="Waits"/>, on the server the last window on it left, whose configuration of this name
-    /// (never the project's own, which names its generated one) has the program write its id into <paramref name="pids"/>,
-    /// its runtime's diagnostics off when <paramref name="undiagnosed"/>, so it never reaches the profiler's port.</summary>
+    /// <summary>A window on <see cref="Waits"/>, on the server the last window on it left, with the configuration of
+    /// <see cref="Configure"/>.</summary>
     private MainWindow OpenWaits(string name, string pids, bool undiagnosed = false)
     {
         MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = waits.Server };
         window.Show();
         window.OpenFolder(waits.Folder);
         Ui.Settle();
+        Configure(window, name, pids, undiagnosed);
+        return window;
+    }
+
+    /// <summary>The window's one configuration, of <see cref="Waits"/>, of this name (never the project's own, which names
+    /// its generated one): the program writes its id into <paramref name="pids"/> (with none it ends at once), its runtime's
+    /// diagnostics off when <paramref name="undiagnosed"/>, so it never reaches the profiler's port, in the working folder
+    /// given (the project's own for none).</summary>
+    private void Configure(MainWindow window, string name, string? pids, bool undiagnosed = false, string workingDirectory = "")
+    {
         Passenger.App.Run.RunConfiguration configuration = new()
         {
             Name = name,
             Project = Path.Combine(PathNames.Canonical(waits.Folder), "Waits.csproj"),
-            Arguments = $"\"{pids}\"",
+            Arguments = pids is null ? string.Empty : $"\"{pids}\"",
+            WorkingDirectory = workingDirectory,
         };
         if (undiagnosed)
         {
             configuration = configuration with { Environment = new Dictionary<string, string> { ["DOTNET_EnableDiagnostics"] = "0" } };
         }
         window.SetConfigurations([configuration], name);
-        return window;
     }
 
     /// <summary>The ids of the programs of <see cref="Waits"/> that have written theirs into a folder.</summary>
@@ -760,7 +635,9 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
     }
 
     /// <summary>A program that writes its id into the folder its argument names, a file named for it, says it is waiting and
-    /// prints each line it reads until its input ends: the tests that start a program, act on it as it waits and end it.</summary>
+    /// prints each line it reads until its input ends, or with no argument ends at once: the tests that start a program, act
+    /// on it as it waits and end it. Its frames provider, the one an Avalonia app's inspector has, says when a recording turns
+    /// it on and off.</summary>
     public sealed class Waits : SharedProject
     {
         public Waits()
@@ -768,8 +645,28 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
         {
             File.WriteAllText(PathOf("Waits.csproj"),
                 TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>"));
-            File.WriteAllText(PathOf("Program.cs"), "File.WriteAllText(Path.Combine(args[0], $\"{Environment.ProcessId}.pid\"), Environment.ProcessId.ToString());\n"
-                + "Console.WriteLine(\"waiting\");\nwhile (Console.ReadLine() is { } line)\n{\n    Console.WriteLine($\"read {line}\");\n}\n");
+            File.WriteAllText(PathOf("Program.cs"), """
+                using System.Diagnostics.Tracing;
+                if (args.Length == 0)
+                {
+                    Environment.Exit(3);
+                }
+                File.WriteAllText(Path.Combine(args[0], $"{Environment.ProcessId}.pid"), Environment.ProcessId.ToString());
+                using Frames frames = new();
+                Console.WriteLine("waiting");
+                while (Console.ReadLine() is { } line)
+                {
+                    frames.Tick();
+                    Console.WriteLine($"read {line}");
+                }
+                sealed class Frames : EventSource
+                {
+                    public Frames() : base("Passenger-Avalonia") { }
+                    [Event(1)] public void Tick() => WriteEvent(1);
+                    protected override void OnEventCommand(EventCommandEventArgs command) => Console.WriteLine($"frames {command.Command}");
+                }
+
+                """);
             // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
             Directory.CreateDirectory(PathOf("bin"));
             Prepare();
