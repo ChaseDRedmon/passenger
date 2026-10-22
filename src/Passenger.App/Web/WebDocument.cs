@@ -203,7 +203,9 @@ public sealed class WebDocument : IServerDocument, IDisposable
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
 
-    /// <summary>A push from the server, on its thread: taken on the window's, if it is for the text as it stands.</summary>
+    /// <summary>A push from the server, on its thread: taken on the window's, if it answers the text as it stands (the
+    /// version it answers told as it arrived, <see cref="LspDocument.Pushed"/>), which lets the file's checks go; one for
+    /// a text typed over leaves them held for the next.</summary>
     private void OnPushed(object? sender, EventArgs e)
     {
         if (sender is LspDocument lsp)

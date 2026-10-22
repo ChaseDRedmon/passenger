@@ -121,6 +121,73 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
         }
     }
 
+    /// <summary>The Dockerfile server checks each text it is sent and names no version: its push for a text the person has
+    /// typed over by the time the window takes it is that text's, never shown as the text now nor letting the file's
+    /// checks go, so once they land the markers are the last text's.</summary>
+    [AvaloniaFact]
+    public void A_dockerfile_typed_over_before_its_servers_push_is_taken_is_never_marked_for_the_text_before()
+    {
+        Shop.SkipWithoutNode();
+        MainWindow window = app.Open("ops/api.Dockerfile");
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.WaitFor(() => window.Session.Web?.For(document) is { Lsp: not null } && !document.IsChecking, "the Dockerfile server's first checks");
+            Passenger.Lsp.LspDocument lsp = window.Session.Web!.For(document)!.Lsp!;
+            int pushes = 0;
+            int now = -1;
+            bool taken = false;
+            List<string> shown = [];
+            using ManualResetEventSlim release = new();
+            void Counted(object? sender, EventArgs e)
+            {
+                if (Interlocked.Increment(ref pushes) == 1)
+                {
+                    // Runs after the window's own take of this push, posted before it; the server's next push is read once it has.
+                    UiThread.Post(() => taken = true);
+                    release.Wait(TimeSpan.FromSeconds(30));
+                }
+            }
+            void Watched(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+            {
+                if (e.PropertyName == nameof(OpenDocument.Markers) && document.Text.Version == now)
+                {
+                    shown.AddRange(document.Markers.Select(m => m.Message));
+                }
+            }
+            lsp.DiagnosticsPushed += Counted;
+            document.PropertyChanged += Watched;
+            try
+            {
+                const string First = "FROMM scratch\n";
+                editor.ApplyEdits([new TextEdit(0, editor.Document.Snapshot.Length, Shop.OpsDockerfile + First)]);
+                // The window's thread held until the server has pushed for that text, so the window takes the push after the next edit.
+                Assert.True(Waiting.Until(() => Volatile.Read(ref pushes) > 0, TimeSpan.FromSeconds(10)), "The Dockerfile server pushed nothing for the edit");
+                editor.ApplyEdits([new TextEdit(Shop.OpsDockerfile.Length, First.Length, "RUNN echo\n")]);
+                now = document.Text.Version;
+                Ui.PumpUntil(() => taken, "the window's take of the push for the text before");
+                release.Set();
+                Ui.Settle();
+                Assert.True(!shown.Any(m => m.Contains("FROMM", StringComparison.Ordinal)), $"The text before was marked as the text now: [{string.Join(", ", shown)}]");
+                string[] errors = [.. document.Markers.Where(m => m.Kind == MarkerKind.Error).Select(m => m.Message)];
+                Assert.True(errors.Any(e => e.Contains("Unknown instruction: RUNN", StringComparison.Ordinal)) && !errors.Any(e => e.Contains("FROMM", StringComparison.Ordinal)),
+                    $"Once its checks landed, the Dockerfile's markers were not its last text's: [{string.Join(", ", errors)}]");
+            }
+            finally
+            {
+                release.Set();
+                lsp.DiagnosticsPushed -= Counted;
+                document.PropertyChanged -= Watched;
+            }
+        }
+        finally
+        {
+            window.Close();
+            app.Reset();
+        }
+    }
+
     private const string HubTags = "Complete image tags from Docker Hub";
     private const string TokenAsked = "GET /auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull";
     private const string TagsAsked = "GET /registry-1.docker.io/v2/library/postgres/tags/list";

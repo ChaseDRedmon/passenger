@@ -293,7 +293,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   `workspace/configuration` (`YamlSettings`): schema store and Kubernetes' catalogue off, Compose's `!reset` and
   `!override` known, compose files (`JsonSchemas.ComposeFiles`) on the carried Compose schema by its file URI, and
   `yaml/registerContentRequest` sends any HTTP schema through `JsonSchemas`, so it fetches nothing itself. The Dockerfile
-  and YAML servers push diagnostics, and a file's checks are held from a change until its push lands (5 s at most).
+  and YAML servers push diagnostics naming no version, so `LspDocument` tells each push the version it answers as it
+  arrives, by its server's `ServerStart.Pushes` (`PushPace`: the Dockerfile server's one push for each text that changed,
+  in order; the YAML server's for the latest text once it has rested its 200 ms, an earlier push answering none), and a
+  file's checks are held from a change until the push for its text lands (5 s at most).
   `WebDocument` is an `IServerDocument`, as `CSharpDocument` is, and `CodeAssist` asks it through `Current`.
   `JsonSchemas` answers `vscode/content` from the carried schemas, else downloads while Settings' Remote JSON Schemas
   allows (`PASSENGER_SCHEMAS` points the tests at a dead address). `CodeAssist.Web.cs` gives JSON the Go to Declaration

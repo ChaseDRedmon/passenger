@@ -64,6 +64,8 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
     /// <summary>Roslyn's diagnostics are pulled, from each source it registers.</summary>
     bool IDocumentHost.PullsDiagnostics => true;
 
+    PushPace IDocumentHost.Pushes => PushPace.Latest;
+
     /// <summary>Starts a server on a folder and has it open the solution or projects. Cancelled or failed, it ends the
     /// server it started: one given up (another folder opened) never goes on loading this folder unseen.</summary>
     /// <param name="solution">The solution to open; with none, <paramref name="projects"/> are opened. The caller decides
@@ -235,6 +237,9 @@ internal interface IDocumentHost
     /// <summary>Whether the server's diagnostics are asked for (<c>textDocument/diagnostic</c>), rather than sent as it
     /// finds them (<c>textDocument/publishDiagnostics</c>).</summary>
     bool PullsDiagnostics { get; }
+
+    /// <summary>How the diagnostics it pushes naming no version follow the texts it is sent.</summary>
+    PushPace Pushes { get; }
 }
 
 /// <summary>One document as the server knows it: opened with its text, then sent every change as it
@@ -247,8 +252,18 @@ public sealed class LspDocument : IDisposable
     private readonly Lock gate = new();
     private bool closed;
 
-    /// <summary>The diagnostics a server that pushes them last sent, with the version they are for (null when it said none).</summary>
+    /// <summary>The diagnostics a server that pushes them last sent, with the version they answer (told as they came; null
+    /// before any came).</summary>
     private (IReadOnlyList<Diagnostic> Diagnostics, int? Version) pushed = ([], null);
+
+    /// <summary>The version of the text last sent (opened, or changed) and when it was sent; and, for a server that pushes
+    /// once for each text that changed, the versions it has yet to answer, in order.</summary>
+    private int sent;
+    private long sentAt;
+    private readonly Queue<int> unanswered = new();
+
+    /// <summary>The version a push answers that answers no text the editor has had: one before a debouncing server's rest.</summary>
+    private const int NoVersion = -1;
 
     internal LspDocument(IDocumentHost session, string uri, TextDocument text, string? languageId = null)
     {
@@ -257,9 +272,37 @@ public sealed class LspDocument : IDisposable
         Text = text;
         IsRazor = languageId is null && IsRazorPath(uri);
         LanguageId = languageId ?? (IsRazor ? "aspnetcorerazor" : "csharp");
+        Sent(text.Version, changed: true);
         session.Server.Notify("textDocument/didOpen",
             new DidOpenTextDocumentParams(new TextDocumentItem(uri, LanguageId, text.Version, text.Snapshot.ToString())));
         text.Changed += OnChanged;
+    }
+
+    /// <summary>A text sent, before it goes, so a push that answers it, however soon it comes, is told so.</summary>
+    private void Sent(int version, bool changed)
+    {
+        lock (gate)
+        {
+            sent = version;
+            sentAt = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (changed && session.Pushes.EachText)
+            {
+                unanswered.Enqueue(version);
+            }
+        }
+    }
+
+    /// <summary>The version a push naming none answers, as it arrives (under the gate): the next a server that pushes once
+    /// a text has yet to answer (the latest sent for the last, which changes since left as it was); for a debouncing one
+    /// the latest sent, once it has rested, else none; else the latest sent.</summary>
+    private int Answered()
+    {
+        PushPace pace = session.Pushes;
+        if (pace.EachText)
+        {
+            return unanswered.TryDequeue(out int version) && unanswered.Count > 0 ? version : sent;
+        }
+        return System.Diagnostics.Stopwatch.GetElapsedTime(sentAt) >= pace.Rest ? sent : NoVersion;
     }
 
     public string Uri { get; }
@@ -273,18 +316,18 @@ public sealed class LspDocument : IDisposable
     /// then in <see cref="DiagnosticsAsync"/>.</summary>
     public event EventHandler? DiagnosticsPushed;
 
-    /// <summary>The diagnostics the server pushed, kept for the version they are for.</summary>
+    /// <summary>The diagnostics the server pushed, kept for the version they answer: the one it named, else the one its
+    /// <see cref="PushPace"/> says, told as they arrive (a version read later, on another thread, may be a text sent since).</summary>
     internal void Publish(PublishDiagnosticsParams published)
     {
         lock (gate)
         {
-            pushed = (published.Diagnostics, published.Version);
+            pushed = (published.Diagnostics, published.Version ?? Answered());
         }
         DiagnosticsPushed?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>The diagnostics the server last pushed and the version they are for: the one it named, else the text's
-    /// version now, as a server that names none sends them for the latest text it has.</summary>
+    /// <summary>The diagnostics the server last pushed and the version they answer (none for the text now before any came).</summary>
     public (IReadOnlyList<Diagnostic> Diagnostics, int Version) Pushed
     {
         get
@@ -606,6 +649,8 @@ public sealed class LspDocument : IDisposable
             changes.Add(new TextDocumentContentChangeEvent(before.RangeOf(range), text));
             last = first - 1;
         }
+        // A server pushing once a text pushes nothing for a change that leaves the text as it was.
+        Sent(e.Version, changed: e.Edits.Any(edit => edit.Text.Length != edit.End - edit.Start || e.Before.GetText(edit.Start, edit.End - edit.Start) != edit.Text));
         Server.Notify("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
     }
 
