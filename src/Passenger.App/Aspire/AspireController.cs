@@ -35,9 +35,14 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     public Func<AspireAppRun, CancellationToken, Task<AspireInteractions?>>? ConnectInteractions { get; set; }
     public Func<AspireAppRun, AspireResourceRun, LaunchPlan, CancellationToken, Task<ProfilingSession>>? ProfileService { get; set; }
 
+    /// <summary>Whether the Debug window's chosen tab is another program's than any service's (a plain launch beside the
+    /// AppHost), which the Aspire window's resources read again do not take back: only a person's choice of a resource does.</summary>
+    public bool OtherProgramChosen { get; private set; }
+
     public void SelectService(AspireResourceRun? service)
     {
         UiThread.Check();
+        OtherProgramChosen = false;
         if (SelectedService != service)
         {
             SelectedService = service;
@@ -45,8 +50,12 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
     }
 
-    public void SelectDebugger(DebugTab? tab) => SelectService(tab is null ? null : apps.SelectMany(app => app.Services)
-        .FirstOrDefault(service => service.DebugTab == tab));
+    public void SelectDebugger(DebugTab? tab)
+    {
+        AspireResourceRun? service = tab is null ? null : apps.SelectMany(app => app.Services).FirstOrDefault(service => service.DebugTab == tab);
+        SelectService(service);
+        OtherProgramChosen = tab is not null && service is null;
+    }
 
     public AspireAppRun? FindApp(string appHost) => apps.FirstOrDefault(app => PathNames.Same(app.Configuration.Project, appHost));
 
