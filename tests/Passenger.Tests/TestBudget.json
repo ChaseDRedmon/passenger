@@ -4,7 +4,7 @@
   "classes": {
     "CodeAssistTests": 480,
     "CodeAssistResponsivenessTests": 90,
-    "LongFileAssistTests": 150,
+    "LongFileAssistTests": 120,
     "DebuggerTests": 420,
     "HotReloadTests": 180,
     "HotReloadEditsTests": 240,
