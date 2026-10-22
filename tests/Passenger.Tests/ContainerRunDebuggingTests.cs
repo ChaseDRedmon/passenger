@@ -254,7 +254,8 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         return window.Debugger.Tabs.Single(t => t.Name == service);
     }
 
-    /// <summary>Waits for a tab's program to stop at a file's line (from zero), failing with where its frames say it is.</summary>
+    /// <summary>Waits for a tab's program to stop at a file's line (from zero), failing with where its frames say it is, and
+    /// for the window to have shown the stop (the editor at its line), which a person acts after.</summary>
     internal static void StoppedAt(MainWindow window, DebugTab tab, string path, int line, string what)
     {
         (string? Path, int Line)? at = null;
@@ -280,6 +281,8 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
                 + string.Join(", ", window.Debugger.Breakpoints.In(path).Select(b => $"{b.Line} {b.Status} {b.Message}")) + $"; its console:\n{tab.Console.Document.Snapshot}");
         }
         Assert.True(at is { } stop && stop.Path == path && stop.Line == line, $"{what}: it stopped at {at?.Path}:{at?.Line}");
+        // Showing it is the window's background work.
+        Ui.Settle();
     }
 
     internal static string Evaluate(DebugSession session, string expression)

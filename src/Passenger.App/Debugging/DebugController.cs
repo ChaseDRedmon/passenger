@@ -1524,13 +1524,16 @@ public sealed class DebugController : IDisposable
     };
 
     /// <summary>Shows a stop: its exception described, then its thread's frames and the top one's values. An exception the
-    /// debugger cannot describe (a getter of its own that never returns) still shows where the program stopped.</summary>
+    /// debugger cannot describe (a getter of its own that never returns) still shows where the program stopped. Held as
+    /// background work until the stop is placed (its frames listed, the editor at its line), so a wait for the IDE to be
+    /// quiet never ends with the editor about to go there; its values are read after, unheld, as Continue never waits.</summary>
     private async Task ShowStop(DebugSession session)
     {
         if (session.StoppedThread is not int thread)
         {
             return;
         }
+        using IDisposable placing = BackgroundWork.Scope();
         int stop = shown;
         stopException = null;
         undescribed = null;
@@ -1595,7 +1598,7 @@ public sealed class DebugController : IDisposable
         }
         try
         {
-            await ChooseThread(thread);
+            await ChooseThread(thread, placing);
         }
         catch (DapException error)
         {
@@ -1636,7 +1639,9 @@ public sealed class DebugController : IDisposable
             ? literal.Token.ValueText
             : null;
 
-    private async Task ChooseThread(int thread)
+    /// <summary>Shows a thread's frames, the top one chosen and gone to; <paramref name="placed"/> is let go once it has been,
+    /// before the frame's values are read.</summary>
+    private async Task ChooseThread(int thread, IDisposable? placed = null)
     {
         if (Session is not { State: DebugState.Paused } session)
         {
@@ -1672,15 +1677,15 @@ public sealed class DebugController : IDisposable
             FramesShown();
         }
         UpdateAllMarks();
-        if (top is not null)
-        {
-            await ChooseFrame(top, navigate: shows);
-        }
+        // The frame is gone to before its first wait, for its values.
+        Task values = top is not null ? ChooseFrame(top, navigate: shows) : Task.CompletedTask;
         if (thread == session.StoppedThread && !shows && bindingStop?.Problem.Problem is { Path: { } xaml } failedAt && File.Exists(xaml))
         {
             // No code of the app's made the binding fail (a template's, a style's): its XAML is where to look.
             Navigate?.Invoke(this, (xaml, failedAt.Position));
         }
+        placed?.Dispose();
+        await values;
     }
 
     private async Task ChooseFrame(DapStackFrame chosen, bool navigate)
