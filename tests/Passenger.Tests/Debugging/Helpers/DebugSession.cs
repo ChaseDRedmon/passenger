@@ -181,12 +181,21 @@ public sealed class DebugSession : IDisposable
     }
 
     /// <summary>Bytes written to the adapter's input as they are, not as a message of the protocol's: what a client that does
-    /// not speak it sends.</summary>
-    public void SendRaw(byte[] bytes)
+    /// not speak it sends. False when the adapter closed its input before they were all written, as one that stopped
+    /// reading them may: Windows' pipe ends under the write, where macOS's and Linux's take what fits their buffer.</summary>
+    public bool SendRaw(byte[] bytes)
     {
         Stream input = adapter.StandardInput.BaseStream;
-        input.Write(bytes);
-        input.Flush();
+        try
+        {
+            input.Write(bytes);
+            input.Flush();
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Whether the adapter has ended within the time given (scaled), its input still open.</summary>

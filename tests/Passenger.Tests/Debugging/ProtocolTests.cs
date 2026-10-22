@@ -32,9 +32,11 @@ public class ProtocolTests(ITestOutputHelper testOutputHelper)
     public void A_message_too_large_to_read_ends_the_conversation_saying_so(string sent)
     {
         using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
-        host.SendRaw(Encoding.ASCII.GetBytes(sent == "header"
+        bool whole = host.SendRaw(Encoding.ASCII.GetBytes(sent == "header"
             ? string.Concat(Enumerable.Repeat($"X-Filler: {new string('x', 1000)}\r\n", 80))
             : $"Content-Length: {sent}\r\n\r\n"));
+        // The 80 KB header runs past what the adapter reads, which may end the conversation before the rest is written.
+        Assert.True(whole || sent == "header", $"The adapter stopped reading before the {sent} header was written whole: {host.EngineLog()}");
         Assert.True(host.Ended(TimeSpan.FromSeconds(20)), $"The adapter was still reading what it was sent ({sent}) 20 s later: {host.EngineLog()}");
         string logged = host.EngineLog();
         Assert.True(logged.Contains("DAP read ended", StringComparison.Ordinal)
