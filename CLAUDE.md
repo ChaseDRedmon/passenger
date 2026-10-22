@@ -546,6 +546,21 @@ window or takes the focus; it shows everything but the system's own window chrom
   would carry the body there, either said in the answer's notes. A body is read to `MostRead` and shown to `MostShown`, a request's
   variables filled in to `MostFilledIn`; a row's last outcome is kept by its name, else its method and URL. Tests send
   only to `EndpointsTests`' stand-ins on loopback (its `localhost` name the other host, a second stand-in the other port).
+- A run of several .NET services (#404) is one model, `Run/ServiceRun.cs`, which a container run is (`ContainerRun`) and an
+  Aspire AppHost's run is to be (#404's next step): it lists its .NET services (`IRunService`: name, project, whether it
+  starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
+  Reload, or unheld), the sessions that reach it from here (`Debugged`, `AttachedRunning`) and the one the profiler records
+  (`Profiled`, `EndProfiling`); `EndSessionsAsync` is Stop's order, every session and recording ended before the programs
+  go. What is done to a service is written once over it (`BuildRunController.Services.cs`): the held start's attach, all at
+  once (`AttachAllAsync`), Debug, Attach, Run without Debugger and Restart (`DebugServiceAsync`, `AttachServiceAsync`,
+  `RunServiceAsync`, `RestartServiceAsync`, under `OnServiceAsync`), the person's choice kept by configuration for the run's
+  restarts and a Rerun (`chosenDebugged`), a restart's attach again and a service held that no debugger reached made anew
+  unheld (`RestartServicesAsync`), and the restart for an edit Hot Reload cannot apply, of only the services whose project
+  holds it (`RestartServicesForEditAsync`). A kind supplies only what is its own: how its services restart
+  (`RestartAsync`), how a hold chosen takes effect at their next start (`HoldsChangedAsync`), where a service's program is
+  for the debugger and the profiler (`ProgramAsync`, a `ServiceProgram`: its id there, the adapter's `AdapterPlace`, the
+  profiler's `ProfilePlace`; `ServiceUnreachedException` saying why not), whether an edit's restart builds here first
+  (`BuildsBeforeRestart`) and which failures are its own to say (`Refused`).
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -697,7 +712,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ContainerPlans.HeldVariable`, DOTNET_DefaultDiagnosticPortSuspend=1, with DOTNET_MODIFIABLE_ASSEMBLIES=debug, in the
   override); and Run with Hot Reload (Settings' Hot Reload when running, or `run`'s `hotReload`), every .NET service held, since
   dotnet watch would need the SDK in the image. `ContainerRun.UpAsync` runs `up --wait` while each held service is attached
-  to alongside (`BuildRunController.AttachAllAsync`: its container from `compose ps -q` once Compose starts it, the tools
+  to alongside (`BuildRunController.AttachAllAsync`, each program reached through `ContainerRun.ProgramAsync`: its container from `compose ps -q` once Compose starts it, the tools
   copied in for its image's system, never mounted, since the system is known only once the image is and an engine shares
   only some of this machine's folders; its program from the tools' `processes` by its assembly), so a healthcheck or a
   dependent's `service_healthy` is not waited on before the attach lets it go. Debug gives each service a Debug tab named for
@@ -706,12 +721,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   quietly (`DebugController.AttachForHotReloadAsync`, `DebugSession.Quiet`: no breakpoint sent, no exception stops it, the
   store never told), Apply Hot Reload Changes and a save applying the edits through it (`ApplyRunningAsync`) whatever else
   is debugged, a session debugged with Hot Reload taking them too (`ApplyAllAsync`). An edit Hot
-  Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartContainerServicesAsync`: only
+  Reload cannot apply builds the service's project again (fast mode) and restarts it (`RestartServicesForEditAsync`: only
   the services whose project holds a rude edit, since Roslyn names one in another project rude to each session; images mode
   `up --build --no-deps --force-recreate`), its session ended first and attached again, as Rerun's restart of a held service
   does. A Release build (the tools' `optimized`), a runtime with DOTNET_EnableDiagnostics=0 (not held, and not attached: it
   runs on) and an image of another processor than the engine's are said in the status bar after the run comes up. Stop ends
-  the run's sessions (`ContainerRun.Debugged`) before the containers go, since a container taken from under its adapter
+  the run's sessions (`ServiceRun.EndSessionsAsync`) before the containers go, since a container taken from under its adapter
   would end it as a failure. A start stopped (Stop, the window's Kill, an agent giving up on `run` or `debug_start`,
   `PassengerTools.Started`, an agent's `stop`) ends Compose's `up` and waits for its CLI to go before the take-down looks, which waits for it
   (`ContainerRun.upEnded`) and looks again 2 s later, since the engine can finish a container it was making as `up` ended;
@@ -725,19 +740,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
-  changing; the run's `ContainerProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
+  changing; the run's `ServiceProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
   handed over only once up (a failed start disposes the recording). Get Snapshot ends the recording and the containers run
-  on; Stop ends it first (`ContainerRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
+  on; Stop ends it first (`ServiceRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
   Profiler with a container run up (and nothing debugged) records that service as it runs (`ServiceInContainerAsync`,
-  `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
-  modifiable)`), and the run keeps what each service is held for (`ContainerRun.HeldFor`, `HoldAsync`) and which containers
+  `ContainerRun.ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
+  modifiable)`), and the run keeps what each service is held for (`ServiceRun.HeldFor`, `HoldAsync`) and which containers
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
   no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
   said, rather than waiting at its start for good. A .NET service of the run under way is acted on alone, the run left up (`MainWindow.ContainerServices.cs`,
   `AppActions.Service*`, on the Containers window's service and container rows and the gutter's icon, whose menu joins a run
   that reads its compose file, `InRunNow`): Debug (`DebugServiceAsync`: held from now and restarted, attached in a tab, its
   startup stopping at breakpoints), Attach (`AttachServiceAsync`: as it runs, its startup said to have run;
-  `ContainerRun.AttachedRunning`, attached again after a restart), Run without Debugger (`RunServiceAsync`: detached, not
+  `ServiceRun.AttachedRunning`, attached again after a restart), Run without Debugger (`RunServiceAsync`: detached, not
   restarted, unheld from its next restart) and Profile (`ProfilerCommands.AttachServiceAsync`, Attach Profiler's path). Debug's
   and Run without Debugger's choice is kept by configuration (`chosenDebugged`) for the run's restarts and a Rerun that
   brings it up again. The window's Restart, Stop and Remove of such a service, and an agent's `container_action`, go through

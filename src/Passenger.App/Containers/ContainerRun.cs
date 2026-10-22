@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Passenger.App.Debugging;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
@@ -16,9 +17,12 @@ namespace Passenger.App.Containers;
 /// where Passenger's build puts it (mounted into the container in fast mode), what the configuration does with it, the
 /// stage fast mode stops its image at, and the folder its image's paths map back to (<see cref="Paths"/>).</summary>
 public sealed record DotnetService(string Service, string Project, string Assembly, string Output, ServiceStart Action, string? Stage, ContainerPaths Paths)
+    : IRunService
 {
     /// <summary>Whether this run starts it.</summary>
     public bool Starts => Action != ServiceStart.DontStart;
+
+    string IRunService.Name => Service;
 }
 
 /// <summary>How a container configuration is started: run; debugged, its .NET services (those marked Debug, else every one)
@@ -824,15 +828,14 @@ internal static class OwnFiles
 /// and why its image may not be debugged where it runs under emulation, or null.</summary>
 public sealed record ServiceInContainer(string Container, DotnetProcess Program, string Tools, string Started, string? Emulated);
 
-/// <summary>Has the profiler record a .NET service held at its start in its container (its program there, by its id, and
-/// the place the tools record it at), which lets it go once recording: null once it records, else why not.</summary>
-public delegate Task<string?> ContainerProfiler(DotnetService service, DotnetProcess program, Profiler.ProfilePlace place, CancellationToken stop);
-
-/// <summary>A container configuration running: its plan, Compose's watch of the services that ask for one, and each .NET
-/// service's build as it was when started, so Rerun restarts only those whose build changed. Brought up by
-/// <see cref="UpAsync"/> (its words in the Run console), taken down by <see cref="StopAsync"/> (<c>docker compose down</c>,
-/// its volumes kept, or only the .NET services when backing services are kept). A UI-thread object of the session's.</summary>
-public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, ConsoleSink console)
+/// <summary>A container configuration running, a run of services (<see cref="ServiceRun"/>) whose services run in containers:
+/// its plan, Compose's watch of the services that ask for one, and each .NET service's build as it was when started, so
+/// Rerun restarts only those whose build changed. Brought up by <see cref="UpAsync"/> (its words in the Run console), taken
+/// down by <see cref="StopAsync"/> (<c>docker compose down</c>, its volumes kept, or only the .NET services when backing
+/// services are kept). What is its own: a service restarts through Compose (<see cref="RestartAsync"/>), a hold chosen is
+/// the override written again, and a service's program is in its container, reached through Passenger's tools there
+/// (<see cref="ProgramAsync"/>). A UI-thread object of the session's.</summary>
+public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, ConsoleSink console) : ServiceRun
 {
     private readonly Dictionary<string, string> stamps = new(StringComparer.Ordinal);
     private Process? watching;
@@ -858,82 +861,156 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
     public ContainerPlan Plan { get; private set; } = plan;
 
+    public override string Name => Plan.Name;
+
+    public override IReadOnlyList<IRunService> Services => Plan.Dotnet;
+
     /// <summary>The address the browser was opened at, which a restart on an engine that chose another port changes.</summary>
     public string? Address { get; set; }
 
     public ContainerEngine Engine => engine;
 
+    /// <summary>Where the container tools come from that are put in a service's container to reach its program.</summary>
+    public Func<ContainerToolsSource> ToolsFrom { get; init; } = () => ContainerToolsSource.Default(Updates.ReleaseFeed.Default);
+
     /// <summary>Whether it was taken down (or is being).</summary>
-    public bool IsStopped => stopping is not null;
+    public override bool IsStopped => stopping is not null;
 
     /// <summary>Done once <see cref="StopAsync"/> has had the engine take it down.</summary>
     public Task Stopped => stopping ?? Task.CompletedTask;
-
-    /// <summary>The Debug tabs of the services debugged (or attached to for Hot Reload), by their names: Stop ends them before
-    /// it takes their containers down.</summary>
-    public HashSet<string> Debugged { get; } = new(StringComparer.Ordinal);
-
-    /// <summary>How it was started: run, debugged, run with Hot Reload through the debugger, or profiled.</summary>
-    public ContainerStart How { get; init; }
-
-    /// <summary>What has the profiler record the service Profile holds at its start; null for any other start.</summary>
-    public ContainerProfiler? Profiler { get; init; }
-
-    /// <summary>What each .NET service is held at its start for, as last chosen (debugged, or attached to quietly for Hot
-    /// Reload): a restart holds it again and attaches again. A service not here runs unheld.</summary>
-    private readonly Dictionary<string, ContainerStart> holds = new(StringComparer.Ordinal);
 
     /// <summary>The services whose container was made held (the override in force when it was made said so), which
     /// <c>docker compose restart</c> holds again whatever was chosen since: one chosen otherwise is made anew instead.</summary>
     private readonly HashSet<string> madeHeld = new(StringComparer.Ordinal);
 
-    /// <summary>The .NET services held at their start for the debugger, which a restart holds again.</summary>
-    public IReadOnlyList<DotnetService> Held => [.. Plan.Dotnet.Where(d => holds.ContainsKey(d.Service))];
+    protected override void MadeHeld(string service) => madeHeld.Add(service);
 
-    /// <summary>What a service is held at its start for (Debug or Hot Reload), or null when it runs unheld.</summary>
-    public ContainerStart? HeldFor(string service) => holds.TryGetValue(service, out ContainerStart how) ? how : null;
-
-    /// <summary>The services as they were brought up: those held for the debugger (or the one for the profiler, whose hold its
-    /// recording lets go, never asked again), their containers made so.</summary>
-    public void Brought(IReadOnlyList<(DotnetService Service, ContainerStart How)> held)
-    {
-        foreach ((DotnetService service, ContainerStart how) in held)
-        {
-            if (how != ContainerStart.Profile)
-            {
-                holds[service.Service] = how;
-            }
-            madeHeld.Add(service.Service);
-        }
-    }
-
-    /// <summary>The services attached to as they ran (Attach, not held at their start), which a restart attaches to again.</summary>
-    public HashSet<string> AttachedRunning { get; } = new(StringComparer.Ordinal);
-
-    /// <summary>Chooses what a service is held at its start for from now (null: unheld), and writes the override so: its
-    /// next restart makes it so.</summary>
-    public Task HoldAsync(string service, ContainerStart? how, CancellationToken cancel)
-    {
-        if (how is { } held)
-        {
-            holds[service] = held;
-        }
-        else
-        {
-            holds.Remove(service);
-        }
-        return WriteOverrideAsync(cancel);
-    }
+    /// <summary>A hold chosen takes effect as the override, written again, says it at the service's next restart.</summary>
+    protected override Task HoldsChangedAsync(CancellationToken cancel) => WriteOverrideAsync(cancel);
 
     /// <summary>The override as the holds chosen say, each held service's code open to Hot Reload.</summary>
-    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. holds.Keys], [.. holds.Keys], Certificate, cancel);
+    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. HeldNames], [.. HeldNames], Certificate, cancel);
 
-    /// <summary>The service the profiler records, which Stop ends (<see cref="EndProfiling"/>, its snapshot read) before it
-    /// takes the containers down; null when none is.</summary>
-    public string? Profiled { get; set; }
+    /// <summary>In fast mode a service's container runs the build here, which an edit's restart builds first; as deployed,
+    /// its restart builds its image.</summary>
+    public override bool BuildsBeforeRestart => Plan.Mode == ContainerMode.Fast;
 
-    /// <summary>Ends the profiler's recording of <see cref="Profiled"/>, reading its snapshot, done once it has.</summary>
-    public Func<Task>? EndProfiling { get; set; }
+    public override bool Refused(Exception failure) => failure is IOException or UnauthorizedAccessException or ContainerToolsException or ContainerCommandException
+        or TimeoutException;
+
+    /// <summary>The run's .NET service by its name in the run.</summary>
+    private DotnetService Dotnet(IRunService service) => Plan.Dotnet.First(d => d.Service == service.Name);
+
+    /// <summary>A service's program in its container once Compose has started it, reached through Passenger's tools there:
+    /// the adapter run there over docker exec, its console the container's log since its start, its paths mapped back in
+    /// images mode; the profiler's tools there too.</summary>
+    public override async Task<ServiceProgram?> ProgramAsync(IRunService service, Task up, CancellationToken stop)
+    {
+        DotnetService dotnet = Dotnet(service);
+        ServiceInContainer? found;
+        try
+        {
+            found = await ThereAsync(dotnet, up, stop);
+        }
+        catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or TimeoutException or JsonException)
+        {
+            throw new ServiceUnreachedException(failed.Message, failed);
+        }
+        if (found is not { } there)
+        {
+            return null;
+        }
+        ContainerPaths paths = Plan.Mode == ContainerMode.Images ? dotnet.Paths : ContainerPaths.None;
+        AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(there.Container, there.Tools, arguments)), ContainerTools.SymbolCache, paths, there.Container)
+        {
+            Output = () => engine.Command(["logs", "--follow", "--since", there.Started, there.Container]),
+            // Its container stopped (its own end, the Containers window's Stop) is its program's end, never the debugger's.
+            Running = AdapterPlace.Runs(engine, there.Container),
+            Program = there.Program.Program,
+        };
+        return new ServiceProgram(there.Program.Id, place, ProfilePlaceOf(dotnet, there))
+        {
+            WhyNot = there.Program.WhyNot,
+            Notes = [.. ((string?[])[there.Program.Note, there.Emulated]).OfType<string>()],
+            Caveat = there.Emulated,
+            HotReload = there.Program.HotReload,
+        };
+    }
+
+    /// <summary>A service of the run in its container, once Compose has started it (null when Compose ended without it):
+    /// Passenger's tools in it (copied in for its image's system, found here or downloaded), its program by its assembly as
+    /// the tools list it there, when its container started, and whether its image runs under emulation. Off the UI thread.</summary>
+    public Task<ServiceInContainer?> ThereAsync(DotnetService service, Task up, CancellationToken stop)
+    {
+        ContainerToolsSource source = ToolsFrom();
+        return BackgroundWork.Run(async () =>
+        {
+            string? container = await ContainerOfAsync(engine, Plan, service.Service, up, stop);
+            if (container is null)
+            {
+                return null;
+            }
+            ContainerSystem system = await ContainerTools.SystemOfContainerAsync(engine, container, stop);
+            string architecture = await ContainerTools.EngineArchitectureAsync(engine, stop);
+            string? emulated = system.Architecture == architecture ? null
+                : $"its image is for {system.Architecture}, which this {architecture} engine runs under emulation, where the debugger may not attach";
+            string rid = system.Rid ?? throw new ContainerToolsException($"{service.Service}'s image is for {system.Architecture}, for which Passenger has no debugger");
+            string tools = await ContainerTools.InContainerAsync(engine, container, stop)
+                ?? await ContainerTools.CopyIntoAsync(engine, container, await ContainerTools.FolderAsync(source, rid, null, stop), stop);
+            DotnetProcess program = await HeldProgramAsync(engine, container, tools, service, stop);
+            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{.State.StartedAt}}", container], cancel: stop);
+            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim(), emulated);
+        }, stop);
+    }
+
+    /// <summary>Where the profiler records a service of the run: Passenger's tools in its container over docker exec, its
+    /// PDBs' paths made this machine's through the service's map in images mode (in fast mode they are this machine's).</summary>
+    public Profiler.ProfilePlace ProfilePlaceOf(DotnetService service, ServiceInContainer there)
+    {
+        ContainerPaths paths = Plan.Mode == ContainerMode.Images ? service.Paths : ContainerPaths.None;
+        return new Profiler.ProfilePlace(words => engine.Command(ContainerTools.ToolsCommand(there.Container, there.Tools, words)), there.Container, path => paths.ToHost(path) ?? path);
+    }
+
+    /// <summary>A service's container once Compose has started it (null when Compose ended without it).</summary>
+    internal static async Task<string?> ContainerOfAsync(ContainerEngine engine, ContainerPlan plan, string service, Task up, CancellationToken stop)
+    {
+        while (true)
+        {
+            bool ended = up.IsCompleted;
+            ChildResult found = await engine.RunAsync([.. plan.Compose, "ps", "-q", "--", service], cancel: stop);
+            if (found.Succeeded && found.Output.Trim().Split('\n')[0].Trim() is { Length: > 0 } container)
+            {
+                return container;
+            }
+            if (ended)
+            {
+                return null;
+            }
+            await Task.WhenAny(up, Task.Delay(TimeSpan.FromMilliseconds(300), stop));
+            stop.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>The service's program in its container as the tools list it once its runtime has loaded: held at its start
+    /// for the debugger (or, its debugger turned off, saying why), by its assembly; given up on after a minute.</summary>
+    internal static async Task<DotnetProcess> HeldProgramAsync(ContainerEngine engine, string container, string tools, DotnetService service, CancellationToken stop)
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+        string assembly = $"{service.Assembly}.dll";
+        while (true)
+        {
+            IReadOnlyList<DotnetProcess> there = await ContainerTools.ProcessesAsync(engine, container, tools, stop);
+            if ((there.FirstOrDefault(p => p.CommandLine.Contains(assembly, StringComparison.OrdinalIgnoreCase)) ?? (there is [{ } only] ? only : null)) is { } program)
+            {
+                return program;
+            }
+            if (DateTime.UtcNow > until)
+            {
+                throw new ContainerToolsException($"no .NET program running {assembly} started in its container {container} within a minute");
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(250), stop);
+        }
+    }
 
     /// <summary>Brings it up as <c>docker compose up --detach --wait</c> (images built as Compose says in images mode), its
     /// words in the console as they come: null once every service is up (healthy where it has a check), else what went
@@ -1097,10 +1174,6 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         return upEnded.Task;
     }
 
-    /// <summary>What the run said of itself as it came up (its notes: a service over HTTP, one run as the person, one that runs
-    /// without the debugger), which an agent's answer carries too.</summary>
-    public List<string> Notes { get; } = [];
-
     /// <summary>The .NET services whose build changed since they started (or were last restarted), Rerun's to restart.</summary>
     public IReadOnlyList<DotnetService> Changed() =>
         [.. Plan.Restartable.Where(d => !stamps.TryGetValue(d.Service, out string? was) || was != Stamp(d.Output))];
@@ -1108,41 +1181,26 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     /// <summary>Restarts services (their containers kept, the same mount reading the new build), saying so in the console
     /// (<paramref name="why"/>, else that their build changed). A service whose container was made held, or unheld, other
     /// than as it is now chosen is made anew from the override, as are all of them in images mode, from an image built again
-    /// from its Dockerfile. <paramref name="alongside"/> runs while they come up, as <see cref="UpAsync"/>'s does.</summary>
-    public async Task<string?> RestartAsync(IReadOnlyList<DotnetService> services, CancellationToken cancel, string? why = null,
-        Func<Task, CancellationToken, Task<string?>>? alongside = null)
+    /// from its Dockerfile.</summary>
+    public override async Task<string?> RestartAsync(IReadOnlyList<IRunService> services, CancellationToken cancel, string? why = null)
     {
         if (services.Count == 0)
         {
             console.Write("No service's build changed: nothing restarted\n");
             return null;
         }
-        console.Write($"Restarting {string.Join(", ", services.Select(s => s.Service))}: {why ?? (services.Count == 1 ? "its build changed" : "their builds changed")}\n");
-        List<string> made = [.. services.Select(s => s.Service).Where(s => Plan.Mode == ContainerMode.Images || madeHeld.Contains(s) != holds.ContainsKey(s))];
-        List<string> kept = [.. services.Select(s => s.Service).Except(made)];
+        console.Write($"Restarting {string.Join(", ", services.Select(s => s.Name))}: {why ?? (services.Count == 1 ? "its build changed" : "their builds changed")}\n");
+        List<string> made = [.. services.Select(s => s.Name).Where(s => Plan.Mode == ContainerMode.Images || madeHeld.Contains(s) != HeldFor(s) is not null)];
+        List<string> kept = [.. services.Select(s => s.Name).Except(made)];
         if (made.Count > 0)
         {
             await WriteOverrideAsync(cancel);
         }
         // Stop of the run ends its restart too, whoever asked for it.
         using CancellationTokenSource restartEnding = CancellationTokenSource.CreateLinkedTokenSource(cancel, ending.Token);
-        Task<string?> restarting = RestartEachAsync(restartEnding.Token);
-        if (alongside is not null && await alongside(restarting, restartEnding.Token) is { } unattached)
-        {
-            await restartEnding.CancelAsync();
-            try
-            {
-                await restarting;
-            }
-            catch (OperationCanceledException)
-            {
-                // Ended for the attach that failed, which says why.
-            }
-            return unattached;
-        }
-        string? failed = await restarting;
+        string? failed = await RestartEachAsync(restartEnding.Token);
         // Only those restarted run the build they have now: another's that changed meanwhile is still Rerun's to restart.
-        Stamp(services);
+        Stamp(services.Select(Dotnet));
         return failed;
 
         async Task<string?> RestartEachAsync(CancellationToken stop)
@@ -1163,7 +1221,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
                 }
                 foreach (string service in named)
                 {
-                    if (holds.ContainsKey(service))
+                    if (HeldFor(service) is not null)
                     {
                         madeHeld.Add(service);
                     }

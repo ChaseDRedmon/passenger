@@ -20,10 +20,6 @@ public sealed partial class BuildRunController
     /// <summary>The container run under way, if any (its services up, its log followed).</summary>
     public ContainerRun? Containers => session.ContainerRun is { IsStopped: false } run ? run : null;
 
-    /// <summary>What a person chose for each .NET service of a configuration's run as it ran (debugged, or run without the
-    /// debugger), by configuration: its restarts and a Rerun that brings it up again keep it, until it is chosen otherwise.</summary>
-    private readonly Dictionary<string, Dictionary<string, bool>> chosenDebugged = new(StringComparer.Ordinal);
-
     /// <summary>Runs (or debugs) a container configuration not chosen in the toolbar (a gutter icon's: one compose service, a
     /// Dockerfile's image), as Run (or Debug) runs the chosen one; a container run under way is taken down first. Null once it
     /// runs.</summary>
@@ -52,12 +48,12 @@ public sealed partial class BuildRunController
     /// <summary>Profile of a container configuration: brought up as Run brings it up, the one .NET service it profiles
     /// (<see cref="ContainerPlan.Profiled"/>) held at its start until <paramref name="profile"/> has the profiler recording
     /// it in its container, which lets it go; the rest run as Run runs them. Null once it records, else why not.</summary>
-    public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work, ContainerProfiler profile) =>
+    public Task<string?> ProfileContainersAsync(RunConfiguration chosen, Working work, ServiceProfiler profile) =>
         RunContainersAsync(chosen, work, ContainerStart.Profile, profile);
 
     /// <summary>One container start at a time, which the folder's end ends too (<see cref="ProjectSession.ContainerStarting"/>):
     /// one under way (Run's, as Debug begins) is ended first, as Stop ends it, and this one goes on once it has.</summary>
-    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, ContainerStart how = ContainerStart.Run, ContainerProfiler? profile = null)
+    private async Task<string?> RunContainersAsync(RunConfiguration chosen, Working work, ContainerStart how = ContainerStart.Run, ServiceProfiler? profile = null)
     {
         using IDisposable held = BackgroundWork.Scope();
         if (session.ContainerStarting is { } earlier)
@@ -93,7 +89,7 @@ public sealed partial class BuildRunController
         }
     }
 
-    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, ContainerStart how, ContainerProfiler? profile)
+    private async Task<string?> StartContainersAsync(RunConfiguration chosen, Working work, ContainerStart how, ServiceProfiler? profile)
     {
         parts.Editors.SaveAll();
         parts.Views.Run.Clear();
@@ -270,8 +266,15 @@ public sealed partial class BuildRunController
             parts.Views.Debug.ShowTab(console: true);
         }
         parts.Say($"Bringing {chosen.Name} up…");
-        ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Profiler = profile, LabelledFor = session.Folder, Certificate = certificate };
-        run.Brought(holding);
+        ContainerRun run = new(plan, engine, parts.Views.Run.Sink)
+        {
+            How = how,
+            Profiler = profile,
+            LabelledFor = session.Folder,
+            Certificate = certificate,
+            ToolsFrom = () => parts.Tools?.Invoke() ?? ContainerToolsSource.Default(Updates.ReleaseFeed.Default),
+        };
+        run.Brought([.. holding.Select(h => ((IRunService)h.Service, h.How))]);
         run.ProblemFound += (_, found) =>
         {
             Problem problem = Placed(found, CSharp.ServerPlaces.Texts(parts.Editors));
@@ -409,116 +412,6 @@ public sealed partial class BuildRunController
         return replace ? null : $"{chosen.Name} was not run: {named} of {plan.ProjectName}, which Passenger did not make, were left as they are";
     }
 
-    /// <summary>Attaches to each service held at its start, all at once, while Compose brings the run up: null once each is
-    /// attached (one whose runtime has its debugger off runs on undebugged, said in <paramref name="notes"/>), else why not.</summary>
-    private async Task<string?> AttachAllAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Task up, List<string> notes, Working work, CancellationToken stop,
-        ContainerStart? purpose = null) =>
-        (await AttachEachAsync(run, services, up, notes, work, stop, purpose)).Select(a => a.Refused).FirstOrDefault(s => s is not null);
-
-    /// <summary>Attaches to each service held at its start, all at once: each with why it was not attached, or null.</summary>
-    private Task<(DotnetService Service, string? Refused)[]> AttachEachAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Task up, List<string> notes, Working work,
-        CancellationToken stop, ContainerStart? purpose = null)
-    {
-        string named = string.Join(", ", services.Select(s => s.Service));
-        work.Say(purpose == ContainerStart.Profile ? $"Attaching the profiler to {named}…" : services.All(s => run.HeldFor(s.Service) == ContainerStart.HotReload) ? "Attaching for Hot Reload…"
-            : $"Attaching the debugger to {named}…");
-        return Task.WhenAll(services.Select(async s => (s, await AttachAsync(run, s, up, notes, stop, purpose))));
-    }
-
-    /// <summary>One service held at its start: its container, once Compose has started it; Passenger's tools copied into it
-    /// (for its image's system, found here or downloaded); its program, by its assembly, as the tools list it there; and a
-    /// session attached to it, which lets it go: one with its tab in the Debug window, its console the container's log, or,
-    /// under Run with Hot Reload, a quiet one. Null once attached, else why not.</summary>
-    private async Task<string?> AttachAsync(ContainerRun run, DotnetService service, Task up, List<string> notes, CancellationToken stop, ContainerStart? given = null)
-    {
-        UiThread.Check();
-        ContainerEngine engine = run.Engine;
-        ContainerPlan plan = run.Plan;
-        // Held for the debugger (in a tab, or quietly for Hot Reload), held for the profiler, or attached to as it runs.
-        ContainerStart purpose = given ?? run.HeldFor(service.Service) ?? ContainerStart.Debug;
-        ServiceInContainer? found;
-        try
-        {
-            found = await ThereAsync(run, service, up, stop);
-        }
-        catch (Exception failed) when (failed is ContainerToolsException or ContainerCommandException or FileNotFoundException or TimeoutException or System.Text.Json.JsonException)
-        {
-            return $"Could not {(purpose == ContainerStart.Profile ? "profile" : "debug")} {service.Service}: {failed.Message}";
-        }
-        if (found is not { } there)
-        {
-            // Compose ended without starting it: what it said is in the Run window, and the run's failure says why.
-            return null;
-        }
-        // Stopped, or its folder left, while its container was reached: a session begun now would outlive the Stop that ended
-        // the others, or open in the next folder's Debug window.
-        stop.ThrowIfCancellationRequested();
-        if (run.IsStopped || session.IsEnded)
-        {
-            throw new OperationCanceledException(stop);
-        }
-        if (there.Program.WhyNot is { } why)
-        {
-            notes.Add($"{service.Service} runs without the {(purpose == ContainerStart.Profile ? "profiler" : "debugger")}: {why}");
-            return null;
-        }
-        ContainerPaths paths = plan.Mode == ContainerMode.Images ? service.Paths : ContainerPaths.None;
-        foreach (string note in ((string?[])[there.Program.Note, there.Emulated]).OfType<string>())
-        {
-            notes.Add($"{service.Service}: {note}");
-        }
-        string? refused;
-        if (purpose == ContainerStart.Profile)
-        {
-            run.Profiled = service.Service;
-            refused = await run.Profiler!(service, there.Program, ProfilePlaceOf(run, service, there), stop);
-        }
-        else
-        {
-            AdapterPlace place = new(arguments => engine.Command(ContainerTools.AdapterCommand(there.Container, there.Tools, arguments)), ContainerTools.SymbolCache, paths, there.Container)
-            {
-                Output = () => engine.Command(["logs", "--follow", "--since", there.Started, there.Container]),
-                // Its container stopped (its own end, the Containers window's Stop) is its program's end, never the debugger's.
-                Running = AdapterPlace.Runs(engine, there.Container),
-                Program = there.Program.Program,
-            };
-            run.Debugged.Add(service.Service);
-            refused = purpose == ContainerStart.HotReload
-                ? await session.Debug.AttachForHotReloadAsync(there.Program.Id, service.Service, place)
-                : await session.Debug.AttachAsync(there.Program.Id, service.Service, hotReload: there.Program.HotReload, place: place, group: plan.Name);
-        }
-        return refused is null ? null : there.Emulated is { } emulation ? $"{refused} ({emulation})" : refused;
-    }
-
-    /// <summary>A service of the run in its container, once Compose has started it (null when Compose ended without it):
-    /// Passenger's tools in it (copied in for its image's system, found here or downloaded), its program by its assembly as
-    /// the tools list it there, when its container started, and whether its image runs under emulation. Off the UI thread.</summary>
-    private Task<ServiceInContainer?> ThereAsync(ContainerRun run, DotnetService service, Task up, CancellationToken stop)
-    {
-        ContainerEngine engine = run.Engine;
-        ContainerPlan plan = run.Plan;
-        ContainerToolsSource source = parts.Tools?.Invoke() ?? ContainerToolsSource.Default(Updates.ReleaseFeed.Default);
-        return BackgroundWork.Run(async () =>
-        {
-            string? container = await ContainerOfAsync(engine, plan, service.Service, up, stop);
-            if (container is null)
-            {
-                return null;
-            }
-            ContainerSystem system = await ContainerTools.SystemOfContainerAsync(engine, container, stop);
-            string architecture = await ContainerTools.EngineArchitectureAsync(engine, stop);
-            string? emulated = system.Architecture == architecture ? null
-                : $"its image is for {system.Architecture}, which this {architecture} engine runs under emulation, where the debugger may not attach";
-            string rid = system.Rid ?? throw new ContainerToolsException($"{service.Service}'s image is for {system.Architecture}, for which Passenger has no debugger");
-            string tools = await ContainerTools.InContainerAsync(engine, container, stop)
-                ?? await ContainerTools.CopyIntoAsync(engine, container, await ContainerTools.FolderAsync(source, rid, null, stop), stop);
-            DotnetProcess program = await HeldProgramAsync(engine, container, tools, service, stop);
-            // As JSON, RFC 3339 either way: Podman's own docker writes the time itself in Go's words, which its logs --since refuses.
-            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{json .State.StartedAt}}", container], cancel: stop);
-            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim().Trim('"'), emulated);
-        }, stop);
-    }
-
     /// <summary>A service of the container run under way as it runs now, for the debugger or the profiler to reach: its
     /// container, Passenger's tools in it and its program there. Throws a <see cref="ContainerToolsException"/> saying why
     /// not (its container not running among them).</summary>
@@ -529,57 +422,7 @@ public sealed partial class BuildRunController
         {
             throw new ContainerToolsException($"{service.Service} is not a .NET service of a container run under way");
         }
-        return await ThereAsync(run, service, Task.CompletedTask, stop) ?? throw new ContainerToolsException($"{service.Service} has no container running");
-    }
-
-    /// <summary>Where the profiler records a service of a container run: Passenger's tools in its container over docker exec,
-    /// its PDBs' paths made this machine's through the service's map in images mode (in fast mode they are this machine's).</summary>
-    public static Profiler.ProfilePlace ProfilePlaceOf(ContainerRun run, DotnetService service, ServiceInContainer there)
-    {
-        ContainerPaths paths = run.Plan.Mode == ContainerMode.Images ? service.Paths : ContainerPaths.None;
-        ContainerEngine engine = run.Engine;
-        return new Profiler.ProfilePlace(words => engine.Command(ContainerTools.ToolsCommand(there.Container, there.Tools, words)), there.Container, path => paths.ToHost(path) ?? path);
-    }
-
-    /// <summary>A service's container once Compose has started it (null when Compose ended without it).</summary>
-    internal static async Task<string?> ContainerOfAsync(ContainerEngine engine, ContainerPlan plan, string service, Task up, CancellationToken stop)
-    {
-        while (true)
-        {
-            bool ended = up.IsCompleted;
-            ChildResult found = await engine.RunAsync([.. plan.Compose, "ps", "-q", "--", service], cancel: stop);
-            if (found.Succeeded && found.Output.Trim().Split('\n')[0].Trim() is { Length: > 0 } container)
-            {
-                return container;
-            }
-            if (ended)
-            {
-                return null;
-            }
-            await Task.WhenAny(up, Task.Delay(TimeSpan.FromMilliseconds(300), stop));
-            stop.ThrowIfCancellationRequested();
-        }
-    }
-
-    /// <summary>The service's program in its container as the tools list it once its runtime has loaded: held at its start
-    /// for the debugger (or, its debugger turned off, saying why), by its assembly; given up on after a minute.</summary>
-    internal static async Task<DotnetProcess> HeldProgramAsync(ContainerEngine engine, string container, string tools, DotnetService service, CancellationToken stop)
-    {
-        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(1);
-        string assembly = $"{service.Assembly}.dll";
-        while (true)
-        {
-            IReadOnlyList<DotnetProcess> there = await ContainerTools.ProcessesAsync(engine, container, tools, stop);
-            if ((there.FirstOrDefault(p => p.CommandLine.Contains(assembly, StringComparison.OrdinalIgnoreCase)) ?? (there is [{ } only] ? only : null)) is { } program)
-            {
-                return program;
-            }
-            if (DateTime.UtcNow > until)
-            {
-                throw new ContainerToolsException($"no .NET program running {assembly} started in its container {container} within a minute");
-            }
-            await Task.Delay(TimeSpan.FromMilliseconds(250), stop);
-        }
+        return await run.ThereAsync(service, Task.CompletedTask, stop) ?? throw new ContainerToolsException($"{service.Service} has no container running");
     }
 
     /// <summary>What the CLI is told in the Run console: no colours, no hints.</summary>
@@ -631,109 +474,6 @@ public sealed partial class BuildRunController
         }
     }
 
-    /// <summary>Restarts services of the container run (their sessions ended first, so no debugger loses its program under
-    /// it, and their recording, so the profiler's trace keeps its rundown), and attaches again to those held for the debugger,
-    /// which the restart holds again, and to those attached to as they ran. Null once done, else why not.</summary>
-    private async Task<string?> RestartServicesAsync(ContainerRun run, IReadOnlyList<DotnetService> services, Working work, string? why = null)
-    {
-        List<DotnetService> held = [.. run.Held.Where(h => services.Any(s => s.Service == h.Service))];
-        List<DotnetService> running = [.. services.Where(s => run.AttachedRunning.Contains(s.Service) && run.HeldFor(s.Service) is null)];
-        await EndSessionsAsync(run, services);
-        try
-        {
-            if (await run.RestartAsync(services, work.Stopping, why) is { } failed)
-            {
-                return failed;
-            }
-            List<string> notes = [];
-            (DotnetService Service, string? Refused)[] attached = held.Count == 0 ? [] : await AttachEachAsync(run, held, Task.CompletedTask, notes, work, work.Stopping);
-            string? unattached = attached.Select(a => a.Refused).FirstOrDefault(r => r is not null);
-            foreach (DotnetService again in running)
-            {
-                unattached ??= await AttachAsync(run, again, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
-            }
-            // Restarted held, a service no debugger reached would wait at its runtime's start for good: it is made again
-            // unheld, running without the debugger, its hold for the run let go.
-            if (attached.Where(a => a.Refused is not null).Select(a => a.Service).ToList() is { Count: > 0 } stuck)
-            {
-                foreach (DotnetService service in stuck)
-                {
-                    await run.HoldAsync(service.Service, null, CancellationToken.None);
-                }
-                string names = string.Join(", ", stuck.Select(s => s.Service));
-                string? unheld = await run.RestartAsync(stuck, CancellationToken.None, "to run without the debugger, which could not attach");
-                return $"{unattached}; {names} {(unheld is null ? "restarted to run without the debugger" : $"could not be restarted to run without it: {unheld}")}";
-            }
-            return unattached;
-        }
-        catch (OperationCanceledException)
-        {
-            return $"{run.Plan.Name}'s restart was stopped";
-        }
-    }
-
-    /// <summary>A .NET service of the container run under way, by its name, or why there is none to act on.</summary>
-    public (DotnetService? Service, string? WhyNot) ServiceOfRun(string? name)
-    {
-        if (Containers is not { } run || !IsRunning)
-        {
-            return (null, "No container run is under way: Run, Debug or Profile a container configuration first");
-        }
-        if (name is null || run.Plan.Dotnet.FirstOrDefault(d => d.Service == name) is not { } service)
-        {
-            return (null, name is null ? "No .NET service of the container run is chosen" : $"{name} is not a .NET service of {run.Plan.Name}");
-        }
-        return service.Starts ? (service, null) : (null, $"{run.Plan.Name} does not start {name}");
-    }
-
-    /// <summary>Debug of one .NET service of the container run under way, the others left as they run: its session ended,
-    /// its container made again held at its start, and a session attached in a Debug tab of its own, so its startup stops at
-    /// its breakpoints; kept for the run's restarts and a Rerun until chosen otherwise. Null once attached, else why not.</summary>
-    public Task<string?> DebugServiceAsync(string name) => OnServiceAsync(name, AppActions.ServiceDebug, $"Restarting {name} to debug it…", async (run, service, work) =>
-    {
-        Choose(run, name, debug: true);
-        run.AttachedRunning.Remove(name);
-        await run.HoldAsync(name, ContainerStart.Debug, work.Stopping);
-        parts.Dock.Show(ToolWindowIds.Debug);
-        parts.Views.Debug.ShowTab(console: true);
-        return Done(await RestartServicesAsync(run, [service], work, "to debug it from its start"),
-            $"Debugging {name} of {run.Plan.Name} from its start; the rest run on as they were");
-    });
-
-    /// <summary>Attach to one .NET service of the container run as it runs, no restart: its startup has run already, which is
-    /// said (Debug restarts it held to stop there). A restart attaches to it again. Null once attached, else why not.</summary>
-    public Task<string?> AttachServiceAsync(string name) => OnServiceAsync(name, AppActions.ServiceAttach, $"Attaching the debugger to {name}…", async (run, service, work) =>
-    {
-        await EndSessionsAsync(run, [service]);
-        run.AttachedRunning.Add(name);
-        parts.Dock.Show(ToolWindowIds.Debug);
-        List<string> notes = [];
-        string? refused = await AttachAsync(run, service, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
-        if (refused is not null || session.Debug.SessionNamed(name) is not { State: not Debugging.DebugState.Ended })
-        {
-            run.AttachedRunning.Remove(name);
-            return Said(refused ?? (notes.Count > 0 ? string.Join("; ", notes) : $"{name} could not be attached to"));
-        }
-        return Done(null, $"Debugging {name} of {run.Plan.Name} as it runs: its startup has run already, which Debug catches by restarting it held"
-            + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty));
-    });
-
-    /// <summary>Run without debugger of one .NET service of the container run: its session let go (detached, not restarted),
-    /// the program running on as it is; held at its start, its next restart makes it anew unheld. Kept as Debug's choice is.</summary>
-    public Task<string?> RunServiceAsync(string name) => OnServiceAsync(name, AppActions.ServiceRun, $"Letting go of {name}…", async (run, service, work) =>
-    {
-        Choose(run, name, debug: false);
-        run.AttachedRunning.Remove(name);
-        await run.HoldAsync(name, null, work.Stopping);
-        await session.Debug.DetachAsync(name);
-        return Done(null, $"{name} of {run.Plan.Name} runs on without the debugger, not restarted; its next restart starts it unheld");
-    });
-
-    /// <summary>Restart of one .NET service from the Containers window or an agent, through the run: its session ended
-    /// first, restarted (held again where it is debugged), and attached to again. Null once done, else why not.</summary>
-    public Task<string?> RestartServiceAsync(string name) => OnServiceAsync(name, AppActions.ContainerRestart, $"Restarting {name}…", async (run, service, work) =>
-        Done(await RestartServicesAsync(run, [service], work, "restarted from the Containers window"), $"{run.Plan.Name}: restarted {name}"));
-
     /// <summary>The Containers window's Restart, Stop or Remove of the container run's own Compose project, and an agent's,
     /// through the run, as for one of its services: Restart ends its sessions and recording, restarts its other services as
     /// they are and its .NET services as the run's restart does (held again where debugged, attached again); Stop and Remove
@@ -772,108 +512,6 @@ public sealed partial class BuildRunController
                 return Said($"{run.Plan.Name}'s restart was stopped");
             }
             return Done(await RestartServicesAsync(run, dotnet, work, "restarted from the Containers window"), $"{run.Plan.Name}: restarted its services");
-        }
-    }
-
-    /// <summary>Ends what reaches one .NET service of the container run from here (its session, the profiler's recording),
-    /// before something takes its container from under it (the Containers window's Stop or Remove).</summary>
-    public Task EndServiceSessionsAsync(string name) =>
-        Containers is { } run && run.Plan.Dotnet.FirstOrDefault(d => d.Service == name) is { } service ? EndSessionsAsync(run, [service]) : Task.CompletedTask;
-
-    /// <summary>Says how a service's action ended (what failed, else <paramref name="done"/>), and gives back what failed.</summary>
-    private string? Done(string? failed, string done)
-    {
-        parts.Say(failed ?? done);
-        return failed;
-    }
-
-    /// <summary>What a person chose for a service of the run, kept for its configuration.</summary>
-    private void Choose(ContainerRun run, string service, bool debug)
-    {
-        if (!chosenDebugged.TryGetValue(run.Plan.Name, out Dictionary<string, bool>? choices))
-        {
-            chosenDebugged[run.Plan.Name] = choices = new Dictionary<string, bool>(StringComparer.Ordinal);
-        }
-        choices[service] = debug;
-    }
-
-    /// <summary>One service's action under its own <see cref="Working"/>, Stop ending it: refused saying why when the run
-    /// has no such service, or the action is under way.</summary>
-    private async Task<string?> OnServiceAsync(string name, string action, string stage, Func<ContainerRun, DotnetService, Working, Task<string?>> act)
-    {
-        UiThread.Check();
-        if (ServiceOfRun(name) is not ({ } service, null) || Containers is not { } run)
-        {
-            return Said(ServiceOfRun(name).WhyNot!);
-        }
-        if (parts.Work.Begin(action, stage) is not { } work)
-        {
-            return Said(ActionWork.Busy(parts.Work.Of(action)!));
-        }
-        using (work)
-        {
-            using IDisposable held = BackgroundWork.Scope();
-            try
-            {
-                return await act(run, service, work);
-            }
-            catch (OperationCanceledException)
-            {
-                return Said($"{stage.TrimEnd('…')} was stopped");
-            }
-            catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or ContainerToolsException or ContainerCommandException or TimeoutException)
-            {
-                return Said($"{stage.TrimEnd('…')} failed: {failed.Message}");
-            }
-        }
-    }
-
-    /// <summary>Ends what reaches services of the container run from here: their debugging sessions (in a tab or for Hot
-    /// Reload) and the profiler's recording, its snapshot read; done once they have.</summary>
-    private Task EndSessionsAsync(ContainerRun run, IEnumerable<DotnetService> services)
-    {
-        List<Task> ending = [.. services.Select(s => s.Service).Where(run.Debugged.Contains).Select(session.Debug.StopAsync)];
-        if (services.Any(s => s.Service == run.Profiled) && run.EndProfiling is { } end)
-        {
-            ending.Add(end());
-        }
-        return Task.WhenAll(ending);
-    }
-
-    /// <summary>Hot Reload's restart for edits it could not apply to services of the container run: built again on the host
-    /// (fast mode; as deployed, its image built again), restarted held, and attached to again, as dotnet watch restarts a
-    /// program: those whose project holds an edit that needs it, when any does (Roslyn names an edit to another project
-    /// rude to each service's session). True once they are.</summary>
-    public async Task<bool> RestartContainerServicesAsync(Debugging.HotReloadOutcome outcome, IReadOnlyList<string> names)
-    {
-        if (session.ContainerRun is not { IsStopped: false } run || run.Held.Where(h => names.Contains(h.Service)).ToList() is not { Count: > 0 } named)
-        {
-            return false;
-        }
-        List<string> rude = [.. outcome.Problems.Where(p => p.Severity == ProblemSeverity.Error && p.Path is not null).Select(p => p.Path!)];
-        List<DotnetService> services = [.. named.Where(s => rude.Any(path => PathNames.IsUnder(path, Path.GetDirectoryName(s.Project)!)))];
-        if (services.Count == 0)
-        {
-            services = named;
-        }
-        names = [.. services.Select(s => s.Service)];
-        string action = run.How == ContainerStart.Debug ? AppActions.Debug : AppActions.RunProgram;
-        if (parts.Work.Begin(action, $"Restarting {string.Join(", ", names)} to apply changes…") is not { } work)
-        {
-            return false;
-        }
-        using (work)
-        {
-            using IDisposable held = BackgroundWork.Scope();
-            parts.Editors.SaveAll();
-            List<string> projects = [.. services.Select(s => s.Project).Distinct(StringComparer.Ordinal)];
-            if (run.Plan.Mode == ContainerMode.Fast && !(await BuildProjectsAsync(projects)).Succeeded)
-            {
-                return false;
-            }
-            string? failed = await RestartServicesAsync(run, services, work);
-            parts.Say(failed ?? $"{run.Plan.Name}: restarted {string.Join(", ", names)} to apply changes");
-            return failed is null;
         }
     }
 

@@ -85,10 +85,10 @@ public partial class MainWindow
         }
         return id switch
         {
-            AppActions.ServiceDebug => buildRun.DebugServiceAsync(running.Service),
-            AppActions.ServiceAttach => buildRun.AttachServiceAsync(running.Service),
-            AppActions.ServiceRun => buildRun.RunServiceAsync(running.Service),
-            _ => ProfileServiceAsync(running),
+            AppActions.ServiceDebug => buildRun.DebugServiceAsync(running.Name),
+            AppActions.ServiceAttach => buildRun.AttachServiceAsync(running.Name),
+            AppActions.ServiceRun => buildRun.RunServiceAsync(running.Name),
+            _ => ProfileServiceAsync(buildRun.Containers!.Plan.Dotnet.First(d => d.Service == running.Name)),
         };
 
         async Task<string?> ProfileServiceAsync(DotnetService profiled)

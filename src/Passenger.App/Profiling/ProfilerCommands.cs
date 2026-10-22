@@ -353,19 +353,19 @@ public sealed class ProfilerCommands
         string? failed;
         try
         {
-            failed = await builds.ProfileContainersAsync(chosen, work, async (service, program, place, cancel) =>
+            failed = await builds.ProfileContainersAsync(chosen, work, async (service, program, cancel) =>
             {
                 // A gutter icon's one-service configuration is named for its service already.
-                name = chosen.Services is [{ } only] && only == service.Service ? chosen.Name : $"{service.Service} of {chosen.Name}";
-                work.Say($"Recording {service.Service} in its container…");
+                name = chosen.Services is [{ } only] && only == service.Name ? chosen.Name : $"{service.Name} of {chosen.Name}";
+                work.Say($"Recording {service.Name} in its container…");
                 try
                 {
-                    recording = await ProfilingSession.AttachAsync(program.Id, FileName(service.Service), SnapshotFolder, place, resume: true, cancel);
+                    recording = await ProfilingSession.AttachAsync(program.Id, FileName(service.Name), SnapshotFolder, program.Recorded!, resume: true, cancel);
                     return null;
                 }
                 catch (ProfilingException refused)
                 {
-                    return $"Could not profile {service.Service}: {refused.Message}";
+                    return $"Could not profile {service.Name}: {refused.Message}";
                 }
             });
         }
@@ -742,7 +742,7 @@ public sealed class ProfilerCommands
         {
             throw new ContainerToolsException(why);
         }
-        return (there.Program, BuildRunController.ProfilePlaceOf(run, service, there));
+        return (there.Program, run.ProfilePlaceOf(service, there));
     }
 
     /// <summary>The program Attach Profiler profiles: the selected Aspire service, else the one being debugged (in its
