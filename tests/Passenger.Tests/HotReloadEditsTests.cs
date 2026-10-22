@@ -123,6 +123,18 @@ public sealed class HotReloadEditsTests : IClassFixture<HotReloadEditsTests.Tick
             }
             Assert.True(outcome.Result == HotReloadResult.Applied, $"Changing {kind} should apply: {outcome.Said}");
             Ui.WaitFor(() => Output(window)[before..].Contains(prints, StringComparison.Ordinal), $"the program to print '{prints}' ({Output(window)[before..]})");
+            if (kind == "a method body")
+            {
+                // Applied without pausing the program; the edits Roslyn's rules allowed are those the program's own runtime says
+                // it can take, read from its CoreLib.
+                Assert.Equal(DebugState.Running, window.Debugger.Session!.State);
+                Dap.HotReloadStateResponse state = Ui.Await(window.Debugger.Session.HotReloadStateAsync(), "what the program's runtime can take");
+                TestContext.Current.TestOutputHelper?.WriteLine($"The runtime's capabilities: {string.Join(' ', state.Capabilities ?? [])}");
+                Assert.True(state.Capabilities is { } capabilities && capabilities.Contains("Baseline") && capabilities.Contains("AddMethodToExistingType"),
+                    $"The runtime should say which edits it takes: {state.CapabilitiesUnknown}");
+                Assert.Contains(state.Modules, m => m.Name == "Ticks.dll" && m.Editable);
+                Assert.Contains(state.Modules, m => m.Name == "System.Private.CoreLib.dll" && !m.Editable);
+            }
         }
         finally
         {
@@ -130,6 +142,8 @@ public sealed class HotReloadEditsTests : IClassFixture<HotReloadEditsTests.Tick
         }
     }
 
+    /// <summary>An edit to the method the program is paused in runs from the paused statement, applied with Apply Hot Reload
+    /// Changes, and, as Rider does, with no Apply at all: by the Resume that lets the program go on.</summary>
     [AvaloniaFact]
     public void An_edit_to_a_method_paused_on_the_stack_runs_from_its_statement()
     {
@@ -150,6 +164,21 @@ public sealed class HotReloadEditsTests : IClassFixture<HotReloadEditsTests.Tick
             Ui.Run(window, AppActions.Resume);
             Ui.WaitFor(() => Output(window).Contains("tick edited 2", StringComparison.Ordinal), $"the program to tick with the edit ({Output(window)})");
             Assert.Contains("tick edited 1", Output(window), StringComparison.Ordinal);
+
+            // Paused in Tick again, an edit there is applied by Resume alone, the paused tick printing what the new code prints.
+            window.EditorArea.CodeEditor.GoTo(new TextPosition(6, 8));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.Debugger.Stop is not null, "the program to stop in Tick again");
+            Ui.Settle();
+            string? tick = null;
+            Ui.WaitFor(() => (tick = window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == "i")?.Value) is not null, "the paused tick's number in Variables");
+            Replace(window, "$\"tick edited {i}\"", "$\"tick resumed {i}\"");
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+            Ui.Run(window, AppActions.Resume);
+            Ui.WaitFor(() => Output(window).Contains($"tick resumed {tick}", StringComparison.Ordinal), $"the paused tick to print with the edit Resume applied ({Output(window)})");
+            Assert.True(window.Debugger.LastApplied != outcome && window.Debugger.LastApplied?.Result == HotReloadResult.Applied,
+                $"Resuming should apply the edit: {window.Debugger.LastApplied?.Said}");
+            Assert.DoesNotContain($"tick edited {tick}", Output(window), StringComparison.Ordinal);
         }
         finally
         {
