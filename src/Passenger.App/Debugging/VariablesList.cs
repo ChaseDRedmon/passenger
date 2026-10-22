@@ -1,0 +1,300 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Threading;
+using Passenger.App.ToolWindows;
+using Passenger.Editor;
+
+namespace Passenger.App.Debugging;
+
+/// <summary>A stop's values as rows of a <see cref="VariablesTree"/>: the one list the Debug window's Variables view and the
+/// debugger's hover card both are. A row's chevron, Right or Enter opens it (its members asked of the debugger the first
+/// time) and Left closes it; a double-click opens what has members and sets what has none; F2 types a new value in its row;
+/// Delete takes a watch away; and its menu is Rider's Variables and Watches menu. What a row asks for it raises, for the
+/// debugger to do.</summary>
+public sealed class VariablesList : ListBox
+{
+    // Styled as the ListBox it is, so the theme's ListBox.tree reaches it.
+    protected override Type StyleKeyOverride => typeof(ListBox);
+
+    public VariablesList(VariablesTree tree)
+    {
+        Tree = tree;
+        Classes.Add("tree");
+        ItemsSource = tree.Rows;
+        ItemTemplate = new FuncDataTemplate<VariableNode>((node, _) => Row(node), supportsRecycling: false);
+        DoubleTapped += (_, _) =>
+        {
+            // A double-click opens what has members, and sets what has none, as in Rider.
+            if (SelectedItem is VariableNode node && node.HasChildren)
+            {
+                _ = Tree.Toggle(node);
+            }
+            else
+            {
+                EditSelectedValue();
+            }
+        };
+        // Ahead of the list's own keys, which took Right and Left before a handler of its rows heard them.
+        AddHandler(KeyDownEvent, OnKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        // The menu is made again as the choice moves: each one made says as it closes.
+        PropertyChanged += (_, e) =>
+        {
+            if (e.Property == ContextMenuProperty && e.NewValue is ContextMenu menu)
+            {
+                menu.Closed += (_, _) => MenuClosed?.Invoke(this, EventArgs.Empty);
+            }
+        };
+        ListMenus.Attach(this, Menu);
+    }
+
+    /// <summary>A row's menu closed, chosen from or not.</summary>
+    public event EventHandler? MenuClosed;
+
+    public VariablesTree Tree { get; }
+
+    /// <summary>An expression to evaluate once (false: Inspect), or to keep as a watch (true: Add to Watches).</summary>
+    public event EventHandler<(string Expression, bool Watch)>? EvaluateRequested;
+
+    /// <summary>A watch to stop watching.</summary>
+    public event EventHandler<string>? WatchRemoved;
+
+    /// <summary>Set Value: a row's new value typed in its place (a C# expression), Enter pressed.</summary>
+    public event EventHandler<(VariableNode Node, string Value)>? SetValueRequested;
+
+    /// <summary>Set Data Breakpoint, or Remove Data Breakpoint, chosen on a row.</summary>
+    public event EventHandler<VariableNode>? DataBreakpointRequested;
+
+    /// <summary>What Set Data Breakpoint offers on a row, the debugger asked: the menu's item says so once it answers.</summary>
+    public Func<VariableNode, Task<DataWatchOffer>>? DataWatch { get; set; }
+
+    /// <summary>Whether a row's value is being typed over (Set Value), or its menu is open: the list is in use.</summary>
+    public bool IsInUse => Tree.Rows.Any(r => r.IsEditing) || ContextMenu?.IsOpen == true;
+
+    /// <summary>Starts typing over the selected row's value, as F2 does: Rider's Set Value.</summary>
+    public bool EditSelectedValue()
+    {
+        if (SelectedItem is not VariableNode { Expression: not null } node)
+        {
+            return false;
+        }
+        node.IsEditing = true;
+        return true;
+    }
+
+    /// <summary>Gives the keys to the chosen row, the first when none is chosen, as a person's click on it would.</summary>
+    public void FocusRow()
+    {
+        if (SelectedIndex < 0 && Tree.Rows.Count > 0)
+        {
+            SelectedIndex = 0;
+        }
+        if (SelectedIndex >= 0 && ContainerFromIndex(SelectedIndex) is Control row)
+        {
+            row.Focus(NavigationMethod.Directional);
+            return;
+        }
+        Focus(NavigationMethod.Directional);
+    }
+
+    /// <summary>Shows rows read again in place of these (a value set changes what they say), those that were open opened
+    /// again, and the row chosen chosen again, with the keys if the list had them.</summary>
+    public async Task ShowAgain(IEnumerable<VariableNode> top)
+    {
+        string? chosen = SelectedItem is VariableNode node ? VariablesTree.PathOf(node) : null;
+        bool focused = IsKeyboardFocusWithin;
+        await Tree.ShowAgain(top);
+        if (chosen is not null && Tree.Rows.FirstOrDefault(r => VariablesTree.PathOf(r) == chosen) is { } again)
+        {
+            SelectedItem = again;
+        }
+        if (focused)
+        {
+            Dispatcher.UIThread.Post(FocusRow, DispatcherPriority.Loaded);
+        }
+    }
+
+    private void OnKey(object? sender, KeyEventArgs e)
+    {
+        // A value being typed in its row takes its own keys.
+        if (SelectedItem is not VariableNode node || e.Source is TextBox || Tree.Rows.Any(r => r.IsEditing))
+        {
+            return;
+        }
+        switch (e.Key)
+        {
+            case Key.Right when node.HasChildren && !node.IsExpanded:
+            case Key.Enter when node.HasChildren:
+                _ = Tree.Toggle(node);
+                e.Handled = true;
+                break;
+            case Key.Left when node.IsExpanded:
+                _ = Tree.Collapse(node);
+                e.Handled = true;
+                break;
+            case Key.Left when node.Parent is { } parent && Tree.Rows.Contains(parent):
+                // On a row that is closed, Left goes up to the row it opened from, as a tree's does.
+                SelectedItem = parent;
+                ScrollIntoView(parent);
+                Dispatcher.UIThread.Post(FocusRow, DispatcherPriority.Loaded);
+                e.Handled = true;
+                break;
+            case Key.Delete or Key.Back when node.Role == VariableRole.Watch:
+                WatchRemoved?.Invoke(this, node.Name);
+                e.Handled = true;
+                break;
+            case Key.F2 when node.Expression is not null:
+                node.IsEditing = true;
+                e.Handled = true;
+                break;
+        }
+    }
+
+    /// <summary>Rider's Variables and Watches menu: Set Value, Copy Value and Copy Name, Add to Watches, Inspect (the
+    /// value evaluated on its own, to open), Remove Watch for a watch, and last, as Rider adds it, Set Data Breakpoint
+    /// (Remove Data Breakpoint on a member watched), greyed with why where it cannot be set.</summary>
+    private IReadOnlyList<Control> Menu()
+    {
+        if (SelectedItem is not VariableNode node)
+        {
+            return [];
+        }
+        List<Control> items =
+        [
+            ListMenus.Item("Set Value...", "F2", () => EditSelectedValue(), node.Expression is not null),
+            ListMenus.Item("Copy Value", null, () => _ = ListMenus.CopyAsync(this, node.Value)),
+            ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, node.Name)),
+            new Separator(),
+            ListMenus.Item("Add to Watches", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, true)), node.Expression is not null && node.Role != VariableRole.Watch),
+            ListMenus.Item("Inspect", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, false)), node.Expression is not null),
+        ];
+        if (node.Role == VariableRole.Watch)
+        {
+            items.Add(new Separator());
+            items.Add(ListMenus.Item("Remove Watch", "Delete", () => WatchRemoved?.Invoke(this, node.Name)));
+        }
+        if (DataWatch is { } offer)
+        {
+            MenuItem watch = ListMenus.Item(DataWatchOffer.Set, null, () => DataBreakpointRequested?.Invoke(this, node), enabled: false);
+            ToolTip.SetShowOnDisabled(watch, true);
+            items.Add(new Separator());
+            items.Add(watch);
+            _ = Offer(watch, offer(node));
+            // Asked again each time the menu opens: the row may have been watched, or let go, since it was chosen.
+            watch.AttachedToVisualTree += (_, _) => _ = Offer(watch, offer(node));
+        }
+        return items;
+    }
+
+    /// <summary>Shows on the menu's item what the debugger said can be done with the row: held until then, so a picture
+    /// taken as the menu opens shows its answer.</summary>
+    private static async Task Offer(MenuItem item, Task<DataWatchOffer> asked)
+    {
+        using IDisposable held = BackgroundWork.Scope();
+        DataWatchOffer offered = await asked;
+        item.Header = offered.Title;
+        item.IsEnabled = offered.WhyNot is null;
+        ToolTip.SetTip(item, offered.WhyNot);
+    }
+
+    private Control Row(VariableNode? node)
+    {
+        if (node is null)
+        {
+            return new TextBlock();
+        }
+        PathIcon chevron = new() { Classes = { "chevron" }, IsVisible = node.HasChildren, RenderTransformOrigin = RelativePoint.Center };
+        chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
+        chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
+        node.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(VariableNode.ChevronAngle))
+            {
+                chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
+            }
+        };
+        Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
+        toggle.PointerPressed += (_, e) =>
+        {
+            if (node.HasChildren)
+            {
+                _ = Tree.Toggle(node);
+                e.Handled = true;
+            }
+        };
+        PathIcon icon = new() { Margin = new Thickness(0, 0, 6, 0) };
+        // Rider's own marks for what the debugger adds to a frame's values: a call's value, and the exception stopped at.
+        string iconKey = node switch
+        {
+            { Role: VariableRole.Watch } => "Icon.Evaluate",
+            { IsReturnValue: true } => "Icon.StepOut",
+            { IsException: true } => "Icon.Error",
+            _ => "Icon.Variable",
+        };
+        icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(iconKey));
+        TextBlock type = new() { Text = node.TypeLabel, VerticalAlignment = VerticalAlignment.Center };
+        type.Bind(TextBlock.ForegroundProperty, type.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock value = new() { Text = node.Shown, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };
+        if (node.Role == VariableRole.Error)
+        {
+            value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Error"));
+        }
+        ToolTip.SetTip(value, node.Shown);
+        TextBox editor = new() { Classes = { "search" }, MinHeight = 22, Height = 22, MinWidth = 240, Padding = new Thickness(6, 0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
+        editor.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                SetValueRequested?.Invoke(this, (node, editor.Text ?? string.Empty));
+                // The keys go back to the row, as the field they were in goes.
+                FocusRow();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                node.IsEditing = false;
+                FocusRow();
+                e.Handled = true;
+            }
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        editor.LostFocus += (_, _) => node.IsEditing = false;
+        node.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(VariableNode.IsEditing))
+            {
+                return;
+            }
+            editor.IsVisible = node.IsEditing;
+            value.IsVisible = type.IsVisible = !node.IsEditing;
+            if (node.IsEditing)
+            {
+                // It starts from the value as shown, all of it chosen, so typing replaces it and an arrow edits it.
+                editor.Text = node.Value;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    editor.Focus();
+                    editor.SelectAll();
+                }, DispatcherPriority.Loaded);
+            }
+        };
+        // Narrower than its row, the value gives way first, ending in an ellipsis, then its type.
+        return new ShrinkingRow
+        {
+            Height = ListRow.Height,
+            Margin = node.Indent,
+            Children =
+            {
+                toggle,
+                icon,
+                new TextBlock { Text = node.Name, VerticalAlignment = VerticalAlignment.Center },
+                new TextBlock { Text = " = ", VerticalAlignment = VerticalAlignment.Center },
+                type,
+                value,
+                editor,
+            },
+        };
+    }
+}

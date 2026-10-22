@@ -134,8 +134,8 @@ public enum VariableRole
     Scope,
 }
 
-/// <summary>The Variables view's rows, flattened to what is open so a virtualizing list draws only
-/// what is on screen; a node's children are fetched when it first opens.</summary>
+/// <summary>The rows of the Variables view and of the debugger's hover card (<see cref="VariablesList"/>), flattened to
+/// what is open so a virtualizing list draws only what is on screen; a node's children are fetched when it first opens.</summary>
 public sealed class VariablesTree
 {
     public ObservableCollection<VariableNode> Rows { get; } = [];
@@ -152,6 +152,26 @@ public sealed class VariablesTree
         }
     }
 
+    /// <summary>Shows rows read again in place of these, those open opened again by the names that reach them: what the
+    /// person had open is what they asked to see, each asked of the debugger once more.</summary>
+    public async Task ShowAgain(IEnumerable<VariableNode> top)
+    {
+        HashSet<string> open = [.. Rows.Where(r => r.IsExpanded).Select(PathOf)];
+        Show(top);
+        // Rows open in order, so a row's children, inserted after it, are reached after it.
+        for (int at = 0; at < Rows.Count && open.Count > 0; at++)
+        {
+            VariableNode row = Rows[at];
+            if (open.Remove(PathOf(row)))
+            {
+                await Expand(row);
+            }
+        }
+    }
+
+    /// <summary>The names from a top row down to this one, which say the same row in rows read again.</summary>
+    public static string PathOf(VariableNode node) => node.Parent is { } parent ? $"{PathOf(parent)}\u001f{node.Name}" : node.Name;
+
     public Task Toggle(VariableNode node) => node.IsExpanded ? Collapse(node) : Expand(node);
 
     public async Task Expand(VariableNode node)
@@ -162,6 +182,8 @@ public sealed class VariablesTree
         }
         if (node.Children is null)
         {
+            // Held until the rows are in, so a picture taken after a row is opened shows what it opened into.
+            using IDisposable held = Passenger.Editor.BackgroundWork.Scope();
             try
             {
                 node.Children = [.. (await Load!(node.Reference)).Select(v => VariableNode.From(v, node.Depth + 1, node))];

@@ -77,7 +77,7 @@ public sealed class DebugView : DockPanel
     private readonly List<OutputView> consoles = [];
     private readonly ComboBox threads;
     private readonly ListBox frames;
-    private readonly ListBox variables;
+    private readonly VariablesList variables;
     private readonly TextBox evaluate;
     private readonly Panel debugger;
     private readonly ToggleButton debuggerTab;
@@ -141,26 +141,11 @@ public sealed class DebugView : DockPanel
             PlaceholderText = $"Evaluate expression (Enter) or add a watch ({(OperatingSystem.IsMacOS() ? "⇧⌘Enter" : "Ctrl+Shift+Enter")})",
         };
         evaluate.AddHandler(KeyDownEvent, OnEvaluateKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        variables = new ListBox
-        {
-            Classes = { "tree" },
-            ItemsSource = tree.Rows,
-            ItemTemplate = new FuncDataTemplate<VariableNode>((node, _) => VariableRow(node), supportsRecycling: false),
-        };
-        variables.DoubleTapped += (_, _) =>
-        {
-            // A double-click opens what has members, and sets what has none, as in Rider.
-            if (variables.SelectedItem is VariableNode node && node.HasChildren)
-            {
-                _ = tree.Toggle(node);
-            }
-            else
-            {
-                EditSelectedValue();
-            }
-        };
-        variables.KeyDown += OnVariablesKey;
-        ListMenus.Attach(variables, VariablesMenu);
+        variables = new VariablesList(tree);
+        variables.EvaluateRequested += (_, request) => EvaluateRequested?.Invoke(this, request);
+        variables.WatchRemoved += (_, watch) => WatchRemoved?.Invoke(this, watch);
+        variables.SetValueRequested += (_, request) => SetValueRequested?.Invoke(this, request);
+        variables.DataBreakpointRequested += (_, node) => DataBreakpointRequested?.Invoke(this, node);
         ListMenus.Attach(frames, FramesMenu);
         ListMenus.Attach(threads, ThreadsMenu);
         DockPanel variablesPane = new() { Children = { evaluate, variables } };
@@ -260,27 +245,23 @@ public sealed class DebugView : DockPanel
     public event EventHandler<VariableNode>? DataBreakpointRequested;
 
     /// <summary>What Set Data Breakpoint offers on a row, the debugger asked: the menu's item says so once it answers.</summary>
-    public Func<VariableNode, Task<DataWatchOffer>>? DataWatch { get; set; }
+    public Func<VariableNode, Task<DataWatchOffer>>? DataWatch
+    {
+        get => variables.DataWatch;
+        set => variables.DataWatch = value;
+    }
 
     /// <summary>Where a frame is in its file now, from zero, as the editor counts lines (the debugger's are its build's
     /// compiler's), the debugger asked: the line a frame's row and Copy Stack name.</summary>
     public Func<DapStackFrame, TextPosition?>? PlaceOf { get; set; }
 
     /// <summary>Starts typing over the selected row's value, as F2 does: Rider's Set Value.</summary>
-    public bool EditSelectedValue()
-    {
-        if (variables.SelectedItem is not VariableNode { Expression: not null } node)
-        {
-            return false;
-        }
-        node.IsEditing = true;
-        return true;
-    }
+    public bool EditSelectedValue() => variables.EditSelectedValue();
 
     public VariablesTree Tree { get; } = new();
 
     /// <summary>The Variables view's list, whose rows are <see cref="Tree"/>'s.</summary>
-    public ListBox VariablesList => variables;
+    public VariablesList VariablesList => variables;
 
     /// <summary>The chosen program's output, as Rider's Console tab shows it.</summary>
     public OutputView Console => (OutputView)consolePane.Children[0];
@@ -489,81 +470,6 @@ public sealed class DebugView : DockPanel
         e.Handled = true;
     }
 
-    private void OnVariablesKey(object? sender, KeyEventArgs e)
-    {
-        if (variables.SelectedItem is not VariableNode node)
-        {
-            return;
-        }
-        switch (e.Key)
-        {
-            case Key.Right when node.HasChildren && !node.IsExpanded:
-            case Key.Enter when node.HasChildren:
-                _ = Tree.Toggle(node);
-                e.Handled = true;
-                break;
-            case Key.Left when node.IsExpanded:
-                _ = Tree.Collapse(node);
-                e.Handled = true;
-                break;
-            case Key.Delete or Key.Back when node.Role == VariableRole.Watch:
-                WatchRemoved?.Invoke(this, node.Name);
-                e.Handled = true;
-                break;
-            case Key.F2 when node.Expression is not null:
-                node.IsEditing = true;
-                e.Handled = true;
-                break;
-        }
-    }
-
-    /// <summary>Rider's Variables and Watches menu: Set Value, Copy Value and Copy Name, Add to Watches, Inspect (the
-    /// value evaluated on its own, to open), Remove Watch for a watch, and last, as Rider adds it, Set Data Breakpoint
-    /// (Remove Data Breakpoint on a member watched), greyed with why where it cannot be set.</summary>
-    private IReadOnlyList<Control> VariablesMenu()
-    {
-        if (variables.SelectedItem is not VariableNode node)
-        {
-            return [];
-        }
-        List<Control> items =
-        [
-            ListMenus.Item("Set Value...", "F2", () => EditSelectedValue(), node.Expression is not null),
-            ListMenus.Item("Copy Value", null, () => _ = ListMenus.CopyAsync(this, node.Value)),
-            ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, node.Name)),
-            new Separator(),
-            ListMenus.Item("Add to Watches", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, true)), node.Expression is not null && node.Role != VariableRole.Watch),
-            ListMenus.Item("Inspect", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, false)), node.Expression is not null),
-        ];
-        if (node.Role == VariableRole.Watch)
-        {
-            items.Add(new Separator());
-            items.Add(ListMenus.Item("Remove Watch", "Delete", () => WatchRemoved?.Invoke(this, node.Name)));
-        }
-        if (DataWatch is { } offer)
-        {
-            MenuItem watch = ListMenus.Item(DataWatchOffer.Set, null, () => DataBreakpointRequested?.Invoke(this, node), enabled: false);
-            ToolTip.SetShowOnDisabled(watch, true);
-            items.Add(new Separator());
-            items.Add(watch);
-            _ = Offer(watch, offer(node));
-            // Asked again each time the menu opens: the row may have been watched, or let go, since it was chosen.
-            watch.AttachedToVisualTree += (_, _) => _ = Offer(watch, offer(node));
-        }
-        return items;
-    }
-
-    /// <summary>Shows on the menu's item what the debugger said can be done with the row: held until then, so a picture
-    /// taken as the menu opens shows its answer.</summary>
-    private static async Task Offer(MenuItem item, Task<DataWatchOffer> asked)
-    {
-        using IDisposable held = BackgroundWork.Scope();
-        DataWatchOffer offered = await asked;
-        item.Header = offered.Title;
-        item.IsEnabled = offered.WhyNot is null;
-        ToolTip.SetTip(item, offered.WhyNot);
-    }
-
     /// <summary>Rider's Frames menu: Copy Stack, every frame a line, and Go to Source for the one chosen.</summary>
     private IReadOnlyList<Control> FramesMenu()
     {
@@ -659,102 +565,6 @@ public sealed class DebugView : DockPanel
             {
                 new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center },
                 where,
-            },
-        };
-    }
-
-    private Control VariableRow(VariableNode? node)
-    {
-        if (node is null)
-        {
-            return new TextBlock();
-        }
-        PathIcon chevron = new() { Classes = { "chevron" }, IsVisible = node.HasChildren, RenderTransformOrigin = RelativePoint.Center };
-        chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
-        chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
-        node.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(VariableNode.ChevronAngle))
-            {
-                chevron.RenderTransform = new RotateTransform(node.ChevronAngle);
-            }
-        };
-        Border toggle = new() { Width = 18, Height = ListRow.Height, Background = Brushes.Transparent, Child = chevron };
-        toggle.PointerPressed += (_, e) =>
-        {
-            if (node.HasChildren)
-            {
-                _ = Tree.Toggle(node);
-                e.Handled = true;
-            }
-        };
-        PathIcon icon = new() { Margin = new Thickness(0, 0, 6, 0) };
-        // Rider's own marks for what the debugger adds to a frame's values: a call's value, and the exception stopped at.
-        string iconKey = node switch
-        {
-            { Role: VariableRole.Watch } => "Icon.Evaluate",
-            { IsReturnValue: true } => "Icon.StepOut",
-            { IsException: true } => "Icon.Error",
-            _ => "Icon.Variable",
-        };
-        icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(iconKey));
-        TextBlock type = new() { Text = node.TypeLabel, VerticalAlignment = VerticalAlignment.Center };
-        type.Bind(TextBlock.ForegroundProperty, type.GetResourceObservable("Passenger.TextMuted"));
-        TextBlock value = new() { Text = node.Shown, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };
-        if (node.Role == VariableRole.Error)
-        {
-            value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Error"));
-        }
-        ToolTip.SetTip(value, node.Shown);
-        TextBox editor = new() { Classes = { "search" }, MinHeight = 22, Height = 22, MinWidth = 240, Padding = new Thickness(6, 0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
-        editor.AddHandler(KeyDownEvent, (_, e) =>
-        {
-            if (e.Key == Key.Enter)
-            {
-                SetValueRequested?.Invoke(this, (node, editor.Text ?? string.Empty));
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Escape)
-            {
-                node.IsEditing = false;
-                variables.Focus();
-                e.Handled = true;
-            }
-        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        editor.LostFocus += (_, _) => node.IsEditing = false;
-        node.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName != nameof(VariableNode.IsEditing))
-            {
-                return;
-            }
-            editor.IsVisible = node.IsEditing;
-            value.IsVisible = type.IsVisible = !node.IsEditing;
-            if (node.IsEditing)
-            {
-                // It starts from the value as shown, all of it chosen, so typing replaces it and an arrow edits it.
-                editor.Text = node.Value;
-                Dispatcher.UIThread.Post(() =>
-                {
-                    editor.Focus();
-                    editor.SelectAll();
-                }, DispatcherPriority.Loaded);
-            }
-        };
-        return new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Height = ListRow.Height,
-            Margin = node.Indent,
-            Children =
-            {
-                toggle,
-                icon,
-                new TextBlock { Text = node.Name, VerticalAlignment = VerticalAlignment.Center },
-                new TextBlock { Text = " = ", VerticalAlignment = VerticalAlignment.Center },
-                type,
-                value,
-                editor,
             },
         };
     }
