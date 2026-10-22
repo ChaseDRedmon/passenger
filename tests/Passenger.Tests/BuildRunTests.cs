@@ -815,9 +815,10 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
         Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
 
-        // Run and Debug start it in a container (ContainerRunsTests, ContainerDebuggingTests); Profile says it does not profile one yet.
+        // Run, Debug and Profile start it in a container (ContainerRunsTests, ContainerRunDebuggingTests, ContainerRunProfilingTests),
+        // which this project, with a Docker profile and no Dockerfile, cannot make: Profile says so rather than profiling it here.
         Assert.True(window.SelectConfiguration("Hello: Docker"));
-        Assert.Equal(LaunchPlan.InContainers("Hello: Docker"), Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
+        Assert.Equal("Hello: Docker cannot run: Hello has no Dockerfile", Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
         window.Close();
     }
 
