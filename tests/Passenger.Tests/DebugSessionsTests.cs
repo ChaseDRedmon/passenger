@@ -67,6 +67,8 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Assert.Equal(DebugState.Paused, first.State);
             Assert.Equal(firstThread, first.StoppedThread);
             Assert.Same(second, window.Debugger.Session);
+            // A value the pointer rests on is the chosen program's, read in the frame of its stop.
+            Assert.Equal("next = {int} 1", Hover(window, editor, "return next", 8));
 
             // Its tab chosen, the first program's frames, values, console and execution point are the window's, still at the
             // breakpoint it stopped at.
@@ -74,6 +76,9 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             Assert.Same(first, window.Debugger.Session);
             Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0 && window.BottomPanel.Debug.Frames[0].Line == Pair.Next + 1, "the first program's frames");
             Ui.WaitFor(() => Value(window, "value") == "0", "the first program's values at its stop");
+            // The card read at the second program's stop went with it, and the same value rested on now is the first's.
+            Assert.True(window.Assist.HoverText is null, $"The card read at the second program's stop stayed as the first's tab was chosen: {window.Assist.HoverText}");
+            Assert.Equal("next = {int} 0", Hover(window, editor, "return next", 9));
             Assert.Same(window.Debugger.Tabs[0].Console, window.BottomPanel.Debug.Console);
             Assert.Contains(new LineMark(Pair.Next, LineMarkKind.ExecutionPoint), editor.LineMarks);
 
@@ -364,6 +369,18 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
             TextBlock name = button.GetVisualDescendants().OfType<TextBlock>().First();
             return (name.Text ?? string.Empty, button.IsChecked == true, name.Classes.Contains("muted"), button, button.GetVisualDescendants().OfType<Button>().First());
         })];
+    }
+
+    /// <summary>The card shown with the pointer resting on a letter of some text of the editor's, the last card gone first: a
+    /// letter other than the last one rested on, since the pointer back where it last rested is no new rest.</summary>
+    private static string Hover(MainWindow window, CodeEditor editor, string text, int letter)
+    {
+        window.MouseMove(new Point(0, 0), Avalonia.Input.RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is null, "the last card to go");
+        int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal) + letter;
+        window.MouseMove(editor.TranslatePoint(editor.PointOf(at) + new Point(1, editor.LineHeight / 2), window)!.Value, Avalonia.Input.RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, $"the card on {text}");
+        return window.Assist.HoverText!;
     }
 
     /// <summary>A click on a control of the window, where it is drawn.</summary>

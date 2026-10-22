@@ -1167,7 +1167,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   docker exec with it) is the program's end, said so (`DebugSession.Gone`), never the debugger's. A tab's program output
   followed from outside (`AdapterPlace.Output`) ends with its session, its failed start, its tab's close and the folder's
   end. Hot Reload's apply is its own tab's whichever is chosen when it lands (another program's stop takes the window):
-  its built lines, breakpoints, console and resume are that program's. The engine decides exception breakpoints (`ExceptionRule`)
+  its built lines, breakpoints, console and resume are that program's. A stop's values are a `VariablesTree`'s rows in a
+  `VariablesList`, the one list the Variables view and the debugger's hover card both are (its keys taken ahead of the
+  ListBox's, which swallowed Right and Left; its menu; a row's members read under `BackgroundWork`). Rested on while
+  paused, a value with members is its row in the hover card (`DebugController.HoverAt`, #340; one without stays words),
+  evaluated in the chosen tab's frame, each row it opens into asked of that stop alone, its rows' actions the view's own
+  handlers; the card (`InfoCard.AddValues`) takes the narrowest of the popups' widths that holds it, never narrowing while
+  shown, scrolls past 16 rows, stays while the pointer, its keys (a click, or Quick Documentation pressed again) or its
+  menu are on it, and goes 300 ms after they leave, on Escape, and with its stop (`DebuggerHover.Gone`, which
+  `NextShown` cancels); a value set in it shows the value read again with what was open still open
+  (`VariablesTree.ShowAgain`). The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
@@ -1634,7 +1643,9 @@ programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Repl
 Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests.WpfApp.cs` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
-a callback from List.ForEach, CoreLib's frame below it. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
+a callback from List.ForEach, CoreLib's frame below it. `DebuggerHoverTests` (Alone) open the hover card of a stop's
+values by the pointer and the keys (`People`: an object holding another, and a list), holding it to the popups' rules
+(`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread). `AvaloniaFramesTests` (Alone) profile,
 debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `DebugSessionsTests` (Alone) debug two
 programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpTests.Sessions.cs` has an agent name

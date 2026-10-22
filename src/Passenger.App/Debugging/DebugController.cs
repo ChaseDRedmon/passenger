@@ -64,6 +64,10 @@ public sealed class DebugController : IDisposable
     /// gone on is dropped rather than shown over what is now true.</summary>
     private int shown;
 
+    /// <summary>Cancelled as the stop shown goes (the program goes on, another tab is chosen, the folder is left), so what was
+    /// read at it and still shows (a hover card's value) goes with it.</summary>
+    private CancellationTokenSource stopShown = new();
+
     /// <summary>The chosen session's name, as the status bar names it ("Tests", a run configuration's).</summary>
     private string name => chosen?.Name ?? string.Empty;
 
@@ -144,6 +148,7 @@ public sealed class DebugController : IDisposable
         UiThread.Check();
         disposed = true;
         clearing.Stop();
+        NextShown();
         letGo();
         foreach (DebugTab tab in view.Sessions)
         {
@@ -749,7 +754,7 @@ public sealed class DebugController : IDisposable
             each.IsChosen = each == tab;
         }
         view.ShowConsole(tab.Console);
-        shown++;
+        NextShown();
         frame = null;
         Stop = null;
         showing = null;
@@ -1258,23 +1263,80 @@ public sealed class DebugController : IDisposable
         }
     }
 
-    /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word
-    /// hovered), in the chosen frame; null when there is none or it does not evaluate.</summary>
-    public async Task<string?> ValueAt(int offset, CancellationToken cancellation)
+    /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word hovered), evaluated in the
+    /// chosen frame of the stop shown, for the hover card; one with members as its row, which opens as the Variables view's
+    /// rows do (<see cref="HoverValues"/>). Null when there is none or it does not evaluate. The card goes with the stop.</summary>
+    public async Task<CSharp.DebuggerHover?> HoverAt(int offset, CancellationToken cancellation)
     {
         UiThread.Check();
-        if (Session is not { State: DebugState.Paused } session || frame is null || ExpressionAt(editors.CodeEditor.Document.Snapshot, offset) is not { } expression)
+        if (Session is not { State: DebugState.Paused } session || frame is not { } at || ExpressionAt(editors.CodeEditor.Document.Snapshot, offset) is not { } expression)
         {
             return null;
         }
+        int stop = shown;
+        CancellationToken gone = stopShown.Token;
         try
         {
-            EvaluateResponse value = await session.EvaluateAsync(expression, frame.Id, "hover").WaitAsync(cancellation);
-            return $"{expression} = {(value.Type is { Length: > 0 } type && value.Result != type ? $"{{{type}}} " : "")}{VariableNode.Cut(value.Result)}";
+            EvaluateResponse value = await session.EvaluateAsync(expression, at.Id, "hover").WaitAsync(cancellation);
+            if (stop != shown)
+            {
+                return null;
+            }
+            string code = $"{expression} = {(value.Type is { Length: > 0 } type && value.Result != type ? $"{{{type}}} " : "")}{VariableNode.Cut(value.Result)}";
+            return new CSharp.DebuggerHover(code)
+            {
+                Values = value.VariablesReference > 0 ? HoverValues(session, at, stop, expression, value) : null,
+                Gone = gone,
+            };
         }
         catch (DapException)
         {
             return null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A hovered value's rows: its own, opening into its members as the Variables view's rows do, each asked of the
+    /// stop it was read at and of no other; its rows' actions are the Variables view's own (Add to Watches, Inspect, Set
+    /// Value, a data breakpoint), and a value set there shows the hovered value read again with what was open still open.</summary>
+    private VariablesList HoverValues(DebugSession session, DapStackFrame at, int stop, string expression, EvaluateResponse value)
+    {
+        VariablesTree tree = new()
+        {
+            Load = async reference => stop == shown && session.State == DebugState.Paused
+                ? await session.VariablesAsync(reference)
+                : throw new DapException("variables", "The program has gone on from the stop this value was read at"),
+        };
+        tree.Show([Hovered(value)]);
+        VariablesList list = new(tree) { DataWatch = DataWatchAsync };
+        list.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
+        list.DataBreakpointRequested += (_, node) => _ = ToggleDataBreakpointAsync(node);
+        list.SetValueRequested += (_, request) => _ = SetHoveredAsync(request.Node, request.Value);
+        return list;
+
+        VariableNode Hovered(EvaluateResponse read) => new(expression, read.Result, read.Type, read.VariablesReference, 0, VariableRole.Value);
+
+        async Task SetHoveredAsync(VariableNode node, string typed)
+        {
+            if (!await SetValue(node, typed, at) || stop != shown)
+            {
+                return;
+            }
+            try
+            {
+                EvaluateResponse again = await session.EvaluateAsync(expression, at.Id, "hover");
+                if (stop == shown)
+                {
+                    await list.ShowAgain([Hovered(again)]);
+                }
+            }
+            catch (DapException)
+            {
+                // The value set shows in Variables; the card keeps what it read.
+            }
         }
     }
 
@@ -1371,7 +1433,7 @@ public sealed class DebugController : IDisposable
         view.SetState(session.State);
         view.ShowDetachable(session.Attached && session.State is DebugState.Running or DebugState.Paused);
         // Every stop is new and every run lets the last one's frames and values go: none is asked of again.
-        shown++;
+        NextShown();
         frame = null;
         Stop = null;
         clearing.Stop();
@@ -1877,16 +1939,18 @@ public sealed class DebugController : IDisposable
     /// <summary>Shows the chosen frame's variables and inline values again, as a value changed.</summary>
     public Task RefreshAsync() => ShowVariables();
 
-    /// <summary>Set Value: what a row's expression names takes the value typed (a C# expression), and the frame's
-    /// variables and inline values show what it now is; a refusal is said in the status bar.</summary>
-    public async Task SetValue(VariableNode node, string value)
+    /// <summary>Set Value: what a row's expression names takes the value typed (a C# expression), in the chosen frame or the
+    /// one given (a hover's), and the frame's variables and inline values show what it now is; a refusal is said in the
+    /// status bar. True when the value was set.</summary>
+    public async Task<bool> SetValue(VariableNode node, string value, DapStackFrame? within = null)
     {
         UiThread.Check();
         node.IsEditing = false;
-        if (Session is not { State: DebugState.Paused } session || frame is not { } current || node.Expression is not { } expression)
+        if (Session is not { State: DebugState.Paused } session || (within ?? frame) is not { } current || node.Expression is not { } expression)
         {
-            return;
+            return false;
         }
+        bool set = true;
         try
         {
             await session.SetExpressionAsync(expression, value, current.Id);
@@ -1894,8 +1958,19 @@ public sealed class DebugController : IDisposable
         catch (DapException error)
         {
             Message?.Invoke(this, $"Could not set {expression}: {error.Reason}");
+            set = false;
         }
         await ShowVariables();
+        return set;
+    }
+
+    /// <summary>A new stop shown, or none: what the last one's requests bring back is dropped, and what still shows of it goes.</summary>
+    private void NextShown()
+    {
+        shown++;
+        CancellationTokenSource gone = stopShown;
+        stopShown = new CancellationTokenSource();
+        gone.Cancel();
     }
 
     /// <summary>Evaluate's Enter, or Add to Watches: a watch is evaluated at every stop, an expression only now, once, its

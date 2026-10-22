@@ -10,29 +10,86 @@ using Avalonia.Threading;
 namespace Passenger.App.CSharp;
 
 /// <summary>A card over the editor: hover information, a diagnostic's message, a signature. Code is
-/// set in the editor's font, prose in the interface's, a problem in its severity's colour.</summary>
+/// set in the editor's font, prose in the interface's, a problem in its severity's colour. A paused program's value with
+/// members is its row of the stop's values (<see cref="AddValues"/>), which the card then takes the pointer and the keys for.</summary>
 internal sealed partial class InfoCard : Border
 {
     // Styled as the Border it is, so the theme's Border.popup reaches it.
     protected override Type StyleKeyOverride => typeof(Border);
 
+    /// <summary>The most a card of words is wide; one of a value's rows takes a width of the popups' (<see cref="PopupFrame"/>).</summary>
+    private const double WordsWidth = 640;
+
+    /// <summary>The most rows of a value the card shows before it scrolls.</summary>
+    private const int MostRows = 16;
+
     private readonly StackPanel parts = new() { Spacing = 6 };
+
+    /// <summary>The width a card of values has taken: it only grows while it shows them, so a row closed never narrows it
+    /// under the pointer.</summary>
+    private double fitted;
 
     public InfoCard()
     {
         Classes.Add("popup");
         Padding = new Thickness(10, 8);
-        MaxWidth = 640;
+        MaxWidth = WordsWidth;
         Child = parts;
         IsHitTestVisible = false;
     }
 
     public bool IsEmpty => parts.Children.Count == 0;
 
-    /// <summary>What the card says, a line a part.</summary>
-    public string Text => string.Join('\n', parts.Children.OfType<TextBlock>().Select(t => t.Text));
+    /// <summary>The rows of a value the card shows, null for a card of words alone.</summary>
+    public Debugging.VariablesList? Values { get; private set; }
 
-    public void Clear() => parts.Children.Clear();
+    /// <summary>What the card says, a line a part, a value's rows a line each, indented as they are.</summary>
+    public string Text => string.Join('\n', parts.Children.Select(part => part switch
+    {
+        TextBlock words => words.Text,
+        Debugging.VariablesList values => string.Join('\n', values.Tree.Rows.Select(r => $"{new string(' ', r.Depth * 2)}{r.Name} = {r.TypeLabel}{r.Shown}")),
+        _ => null,
+    }).OfType<string>());
+
+    public void Clear()
+    {
+        parts.Children.Clear();
+        Values = null;
+        fitted = 0;
+        IsHitTestVisible = false;
+        MaxWidth = WordsWidth;
+    }
+
+    /// <summary>A value's rows, which open in the card: it takes the pointer and the keys, a width of the popups', growing as
+    /// rows open, and scrolls past <see cref="MostRows"/> rows or the room it is given.</summary>
+    public void AddValues(Debugging.VariablesList values, double room)
+    {
+        Values = values;
+        values.MaxHeight = Math.Max(ListRow.Height * 4, Math.Min(ListRow.Height * MostRows, room - Padding.Top - Padding.Bottom)) + values.Padding.Top + values.Padding.Bottom;
+        parts.Children.Add(values);
+        IsHitTestVisible = true;
+        MaxWidth = PopupFrame.Wide;
+        values.Tree.Rows.CollectionChanged += (_, _) =>
+        {
+            if (Values == values)
+            {
+                InvalidateMeasure();
+            }
+        };
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        if (Values is null)
+        {
+            return base.MeasureOverride(availableSize);
+        }
+        // The narrowest of the popups' widths that holds every row as it would lay out, else the widest a card takes.
+        double natural = base.MeasureOverride(new Size(double.PositiveInfinity, availableSize.Height)).Width;
+        double wanted = PopupFrame.Widths.Where(w => w <= PopupFrame.Wide).FirstOrDefault(w => w >= natural, PopupFrame.Wide);
+        fitted = Math.Max(fitted, wanted);
+        return new Size(fitted, base.MeasureOverride(new Size(fitted, availableSize.Height)).Height);
+    }
 
     public void AddCode(string code) => parts.Children.Add(new TextBlock
     {

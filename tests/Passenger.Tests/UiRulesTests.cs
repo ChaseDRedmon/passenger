@@ -183,13 +183,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
             Ui.Settle();
             Ui.WaitFor(() => window.IsPopupOpen, what);
             Border frame = window.Popup!.GetSelfAndVisualDescendants().OfType<Border>().First(b => b.Classes.Contains("popup"));
-            Assert.True(PopupFrame.Widths.Any(w => Math.Abs(frame.Bounds.Width - w) < 0.5),
-                $"{what} is {frame.Bounds.Width:0.#} px wide, not one of the popups' widths ({string.Join(", ", PopupFrame.Widths)})");
-            foreach (ListBoxItem row in frame.GetVisualDescendants().OfType<ListBoxItem>().Where(r => r.IsEffectivelyVisible))
-            {
-                Assert.True(Math.Abs(row.Bounds.Height - ListRow.Height) < 0.5,
-                    $"A row of {what} is {row.Bounds.Height:0.#} px tall, where every popup's row is {ListRow.Height}");
-            }
+            HoldsToPopupRules(what, frame);
             seen.Add((what, frame));
             Ui.Press(window, "ESCAPE");
         }
@@ -206,6 +200,20 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         Assert.True(titles.Length >= seen.Count - 2, $"Only {titles.Length} of {seen.Count} popups have a title of the popups' look");
         Assert.True(titles.All(t => t.FontSize == titles[0].FontSize && t.FontWeight == titles[0].FontWeight),
             "Popups' titles differ in size or weight: " + string.Join(", ", titles.Select(t => $"'{t.Text}' {t.FontSize} {t.FontWeight}")));
+    }
+
+    /// <summary>A popup's frame as every popup's is: a width of the popups' scale (<see cref="PopupFrame"/>) and its rows
+    /// <see cref="ListRow.Height"/> tall; a popup that lives elsewhere (the debugger's hover card) is held to it here too.</summary>
+    internal static void HoldsToPopupRules(string what, Border frame)
+    {
+        Assert.True(frame.Classes.Contains("popup"), $"{what} is not framed as the popups are (Border.popup)");
+        Assert.True(PopupFrame.Widths.Any(w => Math.Abs(frame.Bounds.Width - w) < 0.5),
+            $"{what} is {frame.Bounds.Width:0.#} px wide, not one of the popups' widths ({string.Join(", ", PopupFrame.Widths)})");
+        foreach (ListBoxItem row in frame.GetVisualDescendants().OfType<ListBoxItem>().Where(r => r.IsEffectivelyVisible))
+        {
+            Assert.True(Math.Abs(row.Bounds.Height - ListRow.Height) < 0.5,
+                $"A row of {what} is {row.Bounds.Height:0.#} px tall, where every popup's row is {ListRow.Height}");
+        }
     }
 
     [AvaloniaFact]
