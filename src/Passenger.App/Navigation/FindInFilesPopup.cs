@@ -352,10 +352,13 @@ public sealed class FindInFilesPopup : UserControl
         asking?.Cancel();
     }
 
+    /// <summary>A change to what is asked: the older query's matches go at once, so none is replaced for what is no longer
+    /// asked, and a query that finds nothing says why now (an empty one nothing) rather than that it searches.</summary>
     private void Retype()
     {
         asking?.Cancel();
-        Show([], "Searching…", null);
+        SearchQuery asked = Query;
+        Show([], asked.Text.Length == 0 ? string.Empty : FileSearch.Problem(asked) ?? Scope.Problem() ?? "Searching…", null);
         typing.Restart();
     }
 
