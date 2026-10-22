@@ -13,6 +13,7 @@ using Avalonia.VisualTree;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Passenger.App;
+using Passenger.App.Mcp;
 using Passenger.App.Run;
 using Passenger.Core;
 
@@ -55,6 +56,50 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         JsonElement workspace = await Call(client, "workspace");
         Assert.Equal(PathNames.Canonical(Folder), workspace.GetProperty("folder").GetString());
         Assert.Empty(workspace.GetProperty("aspireApps").EnumerateArray());
+    }
+
+    /// <summary>An agent's run of an AppHost whose launch profile serves HTTPS, the development certificate not trusted, asks
+    /// the person nothing (their answer could keep the call waiting for good), as a container run's does: it runs over HTTP,
+    /// its answer and the status bar saying so. The AppHost is AspireStandInTests' stand-in, which needs no Aspire, and
+    /// dev-certs <see cref="DevCerts"/>' stand-in, which trusts nothing on this machine.</summary>
+    [AvaloniaFact]
+    public void An_agents_run_of_an_AppHost_that_serves_HTTPS_with_no_trusted_certificate_runs_it_over_HTTP_asking_no_one()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in dev-certs is a shell script");
+        string standIn = TestFolders.Create("devcerts-");
+        File.WriteAllText(Path.Combine(standIn, "check"), "7");
+        using StandInAppHost project = new();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend, "https://localhost:7312");
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false, DevCertificates = DevCerts.In(standIn) };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        Ui.Settle();
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            Task<JsonElement> running = Task.Run(() => Call(client, "run", new() { ["configuration"] = StandInAppHost.Configuration, ["waitSeconds"] = 0 }));
+            Press(Admission(window, "the window to ask whether the agent may work there"), AgentAdmissionDialog.Allow);
+            Press(Question(window, "the question for the agent's run"), "Allow");
+            WaitFor(() => running.IsCompleted || window.CertificateQuestion is not null, "the agent's run", TimeSpan.FromMinutes(2));
+            Assert.Null(window.CertificateQuestion);
+            const string Said = "StandIn.AppHost over HTTP for this run: the development certificate is not trusted, and an agent's call started this run, and asks no one";
+            Assert.Contains(Said, running.GetAwaiter().GetResult().GetProperty("status").GetString(), StringComparison.Ordinal);
+            Assert.Contains(Said, window.Status, StringComparison.Ordinal);
+            Assert.Equal("dev-certs https --check --trust\n", DevCerts.Asked(standIn));
+            Assert.Equal("http://localhost:7312", File.ReadAllText(project.UrlsFile).Split('\n')[0]);
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+            Await(Task.Run(async () =>
+            {
+                await backend.DisposeAsync();
+                return true;
+            }), "the stand-in resource service to stop");
+        }
     }
 
     [Fact(Skip = AspireApp.CliSkipped, SkipType = typeof(AspireApp), SkipWhen = nameof(AspireApp.IsUnavailable))]

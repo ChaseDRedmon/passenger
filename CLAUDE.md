@@ -656,7 +656,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (fast mode's `:passenger-fast`), never the name its files give, which stays the person's; on Linux a .NET service runs as
   the person (`user: uid:gid`), in fast mode always and as deployed where it takes the certificate or user secrets (said
   after the status), since the engine keeps the host's owners and modes and those are the person's alone; the dev certificate (`DevelopmentCertificate`) for a
-  service that serves HTTPS (`ContainerPlan.Https`; `BuildRunController.CertificateAsync` before the override: `dotnet
+  service that serves HTTPS (`ContainerPlan.Https`; `BuildRunController.CertificateAsync`, every HTTPS run's one path, an
+  Aspire AppHost's too, `BuildRunController.Certificate.cs`, before the override: `dotnet
   dev-certs https --check --trust`, and missing or not trusted the person asked once, `CertificateQuestionDialog`, Create
   and Trust running `--trust` or Run over HTTP; a run an agent's call started (`Mcp.AgentCall.Current`) or an agent's own
   IDE (`MainWindow.AgentsOwn`, `--mcp`'s, not `--no-mcp`'s) asks no one and runs over HTTP, saying so in the status bar and
@@ -751,7 +752,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
   which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`; its check answered trusted by a
   stand-in, so it asks nothing), their certificate question's test answers with a shell stand-in for dev-certs that trusts
-  nothing on the machine (`DevCerts`), and their SDK container image (unlabelled, the SDK's) is removed by the test that
+  nothing on the machine (`DevCerts`, which AspireStandInTests' and McpAspireTests' HTTPS AppHost take too), and their SDK container image (unlabelled, the SDK's) is removed by the test that
   made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
@@ -781,7 +782,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
   files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#
   file's head read as a walk first lists it and again only as the watcher says it changed, each a run configuration
-  (`RunConfiguration.Aspire`, `LinkedAppHosts`). `AspireInteractions` is one
+  (`RunConfiguration.Aspire`, `LinkedAppHosts`). An AppHost whose launch profile serves HTTPS on this machine
+  (`AspireController.ServingHttps`) has the development certificate checked once before it starts, through the container
+  runs' path (`BuildRunController.CertificateAsync`, the person asked by `CertificateQuestionDialog`, nobody for an agent;
+  no export, what runs here taking the store's own); over HTTP (`HttpsChoice.OverHttp`, `AspireAppRun.OverHttp`, said in
+  the status bar and `AspireAppRun.Notes`, which an agent's `run` answers with) its own addresses serve HTTP, unsecured
+  transport allowed, and the services it starts are told HTTP as a container's are (`DevelopmentCertificate.OverHttp`).
+  `AspireInteractions` is one
   authenticated connection to an AppHost's resource service (gRPC, `Protocol/dashboard_service.proto`, its C# checked in beside it): its resources,
   their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`), the display's streams followed only
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the

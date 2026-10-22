@@ -103,7 +103,7 @@ public static class ContainerPlans
         string stateFolder, ContainerEngine engine, IReadOnlyList<string> labels, CancellationToken cancel)
     {
         string folder = workspace?.Folder ?? throw new LaunchException("Nothing to run: no folder is open");
-        string state = Path.Combine(StateFolderOf(stateFolder, folder), "containers");
+        string state = StateOf(stateFolder, folder);
         Directory.CreateDirectory(state);
         string file = Slug(configuration.Name);
         List<string> files;
@@ -641,20 +641,13 @@ public static class ContainerPlans
         }
     }
 
-    /// <summary>A service that serves HTTPS told to serve HTTP for this run, there being no certificate to give it (the person
-    /// chose so, or the export failed): its https addresses as http, and its HTTPS ports among its HTTP ones, so it listens
-    /// where it would and Kestrel finds no HTTPS to want a certificate for.</summary>
+    /// <summary>A service that serves HTTPS told to serve HTTP for this run, there being no certificate to give it
+    /// (<see cref="DevelopmentCertificate.OverHttp"/>).</summary>
     private static void OverHttp(ComposeService service, JsonObject environment)
     {
-        if (service.Environment.GetValueOrDefault("ASPNETCORE_URLS") is { } urls && urls.Contains("https:", StringComparison.OrdinalIgnoreCase))
+        foreach ((string name, string value) in DevelopmentCertificate.OverHttp(service.Environment))
         {
-            environment["ASPNETCORE_URLS"] = urls.Replace("https:", "http:", StringComparison.OrdinalIgnoreCase);
-        }
-        if (service.Environment.GetValueOrDefault("ASPNETCORE_HTTPS_PORTS") is { Length: > 0 } https)
-        {
-            string http = service.Environment.GetValueOrDefault("ASPNETCORE_HTTP_PORTS") ?? string.Empty;
-            environment["ASPNETCORE_HTTP_PORTS"] = string.Join(';', (http + ";" + https).Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct());
-            environment["ASPNETCORE_HTTPS_PORTS"] = string.Empty;
+            environment[name] = value;
         }
     }
 
@@ -771,6 +764,10 @@ public static class ContainerPlans
 
     /// <summary>The folder's own place in the state, where its override files live.</summary>
     private static string StateFolderOf(string stateFolder, string folder) => State.ProjectState.FolderOf(stateFolder, folder);
+
+    /// <summary>A folder's place in the state for its container runs (<see cref="ContainerPlan.State"/>), where the development
+    /// certificate is exported, and which a certificate made since lets go of.</summary>
+    public static string StateOf(string stateFolder, string folder) => Path.Combine(StateFolderOf(stateFolder, folder), "containers");
 }
 
 /// <summary>Compose would not read a configuration's files: what it said, for Problems' Containers tab.</summary>
@@ -813,158 +810,6 @@ internal static class OwnFiles
             File.SetUnixFileMode(path, OwnersFile);
         }
     }
-}
-
-/// <summary>The .NET command line <c>dotnet dev-certs</c> runs through: the machine's (<see cref="DevelopmentCertificate.Machine"/>),
-/// or a test's stand-in, which never trusts a certificate on the machine it runs on.</summary>
-public delegate ProcessStartInfo DotnetWords(IReadOnlyList<string> words, string folder);
-
-/// <summary>ASP.NET Core's development certificate for containers that serve HTTPS: how it stands on this machine
-/// (<c>dotnet dev-certs https --check --trust</c>), made and trusted when the person asks (<c>--trust</c>, which the system
-/// may ask about too), and exported once into the state (<c>-ep … -p …</c>), with a password of its own kept beside it and
-/// never written to a console; each through ChildProcesses, bounded, saying why when it does not come.</summary>
-public static partial class DevelopmentCertificate
-{
-    public sealed record Exported(string Folder, string File, string Password);
-
-    /// <summary>How this machine's development certificate stands.</summary>
-    public enum Standing
-    {
-        Trusted,
-        NotTrusted,
-        Missing,
-        Unknown,
-    }
-
-    /// <summary>The machine's own dotnet.</summary>
-    public static readonly DotnetWords Machine = (words, folder) => ChildProcesses.DotnetCommand(words, folder);
-
-    private static readonly SemaphoreSlim Gate = new(1, 1);
-
-    /// <summary>How long the export or the trust may take: one waiting on the system's certificate store (a locked keychain
-    /// asking for its password) is said rather than the run waiting for good.</summary>
-    public static readonly TimeSpan ExportLimit = TimeSpan.FromSeconds(60);
-
-    /// <summary>How long the check may take, which asks nothing of the person.</summary>
-    public static readonly TimeSpan CheckLimit = TimeSpan.FromSeconds(30);
-
-    /// <summary>Whether a certificate is there and trusted, as dev-certs answers (6: none valid, 7: not trusted), what it said,
-    /// and the thumbprint of the certificate it found, when it named one. Stopped, it throws <see cref="OperationCanceledException"/>.</summary>
-    public static async Task<(Standing Standing, string Said, string? Thumbprint)> CheckAsync(DotnetWords dotnet, string folder, CancellationToken cancel)
-    {
-        try
-        {
-            ChildResult answered = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--check", "--trust"], folder), limit: CheckLimit, cancel: cancel,
-                answers: [6, 7]);
-            string? thumbprint = answered.ExitCode is 0 or 7 && Thumbprint().Match(answered.Output) is { Success: true } found ? found.Value.ToUpperInvariant() : null;
-            return (answered.ExitCode switch { 0 => Standing.Trusted, 6 => Standing.Missing, 7 => Standing.NotTrusted, _ => Standing.Unknown }, Said(answered), thumbprint);
-        }
-        catch (TimeoutException)
-        {
-            return (Standing.Unknown, $"dotnet dev-certs https --check did not answer within {CheckLimit.TotalSeconds:0} s", null);
-        }
-        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            return (Standing.Unknown, failed.Message, null);
-        }
-    }
-
-    /// <summary>A certificate's SHA-1 thumbprint, as dev-certs names the one it found ("A valid certificate was found: …").</summary>
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b[0-9A-Fa-f]{40}\b")]
-    private static partial System.Text.RegularExpressions.Regex Thumbprint();
-
-    /// <summary>Makes the certificate if there is none and trusts it, as <c>dotnet dev-certs https --trust</c> does (the
-    /// system may ask the person too), the copy exported before let go: null once trusted, else why not.</summary>
-    public static async Task<string?> TrustAsync(DotnetWords dotnet, string folder, string state, CancellationToken cancel)
-    {
-        try
-        {
-            ChildResult trusted = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--trust"], folder), limit: ExportLimit, cancel: cancel);
-            Forget(state);
-            return trusted.Succeeded ? null : $"dotnet dev-certs https --trust ended with exit code {trusted.ExitCode}: {Said(trusted)}";
-        }
-        catch (TimeoutException)
-        {
-            return $"dotnet dev-certs https --trust did not end within {ExportLimit.TotalSeconds:0} s (the system's certificate store may be asking for a password)";
-        }
-        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
-        {
-            return failed.Message;
-        }
-    }
-
-    /// <summary>The certificate exported into the state (once for the certificate dev-certs has, <paramref name="thumbprint"/>
-    /// as its check named it: again once that is another, or after <see cref="TrustAsync"/>), or why it is not. Stopped, it
-    /// throws <see cref="OperationCanceledException"/>.</summary>
-    public static async Task<(Exported? Certificate, string? Problem)> ExportAsync(DotnetWords dotnet, string state, string? thumbprint, CancellationToken cancel)
-    {
-        string folder = Path.Combine(state, "https");
-        string file = Path.Combine(folder, "aspnetapp.pfx");
-        string kept = Path.Combine(folder, "password");
-        // The thumbprint of the certificate exported, as the check named it then: a copy of another the check no longer finds
-        // (made again since, or expired and replaced) would be refused by every browser that trusts the new one.
-        string exportedOf = Path.Combine(folder, "thumbprint");
-        await Gate.WaitAsync(cancel);
-        try
-        {
-            OwnFiles.Folder(folder);
-            if (File.Exists(file) && File.Exists(kept)
-                && (thumbprint is null || File.Exists(exportedOf) && string.Equals((await File.ReadAllTextAsync(exportedOf, cancel)).Trim(), thumbprint, StringComparison.OrdinalIgnoreCase)))
-            {
-                return (new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim()), null);
-            }
-            Forget(state);
-            string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-            ChildResult exported = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
-            if (!exported.Succeeded || !File.Exists(file))
-            {
-                return (null, $"dotnet dev-certs https -ep ended with exit code {exported.ExitCode}: {Said(exported)}");
-            }
-            // Whatever mode dev-certs gave the copy, in the folder no one else enters.
-            OwnFiles.Keep(file);
-            OwnFiles.Write(kept, password);
-            if (thumbprint is not null)
-            {
-                OwnFiles.Write(exportedOf, thumbprint);
-            }
-            return (new Exported(folder, file, password), null);
-        }
-        catch (TimeoutException)
-        {
-            return (null, $"dotnet dev-certs https -ep did not end within {ExportLimit.TotalSeconds:0} s (the system's certificate store may be asking for a password)");
-        }
-        catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or FileNotFoundException
-            or InvalidOperationException)
-        {
-            return (null, failed.Message);
-        }
-        finally
-        {
-            Gate.Release();
-        }
-    }
-
-    /// <summary>Lets go of the copy exported before, which a certificate made since no longer matches.</summary>
-    private static void Forget(string state)
-    {
-        try
-        {
-            foreach (string kept in (string[])["aspnetapp.pfx", "thumbprint"])
-            {
-                if (Path.Combine(state, "https", kept) is var file && File.Exists(file))
-                {
-                    File.Delete(file);
-                }
-            }
-        }
-        catch (Exception kept) when (kept is IOException or UnauthorizedAccessException)
-        {
-            // An export kept stands until the next one replaces it.
-        }
-    }
-
-    private static string Said(ChildResult result) =>
-        string.Join(' ', ((string[])[result.Error.Trim(), result.Output.Trim()]).Where(s => s.Length > 0)) is { Length: > 0 } said ? said : "it said nothing";
 }
 
 /// <summary>A .NET service of a container run in its container, as the debugger and the profiler reach it: the container,

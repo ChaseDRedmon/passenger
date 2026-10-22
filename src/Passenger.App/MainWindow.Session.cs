@@ -54,7 +54,7 @@ public partial class MainWindow
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, Say, ShowInTerminal,
-        OpenBrowserOnceListening, () => StateFolder, work, CheckAspireReadinessAsync)
+        OpenBrowserOnceListening, () => StateFolder, work, ShowAspireEngineAsync)
     {
         Reveal = project => containersView?.Reveal(project),
         Tools = () => ToolsSource,

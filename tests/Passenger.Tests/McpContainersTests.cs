@@ -109,7 +109,7 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
         (string shop, string project) = ContainerRunsTests.Shop("agentcerts");
         File.WriteAllText(Path.Combine(shop, "compose.yaml"), File.ReadAllText(Path.Combine(shop, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
-        MainWindow window = ContainerRunsTests.Open(shop, (words, at) => global::Passenger.Core.ChildProcesses.Command("/bin/sh", ["-c", ContainerRunsTests.DevCerts, "dev-certs", standIn, .. words], at));
+        MainWindow window = ContainerRunsTests.Open(shop, DevCerts.In(standIn));
         global::Passenger.App.Run.RunConfiguration web = window.Configurations.First(c => c.Kind == global::Passenger.App.Run.RunKind.Compose).Copied() with
         {
             Name = "Web over HTTPS",

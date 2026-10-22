@@ -88,18 +88,6 @@ public partial class MainWindow
             {
                 return null;
             }
-            if (endpoint.Scheme == "https")
-            {
-                RunConfiguration actual = app.Configuration with
-                {
-                    LinkedAppHosts = [],
-                    Environment = new Dictionary<string, string> { ["ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL"] = endpoint.AbsoluteUri },
-                };
-                if (await CheckAspireReadinessAsync(actual, cancel) is { } notReady)
-                {
-                    throw new LaunchException(notReady);
-                }
-            }
             AspireInteractions connection = await AspireInteractions.StartAsync(endpoint, app.ResourceServiceKey, this, app.Configuration.Name, cancel);
             if (connection.Failure is { } failure)
             {
@@ -557,7 +545,10 @@ public partial class MainWindow
     private static bool AspireFailure(Exception error) => error is IOException or InvalidDataException or InvalidOperationException or TimeoutException
         or OperationCanceledException or System.ComponentModel.Win32Exception;
 
-    private async Task<string?> CheckAspireReadinessAsync(RunConfiguration configuration, CancellationToken cancel)
+    /// <summary>What an Aspire start asks before its AppHost starts besides its certificate (which is every run's,
+    /// <see cref="BuildRunController"/>'s): the container engine's state, said in the Aspire window. Null unless the folder
+    /// was closed meanwhile.</summary>
+    private async Task<string?> ShowAspireEngineAsync(RunConfiguration configuration, CancellationToken cancel)
     {
         ProjectSession current = session;
         Containers.EngineState engine = await Engine.StateAsync(cancel: cancel);
@@ -568,32 +559,6 @@ public partial class MainWindow
             return "The solution was closed";
         }
         Bottom.AspirePane.SetContainerStatus(engineStatus);
-        IEnumerable<RunConfiguration> configurations = new[] { configuration }.Concat(configuration.LinkedAppHosts
-            .Select(path => current.Configurations.All.FirstOrDefault(candidate => candidate.Aspire && PathNames.Same(candidate.Project, path)))
-            .OfType<RunConfiguration>()).Select(candidate => Path.GetExtension(candidate.Project).Equals(".cs", StringComparison.OrdinalIgnoreCase)
-                ? AspireController.ReadFileProfile(candidate, Path.GetDirectoryName(candidate.Project)!) : candidate);
-        bool https = configurations.SelectMany(candidate => candidate.Environment)
-            .Where(variable => variable.Key is "ASPNETCORE_URLS" or "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL" or "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL")
-            .SelectMany(variable => variable.Value.Split(';')).Any(url => Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)
-                && uri.Scheme == "https" && (uri.IsLoopback || uri.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)));
-        if (!https)
-        {
-            return null;
-        }
-        ChildResult check = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "--check", "--trust"], current.Folder),
-            limit: TimeSpan.FromSeconds(30), cancel: cancel);
-        if (check.Succeeded)
-        {
-            return null;
-        }
-        if (session != current || current.IsEnded || !await Confirm("Aspire HTTPS Certificate",
-            "Aspire needs a trusted .NET HTTPS development certificate. Create and trust it for this user? The operating system may ask for confirmation.", "Create and Trust"))
-        {
-            return "Aspire HTTPS requires a trusted development certificate. Run dotnet dev-certs https --trust, or select an HTTP profile.";
-        }
-        cancel.ThrowIfCancellationRequested();
-        ChildResult trust = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "--trust"], current.Folder),
-            limit: TimeSpan.FromMinutes(2), cancel: cancel);
-        return trust.Succeeded ? null : "The HTTPS development certificate was not trusted. Run dotnet dev-certs https --trust and check its output.";
+        return null;
     }
 }
