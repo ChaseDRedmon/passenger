@@ -6,8 +6,9 @@ namespace Passenger.App.Aspire;
 /// <summary>The native distributed app view and its selected AppHost's own console.</summary>
 public sealed class AspirePane : DockPanel, IDisposable
 {
-    public AspirePane()
+    public AspirePane(AspireClient? client = null)
     {
+        View = new AspireView(client);
         Children.Add(View);
         PropertyChanged += (_, change) =>
         {
@@ -18,7 +19,7 @@ public sealed class AspirePane : DockPanel, IDisposable
         };
     }
 
-    public AspireView View { get; } = new();
+    public AspireView View { get; }
 
     public void SetConsole(OutputView? output) => View.SetAppHostConsole(output);
     public void SetContainerStatus(string text) => View.SetContainerStatus(text);

@@ -256,7 +256,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         int webId = await Processes.WrittenIdAsync(webPid, "the real frontend PID");
         Assert.Equal(hostId, app.GetProperty("processId").GetInt32());
         Assert.All(new[] { hostId, apiId, webId }, id => Assert.True(Processes.IsRunning(id), $"The official starter process {id} never remained alive"));
-        string hostProject = Path.Combine(starter, AspireApp.Name + ".AppHost", AspireApp.Name + ".AppHost.csproj");
+        string hostProject = PathNames.Canonical(Path.Combine(starter, AspireApp.Name + ".AppHost", AspireApp.Name + ".AppHost.csproj"));
         JsonElement api = Assert.Single(app.GetProperty("resources").EnumerateArray(), resource => resource.GetProperty("displayName").GetString() == "apiservice"
             && resource.GetProperty("state").GetString() == "Running");
         string target = api.GetProperty("target").GetString()!;
