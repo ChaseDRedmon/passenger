@@ -469,6 +469,121 @@ public sealed partial class BuildRunController
         }
     }
 
+    /// <summary>A .NET service of the container run under way, by its name, or why there is none to act on.</summary>
+    public (DotnetService? Service, string? WhyNot) ServiceOfRun(string? name)
+    {
+        if (Containers is not { } run || !IsRunning)
+        {
+            return (null, "No container run is under way: Run, Debug or Profile a container configuration first");
+        }
+        if (name is null || run.Plan.Dotnet.FirstOrDefault(d => d.Service == name) is not { } service)
+        {
+            return (null, name is null ? "No .NET service of the container run is chosen" : $"{name} is not a .NET service of {run.Plan.Name}");
+        }
+        return service.Starts ? (service, null) : (null, $"{run.Plan.Name} does not start {name}");
+    }
+
+    /// <summary>Debug of one .NET service of the container run under way, the others left as they run: its session ended,
+    /// its container made again held at its start, and a session attached in a Debug tab of its own, so its startup stops at
+    /// its breakpoints; kept for the run's restarts and a Rerun until chosen otherwise. Null once attached, else why not.</summary>
+    public Task<string?> DebugServiceAsync(string name) => OnServiceAsync(name, AppActions.ServiceDebug, $"Restarting {name} to debug it…", async (run, service, work) =>
+    {
+        Choose(run, name, debug: true);
+        run.AttachedRunning.Remove(name);
+        await run.HoldAsync(name, ContainerStart.Debug, work.Stopping);
+        parts.Dock.Show("debug");
+        parts.Views.Debug.ShowTab(console: true);
+        return Done(await RestartServicesAsync(run, [service], work, "to debug it from its start"),
+            $"Debugging {name} of {run.Plan.Name} from its start; the rest run on as they were");
+    });
+
+    /// <summary>Attach to one .NET service of the container run as it runs, no restart: its startup has run already, which is
+    /// said (Debug restarts it held to stop there). A restart attaches to it again. Null once attached, else why not.</summary>
+    public Task<string?> AttachServiceAsync(string name) => OnServiceAsync(name, AppActions.ServiceAttach, $"Attaching the debugger to {name}…", async (run, service, work) =>
+    {
+        await EndSessionsAsync(run, [service]);
+        run.AttachedRunning.Add(name);
+        parts.Dock.Show("debug");
+        List<string> notes = [];
+        string? refused = await AttachAsync(run, service, Task.CompletedTask, notes, work.Stopping, ContainerStart.Debug);
+        if (refused is not null || session.Debug.SessionNamed(name) is not { State: not Debugging.DebugState.Ended })
+        {
+            run.AttachedRunning.Remove(name);
+            return Said(refused ?? (notes.Count > 0 ? string.Join("; ", notes) : $"{name} could not be attached to"));
+        }
+        return Done(null, $"Debugging {name} of {run.Plan.Name} as it runs: its startup has run already, which Debug catches by restarting it held"
+            + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty));
+    });
+
+    /// <summary>Run without debugger of one .NET service of the container run: its session let go (detached, not restarted),
+    /// the program running on as it is; held at its start, its next restart makes it anew unheld. Kept as Debug's choice is.</summary>
+    public Task<string?> RunServiceAsync(string name) => OnServiceAsync(name, AppActions.ServiceRun, $"Letting go of {name}…", async (run, service, work) =>
+    {
+        Choose(run, name, debug: false);
+        run.AttachedRunning.Remove(name);
+        await run.HoldAsync(name, null, work.Stopping);
+        await session.Debug.DetachAsync(name);
+        return Done(null, $"{name} of {run.Plan.Name} runs on without the debugger, not restarted; its next restart starts it unheld");
+    });
+
+    /// <summary>Restart of one .NET service from the Containers window or an agent, through the run: its session ended
+    /// first, restarted (held again where it is debugged), and attached to again. Null once done, else why not.</summary>
+    public Task<string?> RestartServiceAsync(string name) => OnServiceAsync(name, AppActions.ContainerRestart, $"Restarting {name}…", async (run, service, work) =>
+        Done(await RestartServicesAsync(run, [service], work, "restarted from the Containers window"), $"{run.Plan.Name}: restarted {name}"));
+
+    /// <summary>Ends what reaches one .NET service of the container run from here (its session, the profiler's recording),
+    /// before something takes its container from under it (the Containers window's Stop or Remove).</summary>
+    public Task EndServiceSessionsAsync(string name) =>
+        Containers is { } run && run.Plan.Dotnet.FirstOrDefault(d => d.Service == name) is { } service ? EndSessionsAsync(run, [service]) : Task.CompletedTask;
+
+    /// <summary>Says how a service's action ended (what failed, else <paramref name="done"/>), and gives back what failed.</summary>
+    private string? Done(string? failed, string done)
+    {
+        parts.Say(failed ?? done);
+        return failed;
+    }
+
+    /// <summary>What a person chose for a service of the run, kept for its configuration.</summary>
+    private void Choose(ContainerRun run, string service, bool debug)
+    {
+        if (!chosenDebugged.TryGetValue(run.Plan.Name, out Dictionary<string, bool>? choices))
+        {
+            chosenDebugged[run.Plan.Name] = choices = new Dictionary<string, bool>(StringComparer.Ordinal);
+        }
+        choices[service] = debug;
+    }
+
+    /// <summary>One service's action under its own <see cref="Working"/>, Stop ending it: refused saying why when the run
+    /// has no such service, or the action is under way.</summary>
+    private async Task<string?> OnServiceAsync(string name, string action, string stage, Func<ContainerRun, DotnetService, Working, Task<string?>> act)
+    {
+        UiThread.Check();
+        if (ServiceOfRun(name) is not ({ } service, null) || Containers is not { } run)
+        {
+            return Said(ServiceOfRun(name).WhyNot!);
+        }
+        if (parts.Work.Begin(action, stage) is not { } work)
+        {
+            return Said(ActionWork.Busy(parts.Work.Of(action)!));
+        }
+        using (work)
+        {
+            using IDisposable held = BackgroundWork.Scope();
+            try
+            {
+                return await act(run, service, work);
+            }
+            catch (OperationCanceledException)
+            {
+                return Said($"{stage.TrimEnd('…')} was stopped");
+            }
+            catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or ContainerToolsException or ContainerCommandException or TimeoutException)
+            {
+                return Said($"{stage.TrimEnd('…')} failed: {failed.Message}");
+            }
+        }
+    }
+
     /// <summary>Ends what reaches services of the container run from here: their debugging sessions (in a tab or for Hot
     /// Reload) and the profiler's recording, its snapshot read; done once they have.</summary>
     private Task EndSessionsAsync(ContainerRun run, IEnumerable<DotnetService> services)

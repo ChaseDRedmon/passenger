@@ -236,14 +236,14 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
     }
 
     /// <summary>A service's Debug tab, once its session has begun.</summary>
-    private static DebugTab Tab(MainWindow window, string service)
+    internal static DebugTab Tab(MainWindow window, string service)
     {
         Ui.WaitFor(() => window.Debugger.Tabs.Any(t => t.Name == service && t.Session is not null), $"{service}'s Debug tab");
         return window.Debugger.Tabs.Single(t => t.Name == service);
     }
 
     /// <summary>Waits for a tab's program to stop at a file's line (from zero), failing with where its frames say it is.</summary>
-    private static void StoppedAt(MainWindow window, DebugTab tab, string path, int line, string what)
+    internal static void StoppedAt(MainWindow window, DebugTab tab, string path, int line, string what)
     {
         (string? Path, int Line)? at = null;
         try
@@ -270,7 +270,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
         Assert.True(at is { } stop && stop.Path == path && stop.Line == line, $"{what}: it stopped at {at?.Path}:{at?.Line}");
     }
 
-    private static string Evaluate(DebugSession session, string expression)
+    internal static string Evaluate(DebugSession session, string expression)
     {
         Task<IReadOnlyList<Passenger.Dap.DapStackFrame>> frames = session.StackTraceAsync(session.StoppedThread ?? 0);
         Ui.WaitFor(() => frames.IsCompleted, "the stop's frames");
@@ -280,7 +280,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
     }
 
     /// <summary>Resumes a tab's program as Resume does with its tab chosen, waiting for it to run.</summary>
-    private static void Resume(MainWindow window, DebugTab tab)
+    internal static void Resume(MainWindow window, DebugTab tab)
     {
         Chosen(window, tab);
         Ui.Run(window, AppActions.Resume);
@@ -295,7 +295,7 @@ public sealed class ContainerRunDebuggingTests(ContainerRunDebuggingTests.Tools 
 
     /// <summary>A request to a port, answered once the program goes on; asked again while nothing listens there yet (the
     /// program let go of a moment ago).</summary>
-    private static Task<string> Get(int port) => Task.Run(async () =>
+    internal static Task<string> Get(int port) => Task.Run(async () =>
     {
         Uri address = new($"http://localhost:{port.ToString(CultureInfo.InvariantCulture)}/");
         DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(1).Scaled();

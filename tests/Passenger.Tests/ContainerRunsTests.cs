@@ -323,7 +323,7 @@ public sealed class ContainerRunsTests
         window.MouseUp(at, Avalonia.Input.MouseButton.Left);
         Ui.Settle();
         Avalonia.Controls.MenuItem[] items = [.. Assert.IsType<Avalonia.Controls.MenuFlyout>(window.RunMarkMenu).Items.OfType<Avalonia.Controls.MenuItem>()];
-        Assert.Equal(["Run 'cache'", "Debug 'cache'"], items.Select(i => (string?)i.Header));
+        Assert.Equal(["Run 'cache'", "Debug 'cache'", "Profile 'cache'"], items.Select(i => (string?)i.Header));
         Assert.True(items[1].IsEnabled, "Debug of a service was not offered");
         try
         {

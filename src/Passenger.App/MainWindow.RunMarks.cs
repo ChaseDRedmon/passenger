@@ -136,7 +136,8 @@ public partial class MainWindow
     }
 
     /// <summary>The run icon's menu: Run of each configuration that runs the line (one service of a Compose
-    /// configuration, or a Dockerfile's), and Debug of it.</summary>
+    /// configuration, or a Dockerfile's), Debug and Profile of it; for a .NET service of the container run under way, its
+    /// actions on that run instead (Debug, Attach, Run without Debugger, Profile), which leave the run up.</summary>
     private void ShowRunMarkMenu(CodeEditor editor, OpenDocument document, int line)
     {
         RunTarget[] here = [.. RunTargets(document).Where(t => t.Line == line)];
@@ -145,16 +146,35 @@ public partial class MainWindow
             return;
         }
         MenuFlyout menu = new();
+        HashSet<string> joined = new(StringComparer.Ordinal);
         foreach (RunTarget target in here)
         {
             string what = target.Service ?? target.Configuration.Name;
+            if (target.Service is { } service && InRunNow(document.Path, service))
+            {
+                if (joined.Add(service))
+                {
+                    foreach ((string id, string header) in (ReadOnlySpan<(string, string)>)[(AppActions.ServiceDebug, $"Debug '{service}'"),
+                        (AppActions.ServiceAttach, $"Attach to '{service}'"), (AppActions.ServiceRun, $"Run '{service}' without Debugger"),
+                        (AppActions.ServiceProfile, $"Profile '{service}'")])
+                    {
+                        MenuItem item = new() { Header = header };
+                        item.Click += (_, _) => _ = ServiceActionAsync(id, service);
+                        menu.Items.Add(item);
+                    }
+                }
+                continue;
+            }
             string from = here.Length > 1 && target.Service is not null ? $" ({target.Configuration.Name})" : string.Empty;
             MenuItem run = new() { Header = $"Run '{what}'{from}" };
             run.Click += (_, _) => RunTarget(target);
             MenuItem debug = new() { Header = $"Debug '{what}'{from}" };
             debug.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Debug);
+            MenuItem profile = new() { Header = $"Profile '{what}'{from}" };
+            profile.Click += (_, _) => RunTarget(target, Containers.ContainerStart.Profile);
             menu.Items.Add(run);
             menu.Items.Add(debug);
+            menu.Items.Add(profile);
         }
         RunMarkMenu = menu;
         menu.Placement = PlacementMode.Pointer;
@@ -164,17 +184,26 @@ public partial class MainWindow
     /// <summary>The run icon's menu last opened, for a test to choose from.</summary>
     public MenuFlyout? RunMarkMenu { get; private set; }
 
-    /// <summary>Runs (or debugs) what a run icon stands beside: a Compose configuration's one service (with what it depends on,
-    /// the service alone debugged), or a Dockerfile configuration; what stopped it, if anything, is in the status bar.</summary>
-    public Task<string?> RunTarget(RunTarget target, Containers.ContainerStart how = Containers.ContainerStart.Run) => buildRun.RunContainersAsync(target.Service is { } service
-        ? target.Configuration.Copied() with
-        {
-            Name = $"{target.Configuration.Name}: {service}",
-            Services = [service],
-            LaunchService = service,
-            ServiceActions = new Dictionary<string, ServiceStart>(target.Configuration.ServiceActions) { [service] = ServiceStart.Debug },
-        }
-        : target.Configuration, how);
+    /// <summary>Runs (or debugs, or profiles) what a run icon stands beside: a Compose configuration's one service (with what
+    /// it depends on, the service alone debugged or profiled), or a Dockerfile configuration; what stopped it, if anything,
+    /// is in the status bar.</summary>
+    public Task<string?> RunTarget(RunTarget target, Containers.ContainerStart how = Containers.ContainerStart.Run)
+    {
+        RunConfiguration configuration = target.Service is { } service
+            ? target.Configuration.Copied() with
+            {
+                Name = $"{target.Configuration.Name}: {service}",
+                Services = [service],
+                LaunchService = service,
+                ServiceActions = new Dictionary<string, ServiceStart>(target.Configuration.ServiceActions) { [service] = ServiceStart.Debug },
+            }
+            : target.Configuration;
+        return how == Containers.ContainerStart.Profile ? ProfileAsync(configuration) : buildRun.RunContainersAsync(configuration, how);
+    }
+
+    /// <summary>Whether a compose file's service is a .NET service of the container run under way, which reads that file.</summary>
+    private bool InRunNow(string path, string service) =>
+        buildRun.Containers is { } run && run.Plan.Compose.Any(word => Core.PathNames.Same(word, path)) && buildRun.ServiceOfRun(service).Service is not null;
 
     [GeneratedRegex(@"^(?<key>[A-Za-z0-9_.-]+)\s*:")]
     private static partial Regex TopKey();

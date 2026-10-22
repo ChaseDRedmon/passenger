@@ -615,7 +615,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
   modifiable)`), and the run keeps what each service is held for (`ContainerRun.HeldFor`, `HoldAsync`) and which containers
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
-  no debugger to let it go.
+  no debugger to let it go. A .NET service of the run under way is acted on alone, the run left up (`MainWindow.ContainerServices.cs`,
+  `AppActions.Service*`, on the Containers window's service and container rows and the gutter's icon, whose menu joins a run
+  that reads its compose file, `InRunNow`): Debug (`DebugServiceAsync`: held from now and restarted, attached in a tab, its
+  startup stopping at breakpoints), Attach (`AttachServiceAsync`: as it runs, its startup said to have run;
+  `ContainerRun.AttachedRunning`, attached again after a restart), Run without Debugger (`RunServiceAsync`: detached, not
+  restarted, unheld from its next restart) and Profile (`ProfilerCommands.AttachServiceAsync`, Attach Profiler's path). Debug's
+  and Run without Debugger's choice is kept by configuration (`chosenDebugged`) for the run's restarts and a Rerun that
+  brings it up again. The window's Restart, Stop and Remove of such a service, and an agent's `container_action`, go through
+  the run (`MainWindow.ContainerActAsync`): its session and recording ended first, Restart attaching again as the run's restart
+  does (`RestartServiceAsync`).
   Edit Configurations' Compose page lists the services from Compose's model
   (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used

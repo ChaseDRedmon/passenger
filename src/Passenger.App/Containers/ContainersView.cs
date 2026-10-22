@@ -109,6 +109,14 @@ public sealed class ContainersView : DockPanel
             ListMenus.Item("Inspect", null, () => ActionRequested?.Invoke(this, AppActions.ContainerInspect)),
             ListMenus.Item("Pull", null, () => ActionRequested?.Invoke(this, AppActions.ContainerPull)),
             ListMenus.Item("Scale Service…", null, () => ActionRequested?.Invoke(this, AppActions.ContainerScale)),
+            // A .NET service of the container run under way, acted on as the run goes on (the window's actions say why not).
+            .. Chosen is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } ? (Control[])[
+                new Separator(),
+                ListMenus.Item("Debug Service", null, () => ActionRequested?.Invoke(this, AppActions.ServiceDebug)),
+                ListMenus.Item("Attach to Service", null, () => ActionRequested?.Invoke(this, AppActions.ServiceAttach)),
+                ListMenus.Item("Run Service without Debugger", null, () => ActionRequested?.Invoke(this, AppActions.ServiceRun)),
+                ListMenus.Item("Profile Service", null, () => ActionRequested?.Invoke(this, AppActions.ServiceProfile)),
+            ] : [],
             new Separator(),
             ListMenus.Item("Remove", null, () => ActionRequested?.Invoke(this, AppActions.ContainerRemove)),
         ]);

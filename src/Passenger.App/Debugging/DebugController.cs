@@ -850,6 +850,16 @@ public sealed class DebugController : IDisposable
         return null;
     }
 
+    /// <summary>Lets go of the program a name gives (a container run's service) that the debugger attached to, in a tab or
+    /// quietly for Hot Reload, which runs on; done once it has.</summary>
+    public Task DetachAsync(string name)
+    {
+        UiThread.Check();
+        return view.Sessions.FirstOrDefault(t => t.Name == name && t.IsLive)?.Session is { Attached: true } attached ? attached.DetachAsync()
+            : running.FirstOrDefault(r => r.Name == name) is { } run ? run.Session.DetachAsync()
+            : Task.CompletedTask;
+    }
+
     /// <summary>Why Detach cannot run now: nothing is being debugged, or the debugger started the program, which ends with
     /// its session (its input and output are the adapter's).</summary>
     private string? WhyNotDetach() => NotLive()

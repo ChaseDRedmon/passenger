@@ -46,7 +46,7 @@ public partial class MainWindow
             (AppActions.ContainerRemove, "Remove", "remove"),
             (AppActions.ContainerPull, "Pull", "pull")])
         {
-            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(view.Chosen!) : view.ActAsync(id, action, view.Chosen!))
+            actions!.Add(new IdeAction(id, title, "Containers", context => _ = id == AppActions.ContainerRemove ? RemoveAsync(view.Chosen!) : ContainerActAsync(id, action, view.Chosen!))
             {
                 WhyNot = _ => ContainerCommands.For(action, view.Chosen) is { Words: null } refused ? refused.WhyNot ?? $"{view.Chosen?.Name} cannot {action}" : null,
                 Works = id,
@@ -68,6 +68,7 @@ public partial class MainWindow
             WhyNot = _ => view.Chosen is { Kind: not ContainerRowKind.Group and not ContainerRowKind.Project } ? null : "No container, image, volume or network is chosen in the Containers window",
         });
         actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(view.Chosen!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
+        AddServiceActions(view);
     }
 
     /// <summary>The window's folder opened: when it holds a Compose file or a Dockerfile, the engine is asked once, off the
@@ -194,7 +195,7 @@ public partial class MainWindow
                 return "Not removed";
             }
         }
-        return await containersView!.ActAsync(AppActions.ContainerRemove, "remove", row);
+        return await ContainerActAsync(AppActions.ContainerRemove, "remove", row);
     }
 
     /// <summary>The question Prune or a volume's Remove asked last, for the tests.</summary>

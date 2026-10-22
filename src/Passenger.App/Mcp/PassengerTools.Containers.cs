@@ -87,7 +87,7 @@ public sealed partial class PassengerTools
             _ => AppActions.ContainerRemove,
         };
         AgentCall.Say(ContainerCommands.Stage(action, row));
-        return await window.ContainersWindow.ActAsync(id, action, row) is { } problem
+        return await window.ContainerActAsync(id, action, row) is { } problem
             ? throw new InvalidOperationException($"{action} {row.Name} failed: {problem}")
             : $"{row.Name}: {action} done";
     });
