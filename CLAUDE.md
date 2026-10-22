@@ -547,8 +547,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   again, or has no Compose v2, is `ContainersTests.StandInEngine`'s, a shell script (so skipped on Windows) whose `state`
   file says up or down; stand-in container tools are a script copied to `ContainerTools.Copied` in a busybox container. `DockerFilesTests` check the
   Adds' files without an engine, and where a Linux one runs also have Compose read the compose.yaml written and build the
-  Dockerfile Add Docker Support writes for a console app (on the SDK and runtime images; its image labelled with the
-  run's label and removed).
+  Dockerfile Add Docker Support writes for a console app, only where the engine already holds the SDK and runtime images
+  (no test pulls the SDK's 800 MB; it skips saying which to pull), its image labelled with the run's label and removed.
   Container run configurations (#343): a `RunConfiguration`'s `Kind` (Project, Compose, Dockerfile, SdkContainer), made as
   the folder opens by `ContainerConfigurations` (compose files beside the folder, the solution or a project, overrides with
   them; a .dcproj's properties and DockerCompose profiles, read as XML; a runnable project's Dockerfile; a project file

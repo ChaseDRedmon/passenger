@@ -447,41 +447,58 @@ public sealed class DockerFilesTests : IClassFixture<DockerFilesTests.Shop>
 
     /// <summary>A project at its build's context's root, beside its solution or opened on its own, is copied into the
     /// build's work folder (./), and its NuGet.config by the name the disk gives it, since the image's file system tells
-    /// letter case apart; where a Linux engine runs, the image builds from what was written.</summary>
+    /// letter case apart.</summary>
     [AvaloniaFact]
-    public void Add_docker_support_on_a_project_at_its_contexts_root_copies_it_and_its_nuget_config_as_named_and_the_image_builds()
+    public void Add_docker_support_on_a_project_at_its_contexts_root_copies_it_and_its_nuget_config_as_named_into_the_work_folder()
     {
-        string beside = Tiny("docker-beside-", solution: true);
-        string alone = Tiny("docker-alone-", solution: false);
-        foreach ((string folder, string opened) in ((string Folder, string Opened)[])[(beside, "Tiny.slnx"), (alone, "Tiny.csproj")])
+        foreach (bool solution in (bool[])[true, false])
         {
-            MainWindow window = OpenOwn(Path.Combine(folder, opened));
-            try
-            {
-                Ui.WaitFor(() => window.Session.Workspace?.Projects is [{ IsEvaluated: true }], "the project evaluated", TimeSpan.FromMinutes(2));
-                Assert.Null(window.AddDockerSupport(Path.Combine(PathNames.Canonical(folder), "Tiny.csproj"), DockerSupportKind.Dockerfile));
-                string written = File.ReadAllText(Path.Combine(folder, "Dockerfile"));
-                Assert.True(written.Contains("COPY [\"NuGet.config\", \"./\"]\nCOPY [\"Tiny.csproj\", \"./\"]\nRUN dotnet restore \"./Tiny.csproj\"\n", StringComparison.Ordinal),
-                    $"Opened as {opened}, the project at the context's root was not copied into the work folder as it is named:\n{written}");
-            }
-            finally
-            {
-                window.Close();
-            }
+            string written = File.ReadAllText(DockerSupportAtRoot(solution));
+            Assert.True(written.Contains("COPY [\"NuGet.config\", \"./\"]\nCOPY [\"Tiny.csproj\", \"./\"]\nRUN dotnet restore \"./Tiny.csproj\"\n", StringComparison.Ordinal),
+                $"Opened as {(solution ? "Tiny.slnx" : "Tiny.csproj")}, the project at the context's root was not copied into the work folder as it is named:\n{written}");
         }
-        if (Docker.WhyNot is null)
+    }
+
+    /// <summary>Where a Linux engine runs and holds the images it builds on (never pulled by a test: the SDK's is about
+    /// 800 MB, which a fresh runner would fetch each run), the Dockerfile Add Docker Support writes for a project at its
+    /// context's root builds.</summary>
+    [AvaloniaFact]
+    public void Add_docker_supports_dockerfile_for_a_project_at_its_contexts_root_builds()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string[] missing = [.. ((string[])["mcr.microsoft.com/dotnet/sdk:10.0", "mcr.microsoft.com/dotnet/runtime:10.0"])
+            .Where(i => !Task.Run(() => Passenger.App.Containers.ContainerEngine.Shared.RunAsync(["image", "inspect", i], TimeSpan.FromSeconds(30).Scaled())).GetAwaiter().GetResult().Succeeded)];
+        Assert.SkipWhen(missing.Length > 0, $"The engine lacks the images the Dockerfile builds on, which no test pulls: pull {string.Join(" and ", missing)} to run it");
+        string dockerfile = DockerSupportAtRoot(solution: false);
+        string folder = Path.GetDirectoryName(dockerfile)!;
+        string image = $"ptest{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}tiny";
+        Passenger.Core.ChildResult built = Task.Run(() => Passenger.App.Containers.ContainerEngine.Shared.RunAsync(
+            ["build", "--pull=false", "--label", Docker.RunLabel, "-t", image, "-f", dockerfile, folder], TimeSpan.FromMinutes(10).Scaled())).GetAwaiter().GetResult();
+        try
         {
-            string image = $"ptest{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}tiny";
-            Passenger.Core.ChildResult built = Task.Run(() => Passenger.App.Containers.ContainerEngine.Shared.RunAsync(
-                ["build", "--label", Docker.RunLabel, "-t", image, "-f", Path.Combine(alone, "Dockerfile"), alone], TimeSpan.FromMinutes(10).Scaled())).GetAwaiter().GetResult();
-            try
-            {
-                Assert.True(built.Succeeded, $"The Dockerfile written did not build: {Passenger.App.Containers.ContainerEngine.Said(built)}");
-            }
-            finally
-            {
-                Docker.Ask(["rmi", "-f", image]);
-            }
+            Assert.True(built.Succeeded, $"The Dockerfile written did not build: {Passenger.App.Containers.ContainerEngine.Said(built)}");
+        }
+        finally
+        {
+            Docker.Ask(["rmi", "-f", image]);
+        }
+    }
+
+    /// <summary>Add Docker Support's Dockerfile for a console app at its folder's root, opened beside its solution or on
+    /// its own: the Dockerfile's path.</summary>
+    private static string DockerSupportAtRoot(bool solution)
+    {
+        string folder = Tiny(solution ? "docker-beside-" : "docker-alone-", solution);
+        MainWindow window = OpenOwn(Path.Combine(folder, solution ? "Tiny.slnx" : "Tiny.csproj"));
+        try
+        {
+            Ui.WaitFor(() => window.Session.Workspace?.Projects is [{ IsEvaluated: true }], "the project evaluated", TimeSpan.FromMinutes(2));
+            Assert.Null(window.AddDockerSupport(Path.Combine(PathNames.Canonical(folder), "Tiny.csproj"), DockerSupportKind.Dockerfile));
+            return Path.Combine(folder, "Dockerfile");
+        }
+        finally
+        {
+            window.Close();
         }
     }
 
