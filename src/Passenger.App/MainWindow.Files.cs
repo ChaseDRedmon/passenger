@@ -553,6 +553,7 @@ public partial class MainWindow
         Explorer.Refresh();
         // What a project's wildcards take in changed here: its evaluation follows at once, not when the watcher hears of it.
         session.Evaluate();
+        session.MSBuild.FilesCameOrWent();
         if (Folder is { } folder)
         {
             session.Index.Build(folder);

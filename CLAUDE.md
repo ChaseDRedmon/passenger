@@ -349,7 +349,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   design-time builds also run with `UseAppHost=false`, so a build's apphost is created and signed by the build alone) and `inspect` (one project evaluated for the code help
   in its MSBuild files, `Inspection.cs`: the open files' unsaved text fed to MSBuild in place of the disk's; properties
   with the places that set them, items, targets, imports, the SDK's frameworks and the evaluation's errors (a skipped
-  import as MSB4019), places by a file table, answered from its cache while the inputs hold), and `properties`
+  import as MSB4019), places by a file table, answered from its cache while the inputs and the folders its wildcards
+  walked hold, those stamped as `evaluate`'s are (`Evaluation.Walked` and `Folders`, several folders read at once: about
+  15 ms to stamp and 8 ms to check a project of 5,000 files in 361 folders, 50 ms and 25 ms for 20,000 in 1,111, within
+  the 400 ms typing pause)), and `properties`
   (`Properties.cs`: a few properties of one project evaluated afresh with the global properties given, which is how
   Publish reads a publish profile, the SDK importing it by PublishProfile). Off Windows a project
   that references a framework the SDK marks Windows-only and leaves EnableWindowsTargeting unset is loaded again with it
@@ -1416,7 +1419,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/MSBuild`: code help in project, .props and .targets files. `MSBuildService` is the session's
   (`ProjectSession.MSBuild`), one `MSBuildDocument` per open MSBuild file, evaluated through its project (itself, the
   workspace project whose evaluation imports it, a Directory.* file's nearest project, or the one Go to Declaration
-  came from) once typing pauses, on the text as typed. Completion reads the text as typed (`Passenger.Xaml`'s XmlTree)
+  came from) once typing pauses, on the text as typed, and again as a file comes into or goes from a folder that
+  evaluation's wildcards walked (`MSBuildInsight.Walked`: the folder watcher's `Structure` changes, and
+  `FilesCameOrWent` for what the IDE itself made, moved or deleted, a new file of which the watcher takes for a save).
+  Completion reads the text as typed (`Passenger.Xaml`'s XmlTree)
   with `MSBuildSchema` (dotnet/msbuild's Core and CommonTypes XSDs, embedded because the SDK lacks them) and the last
   evaluation that succeeded; package ids, versions and advisories come from the window's NuGet (`NuGetView.FeedAsync`,
   `VulnerabilitiesAsync`), and under CPM a new PackageReference takes no version while Directory.Packages.props gets

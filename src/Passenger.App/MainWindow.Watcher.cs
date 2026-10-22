@@ -69,7 +69,7 @@ public partial class MainWindow
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);
         session.Xaml.FilesChanged(changes.Paths.Concat(changes.Restored));
-        session.MSBuild.FilesChanged(changes.Paths);
+        session.MSBuild.FilesChanged(changes.Paths, changes.Structure);
         session.Web?.FilesChanged(changes.Paths);
         EndpointFilesChanged(changes);
         FollowOpenFiles(changes.Paths);

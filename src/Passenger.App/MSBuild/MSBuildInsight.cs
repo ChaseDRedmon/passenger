@@ -14,6 +14,7 @@ public sealed class MSBuildInsight
     private readonly Dictionary<string, InsightItemType> itemTypes;
     private readonly Dictionary<string, InsightTarget> targets;
     private readonly string[] paths;
+    private readonly HashSet<string> walked;
 
     public MSBuildInsight(ProjectInsight insight)
     {
@@ -23,6 +24,7 @@ public sealed class MSBuildInsight
         targets = insight.Targets.DistinctBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
         paths = [.. insight.Files.Select(f => f.Length == 0 ? f : PathNames.Canonical(f))];
         Project = PathNames.Canonical(insight.Project);
+        walked = new HashSet<string>(insight.Folders.Select(f => f.Path), StringComparer.FromComparison(PathNames.Comparison));
     }
 
     public ProjectInsight Raw { get; }
@@ -45,6 +47,10 @@ public sealed class MSBuildInsight
     public InsightTarget? Target(string name) => targets.GetValueOrDefault(name);
 
     public string Value(string name) => Property(name)?.Value ?? string.Empty;
+
+    /// <summary>Whether a file or folder come or gone may change what the evaluation's wildcards took in: it lies in a folder
+    /// they walked, or above the project (the folder watcher names the open folder when it lost track of what changed).</summary>
+    public bool Walked(string path) => Path.GetDirectoryName(path) is { } folder && walked.Contains(folder) || PathNames.IsUnder(Project, path);
 
     public MSBuildPlace Place(InsightPlace place) => new(place.File >= 0 && place.File < paths.Length ? paths[place.File] : string.Empty, place.Line, place.Column);
 

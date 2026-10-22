@@ -2,6 +2,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
+using Passenger.App.MSBuild;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -14,8 +15,9 @@ namespace Passenger.Tests;
 /// Directory.Packages.props complete their elements, properties and values, package ids and versions from the folder's
 /// feed (a stand-in on loopback, never nuget.org), paths and the names MSBuild's evaluation knows; the card over a name
 /// says its evaluated value and where it was set; Go to Declaration goes where a property, target or import is defined,
-/// the SDK's own targets read-only; the evaluation's errors and a vulnerable package are marked on their lines and listed in
-/// Problems; and a project file saved has the Solution view show what it says now.</summary>
+/// the SDK's own targets read-only, and an item's card counts the files its wildcards take in as they come and go on disk;
+/// the evaluation's errors and a vulnerable package are marked on their lines and listed in Problems; and a project file saved
+/// has the Solution view show what it says now.</summary>
 public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Shop>
 {
     private const string Advisory = "https://github.com/advisories/GHSA-pass-0000-test";
@@ -213,6 +215,38 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.Close();
     }
 
+    /// <summary>Core takes in its own folder's C# by the SDK's wildcard and Shared's by its own element, so a file come into or
+    /// gone from either folder, whether another program or the IDE made it, changes what the cards count with nothing typed.</summary>
+    [AvaloniaFact]
+    public void An_item_elements_card_counts_the_files_come_into_and_gone_from_the_folders_its_wildcards_walk_with_nothing_typed()
+    {
+        MainWindow window = Open("Core/Core.csproj");
+        OpenDocument document = window.EditorArea.Active!;
+        MSBuildDocument help = window.Session.MSBuild.For(document)!;
+        void Counted(int count, string why) => Ui.WaitFor(() => help.Insight?.ItemType("Compile")?.Count == count, why);
+        Assert.Equal("MSBuild item, 2 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+
+        File.WriteAllText(Path.Combine(folder, "Core", "Shelf.cs"), "class Shelf\n{\n}\n");
+        Counted(3, "the Compile items to count the file another program put in the project's folder");
+        Assert.Equal("MSBuild item, 3 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+        File.WriteAllText(Path.Combine(folder, "Shared", "Tag.cs"), "class Tag\n{\n}\n");
+        Counted(4, "the Compile items to count the file put in the folder outside the project that its element takes in");
+        Assert.Equal("MSBuild item, 4 Compile items in the project: ../Shared/Price.cs;../Shared/Tag.cs", ItemCard(window, "<Comp"));
+        File.Delete(Path.Combine(folder, "Core", "Shelf.cs"));
+        Counted(3, "the Compile items to stop counting the file deleted from the project's folder");
+        File.Delete(Path.Combine(folder, "Shared", "Tag.cs"));
+        Counted(2, "the Compile items to stop counting the file deleted from Shared");
+        Assert.Equal("MSBuild item, 2 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+
+        // A file the IDE makes itself, which the folder watcher takes for a save.
+        Assert.Null(window.CreateFile(Path.Combine(folder, "Core"), "Crate.cs", "class Crate\n{\n}\n"));
+        Counted(3, "the Compile items to count the file New File made");
+        window.OpenFile(Path.Combine(folder, "Core", "Core.csproj"));
+        Ui.Settle();
+        Assert.Equal("MSBuild item, 3 Compile items in the project: ../Shared/Price.cs", ItemCard(window, "<Comp"));
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void The_evaluations_errors_are_marked_on_their_lines_as_typed_and_listed_in_problems()
     {
@@ -407,6 +441,18 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
         window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Name == name)
             ?? throw new InvalidOperationException($"The Explorer shows no {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
 
+    /// <summary>The card over an item element: its item type's count, then the element's own items in the order of their names.</summary>
+    private static string ItemCard(MainWindow window, string at)
+    {
+        PlaceAfter(window.EditorArea.CodeEditor, at);
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the item element");
+        string[] lines = window.Assist.HoverText!.Split('\n');
+        Ui.Press(window, "ESCAPE");
+        string items = lines[0].Split(' ', 2) is [_, { } includes] ? string.Join(';', includes.Split(';').Order(StringComparer.Ordinal)) : lines[0];
+        return $"{lines.FirstOrDefault(l => l.StartsWith("MSBuild item", StringComparison.Ordinal))}: {items}";
+    }
+
     private static string CaretLine(CodeEditor editor) => XamlTests.CaretLine(editor);
 
     private static void PlaceAfter(CodeEditor editor, string text) => XamlTests.PlaceAfter(editor, text);
@@ -454,8 +500,9 @@ public sealed class ProjectFileHelpTests : IClassFixture<ProjectFileHelpTests.Sh
             Put("App/App.csproj", Project);
             Put("App/Shared.targets", "<Project>\n  <Target Name=\"Greet\" BeforeTargets=\"Build\" />\n</Project>\n");
             Put("App/Program.cs", "System.Console.WriteLine(\"Shop\");\n");
-            Put("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n");
+            Put("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <Compile Include=\"../Shared/*.cs\" />\n  </ItemGroup>\n</Project>\n");
             Put("Core/Store.cs", "class Store\n{\n}\n");
+            Put("Shared/Price.cs", "class Price\n{\n}\n");
             Prepare();
         }
 
