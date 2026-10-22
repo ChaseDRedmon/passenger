@@ -286,10 +286,11 @@ public abstract class NuGetFeedsFolder : IDisposable
             """.ReplaceLineEndings("\n");
     }
 
-    /// <summary>A window on the folder with the NuGet window open, its sources read from the folder's nuget.config.</summary>
+    /// <summary>A window on the folder with the NuGet window open, its sources read from the folder's nuget.config; without
+    /// the C# language server, which nothing here asks of, so none starts and restores the project from the feeds.</summary>
     protected MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();

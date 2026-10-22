@@ -365,7 +365,7 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.True(window.Actions.Context().ToolWindow?.Id == ToolWindowIds.Explorer, $"The Explorer did not take the keys on {row.Name}");
     }
 
-    private MainWindow Open() => Ui.OpenFolder(folder);
+    private MainWindow Open() => Ui.OpenFolder(folder, languageServer: false);
 
     /// <summary>Agrees to every question the window asks, keeping their titles in order.</summary>
     private static List<string> Answer(MainWindow window)

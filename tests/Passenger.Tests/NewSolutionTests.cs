@@ -449,10 +449,12 @@ public sealed class NewSolutionTests : IDisposable
             """);
     }
 
-    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen or the folder given.</summary>
+    /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen or the folder given;
+    /// without the C# language server, which nothing its tests check asks of (the builds and runs are dotnet's), as are the
+    /// windows a new solution opens in.</summary>
     private MainWindow Started(string? folder = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();

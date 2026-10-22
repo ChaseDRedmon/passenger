@@ -201,10 +201,11 @@ public sealed class PackagesTests : IDisposable
         .Select(line => line.Children.OfType<TextBlock>().Skip(1).FirstOrDefault()?.Text)
         .FirstOrDefault();
 
-    /// <summary>A window on a folder (the Lib project's unless given) with the NuGet window open on a feed.</summary>
+    /// <summary>A window on a folder (the Lib project's unless given) with the NuGet window open on a feed; without the C#
+    /// language server, which nothing here asks of, so none starts and restores the project.</summary>
     private MainWindow Open(IPackageFeed packages, string? opened = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(opened ?? Path.Combine(folder, "Lib"));
         Ui.Settle();
