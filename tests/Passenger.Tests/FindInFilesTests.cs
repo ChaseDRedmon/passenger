@@ -113,6 +113,35 @@ public sealed class FindInFilesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_UTF_16_file_is_found_and_replaced_in_as_the_editor_reads_it_and_a_binary_file_is_still_passed_over()
+    {
+        string little = Path.Combine(folder, "Wide.cs");
+        string big = Path.Combine(folder, "WideBig.cs");
+        File.WriteAllText(little, "class Wide\n{\n    int count;\n}\n", System.Text.Encoding.Unicode);
+        File.WriteAllText(big, "// a count kept big-endian\n", System.Text.Encoding.BigEndianUnicode);
+        File.WriteAllBytes(Path.Combine(folder, "Blob.bin"), [.. System.Text.Encoding.ASCII.GetBytes("count"), 0, 1, 2]);
+        MainWindow window = Open();
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.Words = true;
+        Search(popup, "count");
+        Assert.True(popup.Matches.Any(m => m.Name == "Wide.cs" && m.Line == 2 && m.Column == 8 && m.LineText == "    int count;"),
+            $"Find in Files passed over a UTF-16 file the editor opens, or placed its match wrong: {string.Join("; ", popup.Matches.Select(m => $"{m.Name}:{m.Line + 1}:{m.Column + 1} {m.LineText}"))}");
+        Assert.Contains(popup.Matches, m => m.Name == "WideBig.cs" && m.LineText == "// a count kept big-endian");
+        Assert.DoesNotContain(popup.Matches, m => m.Name == "Blob.bin");
+
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        popup.Replacement = "total";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the replacement");
+        Assert.Equal("Replaced 5 matches in 4 files", window.Status);
+        byte[] saved = File.ReadAllBytes(little);
+        Assert.True(saved.AsSpan().StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE]), "Replace in Files wrote a UTF-16 file without its byte-order mark");
+        Assert.Equal("class Wide\n{\n    int total;\n}\n", System.Text.Encoding.Unicode.GetString(saved, 2, saved.Length - 2));
+        Assert.Equal("// a total kept big-endian\n", File.ReadAllText(big, System.Text.Encoding.BigEndianUnicode));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Replace_all_across_a_read_only_file_replaces_in_the_rest_and_says_which_file_it_left_and_why()
     {
         // As Perforce or TFVC leave a file not checked out; first by name, so the files after it show the replace went on.

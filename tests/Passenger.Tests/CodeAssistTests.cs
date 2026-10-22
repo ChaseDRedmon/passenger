@@ -371,6 +371,22 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             find.Rows.SkipWhile(r => r.Depth != 0 || r.Label != group).Skip(1).TakeWhile(r => r.Depth != 0);
     }
 
+    [AvaloniaFact]
+    public void Find_usages_lists_a_usage_in_a_closed_UTF_16_file_at_its_line_with_its_code()
+    {
+        string wide = project.Write("Wide.cs", string.Empty);
+        File.WriteAllText(wide, "static class Wide\n{\n    public static int Four()\n    {\n        return Helper.Twice(2);\n    }\n}\n", Encoding.Unicode);
+        MainWindow window = project.Open("Helper.cs");
+        PlaceAfter(window.EditorArea.CodeEditor, "Twi");
+        Ui.Run(window, AppActions.FindUsages);
+        FindView find = window.Find;
+        Ui.WaitFor(() => find.Shown == "Usages of Twice" && find.Rows.Any(r => r.Usage?.Path == PathNames.Canonical(wide)), "the usage in the UTF-16 file");
+        Usage usage = find.Rows.Select(r => r.Usage).OfType<Usage>().Single(u => u.Path == PathNames.Canonical(wide));
+        Assert.True((usage.Line, usage.Column, usage.LineText) == (4, 22, "        return Helper.Twice(2);"),
+            $"Find Usages listed the UTF-16 file's usage at {usage.Line + 1}:{usage.Column + 1} as '{usage.LineText}', not where it is with its line of code");
+        window.Close();
+    }
+
     /// <summary>The window takes keys while Find Usages lists ten thousand usages: each usage's place was grouped under its
     /// file by a path made canonical on the UI thread, which asks the disk once a usage.</summary>
     [AvaloniaFact]

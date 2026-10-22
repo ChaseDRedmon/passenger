@@ -46,9 +46,6 @@ public sealed class LocalHistory
     /// <summary>Rider's name for changes made by another program.</summary>
     public const string ExternalChange = "External change";
 
-    /// <summary>How much of a file is checked for a NUL byte before it is called binary, as the editor checks.</summary>
-    private const int BinaryProbe = 8000;
-
     /// <summary>The most files a folder made or deleted elsewhere is read for at once.</summary>
     private const int WalkLimit = 5000;
 
@@ -892,9 +889,8 @@ public sealed class LocalHistory
         }
     }
 
-    /// <summary>Text as the editor takes it: a BOM, or no NUL byte near the start.</summary>
-    private static bool IsText(byte[] bytes) =>
-        bytes.Length <= FileText.KeptLimit && (FileText.Bom(bytes) is not null || !bytes.AsSpan(0, Math.Min(bytes.Length, BinaryProbe)).Contains((byte)0));
+    /// <summary>Text as the editor takes it (<see cref="FileText.LooksBinary"/>), and not too large to keep.</summary>
+    private static bool IsText(byte[] bytes) => bytes.Length <= FileText.KeptLimit && !FileText.LooksBinary(bytes);
 
     /// <summary>The files under a folder the history keeps, as many as it reads at once, linked folders not followed.</summary>
     private IEnumerable<string> Walk(string top)
