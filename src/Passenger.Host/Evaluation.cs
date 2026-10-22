@@ -133,32 +133,41 @@ internal static class Evaluation
             Dependencies = [.. each.Select((p, i) => Dependencies(p, named[i]))],
             Items = items,
             Properties = Carried(first, excluded),
-            Inputs = [file, .. each
-                .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
-                .Distinct(PathNames.Comparer)
-                .Where(i => !excluded.Any(root => i.StartsWith(root, PathNames.Comparison)))
-                .Select(Stamps.File)
-                .Concat(LookedFor(path, first))
-                .DistinctBy(s => s.Path, PathNames.Comparer)],
-            Folders = Folders(path, folders, items),
+            Inputs = Inputs(file, each, excluded, LookedFor(path, first)),
+            Folders = Folders(path, folders, items.Select(i => i.Path)),
         };
     }
+
+    /// <summary>The files evaluations of a project read, stamped, each once: the project file as it was read, the imports
+    /// outside the SDK and package folders (<see cref="OutsideRoots"/>), and <paramref name="also"/> (what else the caller
+    /// read, and what it looks for above the project, <see cref="LookedFor"/>). Evaluate's, a design-time build's and
+    /// inspect's alike.</summary>
+    internal static IReadOnlyList<Stamp> Inputs(Stamp file, IEnumerable<Project> evaluations, IReadOnlyCollection<string> outside, IEnumerable<Stamp> also) =>
+        [file, .. evaluations
+            .SelectMany(p => p.Imports.Select(i => i.ImportedProject.FullPath))
+            .Distinct(PathNames.Comparer)
+            .Where(i => !outside.Any(root => i.StartsWith(root, PathNames.Comparison)))
+            .Select(Stamps.File)
+            .Concat(also)
+            .DistinctBy(s => s.Path, PathNames.Comparer)];
 
     /// <summary>The folders a project's files come from, stamped: those under its own (<see cref="Walked"/>, stamped before
     /// it was evaluated), and the folder of each file it takes from elsewhere (../Shared/*.cs), not all under it: a file at
     /// the repository's top (a README packed with every project) would have the whole repository walked.</summary>
-    internal static IReadOnlyList<Stamp> Folders(string path, IReadOnlyList<Stamp> walked, IEnumerable<EvaluatedItem> items)
+    internal static IReadOnlyList<Stamp> Folders(string path, IReadOnlyList<Stamp> walked, IEnumerable<string> files)
     {
         string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
-        return [.. walked, .. items
-            .Where(i => !i.Path.StartsWith(own, PathNames.Comparison))
-            .Select(i => Path.GetDirectoryName(i.Path)!)
+        return [.. walked, .. files
+            .Where(f => !f.StartsWith(own, PathNames.Comparison))
+            .Select(f => Path.GetDirectoryName(f)!)
             .Distinct(PathNames.Comparer)
             .Where(d => !walked.Any(f => PathNames.Same(f.Path, d)) && Directory.Exists(d))
             .Select(Stamps.Folder)];
     }
 
-    private static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
+    /// <summary>One evaluation of a project, of one framework when <paramref name="framework"/> is given: evaluate's, a
+    /// design-time build's and inspect's alike.</summary>
+    internal static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
     {
         Dictionary<string, string> global = new(properties, StringComparer.OrdinalIgnoreCase);
         if (framework is not null)

@@ -399,7 +399,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`Stamps.cs`), so a reopen redoes only what changed: the files it imported, its folders, and what would change it by
   coming (`Evaluation.LookedFor`: each Directory.Build.props, .targets and Directory.Packages.props MSBuild looks for from
   the project's folder up, as far as the first found, and the restore's `obj/X.csproj.nuget.g.props` and `.targets`,
-  which the window evaluates again for as a restore lands); the caches are read off the UI thread (`StateDocument.ValueAsync`).
+  which the window evaluates again for as a restore lands), evaluate's, build's and inspect's stamped by the same
+  `Evaluation.Inputs` and `Folders`, over the same `Evaluation.Load`; the caches are read off the UI thread (`StateDocument.ValueAsync`).
   The shown file's project and what it references load first (`ProjectSession.ActiveProjectsAsync`).
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
   loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled

@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Xml;
 using Microsoft.Build.Construction;
-using Microsoft.Build.Definition;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Evaluation.Context;
 using Microsoft.Build.Exceptions;
@@ -95,7 +94,7 @@ internal static class Inspection
         List<Project> loaded = [];
         try
         {
-            Project project = Load(asked.Project, collection, context, global, null);
+            Project project = Evaluation.Load(asked.Project, collection, context, global, null);
             loaded.Add(project);
             string? framework = null;
             if (project.GetPropertyValue("TargetFramework").Length == 0
@@ -103,7 +102,7 @@ internal static class Inspection
             {
                 cancel.ThrowIfCancellationRequested();
                 framework = first;
-                project = Load(asked.Project, collection, context, global, first);
+                project = Evaluation.Load(asked.Project, collection, context, global, first);
                 loaded.Add(project);
             }
             return Read(project, framework, file, walked, [.. problems, .. logged.Found], Stopwatch.GetElapsedTime(began).TotalSeconds);
@@ -141,22 +140,6 @@ internal static class Inspection
             .Concat(Evaluation.LookedFor(asked.Project, null)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
         Seconds = Stopwatch.GetElapsedTime(began).TotalSeconds,
     };
-
-    private static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
-    {
-        Dictionary<string, string> global = new(properties, StringComparer.OrdinalIgnoreCase);
-        if (framework is not null)
-        {
-            global["TargetFramework"] = framework;
-        }
-        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
-        {
-            GlobalProperties = given,
-            ProjectCollection = collection,
-            EvaluationContext = context,
-            LoadSettings = Evaluation.Settings,
-        }), global, collection);
-    }
 
     /// <summary>An exception's place and words: MSBuild's own for a project that does not load, the reader's for XML that
     /// does not read.</summary>
@@ -271,9 +254,8 @@ internal static class Inspection
             Imports = imports,
             Frameworks = frameworks,
             Installed = roots,
-            Inputs = [file, .. project.Imports.Select(i => i.ImportedProject.FullPath).Distinct(StringComparer.Ordinal).Where(i => !Installed(i)).Select(Stamps.File)
-                .Concat(Evaluation.LookedFor(project.FullPath, project)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
-            Folders = Evaluation.Folders(project.FullPath, walked, Evaluation.Items([project])),
+            Inputs = Evaluation.Inputs(file, [project], roots, Evaluation.LookedFor(project.FullPath, project)),
+            Folders = Evaluation.Folders(project.FullPath, walked, Evaluation.Items([project]).Select(i => i.Path)),
             Files = files.Paths,
             Seconds = seconds,
         };
