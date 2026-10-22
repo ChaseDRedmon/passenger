@@ -30,4 +30,40 @@ public sealed partial class McpTests
         Assert.Contains(profiled.GetProperty("heap").EnumerateArray(), t => t.GetProperty("type").GetString() == "Keepsake");
         Assert.Equal("running", Docker.State(container));
     }
+
+    /// <summary>A compose configuration profiled as an agent asks: its launched service recorded in its container from its
+    /// start, its hot method named at its line in the workspace, its heap read there, and the run going on until stop.</summary>
+    [Fact]
+    public async Task An_agent_profiles_a_compose_configuration_its_services_hot_method_at_its_line_and_its_heap()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), TestContext.Current.CancellationToken);
+        (string shop, string project) = ContainerRunProfilingTests.Shop("agent");
+        // Whichever service it launches spins.
+        ContainerRunsTests.Write(shop, "Api/Program.cs", ContainerRunProfilingTests.Spinning);
+        madeFolders.Add(shop);
+        await using McpClient client = await Start(["--mcp", shop]);
+        try
+        {
+            JsonElement profiled = await Call(client, "profile", new() { ["configuration"] = "Compose: compose.yaml", ["seconds"] = 2, ["memory"] = true });
+            Assert.True(profiled.GetProperty("samples").GetInt32() > 0, $"The profile of the compose configuration sampled nothing: {profiled.GetRawText()}");
+            JsonElement spin = Assert.Single(profiled.GetProperty("hotSpots").EnumerateArray(), h => h.GetProperty("method").GetString()!.StartsWith("Hot.Spin", StringComparison.Ordinal));
+            Assert.True(spin.TryGetProperty("source", out JsonElement source) && source.GetString()!.EndsWith($"Program.cs:{ContainerRunProfilingTests.SpinLine}", StringComparison.Ordinal),
+                $"The service's hot method is not named at its line: {spin}");
+            Assert.Contains(profiled.GetProperty("heap").EnumerateArray(), t => t.GetProperty("type").GetString() == "Keepsake");
+            // The snapshot taken, the run goes on until stop.
+            Assert.Equal("running", ContainerRunsTests.States(project)["api"]);
+        }
+        finally
+        {
+            await Call(client, "stop");
+            Assert.True(await Waiting.UntilAsync(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, TimeSpan.FromMinutes(2),
+                TestContext.Current.CancellationToken), "stop left the configuration's containers behind");
+            // The headless IDE's state is not the run's, whose end removes only its own images: these go here.
+            foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Docker.Run("rmi", "-f", image);
+            }
+        }
+    }
 }

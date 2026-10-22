@@ -251,9 +251,6 @@ public sealed class ContainerRunsTests
         Assert.Equal(ServiceStart.Run, profile.ServiceActions["cache"]);
         // A plain compose configuration of the same files is not listed beside the project's own.
         Assert.DoesNotContain(window.Configurations, c => c.Name.StartsWith("Compose:", StringComparison.Ordinal));
-        // Profiling in a container comes later, and Profile says so rather than starting a program here.
-        Assert.True(window.SelectConfiguration("docker-compose: Web only"));
-        Assert.Equal(LaunchPlan.InContainers("docker-compose: Web only"), Ui.Await(window.ProfileAsync(), "the profiler's refusal"));
         window.Close();
         Assert.NotNull(project);
     }

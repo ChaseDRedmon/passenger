@@ -604,7 +604,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   does. A Release build (the tools' `optimized`), a runtime with DOTNET_EnableDiagnostics=0 (not held, and not attached: it
   runs on) and an image of another processor than the engine's are said in the status bar after the run comes up. Stop ends
   the run's sessions (`ContainerRun.Debugged`) before the containers go, since a container taken from under its adapter
-  would end it as a failure. Profile of a container configuration is still refused (`LaunchPlan.InContainers`; #345).
+  would end it as a failure. Profile of a container configuration (`ContainerStart.Profile`, `ProfilerCommands.LaunchInContainersAsync`,
+  `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
+  at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
+  first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
+  changing; the run's `ContainerProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
+  handed over only once up (a failed start disposes the recording). Get Snapshot ends the recording and the containers run
+  on; Stop ends it first (`ContainerRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
+  Profiler with a container run up (and nothing debugged) records that service as it runs (`ServiceInContainerAsync`,
+  `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
+  modifiable)`), and the run keeps what each service is held for (`ContainerRun.HeldFor`, `HoldAsync`) and which containers
+  were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
+  no debugger to let it go.
   Edit Configurations' Compose page lists the services from Compose's model
   (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
@@ -708,7 +719,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`DebugSession.Place`, by its id there and the debugger's path map), else, from the action with nothing of the
   folder's running, one chosen among the running containers' programs in Attach to Process's dialog
   (`AttachPurpose.Profiler`, `MainWindow.ChooseProfiledAsync`; resumed), the tools put in by `ProfiledInContainerAsync`
-  as the debugger's are, under a `Working`; MCP's `profile` takes `container` with `attach`. Hot spots' sources
+  as the debugger's are, under a `Working`; MCP's `profile` takes `container` with `attach`, and profiles a container
+  configuration as Profile does (Containers above). Hot spots' sources
   (`MethodSources.FindAsync`) are read by the tools' `sources` in the container, where the modules are, each document
   made this machine's by the place's map (as it is for a build of this machine's). A container's run has no inspector,
   so the Frames page (`FramesView.InContainer`) and MCP's `frames` of an app with Avalonia's modules say why it is empty.
@@ -1541,7 +1553,9 @@ snapshots compared; `McpTests.ContainerProfile.cs` has an agent profile it with 
 (Alone) debug ContainerRunsTests' Compose solution (`ContainerRunsTests.Shop`, its Program.cs stopping in Main and in a
 request's handler), run it with Hot Reload, and in images mode build its apps here with `-p:PathMap=…=/src/` copied into
 aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is asked again while nothing listens yet,
-since the attach lets the service go a moment before Kestrel listens. `WpfPreviewTests` (Windows only)
+since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
+solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
+method leads web's own (a web app's idle threads wait in the runtime's code). `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
