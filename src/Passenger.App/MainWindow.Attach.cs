@@ -151,6 +151,7 @@ public partial class MainWindow
             ContainerPaths.None, container)
         {
             Running = AdapterPlace.Runs(engine, container),
+            Program = process.Program,
         };
         return (target, place);
     }

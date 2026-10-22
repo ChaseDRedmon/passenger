@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Passenger.App.CSharp;
@@ -590,9 +591,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string name = Session.Configurations.Chosen?.Name ?? string.Empty;
         BuildRunController builds = Builds;
         AgentCall.Follow(window.Actions.Work, AppActions.RunProgram, AppActions.Build);
-        if (await Started(builds.RunAsync(arguments, hotReload), AppActions.RunProgram, cancel) is { } refused)
+        using (LaunchBuild built = new(builds))
         {
-            throw new InvalidOperationException(WithBuildErrors(refused));
+            if (await Started(builds.RunAsync(arguments, hotReload), AppActions.RunProgram, cancel) is { } refused)
+            {
+                throw new InvalidOperationException(WithBuildErrors(refused, built.Ended));
+            }
         }
         if (builds.Containers is { } running)
         {
@@ -677,6 +681,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         AgentCall.Say(chosen is null ? "Building and running every test" : $"Building and running {chosen.Count} test{(chosen.Count == 1 ? string.Empty : "s")}");
         AgentCall.Follow(window.Actions.Work, AppActions.Build);
+        using LaunchBuild built = new(Builds);
         Task<string?> run = tests.RunAsync(folder, chosen, debug);
         if (debug)
         {
@@ -690,7 +695,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         if (await run.WaitAsync(cancel) is { } problem)
         {
-            throw new InvalidOperationException(WithBuildErrors(problem));
+            throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
         }
         return TestInfo(tests);
     });
@@ -705,16 +710,24 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         int limit = 200,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        int named = state is null ? -1 : Array.FindIndex(TestStates, s => s.Name.Equals(state, StringComparison.OrdinalIgnoreCase));
         Testing.TestState? only = state is null ? null
-            : Enum.TryParse(state, ignoreCase: true, out Testing.TestState parsed) && Enum.IsDefined(parsed) ? parsed
+            : named >= 0 ? TestStates[named].State
             : throw new ArgumentException($"No state '{state}'; there are passed, failed, skipped and notRun");
         // Found from code as the folder opens: an agent's first look waits for that, as the window says it is looking.
         await Until(() => !Session.Tests.IsLooking, TestsLookLimit, cancel);
         return (IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
             .Where(m => (filter is null || (m.FullName ?? m.Name).Contains(filter, StringComparison.Ordinal)) && (only is null || m.State == only))
             .Take(Math.Max(1, limit))
-            .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))];
+            .Select(m => new TestInfoRow(TestName(m), StateName(m.State), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))];
     });
+
+    /// <summary>The states tests_list says and takes, in its description's words.</summary>
+    private static readonly (Testing.TestState State, string Name)[] TestStates =
+        [(Testing.TestState.Passed, "passed"), (Testing.TestState.Failed, "failed"), (Testing.TestState.Skipped, "skipped"), (Testing.TestState.NotRun, "notRun")];
+
+    /// <summary>A test's state as tests_list says it: one of <see cref="TestStates"/>, else running.</summary>
+    private static string StateName(Testing.TestState state) => Array.FindIndex(TestStates, s => s.State == state) is int at and >= 0 ? TestStates[at].Name : "running";
 
     /// <summary>How long tests_list waits for the tests to be found from the test projects' code.</summary>
     private static readonly TimeSpan TestsLookLimit = TimeSpan.FromSeconds(60);
@@ -929,9 +942,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
     {
         Choose(configuration);
         AgentCall.Follow(window.Actions.Work, AppActions.Debug, AppActions.Build);
-        if (await Started(Builds.DebugAsync(arguments), AppActions.Debug, cancel) is { } problem)
+        using (LaunchBuild built = new(Builds))
         {
-            throw new InvalidOperationException(WithBuildErrors(problem));
+            if (await Started(Builds.DebugAsync(arguments), AppActions.Debug, cancel) is { } problem)
+            {
+                throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
+            }
         }
         return await AfterLaunch(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
@@ -944,12 +960,33 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         return await start.WaitAsync(cancel);
     }
 
-    /// <summary>A run, debug, test or profile refused for a failed build, with the build's errors after it (path:line:column,
-    /// code and message, at most ten), so an agent fixes them without asking problems first.</summary>
-    private string WithBuildErrors(string refused)
+    /// <summary>The build a launch an agent waits on runs first, heard as it ends: a failed one is why the launch was refused,
+    /// and what it found is what the refusal names (<see cref="WithBuildErrors"/>).</summary>
+    private sealed class LaunchBuild : IDisposable
     {
-        List<Problem> errors = [.. window.BottomPanel.Problems.Problems.Where(p => p.Severity == ProblemSeverity.Error)];
-        if (errors.Count == 0 || !refused.Contains("failed", StringComparison.OrdinalIgnoreCase))
+        private readonly BuildRunController builds;
+
+        public LaunchBuild(BuildRunController builds)
+        {
+            this.builds = builds;
+            builds.BuildFinished += Heard;
+        }
+
+        /// <summary>The last build that ended since the launch began, or null.</summary>
+        public BuildOutcome? Ended { get; private set; }
+
+        private void Heard(object? sender, BuildOutcome outcome) => Ended = outcome;
+
+        public void Dispose() => builds.BuildFinished -= Heard;
+    }
+
+    /// <summary>A run, debug, test or profile refused for a failed build (the one it ran, <paramref name="built"/>), with that
+    /// build's errors after it (path:line:column, code and message, at most ten), so an agent fixes them without asking
+    /// problems first; a refusal for anything else as it is, whatever an earlier build left in Problems.</summary>
+    private string WithBuildErrors(string refused, BuildOutcome? built)
+    {
+        List<Problem> errors = built is { Status: BuildStatus.Failed } ? [.. built.Problems.Where(p => p.Severity == ProblemSeverity.Error)] : [];
+        if (errors.Count == 0)
         {
             return refused;
         }
@@ -979,7 +1016,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await Until(() => !going(), Min(LaunchSettle, until - DateTime.UtcNow), cancel);
         }
         DebugSnapshot started = await AfterResume(TimeSpan.Zero, cancel);
-        return started.State == "running" && app is { State: LiveTree.LiveAppState.Connected }
+        return started.Debugged == DebugState.Running && app is { State: LiveTree.LiveAppState.Connected }
             ? started with { Status = $"{started.Status}, its UI up: app_windows, app_screenshot and app_click look at it and use it" }
             : started;
     }
@@ -1225,7 +1262,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             await resume(paused);
         }
         DebugSnapshot after = await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel, paused);
-        if (!testing || after.State != "not debugging")
+        if (!testing || after.Debugged is not null)
         {
             return after;
         }
@@ -1297,11 +1334,11 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         string? summary = session is null ? debugger.Summary : debugger.SummaryOf(session);
         if (session is null || session.State == DebugState.Ended)
         {
-            return new DebugSnapshot("not debugging", null, null, [], [], session?.ExitCode, summary);
+            return new DebugSnapshot(null, null, null, [], [], session?.ExitCode, summary);
         }
         if (session.State != DebugState.Paused || session.StoppedThread is null)
         {
-            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, summary);
+            return new DebugSnapshot(session.State, null, null, [], [], null, summary);
         }
         bool shown = debugger.Session == session;
         // The controller's stop is always the one paused at now, since every change drops it; before it is read, the session's.
@@ -1335,7 +1372,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             }
         }
         return new DebugSnapshot(
-            "paused",
+            DebugState.Paused,
             session.StopReason,
             top?.Source?.Path is { } path && debugger.PlaceOf(top, session) is { } at ? $"{Relative(path)}:{at.Line + 1}:{at.Column + 1}" : null,
             Frames(frames, session),
@@ -1715,8 +1752,10 @@ public sealed record VariableInfo(string Name, string Value, string? Type, int R
 /// <summary>A .NET program the debugger can attach to, as Attach to Process lists it.</summary>
 public sealed record ProcessInfo(int ProcessId, string Executable, string Program, string User, string CommandLine, string? Container = null);
 
+/// <summary>Where the debugger is in a program, as the debug tools answer: its session's state (<see cref="Debugged"/>, null
+/// with none debugged or once it ended), said as <see cref="State"/>, and while paused the stop.</summary>
 public sealed record DebugSnapshot(
-    string State,
+    [property: JsonIgnore] DebugState? Debugged,
     string? Reason,
     string? Location,
     IReadOnlyList<string> Frames,
@@ -1725,6 +1764,10 @@ public sealed record DebugSnapshot(
     string? Status,
     string? Exception = null)
 {
+    /// <summary>The state in an agent's words: starting, running or paused, else not debugging.</summary>
+    [JsonPropertyOrder(-1)]
+    public string State => Debugged is { } state ? state.ToString().ToLowerInvariant() : "not debugging";
+
     /// <summary>At a stop in a debugged Avalonia app, the binding values after the lines of the .axaml files the editors show,
     /// as the editor shows them (path:line: Property: value).</summary>
     public IReadOnlyList<string>? BindingValues { get; init; }

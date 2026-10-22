@@ -1191,7 +1191,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
   (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
-  names its errors (`WithBuildErrors`); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
+  names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything
+  else names none); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
   for first. `nuget_install`/`nuget_remove` answer a `PackageChange`: the version installed and the files that changed
   (the project, the nearest Directory.Packages.props). `profile`'s hot spots in the folder's code carry `source`
   (path:line of the method's first sequence point: `Profiler/MethodSources` reads the module's PDB by the trace's

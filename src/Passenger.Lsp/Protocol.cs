@@ -223,8 +223,13 @@ public sealed record SymbolInformation(string Name, int Kind, LspLocation Locati
 /// declaration; SelectionRange is its name.</summary>
 public sealed record DocumentSymbol(string Name, string? Detail, int Kind, LspRange Range, LspRange SelectionRange, IReadOnlyList<DocumentSymbol>? Children = null);
 
+/// <summary>LSP's symbol kinds: the numbers code decides by, and each kind's name as an agent reads it.</summary>
 public static class SymbolKinds
 {
+    public const int Namespace = 3;
+
+    public const int Class = 5;
+
     private static readonly string[] Names =
     [
         "file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum", "interface",

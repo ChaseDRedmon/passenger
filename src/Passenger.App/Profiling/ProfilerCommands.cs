@@ -584,7 +584,7 @@ public sealed class ProfilerCommands
         if (current.Debug.Session is { State: not Debugging.DebugState.Ended, Elsewhere: true, Place: { } place, ProcessStarted.IsCompletedSuccessfully: true } remote)
         {
             string name = current.Debug.TabOf(remote)?.Name ?? $"process {remote.ProcessStarted.Result} in {place.Where}";
-            string program = name.Split(" in ", 2)[0];
+            string program = place.Program ?? $"process {remote.ProcessStarted.Result}";
             DotnetProcess there = new(remote.ProcessStarted.Result, program, string.Empty, string.Empty, true) { Container = place.Where };
             return new AttachTarget(there.Id, name, FileName(Path.GetFileNameWithoutExtension(program))) { Elsewhere = there, Paths = place.Paths };
         }

@@ -195,12 +195,41 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         Assert.Equal(2, (await Call(client, "tests_list")).GetArrayLength());
         // A solution's thousands of tests narrowed as tests_run narrows them, by part of the name, and by the last run's state.
         JsonElement test = Assert.Single((await Call(client, "tests_list", new() { ["filter"] = "two_make_four" })).EnumerateArray());
-        Assert.Equal(("Sums.SumTests.Two_and_two_make_four", "notrun", "SumTests.cs:8"),
+        Assert.Equal(("Sums.SumTests.Two_and_two_make_four", "notRun", "SumTests.cs:8"),
             (test.GetProperty("test").GetString(), test.GetProperty("state").GetString(), test.GetProperty("location").GetString()));
         Assert.Equal(1, (await Call(client, "tests_list", new() { ["limit"] = 1 })).GetArrayLength());
         Assert.Equal(0, (await Call(client, "tests_list", new() { ["state"] = "failed" })).GetArrayLength());
+        // A state is asked for in the words each test's is said in, as the description names them.
+        JsonElement notRun = await Call(client, "tests_list", new() { ["state"] = test.GetProperty("state").GetString() });
+        Assert.True(notRun.GetArrayLength() == 2 && notRun.EnumerateArray().All(t => t.GetProperty("state").GetString() == "notRun"),
+            $"tests_list asked for the state it says the tests are in answered: {notRun}");
         CallToolResult wrong = await Result(client, "tests_list", new() { ["state"] = "broken" });
         Assert.True(wrong.IsError == true && Text(wrong).Contains("there are passed, failed, skipped and notRun", StringComparison.Ordinal), $"tests_list in no state answered: {Text(wrong)}");
+    }
+
+    /// <summary>A run refused for a reason of its own is answered with that reason alone, though the last build's errors are
+    /// still in Problems: they were added to any refusal whose words held "failed" (here a launch profile's command named
+    /// RetryFailed, which Passenger does not run), and still follow a run refused for the build it ran failing.</summary>
+    [Fact]
+    public async Task An_agents_run_refused_for_anything_but_its_own_failed_build_names_no_build_errors()
+    {
+        Write("Program.cs", "int count = \"three\";\nConsole.WriteLine(count);\n");
+        Directory.CreateDirectory(Path.Combine(folder, "Properties"));
+        File.WriteAllText(Path.Combine(folder, "Properties", "launchSettings.json"), "{\n  \"profiles\": {\n    \"Jobs\": { \"commandName\": \"RetryFailed\" }\n  }\n}\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+        JsonElement built = await Call(client, "build");
+        JsonElement error = built.GetProperty("problems").EnumerateArray().FirstOrDefault(p => p.GetProperty("severity").GetString() == "error");
+        Assert.True(!built.GetProperty("succeeded").GetBoolean() && error.ValueKind == JsonValueKind.Object, $"The build of a string given to an int did not fail with an error: {built}");
+        string code = error.GetProperty("code").GetString()!;
+
+        CallToolResult jobs = await Result(client, "run", new() { ["configuration"] = "Sum: Jobs" });
+        Assert.True(jobs.IsError == true && Text(jobs).Contains("Passenger does not know the RetryFailed command", StringComparison.Ordinal),
+            $"The run of a profile Passenger does not run was answered: {Text(jobs)}");
+        Assert.False(Text(jobs).Contains(code, StringComparison.Ordinal), $"A run refused before any build named the last build's errors: {Text(jobs)}");
+
+        CallToolResult sum = await Result(client, "run", new() { ["configuration"] = "Sum" });
+        Assert.True(sum.IsError == true && Text(sum).Contains($"{code} ", StringComparison.Ordinal) && Text(sum).Contains("Program.cs:1:", StringComparison.Ordinal),
+            $"A run refused for its own build's failure did not name that build's error: {Text(sum)}");
     }
 
     /// <summary>A debugged test run an agent goes on with from its stop answers, as its test host ends, with the tally and

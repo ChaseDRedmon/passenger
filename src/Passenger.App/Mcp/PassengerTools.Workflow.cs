@@ -263,12 +263,15 @@ public sealed partial class PassengerTools
             Choose(configuration);
         }
         AgentCall.Follow(window.Actions.Work, AppActions.Profile, AppActions.Build, AppActions.AttachProfiler);
-        Task<string?> started = !attach ? window.ProfileAsync(arguments)
-            : container is null ? window.AttachProfilerAsync()
-            : window.AttachProfilerAsync(await ProfiledIn(container));
-        if (await started.WaitAsync(cancel) is { } problem)
+        using (LaunchBuild built = new(Builds))
         {
-            throw new InvalidOperationException(WithBuildErrors(problem));
+            Task<string?> started = !attach ? window.ProfileAsync(arguments)
+                : container is null ? window.AttachProfilerAsync()
+                : window.AttachProfilerAsync(await ProfiledIn(container));
+            if (await started.WaitAsync(cancel) is { } problem)
+            {
+                throw new InvalidOperationException(WithBuildErrors(problem, built.Ended));
+            }
         }
         AgentCall.Say(seconds is { } lasting ? $"Profiling for {Math.Clamp(lasting, 1, 3600)} s" : "Profiling until the program ends (10 minutes at most)");
         Passenger.Profiler.ProfilingSession running = Session.Profiling!;
