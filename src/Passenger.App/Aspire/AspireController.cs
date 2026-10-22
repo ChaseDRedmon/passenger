@@ -596,8 +596,8 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         if (app.Mode == AspireRunMode.HotReload)
         {
-            environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
-            environment["DOTNET_MODIFIABLE_ASSEMBLIES"] = "debug";
+            environment[RuntimeVariables.DefaultDiagnosticPortSuspend] = "1";
+            environment[RuntimeVariables.ModifiableAssemblies] = "debug";
         }
         IReadOnlyList<string> arguments = request.Arguments is { } given
             ? [.. plan.Built is { } built && plan.Arguments.FirstOrDefault() == built ? new[] { built } : [], .. given]

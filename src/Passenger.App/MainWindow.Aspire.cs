@@ -275,13 +275,13 @@ public partial class MainWindow
         };
         UpdateDisplay();
 
-        bool Shown(string path) => session == next && !next.IsEnded && Dock.IsShown("aspire")
+        bool Shown(string path) => session == next && !next.IsEnded && Dock.IsShown(ToolWindowIds.Aspire)
             && TopLevel.GetTopLevel(pane) is not null && pane.IsEffectivelyVisible
             && view.SelectedApp is { } selected && PathNames.Same(selected.AppHostPath, path);
 
         void UpdateDisplay()
         {
-            bool visible = session == next && !next.IsEnded && Dock.IsShown("aspire")
+            bool visible = session == next && !next.IsEnded && Dock.IsShown(ToolWindowIds.Aspire)
                 && TopLevel.GetTopLevel(pane) is not null && pane.IsEffectivelyVisible;
             pane.SetDisplayVisible(visible);
             foreach (AspireAppRun app in next.Aspire.Apps)
@@ -400,7 +400,7 @@ public partial class MainWindow
             {
                 await current.Debug.ChooseAsync(existing);
                 current.Aspire.SelectService(service);
-                ShowToolWindow("debug");
+                ShowToolWindow(ToolWindowIds.Debug);
                 return null;
             }
             if (!attach)
@@ -434,7 +434,7 @@ public partial class MainWindow
                 return "The solution was closed";
             }
             current.Aspire.SelectService(service);
-            ShowToolWindow("debug");
+            ShowToolWindow(ToolWindowIds.Debug);
             Say($"Attached to {service.Plan.Name}");
             return null;
         }

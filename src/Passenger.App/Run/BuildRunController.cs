@@ -720,7 +720,7 @@ public sealed partial class BuildRunController
                 {
                     return Said(StoppedStarting(chosen.Name));
                 }
-                parts.Dock.Show("aspire");
+                parts.Dock.Show(ToolWindowIds.Aspire);
                 string? problem = await session.Aspire.StartAsync(configuration, mode, BuildBeforeLaunchAsync, work.Stopping);
                 if (problem is not null)
                 {
@@ -728,7 +728,7 @@ public sealed partial class BuildRunController
                 }
                 AspireAppRun[] running = session.Aspire.Apps.Where(app => !app.IsTest).ToArray();
                 aspireEnd = Ended(running);
-                parts.Say($"{mode switch { AspireRunMode.Debug => "Debugging", AspireRunMode.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}", StatusPlace.Window(parts.Dock, "aspire"));
+                parts.Say($"{mode switch { AspireRunMode.Debug => "Debugging", AspireRunMode.HotReload => "Running with Hot Reload", _ => "Running" }} {chosen.Name}", StatusPlace.Window(parts.Dock, ToolWindowIds.Aspire));
                 RunningChanged?.Invoke(this, EventArgs.Empty);
                 return null;
             }

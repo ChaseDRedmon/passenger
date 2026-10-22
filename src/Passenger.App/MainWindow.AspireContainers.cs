@@ -59,7 +59,7 @@ public partial class MainWindow
 
     private async Task ShowAspireContainerAsync(ProjectSession current, string id)
     {
-        ShowToolWindow("containers");
+        ShowToolWindow(ToolWindowIds.Containers);
         await ContainersWindow.RefreshAsync();
         if (session != current || current.IsEnded)
         {

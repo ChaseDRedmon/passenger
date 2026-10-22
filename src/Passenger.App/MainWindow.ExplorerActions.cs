@@ -38,8 +38,14 @@ public partial class MainWindow
             row => row is { Kind: NodeKind.Project, Path: not null } ? null : "Docker support is added to a project", _ => "Docker Support…");
         Row(A.AddDockerCompose, "Add Docker Compose…", _ => ShowDockerCompose(),
             row => row.Kind == NodeKind.Solution ? null : "Docker Compose is added to the solution", _ => "Docker Compose…");
-        Row(A.AddAspireOrchestration, "Add Aspire Orchestration…", _ => ShowAddAspireOrchestration(),
-            row => row.Kind is NodeKind.Solution or NodeKind.SolutionFolder ? null : "Aspire orchestration is added to the solution", _ => "Aspire Orchestration…");
+        // The solution's, from its row or a solution folder's, and from Find Action wherever a solution is open.
+        actions!.Add(new IdeAction(A.AddAspireOrchestration, "Add Aspire Orchestration…", ExplorerGroup, _ => ShowAddAspireOrchestration())
+        {
+            WhyNot = c => RowOf(c) is { } row
+                ? row.Kind is NodeKind.Solution or NodeKind.SolutionFolder ? null : "Aspire orchestration is added to the solution"
+                : Solution is null ? Refusals.NoSolution : null,
+            TitleIn = c => c.ExplorerRow is null ? "Add Aspire Orchestration…" : "Aspire Orchestration…",
+        });
         Row(A.ManageNuGet, "Manage NuGet Packages", _ => ShowToolWindow(ToolWindowIds.NuGet),
             row => row is { Kind: NodeKind.Project } or { Kind: NodeKind.Dependencies, Owner: not null } ? null : $"{row.Name} has no packages");
         Row(A.EditProjectFile, "Edit Project File", row => OpenFile(row.Path!), row => row is { Kind: NodeKind.Project, Path: not null } ? null : $"{row.Name} is not a project");

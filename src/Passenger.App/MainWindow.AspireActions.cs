@@ -9,12 +9,12 @@ public partial class MainWindow
     {
         Add(A.AspireDiscover, "Discover Aspire AppHosts", "Aspire", context =>
         {
-            ShowToolWindow("aspire");
+            ShowToolWindow(ToolWindowIds.Aspire);
             _ = WorkingAsync(A.AspireDiscover, "Discovering AppHosts", () => Aspire.RefreshAppsAsync());
         });
         Add(A.AspireRefresh, "Refresh Aspire Resources", "Aspire", context =>
         {
-            ShowToolWindow("aspire");
+            ShowToolWindow(ToolWindowIds.Aspire);
             _ = WorkingAsync(A.AspireRefresh, "Refreshing resources", () => Aspire.RequestRefreshAsync());
         },
             _ => Aspire.SelectedApp is null ? "No Aspire AppHost is selected" : null);
@@ -22,7 +22,7 @@ public partial class MainWindow
         AddService(A.AspireAttach, "Attach to Aspire Resource", selected => DebugAspireResourceAsync(selected.AppHostPath, selected.Resource.Name, attach: true));
         AddService(A.AspireRun, "Run Aspire Resource Without Debugger", selected => RestartAspireServiceAsync(session, selected, debugging: false));
         AddService(A.AspireProfile, "Profile Aspire Resource", selected => ProfileAspireResourceAsync(selected.AppHostPath, selected.Resource.Name));
-        Add(A.AspireCommand, "Run Aspire Resource Command...", "Aspire", context =>
+        Add(A.AspireCommand, "Run Aspire Resource Command…", "Aspire", context =>
         {
             if (Aspire.TakePendingCommand() is { } command)
             {
@@ -33,14 +33,14 @@ public partial class MainWindow
                 Aspire.ShowCommandChoices();
             }
         }, NeedsAspireResource);
-        Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow("aspire"); Aspire.ShowPage("Console"); Aspire.OpenFind(); });
-        Add(A.AspireShowTrace, "Show Aspire Log Trace", "Aspire", _ => { ShowToolWindow("aspire"); Aspire.ShowSelectedTrace(); },
+        Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage("Console"); Aspire.OpenFind(); });
+        Add(A.AspireShowTrace, "Show Aspire Log Trace", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowSelectedTrace(); },
             _ => Aspire.StructuredLogs.SelectedItem is AspireStructuredLog { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
-        Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow("aspire"); Aspire.ShowRelatedLogs(); },
+        Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowRelatedLogs(); },
             _ => Aspire.TraceList.SelectedItem is AspireTrace && Aspire.SpanList.SelectedItem is AspireView.SpanRow ? null : "No trace span is selected");
         foreach (string page in new[] { "Resources", "Console", "Structured logs", "Traces", "AppHost console" })
         {
-            Add(AspireView.PageAction(page), $"Show Aspire {page}", "Aspire", _ => { ShowToolWindow("aspire"); Aspire.ShowPage(page); });
+            Add(AspireView.PageAction(page), $"Show Aspire {page}", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage(page); });
         }
         Add(A.AspireOpenLink, "Open Aspire Resource Endpoint", "Aspire", _ =>
         {

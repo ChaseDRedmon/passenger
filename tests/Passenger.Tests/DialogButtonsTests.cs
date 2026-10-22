@@ -38,6 +38,8 @@ public sealed class DialogButtonsTests : IDisposable
     public void Every_dialog_has_its_buttons_words_centred_and_its_text_buttons_alike_with_the_default_where_Rider_puts_it(Look look)
     {
         using IDisposable worn = UiRulesTests.Wearing(look);
+        // A solution, which Add Aspire Orchestration adds to.
+        File.WriteAllText(Path.Combine(folder, "Dialogs.slnx"), "<Solution />\n");
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
@@ -74,6 +76,9 @@ public sealed class DialogButtonsTests : IDisposable
             Closed(attach);
 
             Closed(window.ShowCloneRepository());
+
+            Assert.True(window.Perform(AppActions.AddAspireOrchestration), $"Add Aspire Orchestration could not run: {window.Status}");
+            Closed(Opened<Passenger.App.Aspire.AspireOrchestrationDialog>(window));
 
             // Rider's Open Solution question, as another folder opens over the one open.
             window.Open(other);

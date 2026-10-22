@@ -44,7 +44,7 @@ public sealed class AspireOrchestrationDialog : Window
         };
         Add = new Button { Content = "Add", IsDefault = true, IsEnabled = false, Classes = { "primary" } };
         Button cancel = new() { Content = "Cancel", IsCancel = true };
-        InstallTemplates = new Button { Content = "Install Aspire templates..." };
+        InstallTemplates = new Button { Content = "Install Aspire templates…" };
         Problem = new TextBlock { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         foreach ((ProjectModel _, CheckBox check) in choices)
         {

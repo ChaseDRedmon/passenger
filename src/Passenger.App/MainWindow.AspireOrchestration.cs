@@ -53,7 +53,7 @@ public partial class MainWindow
                 {
                     return status.Text = unsaved;
                 }
-                status.Text = "Preparing Aspire orchestration...";
+                status.Text = "Preparing Aspire orchestration…";
                 Task<IReadOnlyList<AspireOrchestration.Write>> preparing = AspireOrchestration.PrepareAsync(solution.Path, staging, choice, cancel.Token);
                 BackgroundWork.Track(preparing);
                 writes = await preparing;

@@ -113,7 +113,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         Color accent = Brush(window, "Passenger.Accent");
         (string Where, double Height, double Size, Thickness Padding, Thickness Border)? first = null;
         int seen = 0;
-        foreach (string action in (string[])[AppActions.ShowProblems, AppActions.ShowGit, AppActions.ShowDebug, AppActions.ShowTerminal, AppActions.ShowLocalHistory])
+        foreach (string action in (string[])[AppActions.ShowProblems, AppActions.ShowGit, AppActions.ShowDebug, AppActions.ShowTerminal, AppActions.ShowLocalHistory, AppActions.ShowAspire])
         {
             Assert.True(window.Perform(action), $"{action} did not run");
             Ui.Settle();
@@ -155,7 +155,7 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
                 }
             }
         }
-        Assert.True(seen >= 5, $"Only {seen} tool window tabs were found in Problems, Git, Debug and the Terminal");
+        Assert.True(seen >= 5, $"Only {seen} tool window tabs were found in Problems, Git, Debug, the Terminal and Aspire");
     }
 
     [AvaloniaFact]
