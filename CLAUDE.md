@@ -769,7 +769,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
-  `App/Profiling/MemoryView` is the Memory page. A container's snapshots are taken there (`ContainerHeap`: the tools'
+  `App/Profiling/MemoryView` is the Memory page. A container's snapshots are taken there (`ContainerHeap`, one given up (an
+  agent's `profile` with `memory`) or past 10 minutes ending the tools, said as a `ProfilingException`: the tools'
   `heap`, started with the first snapshot and kept for the run, `InContainer.HeapAsync` running `HeapHistory` itself
   with the container's own DAC, a line `snapshot` a snapshot), each sent whole (`HeapWire`: a kind, its version, its
   length, then the graph's arrays and the earlier snapshots' identities, deflated, 7-bit numbers, addresses as their

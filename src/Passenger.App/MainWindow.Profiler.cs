@@ -37,8 +37,9 @@ public partial class MainWindow
     /// <summary>Get Snapshot: the run ended and its snapshot read, or why there is none.</summary>
     public Task<SnapshotRead> SnapshotAsync() => profiler!.SnapshotAsync();
 
-    /// <summary>Get Memory Snapshot of the program being profiled.</summary>
-    public Task<MemorySnapshot?> MemorySnapshotAsync() => profiler!.MemorySnapshotAsync();
+    /// <summary>Get Memory Snapshot of the program being profiled; one given up by <paramref name="cancel"/> (an agent's) is
+    /// said so, and the tools taking it in a container are ended.</summary>
+    public Task<MemorySnapshot?> MemorySnapshotAsync(CancellationToken cancel = default) => profiler!.MemorySnapshotAsync(cancel);
 
     /// <summary>Opens a snapshot written before in the profiler window.</summary>
     public Task<Snapshot?> OpenSnapshotAsync(string path) => profiler!.OpenSnapshotAsync(path);

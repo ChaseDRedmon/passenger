@@ -491,6 +491,15 @@ public sealed class ContainersTests
                 Assert.StartsWith("No memory snapshot: ", window.Status, StringComparison.Ordinal);
                 Assert.Contains(said, window.Status, StringComparison.Ordinal);
             }
+
+            // Tools that never send the fourth: the snapshot given up (an agent's call) ends them there, saying so.
+            using CancellationTokenSource givingUp = new();
+            Task<Passenger.Profiler.MemorySnapshot?> never = window.MemorySnapshotAsync(givingUp.Token);
+            Ui.PumpUntil(() => Docker.Ask(["exec", name, "ps"]).Contains("passenger-tools heap", StringComparison.Ordinal), "the tools to be asked for a snapshot they never send");
+            givingUp.Cancel();
+            Assert.Null(Ui.Await(never, "the given-up snapshot's answer"));
+            Assert.Contains("was stopped", window.Status, StringComparison.Ordinal);
+            Ui.PumpUntil(() => !Docker.Ask(["exec", name, "ps"]).Contains("passenger-tools heap", StringComparison.Ordinal), "the tools there to end with the snapshot given up");
         }
         finally
         {

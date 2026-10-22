@@ -27,8 +27,13 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
     /// <summary>The snapshots before the tools running now, theirs numbered from 1 again.</summary>
     private int before;
 
-    /// <summary>Takes the next snapshot. Once asked of the tools, the answer is read whatever <paramref name="cancel"/> says,
-    /// since a frame left half read would be taken for the next one's.</summary>
+    /// <summary>How long the tools may take over a snapshot (the heap dumped, read with the DAC and sent back) before they are
+    /// ended: 10 minutes, generous for a heap of millions of objects, which take a minute or two.</summary>
+    public static readonly TimeSpan Limit = TimeSpan.FromMinutes(10);
+
+    /// <summary>Takes the next snapshot. Its answer is read whole or not at all: a frame left half read would be taken for the
+    /// next one's, so one given up (<paramref name="cancel"/>) or past <see cref="Limit"/> ends the tools, which the next
+    /// snapshot starts again, and fails with a <see cref="ProfilingException"/> saying why.</summary>
     public async Task<MemorySnapshot> TakeAsync(CancellationToken cancel)
     {
         await taking.WaitAsync(cancel).ConfigureAwait(false);
@@ -47,9 +52,19 @@ internal sealed class ContainerHeap(ProfilePlace place, int processId) : IAsyncD
                 throw new InvalidOperationException(await GoneAsync().ConfigureAwait(false), gone);
             }
             (byte Kind, byte[] Body)? frame;
+            Task<(byte Kind, byte[] Body)?> reading = HeapWire.ReadFrameAsync(running.StandardOutput.BaseStream);
             try
             {
-                frame = await HeapWire.ReadFrameAsync(running.StandardOutput.BaseStream).ConfigureAwait(false);
+                frame = await reading.WaitAsync(Limit, cancel).ConfigureAwait(false);
+            }
+            catch (Exception stopped) when (stopped is TimeoutException or OperationCanceledException)
+            {
+                // Its answer is never read now: the tools go, which ends the read, and the next snapshot starts them again.
+                End(running);
+                _ = reading.ContinueWith(static ended => ended.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+                throw new ProfilingException(stopped is TimeoutException
+                    ? $"Passenger's tools in {place.Where} took no memory snapshot in {Limit.TotalMinutes:0} minutes, and were ended"
+                    : $"The memory snapshot of the program in {place.Where} was stopped, and Passenger's tools there ended", stopped);
             }
             catch (InvalidDataException unreadable)
             {

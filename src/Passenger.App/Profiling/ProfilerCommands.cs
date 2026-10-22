@@ -566,12 +566,14 @@ public sealed class ProfilerCommands
     private async Task<(DotnetProcess Program, ProfilePlace Place)> InRunAsync(DotnetService service, CancellationToken stop)
     {
         BuildRunController builds = parts.Builds();
+        // Taken before the wait: the run may be stopped meanwhile, and its place is still where this service was found.
+        ContainerRun run = builds.Containers ?? throw new ContainerToolsException($"{service.Service} is not a .NET service of a container run under way");
         ServiceInContainer there = await builds.ServiceInContainerAsync(service, stop);
         if (there.Program.WhyNot is { } why)
         {
             throw new ContainerToolsException(why);
         }
-        return (there.Program, BuildRunController.ProfilePlaceOf(builds.Containers!, service, there));
+        return (there.Program, BuildRunController.ProfilePlaceOf(run, service, there));
     }
 
     /// <summary>The program Attach Profiler profiles: the one being debugged (in its container, too), else the one Profile
@@ -721,8 +723,8 @@ public sealed class ProfilerCommands
     }
 
     /// <summary>Get Memory Snapshot: the running program's heap, listed on the Memory page with the run's earlier ones to
-    /// compare it with; the run goes on.</summary>
-    public async Task<MemorySnapshot?> MemorySnapshotAsync()
+    /// compare it with; the run goes on. One given up (<paramref name="cancel"/>: an agent's call it was for) is said so.</summary>
+    public async Task<MemorySnapshot?> MemorySnapshotAsync(CancellationToken cancel = default)
     {
         if (Session.Profiling is not { } run)
         {
@@ -733,15 +735,15 @@ public sealed class ProfilerCommands
         using IDisposable held = BackgroundWork.Scope();
         try
         {
-            MemorySnapshot heap = await run.TakeMemorySnapshotAsync();
+            MemorySnapshot heap = await run.TakeMemorySnapshotAsync(cancel);
             View.ShowMemory(heap);
             parts.Say($"{heap.Name} of {profilingName}: {heap.Objects:N0} objects, {heap.Bytes / 1048576.0:N1} MB");
             return heap;
         }
         catch (Exception error) when (error is InvalidOperationException or IOException or ServerNotAvailableException or DiagnosticsClientException
-            or TimeoutException or HeapUnreadableException)
+            or TimeoutException or HeapUnreadableException or ProfilingException or OperationCanceledException)
         {
-            parts.Say($"No memory snapshot: {error.Message}");
+            parts.Say($"No memory snapshot: {(error is OperationCanceledException ? "it was stopped" : error.Message)}");
             return null;
         }
     }

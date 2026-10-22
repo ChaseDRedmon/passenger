@@ -314,7 +314,7 @@ public sealed partial class PassengerTools
         if (seconds is { } limit)
         {
             await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)), cancel);
-            if (memory && !running.HasExited && await window.MemorySnapshotAsync() is { } taken)
+            if (memory && !running.HasExited && await window.MemorySnapshotAsync(cancel) is { } taken)
             {
                 heap = [.. taken.Types.Take(Math.Clamp(top, 1, 200)).Select(t => new HeapTypeInfo(t.Name, t.Count, t.Bytes))];
             }
