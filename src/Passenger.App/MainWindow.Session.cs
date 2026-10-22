@@ -45,6 +45,7 @@ public partial class MainWindow
         cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings, work, () => Engine)
     {
         DockerHub = DockerHub,
+        StartsLanguageServer = StartsLanguageServer,
     };
 
     /// <summary>Where this window's Dockerfile server asks for image tags in Docker Hub's place: a test's stand-in; null for
