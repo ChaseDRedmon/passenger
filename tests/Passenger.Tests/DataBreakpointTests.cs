@@ -270,9 +270,10 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
     private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
         breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
 
+    /// <summary>A window on the program with its file open, with no C# language server, which debugging asks nothing of.</summary>
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(folder);
         window.OpenFile(program);

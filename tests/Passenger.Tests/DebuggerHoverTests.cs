@@ -138,10 +138,11 @@ public sealed class DebuggerHoverTests : IClassFixture<DebuggerHoverTests.People
         }
     }
 
-    /// <summary>A window on the program paused at its breakpoint, on the line that writes what it made, its locals shown.</summary>
+    /// <summary>A window on the program paused at its breakpoint, on the line that writes what it made, its locals shown; with
+    /// no C# language server, since a paused program's card is the debugger's values alone.</summary>
     private MainWindow Stopped()
     {
-        MainWindow window = people.Open(people.PathOf("Program.cs"));
+        MainWindow window = people.Open(people.PathOf("Program.cs"), languageServer: false);
         window.EditorArea.CodeEditor.GoTo(new TextPosition(People.Stop, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
         Ui.Run(window, AppActions.Debug);

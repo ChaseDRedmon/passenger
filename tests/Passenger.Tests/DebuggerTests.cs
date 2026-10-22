@@ -16,10 +16,11 @@ namespace Passenger.Tests;
 
 /// <summary>Debugging from the window, as a person does it: F9 on a line, Alt+F5, the stop shown where
 /// it is with its values, then stepping, resuming and stopping with the keys Rider's keymap gives
-/// them. The tests on Sum as written share it (<see cref="Sum"/>): restored once, its warm language server and the build
-/// the last test left, so each one's Debug finds nothing to compile; those that end a program that would run for ever share
-/// <see cref="Sleeper"/> likewise; a test that changes the program takes a folder of its own (<see cref="Fresh"/>).
-/// Debugged, and the console's answers timed, so run alone.</summary>
+/// them. The tests on Sum as written share it (<see cref="Sum"/>): restored once, and the build the last test left, so each
+/// one's Debug finds nothing to compile; those that end a program that would run for ever share <see cref="Sleeper"/>
+/// likewise; a test that changes the program takes a folder of its own (<see cref="Fresh"/>). A window starts no C#
+/// language server unless the test's edits go into the program debugged (Hot Reload works them out in the server), the
+/// debugger and the file's own parse answering the rest. Debugged, and the console's answers timed, so run alone.</summary>
 [Collection(Alone.Name)]
 public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixture<DebuggerTests.Sleeper>, IClassFixture<RestoredFolders>, IDisposable
 {
@@ -61,8 +62,10 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         return made;
     });
 
+    /// <summary>F9 and Debug stop the program at the line with its locals, in a Debug window that shares a side pane, its
+    /// next hit on Resume and the step after it; the menus of Variables and Frames copy a value, watch it and copy the stack.</summary>
     [AvaloniaFact]
-    public void A_breakpoint_set_with_F9_stops_the_program_there_with_its_locals()
+    public void A_breakpoint_set_with_F9_stops_the_program_there_with_its_locals_and_the_variables_and_frames_menus_copy_them()
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -117,6 +120,18 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             && stepped + listed < TimeSpan.FromSeconds(1).Scaled() && framed <= listed,
             $"The step's stop took too long to show, or was not timed: {window.Debugger.LastStopTimes}");
         Assert.Contains("Debugging Sum: step over stopped", Ui.IdeLog(), StringComparison.Ordinal);
+
+        // The menus of Variables and Frames: a value copied and watched, and the stack copied with the line stopped at.
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        view.VariablesList.SelectedItem = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "i");
+        Ui.ChooseFromMenu(view.VariablesList, "Copy Value");
+        Ui.WaitFor(() => Ui.Clipboard(window) == "2", "the value on the clipboard");
+        Ui.ChooseFromMenu(view.VariablesList, "Add to Watches");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == "i" && r.Value == "2"), "the watch");
+        ListBox frames = view.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
+        Ui.ChooseFromMenu(frames, "Copy Stack");
+        Ui.WaitFor(() => Ui.Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
+        Assert.Contains($"Program.cs:{view.Frames[0].Line}", Ui.Clipboard(window), StringComparison.Ordinal);
 
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
@@ -180,34 +195,6 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     }
 
     [AvaloniaFact]
-    public void The_variables_and_frames_menus_copy_values_add_watches_and_copy_the_stack()
-    {
-        MainWindow window = Open();
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(3, 4));
-        Ui.Run(window, AppActions.ToggleBreakpoint);
-        StartDebugging(window);
-        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
-        Ui.WaitFor(() => Value(window, "i") == "1", "the locals at the first stop");
-        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
-
-        view.VariablesList.SelectedItem = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "i");
-        Ui.ChooseFromMenu(view.VariablesList, "Copy Value");
-        Ui.WaitFor(() => Ui.Clipboard(window) == "1", "the value on the clipboard");
-        Ui.ChooseFromMenu(view.VariablesList, "Add to Watches");
-        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == "i" && r.Value == "1"), "the watch");
-
-        Avalonia.Controls.ListBox frames = view.GetVisualDescendants().OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
-        Ui.ChooseFromMenu(frames, "Copy Stack");
-        Ui.WaitFor(() => Ui.Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
-        Assert.Contains("Program.cs:4", Ui.Clipboard(window), StringComparison.Ordinal);
-
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
-        window.Close();
-    }
-
-    [AvaloniaFact]
     public void Dragging_the_execution_arrow_past_the_loop_goes_on_from_there_and_skips_it()
     {
         MainWindow window = Open();
@@ -261,7 +248,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     [AvaloniaFact]
     public void A_line_typed_above_a_bound_breakpoint_while_paused_leaves_it_stopping_at_its_statement()
     {
-        MainWindow window = Open();
+        MainWindow window = Open(hotReload: true);
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(3, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
@@ -305,7 +292,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     {
         Write("Program.cs", $"int total = 0;\n/* Pasted:{(char)0x2028}a{(char)0x2029}b{(char)0x85}c\rd */\nfor (int i = 1; i <= 3; i++)\n{{\n    total += i;\n}}\n"
             + "total *= 2;\nConsole.WriteLine($\"total {total}\");\n");
-        MainWindow window = Open();
+        MainWindow window = Open(hotReload: true);
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(4, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
@@ -396,7 +383,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             """);
         string work = Path.GetDirectoryName(Write("work dir/.keep", string.Empty))!;
         string settings = TestFolders.Create("settings-");
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(Fresh());
         Ui.Settle();
@@ -795,7 +782,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     /// window on it left.</summary>
     private MainWindow Keeping(string settings)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, WarmServer = sum.Server };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, StartsLanguageServer = false };
         window.Show();
         window.KeepLayout();
         window.OpenFolder(sum.Folder);
@@ -913,9 +900,9 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
     /// <summary>An expression evaluated at a stop runs once, when it is asked: its result is that stop's, gone once the
     /// program goes on, where it was evaluated again at every later stop, side effects and all, an increment adding at
-    /// every step.</summary>
+    /// every step. At the next stop, a value set in Variables is the one the program goes on with.</summary>
     [AvaloniaFact]
-    public void An_expression_evaluated_at_a_stop_runs_once_and_its_result_goes_with_the_stop()
+    public void An_expression_evaluated_at_a_stop_runs_once_with_the_stop_and_a_value_set_in_variables_is_the_one_the_program_goes_on_with()
     {
         MainWindow window = Open();
         window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
@@ -935,6 +922,21 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         Assert.DoesNotContain(view.Tree.Rows, r => r.Role == VariableRole.Result);
         StepOver();
         Assert.True(Value(window, "total") == "101", $"After a second step total was {Value(window, "total")}: the expression ran again");
+
+        // At the loop's next turn, Rider's Set Value: click the row, F2, type over the value, Enter.
+        Ui.Run(window, AppActions.Resume);
+        WaitDebugging(window, () => Value(window, "i") == "2" && Value(window, "total") == "101", "the loop's next turn");
+        ListBox list = view.VariablesList;
+        VariableNode total = view.Tree.Rows.First(r => r.Name == "total");
+        Control row = list.ContainerFromItem(total)!;
+        Ui.Click(row, settle: false);
+        Ui.Press(window, "F2");
+        Assert.True(total.IsEditing);
+        window.KeyTextInput("100");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => Value(window, "total") == "100", "the value set");
+        Ui.Run(window, AppActions.StepOver);
+        Ui.WaitFor(() => Value(window, "total") == "102", "the program to add to the value set, not the old one");
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
@@ -945,33 +947,6 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Ui.Run(window, AppActions.StepOver);
             WaitDebugging(window, () => !ReferenceEquals(window.Debugger.LastStopTimes, before), "the step's stop and its locals");
         }
-    }
-
-    [AvaloniaFact]
-    public void A_value_set_in_the_variables_view_is_the_one_the_program_goes_on_with()
-    {
-        MainWindow window = Open();
-        window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
-        Ui.Run(window, AppActions.ToggleBreakpoint);
-        StartDebugging(window);
-        WaitDebugging(window, () => Value(window, "total") == "0", "the first stop");
-
-        // Click the row, F2, type over the value, Enter: Rider's Set Value.
-        ListBox list = window.BottomPanel.Debug.VariablesList;
-        VariableNode total = window.BottomPanel.Debug.Tree.Rows.First(r => r.Name == "total");
-        Control row = list.ContainerFromItem(total)!;
-        Ui.Click(row, settle: false);
-        Ui.Press(window, "F2");
-        Assert.True(total.IsEditing);
-        window.KeyTextInput("100");
-        Ui.Press(window, "Enter");
-        Ui.WaitFor(() => Value(window, "total") == "100", "the value set");
-
-        Ui.Run(window, AppActions.StepOver);
-        Ui.WaitFor(() => Value(window, "total") == "101", "the program to add to the value set, not the old one");
-        Ui.Run(window, AppActions.Stop);
-        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
-        window.Close();
     }
 
     /// <summary>An element listed under a range (an array longer than a hundred, a row of a two-dimensional one) takes a
@@ -1209,10 +1184,13 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     private static VariableNode? Row(MainWindow window, string name) =>
         window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == name);
 
+    /// <summary>What is typed into the Debug console is the program's input; and Pause stops the program where it runs on in
+    /// its loop, shown there.</summary>
     [AvaloniaFact]
-    public void What_is_typed_into_the_debug_console_is_the_programs_input()
+    public void What_is_typed_into_the_debug_console_is_the_programs_input_and_pause_stops_it_where_it_is_in_its_loop()
     {
-        Write("Program.cs", "Console.Write(\"Name? \");\nstring? name = Console.ReadLine();\nConsole.WriteLine($\"read: {name}\");\n");
+        Write("Program.cs", "Console.Write(\"Name? \");\nstring? name = Console.ReadLine();\nConsole.WriteLine($\"read: {name}\");\n"
+            + "long turns = 0;\nConsole.WriteLine(\"looping\");\nwhile (true)\n{\n    turns++;\n}\n");
         MainWindow window = Open();
         try
         {
@@ -1220,8 +1198,13 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
             Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
             Ui.WaitFor(() => console.Document.Snapshot.ToString().Contains("Name? ", StringComparison.Ordinal), "the program to ask");
             Ui.TypeToDebugged(window, "Ada");
-            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to read the line and end");
+            WaitDebugging(window, () => console.Document.Snapshot.ToString().Contains("looping", StringComparison.Ordinal), "the program to read the line and go on to its loop");
             Assert.Contains("Name? Ada\nread: Ada\n", console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+            window.Perform(AppActions.Pause);
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Frames.Count > 0, "the pause to be shown");
+            Assert.InRange(window.BottomPanel.Debug.Frames[0].Line, 6, 9);
+            Assert.Contains(window.EditorArea.CodeEditor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint && m.Line is >= 5 and <= 8);
         }
         finally
         {
@@ -1300,28 +1283,6 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     }
 
     [AvaloniaFact]
-    public void Pause_stops_a_running_program_and_shows_where_it_is_in_its_loop()
-    {
-        Write("Program.cs", "long turns = 0;\nConsole.WriteLine(\"looping\");\nwhile (true)\n{\n    turns++;\n}\n");
-        MainWindow window = Open();
-        try
-        {
-            StartDebugging(window);
-            WaitDebugging(window, () => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains("looping", StringComparison.Ordinal), "the program to be in its loop");
-            window.Perform(AppActions.Pause);
-            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Frames.Count > 0, "the pause to be shown");
-            Assert.InRange(window.BottomPanel.Debug.Frames[0].Line, 3, 6);
-            Assert.Contains(window.EditorArea.CodeEditor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint && m.Line is >= 2 and <= 5);
-        }
-        finally
-        {
-            window.Perform(AppActions.Stop);
-            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the program to stop");
-            window.Close();
-        }
-    }
-
-    [AvaloniaFact]
     public void A_debugger_that_dies_with_an_exception_leaves_the_window_up_with_its_words_in_the_console_and_the_log()
     {
         // The engine's log is opened as the adapter starts, so a folder in its place kills the adapter with an unhandled
@@ -1361,7 +1322,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     public void A_debugger_killed_while_its_program_is_paused_takes_the_program_with_it()
     {
         string started = Path.Combine(TestFolders.Create("debuggee-"), "program.pid");
-        MainWindow window = OpenSleeper(started, warm: true);
+        MainWindow window = OpenSleeper(started, languageServer: false);
         int debuggee = 0;
         int adapter = 0;
         try
@@ -1395,7 +1356,7 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
     {
         string started = Path.Combine(TestFolders.Create("debuggee-"), "program.pid");
         // A server of the window's own, which its close is to end, not one it would leave for the next window.
-        MainWindow window = OpenSleeper(started, warm: false);
+        MainWindow window = OpenSleeper(started, languageServer: true);
         int debuggee = 0;
         int adapter = 0;
         int server = window.CSharpService?.Session?.Server.ProcessId ?? throw new InvalidOperationException("The language server did not start");
@@ -1448,8 +1409,8 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
                 OpenWindows.Watch();
                 try
                 {
-                    // A server of the window's own: nothing it starts on this dispatcher is left for a later window to take up.
-                    MainWindow window = OpenSleeper(started, warm: false);
+                    // No language server: nothing it starts on this dispatcher is left for a later window to take up.
+                    MainWindow window = OpenSleeper(started, languageServer: false);
                     StartDebugging(window);
                     int program = Running(window, started);
                     Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
@@ -1989,14 +1950,16 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         string.Join('\n', run.Session.Screen.Scrollback.Select(l => l.Text()).Concat(run.Session.Screen.Lines.Select(l => l.Text())));
 
     /// <summary>A window on the folder with its Program.cs open: on Sum, the server the last window on it left, never saving
-    /// what the test types, so the build stays the one the files were built into.</summary>
-    private MainWindow Open()
+    /// what the test types, so the build stays the one the files were built into; on the test's own folder, with no C#
+    /// language server unless the test applies its edits to the program (<paramref name="hotReload"/>), which the server
+    /// works out, since the debugger and the file's own parse answer the rest.</summary>
+    private MainWindow Open(bool hotReload = false)
     {
         if (fresh is null)
         {
-            return sum.Open(Program);
+            return sum.Open(Program, languageServer: hotReload);
         }
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StartsLanguageServer = hotReload };
         window.Show();
         window.OpenFolder(fresh);
         window.OpenFile(Program);
@@ -2058,12 +2021,11 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
 
     /// <summary>A window on <see cref="Sleeper"/> with its Program.cs open, which never saves what the test types, a
     /// configuration of its own (named apart from the project's generated one) giving the program the file to write its id
-    /// to; on the server the last window on it left, or, not <paramref name="warm"/>, one of its own that ends with the
-    /// window.</summary>
-    private MainWindow OpenSleeper(string started, bool warm)
+    /// to; with a C# language server of its own that ends with the window (<paramref name="languageServer"/>), or none.</summary>
+    private MainWindow OpenSleeper(string started, bool languageServer)
     {
         string project = PathNames.Canonical(sleeper.Folder);
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, WarmServer = warm ? sleeper.Server : null };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = languageServer };
         window.Show();
         window.OpenFolder(sleeper.Folder);
         window.OpenFile(Path.Combine(project, "Program.cs"));
