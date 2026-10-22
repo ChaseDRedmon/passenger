@@ -181,12 +181,8 @@ public static class PublishProfiles
     public static Dictionary<string, string> Globals(WorkspaceModel? workspace, ProjectModel project, string? profile, string? configuration, string? framework,
         string? runtime = null)
     {
-        Dictionary<string, string> globals = workspace is null ? new(StringComparer.OrdinalIgnoreCase) : ProjectModels.Properties(workspace);
+        Dictionary<string, string> globals = ProjectModels.Properties(workspace, project);
         globals["_IsPublishing"] = "true";
-        if (project.WindowsTargeting)
-        {
-            globals["EnableWindowsTargeting"] = "true";
-        }
         if (profile is not null)
         {
             globals["PublishProfile"] = profile;

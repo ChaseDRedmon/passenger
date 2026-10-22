@@ -384,7 +384,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   15 ms to stamp and 8 ms to check a project of 5,000 files in 361 folders, 50 ms and 25 ms for 20,000 in 1,111, within
   the 400 ms typing pause)), and `properties`
   (`Properties.cs`: a few properties of one project evaluated afresh with the global properties given, which is how
-  Publish reads a publish profile, the SDK importing it by PublishProfile). Off Windows a project
+  Publish reads a publish profile, the SDK importing it by PublishProfile, a launch finds its program (`LaunchPlan`) and a
+  test run its assemblies (`TestAssemblies`), each given `ProjectModels.Properties(workspace, project)`: no cold dotnet
+  msbuild but for a target's run). Off Windows a project
   that references a framework the SDK marks Windows-only and leaves EnableWindowsTargeting unset is loaded again with it
   as a global property (`WindowsTargeting.cs`), in evaluate, build and inspect alike; Passenger's builds follow
   (`BuildOutput.WindowsTargeting`, `-p:EnableWindowsTargeting=true`), and Roslyn's server has it in its environment off
@@ -892,7 +894,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   a value replaced where it stands, a property added indented as the others, the rest byte for byte) as one command whose
   Part puts the folder's edit back on Undo (`MainWindow.WriteToLaunchProfile`, `RunConfigurations.Rebase`); what the file
   has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
-  `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
+  `LaunchPlan.ResolveAsync` works one out once, in one request of the project host, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. While a run of a configuration is up (Run's program or container run, a session Debug launched for it,
   Profile's program: `BuildRunController.IsRunningConfiguration`), the toolbar, its chooser and Edit Configurations' row say

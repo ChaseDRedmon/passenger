@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Passenger.App.State;
 using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Host;
 
 namespace Passenger.App.Run;
 
@@ -67,11 +68,13 @@ public sealed partial record LaunchPlan
     /// first build makes it (dotnet watch's, for a run with Hot Reload).</summary>
     public bool WorksWhereBuilt => Built is { } file && System.IO.Path.GetDirectoryName(file) is { } output && PathNames.Same(output, WorkingDirectory);
 
-    /// <summary>Works out what a configuration launches among the open folder's projects, asking MSBuild where the project
-    /// builds (and any property its values name), which needs no build. A Passenger it launches keeps its state in the
-    /// launching one's state folder's sandbox/ (<see cref="SandboxedState"/>). Throws a <see cref="LaunchException"/> saying
-    /// why it cannot: a kind of profile Passenger does not run, a project gone or unloaded, MSBuild's refusal.</summary>
-    public static async Task<LaunchPlan> ResolveAsync(RunConfiguration configuration, IReadOnlyList<ProjectModel> projects, string stateFolder, CancellationToken cancel = default)
+    /// <summary>Works out what a configuration launches among the open folder's projects (of <paramref name="workspace"/>,
+    /// whose solution's properties MSBuild is given), asking MSBuild where the project builds (and any property its values
+    /// name), which needs no build. A Passenger it launches keeps its state in the launching one's state folder's sandbox/
+    /// (<see cref="SandboxedState"/>). Throws a <see cref="LaunchException"/> saying why it cannot: a kind of profile
+    /// Passenger does not run, a project gone or unloaded, MSBuild's refusal.</summary>
+    public static async Task<LaunchPlan> ResolveAsync(RunConfiguration configuration, IReadOnlyList<ProjectModel> projects, WorkspaceModel? workspace, string stateFolder,
+        CancellationToken cancel = default)
     {
         if (configuration.Unsupported is { } why)
         {
@@ -99,7 +102,7 @@ public sealed partial record LaunchPlan
                 names.Add(macro.Groups[1].Value);
             }
         }
-        IReadOnlyDictionary<string, string> properties = await EvaluateAsync(project, framework, names, cancel);
+        IReadOnlyDictionary<string, string> properties = await EvaluateAsync(project, framework, names, workspace, cancel);
         string Expand(string text) => System.Environment.ExpandEnvironmentVariables(
             Macro().Replace(text, macro => properties.GetValueOrDefault(macro.Groups[1].Value, string.Empty)));
 
@@ -176,40 +179,60 @@ public sealed partial record LaunchPlan
         return Programs.OnPath(named) ?? Programs.OnPath(named + (OperatingSystem.IsWindows() ? ".exe" : string.Empty)) ?? named;
     }
 
-    /// <summary>The properties MSBuild evaluates for the project (with its framework when it has several), in one request;
-    /// given a target, as they stand once it has run (the SDK's ComputeContainerBaseImage for ContainerBaseImage), and as
-    /// evaluated when it does not run (a project not restored yet).</summary>
-    internal static async Task<IReadOnlyDictionary<string, string>> EvaluateAsync(ProjectModel project, string? framework, IReadOnlyCollection<string> names, CancellationToken cancel,
-        string? target = null)
+    /// <summary>The properties MSBuild evaluates for the project (with its framework when it has several), with the global
+    /// properties a build of it is given (<see cref="ProjectModels.Properties(WorkspaceModel, ProjectModel)"/>), asked of
+    /// the warm project host; given a target, as they stand once it has run (the SDK's ComputeContainerBaseImage for
+    /// ContainerBaseImage), which the host does not run, so dotnet msbuild does, and as evaluated when it does not run (a
+    /// project not restored yet). A property with no value is left out.</summary>
+    internal static async Task<IReadOnlyDictionary<string, string>> EvaluateAsync(ProjectModel project, string? framework, IReadOnlyCollection<string> names,
+        WorkspaceModel? workspace, CancellationToken cancel, string? target = null)
     {
-        List<string> args = ["msbuild", project.Path, "-nologo", .. names.Select(n => $"-getProperty:{n}")];
+        Dictionary<string, string> globals = ProjectModels.Properties(workspace, project);
         if (framework is not null)
         {
-            args.Add($"-property:TargetFramework={framework}");
+            globals["TargetFramework"] = framework;
         }
         if (target is not null)
         {
-            args.Add($"-target:{target}");
+            return await AfterTargetAsync(project, names, globals, target, cancel) ?? await EvaluateAsync(project, framework, names, workspace, cancel);
         }
+        PropertiesAnswer answer;
+        try
+        {
+            // The SDK the project's folder picks, as dotnet msbuild run there would load: the host for it, warm already.
+            ProjectHost host = await ProjectHosts.ForAsync(project.Folder, cancel);
+            answer = await host.PropertiesAsync(project.Path, globals, [.. names], cancel);
+        }
+        catch (ProjectHostFailed failed)
+        {
+            throw new LaunchException($"MSBuild could not say what {project.Name} builds: {failed.Reason}");
+        }
+        return answer.Problem is { } problem
+            ? throw new LaunchException($"MSBuild could not say what {project.Name} builds: {problem}")
+            : new Dictionary<string, string>(answer.Values, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The properties as they stand once a target has run, through dotnet msbuild; null when it did not run.</summary>
+    private static async Task<IReadOnlyDictionary<string, string>?> AfterTargetAsync(ProjectModel project, IReadOnlyCollection<string> names,
+        IReadOnlyDictionary<string, string> globals, string target, CancellationToken cancel)
+    {
+        List<string> args = ["msbuild", project.Path, "-nologo", $"-target:{target}", .. names.Select(n => $"-getProperty:{n}"), .. globals.Select(p => $"-property:{p.Key}={p.Value}")];
         ChildResult msbuild = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(args, project.Folder), cancel: cancel);
         string output = msbuild.Output.Trim();
-        if (target is not null && (!msbuild.Succeeded || output.Length == 0))
-        {
-            return await EvaluateAsync(project, framework, names, cancel);
-        }
         if (!msbuild.Succeeded || output.Length == 0)
         {
-            throw new LaunchException($"MSBuild could not say what {project.Name} builds: {msbuild.Error.Trim()} {output}".Trim());
+            return null;
         }
         try
         {
             using JsonDocument read = JsonDocument.Parse(output);
             return read.RootElement.GetProperty("Properties").EnumerateObject()
-                .ToDictionary(p => p.Name, p => p.Value.GetString() ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+                .Where(p => p.Value.GetString() is { Length: > 0 })
+                .ToDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException)
         {
-            throw new LaunchException($"MSBuild's answer about {project.Name} did not read: {output}");
+            return null;
         }
     }
 

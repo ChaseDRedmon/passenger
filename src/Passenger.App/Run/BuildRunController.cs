@@ -434,7 +434,7 @@ public sealed partial class BuildRunController
     {
         try
         {
-            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, session.Projects, parts.StateFolder(), stop), null);
+            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, session.Projects, session.Workspace, parts.StateFolder(), stop), null);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {

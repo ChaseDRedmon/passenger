@@ -18,6 +18,9 @@ public sealed class TestController : IAsyncDisposable
 
     private readonly Func<CancellationToken, Task<Run.BuildOutcome>> build;
     private readonly Func<IReadOnlyList<ProjectModel>> projects;
+
+    /// <summary>The folder's workspace as last read, whose solution's properties MSBuild is given where the tests build.</summary>
+    private readonly Func<WorkspaceModel?> workspaceModel;
     private readonly Action<string> log;
     private readonly Func<string, CancellationToken, Task<ITestRunner>> startRunner;
     private ITestRunner? runner;
@@ -42,12 +45,13 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>The tests each test project's code declares, by project path.</summary>
     private IReadOnlyDictionary<string, CodeTests> code = new Dictionary<string, CodeTests>();
 
-    public TestController(TestTree tree, Func<CancellationToken, Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log,
-        Func<string, CancellationToken, Task<ITestRunner>>? startRunner = null)
+    public TestController(TestTree tree, Func<CancellationToken, Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects,
+        Func<WorkspaceModel?> workspaceModel, Action<string> log, Func<string, CancellationToken, Task<ITestRunner>>? startRunner = null)
     {
         Tree = tree;
         this.build = build;
         this.projects = projects;
+        this.workspaceModel = workspaceModel;
         this.log = log;
         this.startRunner = startRunner ?? ((workspace, _) => Task.FromResult<ITestRunner>(new TestRunners(workspace)));
         Finder.Changed += (_, found) =>
@@ -500,7 +504,7 @@ public sealed class TestController : IAsyncDisposable
         {
             return known.Assemblies;
         }
-        IReadOnlyList<TestAssembly> assemblies = await TestAssemblies.ResolveAsync(tests, workspace, UiThread.Marshal(log), cancel);
+        IReadOnlyList<TestAssembly> assemblies = await TestAssemblies.ResolveAsync(tests, workspace, workspaceModel(), UiThread.Marshal(log), cancel);
         resolved = (tests, assemblies);
         return assemblies;
     }

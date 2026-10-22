@@ -73,7 +73,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Configurations = new RunConfigurations(folder, () => Workspace);
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
-        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
+        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, () => Workspace, line => setup.Views.Build.Append($"{line}\n")) { Work = setup.Work };
         Containers = new Containers.FolderContainers(folder, setup.Engine());
         Vcs.Work = setup.Work;
         Debug = new DebugController(setup.Editors, setup.Views.Debug)
