@@ -227,6 +227,92 @@ public sealed class KeymapChoiceTests : IDisposable
         }
     }
 
+    /// <summary>A tool window floated off into a window of its own runs the keymap chosen, as the main window does: its
+    /// search box keeps what is typed there, keys the IDE's editor has (Backspace, Left) included; Visual Studio's Find
+    /// Action opens over it; and once VS Code's keymap is chosen, VS Code's Quick Open does, where it opened nothing before.</summary>
+    [AvaloniaFact]
+    public void A_floating_tool_window_runs_the_keymap_chosen_and_its_search_box_keeps_what_is_typed()
+    {
+        MainWindow window = Open();
+        try
+        {
+            Passenger.App.Docking.DockHost dock = window.DockHost;
+            dock.Show("tests");
+            dock.SetMode(dock["tests"]!, Passenger.App.Docking.ToolMode.Floating);
+            Ui.Settle();
+            Window floating = Assert.Single(window.OwnedWindows);
+            TextBox search = window.BottomPanel.Tests.GetVisualDescendants().OfType<TextBox>().Single(b => b.Classes.Contains("search"));
+            Point at = search.TranslatePoint(new Point(search.Bounds.Width / 2, search.Bounds.Height / 2), floating)!.Value;
+            floating.MouseDown(at, MouseButton.Left);
+            floating.MouseUp(at, MouseButton.Left);
+            Ui.Settle();
+            Assert.True(search.IsKeyboardFocusWithin, "A click on the floating Unit Tests window's search box left the keys elsewhere");
+            floating.KeyTextInput("Onex");
+            Ui.Press(floating, "BACK_SPACE");
+            Ui.Press(floating, "LEFT");
+            floating.KeyTextInput("-");
+            Assert.Equal("On-e", search.Text);
+            Assert.Equal(Source, Text(window));
+
+            Ui.Press(floating, $"{Cmd} shift A");
+            Assert.True(window.Popup is ActionPopup popup && floating.GetVisualDescendants().Contains(popup),
+                "Visual Studio's Find Action key, pressed in the floating Unit Tests window, opened no Find Action over it");
+            Ui.Press(floating, "ESCAPE");
+            Assert.True(search.IsKeyboardFocusWithin, "Find Action, closed, left the floating window's keys away from its search box");
+            Ui.Press(floating, $"{Cmd} P");
+            Assert.False(window.Popup is GoToFilePopup, "VS Code's Quick Open key opened Go to File in Visual Studio's keymap");
+
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
+            Ui.Settle();
+            Ui.Press(floating, $"{Cmd} P");
+            Assert.True(window.Popup is GoToFilePopup goToFile && floating.GetVisualDescendants().Contains(goToFile),
+                "VS Code's Quick Open key, pressed in the floating Unit Tests window once VS Code's keymap was chosen, opened no Go to File over it");
+            Ui.Press(floating, "ESCAPE");
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
+    }
+
+    /// <summary>The terminal floated off into a window of its own keeps the shell's keys as it does docked: in VS Code's
+    /// keymap a Ctrl+letter the keymap gives a tool window's action (Hide Active Tool Window's Ctrl+J) and what is typed go
+    /// to the shell, while the terminal's own key, VS Code's Ctrl+`, is still the IDE's and closes it.</summary>
+    [AvaloniaFact]
+    public void A_floating_terminal_keeps_the_shells_keys_and_lets_the_IDEs_through()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
+            window.ApplySettings(window.Settings with { Keymap = KeymapPreset.VSCode });
+            Passenger.App.Docking.DockHost dock = window.DockHost;
+            dock.SetMode(dock["terminal"]!, Passenger.App.Docking.ToolMode.Floating);
+            Ui.Settle();
+            window.EditorArea.CodeEditor.Focus();
+            Ui.Press(window, "control BACK_QUOTE");
+            Window floating = Assert.Single(window.OwnedWindows);
+            Ui.WaitFor(() => window.TerminalPanel.Active is { IsRunning: true }, "the shell to start");
+            Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the floating terminal");
+            Ui.WaitFor(() => window.TerminalPanel.Active!.Screen.CursorColumn > 0, "the shell's prompt");
+
+            Ui.Press(floating, "control J");
+            Assert.True(floating.IsVisible && window.TerminalPanel.View.IsFocused, "Ctrl+J, pressed in the floating terminal, hid it rather than going to the shell");
+            floating.KeyTextInput("echo floated");
+            Ui.Press(floating, "ENTER");
+            Ui.WaitFor(() => window.TerminalPanel.Active!.Screen.ScreenText().Contains("\nfloated", StringComparison.Ordinal), "what was typed run in the floating terminal");
+
+            Ui.Press(floating, "control BACK_QUOTE");
+            Assert.False(window.DockHost.IsShown("terminal"), "Ctrl+`, pressed in the floating terminal, went to the shell rather than closing it");
+        }
+        finally
+        {
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void The_menus_and_the_tool_windows_buttons_name_the_chosen_keymaps_keys()
     {

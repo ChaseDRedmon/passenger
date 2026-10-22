@@ -65,12 +65,12 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Where an action asked for now runs: the file shown and its caret, what has the keys in the window in front
-    /// (an editor window, a diff, a dialog, a floating tool window, this one) and the tool window it is in, and the
-    /// debugger's state.</summary>
+    /// <summary>Where an action asked for now runs: the file shown and its caret, what has the keys in the window its keys
+    /// were pressed in, else the window in front (an editor window, a diff, a dialog, a floating tool window, this one), and
+    /// the tool window it is in, and the debugger's state.</summary>
     private ActionContext Context()
     {
-        Window front = Editors.InFront?.Window ?? OwnedWindows.LastOrDefault(w => w.IsActive) ?? this;
+        TopLevel front = windowKeys.Pressing ?? Editors.InFront?.Window ?? OwnedWindows.LastOrDefault(w => w.IsActive) ?? this;
         object? focused = front.FocusManager?.GetFocusedElement();
         Docking.ToolWindow? tool = focused is Visual visual
             ? Dock.Windows.FirstOrDefault(w => w.Content == visual || w.Content.IsVisualAncestorOf(visual))
@@ -201,7 +201,7 @@ public partial class MainWindow
             actions!.Add(new IdeAction(id, title, "Editor", context => Edit(id, context))
             {
                 InEditor = true,
-                WhyNot = context => context.File is null && context.Focused is not TextBox && !ExplorerEdits(id, context) ? NoFile : null,
+                WhyNot = context => context.File is null && context.Focused is not (TextBox or CodeEditor) && !ExplorerEdits(id, context) ? NoFile : null,
                 Menus = menus.GetValueOrDefault(id, []),
             });
         }

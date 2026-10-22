@@ -107,6 +107,8 @@ public partial class MainWindow
         window = new MergeWindow($"Merge Revisions for {repository.Relative(path)}", view, async text => (await session.Vcs.ResolveAsync(path, text)).Succeeded,
             (title, text, yes, no) => AskAsync(window, title, text, yes, no));
         window.Closed += (_, _) => colours.ForEach(c => c.Dispose());
+        // A dialog, yet an editor of the IDE's: its keymap runs there as in a diff's window.
+        windowKeys.Attach(window);
         Window owner = over is { IsVisible: true } ? over : this;
         await window.ShowDialog<bool?>(owner);
         return window.Resolved;

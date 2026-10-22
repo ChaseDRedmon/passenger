@@ -323,7 +323,7 @@ public partial class MainWindow
                 hold.Dispose();
             };
         }
-        window.Show(this);
+        ShowOwn(window);
         return window;
     }
 
@@ -359,7 +359,7 @@ public partial class MainWindow
         }
         DiffWindow window = new($"{file.Name}: {commit.Short} {commit.Subject}", view);
         window.Closed += (_, _) => colours.ForEach(c => c.Dispose());
-        window.Show(this);
+        ShowOwn(window);
         return window;
     }
 

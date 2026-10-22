@@ -1,6 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
@@ -29,18 +27,9 @@ public partial class MainWindow
                 Autosave();
             }
         };
-        // Leaving Passenger saves; going to one of its own windows (a dialog, Settings, a diff) does not, as in Rider.
-        Deactivated += (_, _) => Dispatcher.UIThread.Post(() =>
-        {
-            if (!OwnWindowActive())
-            {
-                SaveOnLeaving();
-            }
-        }, DispatcherPriority.Background);
+        // Leaving Passenger from any of its windows saves (OnLeft); going to one of its own (a dialog, Settings, a diff) does
+        // not, as in Rider. Any key or click in them is activity, which the idle wait starts again from (OnActivity).
         terminal!.View.GotFocus += (_, _) => SaveOnLeaving();
-        // Any key or click is activity, which the idle wait starts again from.
-        AddHandler(KeyDownEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
-        AddHandler(PointerPressedEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) => RestartIdleSave();
         Editors.Opened += (_, document) =>
         {

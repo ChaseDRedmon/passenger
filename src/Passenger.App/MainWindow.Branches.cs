@@ -112,7 +112,7 @@ public partial class MainWindow
         IReadOnlyList<FileChange> files = await session.Vcs.ChangesSinceAsync(branch);
         ChangesWindow window = new(branch.Name, files, repository);
         window.DiffRequested += (_, change) => _ = CompareWithAsync(change.Path, branch.Ref.FullName, branch.Name, change.From ?? change.Path);
-        window.Show(this);
+        ShowOwn(window);
         return window;
     }
 }

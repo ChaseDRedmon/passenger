@@ -414,8 +414,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   is false, as a workbook's is, so the status bar's text widgets, Find and Replace in Files, Local History's look at an
   opened file, a line's actions and agents' `editor_text` and `edit` pass it over.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
-  it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows) are its
-  parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
+  it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows, its keys and
+  popups the IDE's through `DockHost.WindowOpened`) are its parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
   `DropOverlay` are the one drag and drop zone, which editor tabs share. The layout is kept in the state store as a
   `DockLayout`, with the folder open and as the one a folder without its own opens on; `DockHost.RestoreDefault` puts
   each window back where `Dock.Add` put it. A new tool window is a view and
@@ -1020,7 +1020,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action (`IdeAction.Words` are other names Find Action finds
   it by, as Rider's older names). `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
-  through the registry, so one that cannot run says why; editor actions go to the focused editor. An action that takes a
+  through the registry, so one that cannot run says why; editor actions go to the focused editor. The keys are the main
+  window's one keymap in every window the IDE opens but a dialog, each taken in by `IdeKeys.Attach` before it shows (the
+  main window, an editor window through `EditorArea.WindowOpened`, a floating or windowed tool window through
+  `DockHost.WindowOpened`, a diff's or changes window through `MainWindow.ShowOwn`, the merge window, a test's frame
+  through `TestFramesStrip.ViewerOpened`; `MainWindow.OwnWindows.cs`): a keymap chosen runs in each at once, an action
+  pressed there runs in its context (`IdeKeys.Pressing`, which `Context` reads), an editor action goes to that window's
+  editor with the keys (the shown file's, or a diff's or merge's side), the terminal keeps its keys wherever it floats,
+  and a popup its keys open goes over it (`PopupHost.Attach`, which wraps the window's content with its layer), no wider
+  than the window (`PopupHost.Fit`), the keys going back to what had them as it closes. A part with keys of its own (a diff's F7, a merge's Accept keys, a test
+  frame's zoom) is an `IOwnKeys`, which the keymap leaves them to; a dialog (Settings, Conflicts, a question) keeps its
+  own keys and gets none of this. An action that takes a
   while holds a `Working` (`ActionWork.Begin`, under its id or `IdeAction.Works`) from its first moment until its work is
   done or handed over, saying each stage (`Say`) and honouring `Stopping`: while it works the registry starts it no more
   ("Already under way: …"), the status bar says the stage beside a `WorkingRing`, Stop can end it, and a button bound

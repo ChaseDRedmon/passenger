@@ -12,8 +12,8 @@ namespace Passenger.App.ToolWindows;
 /// <summary>A test's frame at its size, as Rider's image editor shows a picture: one picture pixel a unit at 100%, scrolled
 /// when it is larger than the window; Zoom In and Zoom Out by Rider's steps (⌘= and ⌘-, Ctrl on Windows and Linux, or the
 /// modifier with the wheel), Actual Size (⌘/) and Fit Zoom to Window; the result's other frames on Left and Right, and
-/// Escape closes it.</summary>
-public sealed class FrameViewer : Window
+/// Escape closes it. The IDE's keys work there too, these its own.</summary>
+public sealed class FrameViewer : Window, IOwnKeys
 {
     /// <summary>The zooms Zoom In and Zoom Out step through.</summary>
     private static readonly double[] Steps = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8, 12, 16];
@@ -155,34 +155,32 @@ public sealed class FrameViewer : Window
         ZoomTo(Zoom);
     }
 
+    /// <summary>Its keys are its own, ahead of the IDE's keymap (whose ⌘- is Back).</summary>
+    public bool TakesKey(KeyEventArgs e) => Command(e) is not null;
+
     private void OnKey(object? sender, KeyEventArgs e)
+    {
+        if (Command(e) is { } run)
+        {
+            run();
+            e.Handled = true;
+        }
+    }
+
+    private Action? Command(KeyEventArgs e)
     {
         KeyModifiers command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
         bool held = (e.KeyModifiers & ~KeyModifiers.Shift) == command;
-        switch (e.Key)
+        return e.Key switch
         {
-            case Key.OemPlus or Key.Add when held:
-                ZoomIn();
-                break;
-            case Key.OemMinus or Key.Subtract when held:
-                ZoomOut();
-                break;
-            case Key.Oem2 or Key.Divide when held:
-                ZoomTo(1);
-                break;
-            case Key.Left when e.KeyModifiers == KeyModifiers.None:
-                ShowFrame(Index - 1);
-                break;
-            case Key.Right when e.KeyModifiers == KeyModifiers.None:
-                ShowFrame(Index + 1);
-                break;
-            case Key.Escape when e.KeyModifiers == KeyModifiers.None:
-                Close();
-                break;
-            default:
-                return;
-        }
-        e.Handled = true;
+            Key.OemPlus or Key.Add when held => ZoomIn,
+            Key.OemMinus or Key.Subtract when held => ZoomOut,
+            Key.Oem2 or Key.Divide when held => () => ZoomTo(1),
+            Key.Left when e.KeyModifiers == KeyModifiers.None => () => ShowFrame(Index - 1),
+            Key.Right when e.KeyModifiers == KeyModifiers.None => () => ShowFrame(Index + 1),
+            Key.Escape when e.KeyModifiers == KeyModifiers.None => Close,
+            _ => null,
+        };
     }
 
     /// <summary>The command modifier with the wheel zooms, as in Rider's image editor; the wheel alone scrolls.</summary>

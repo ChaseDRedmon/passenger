@@ -69,9 +69,9 @@ public partial class MainWindow
     /// Cmd+K, its Clear Buffer), the second key of a chord already begun, the shortcuts of the actions that run from the
     /// terminal (<see cref="IdeAction.FromTerminal"/>: the tool windows' and their frame's, but never a Ctrl+letter, the
     /// shell's), and, in a program's tab, Stop's and the debugger's (<see cref="ProgramLeaves"/>).</summary>
-    private bool TerminalTakes(KeyEventArgs e)
+    private bool TerminalTakes(object? focused, KeyEventArgs e)
     {
-        if (FocusManager?.GetFocusedElement() is not Terminal.TerminalView || keys.IsPending)
+        if (focused is not Terminal.TerminalView || keys.IsPending)
         {
             return false;
         }

@@ -1,4 +1,3 @@
-using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Passenger.Editor;
 
@@ -18,11 +17,9 @@ public partial class MainWindow
 
     private void AddChords()
     {
+        // A click, a move of the focus and a window left forget it in every window of the IDE's (IdeKeys).
         chordWait.Tick += (_, _) => keys.Reset();
         keys.PendingChanged += (_, _) => ShowChord();
-        AddHandler(PointerPressedEvent, (_, _) => keys.Reset(), RoutingStrategies.Tunnel, handledEventsToo: true);
-        AddHandler(GotFocusEvent, (_, _) => keys.Reset(), RoutingStrategies.Bubble, handledEventsToo: true);
-        Deactivated += (_, _) => keys.Reset();
     }
 
     /// <summary>The chord's message in the status bar while it waits, and the message it covered back once it ends.</summary>

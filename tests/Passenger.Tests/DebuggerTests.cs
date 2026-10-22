@@ -122,6 +122,59 @@ public sealed class DebuggerTests : IClassFixture<DebuggerTests.Sum>, IClassFixt
         window.Close();
     }
 
+    /// <summary>The Debug window floated off into a window of its own still answers the IDE's keys pressed there, as Rider's
+    /// does in any of its windows: Step Over with its Variables clicked steps the program, Find Action opens over it, its
+    /// evaluate box keeps what is typed and deleted there, Enter evaluating it, and Stop ends the session.</summary>
+    [AvaloniaFact]
+    public void Step_Over_pressed_in_the_Debug_window_floated_off_steps_the_program_and_its_evaluate_box_keeps_its_keys()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
+        Ui.WaitFor(() => Value(window, "i") == "1", "the locals at the first stop");
+
+        Passenger.App.Docking.DockHost dock = window.DockHost;
+        dock.SetMode(dock["debug"]!, Passenger.App.Docking.ToolMode.Floating);
+        Ui.Settle();
+        Window floating = Assert.Single(window.OwnedWindows);
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Assert.Contains(view, floating.GetVisualDescendants());
+        ListBox variables = view.VariablesList;
+        Point row = variables.TranslatePoint(new Point(variables.Bounds.Width / 2, 12), floating)!.Value;
+        floating.MouseDown(row, MouseButton.Left);
+        floating.MouseUp(row, MouseButton.Left);
+        Ui.Settle();
+        Assert.True(variables.IsKeyboardFocusWithin, "A click on the floating Debug window's Variables left the keys elsewhere");
+
+        Ui.Run(floating, AppActions.FindAction);
+        Control popup = Assert.IsType<Passenger.App.Navigation.ActionPopup>(window.Popup);
+        Assert.True(floating.GetVisualDescendants().Contains(popup), "Find Action, pressed in the floating Debug window, opened over the main window");
+        Ui.Press(floating, "ESCAPE");
+        Assert.False(window.IsPopupOpen);
+        Assert.True(variables.IsKeyboardFocusWithin, "Find Action, closed, left the floating Debug window's keys away from its Variables");
+
+        Ui.Run(floating, AppActions.StepOver);
+        WaitDebugging(window, () => editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line != 3),
+            "Step Over, pressed in the floating Debug window, to step the program");
+        Ui.WaitFor(() => Value(window, "total") == "1", "the values after the step");
+
+        // Its evaluate box takes what is typed, a key the IDE's editor has (Backspace) included, and evaluates it with Enter.
+        Ui.Run(floating, AppActions.Evaluate);
+        TextBox evaluate = view.GetVisualDescendants().OfType<TextBox>().Single(b => b.IsKeyboardFocusWithin);
+        floating.KeyTextInput("total + 100");
+        Ui.Press(floating, "BACK_SPACE");
+        Assert.Equal("total + 10", evaluate.Text);
+        Ui.Press(floating, "ENTER");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "total + 10" && r.Value == "11"), "the expression typed in the floating Debug window evaluated");
+
+        Ui.Run(floating, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "Stop, pressed in the floating Debug window, to end the session");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void The_variables_and_frames_menus_copy_values_add_watches_and_copy_the_stack()
     {

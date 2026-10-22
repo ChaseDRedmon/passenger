@@ -36,9 +36,8 @@ public partial class MainWindow
 
     private void AddDiscord()
     {
-        // Any key, click, scroll or caret move, in this window or an editor window, is the person at work.
-        AddHandler(KeyDownEvent, (_, _) => Stir(), RoutingStrategies.Tunnel, handledEventsToo: true);
-        AddHandler(PointerPressedEvent, (_, _) => Stir(), RoutingStrategies.Tunnel, handledEventsToo: true);
+        // Any key, click, scroll or caret move is the person at work: a key or click in any of the IDE's windows (OnActivity),
+        // a scroll here, a caret's move in an editor anywhere.
         AddHandler(PointerWheelChangedEvent, (_, _) => Stir(), RoutingStrategies.Tunnel, handledEventsToo: true);
         Editors.CaretMoved += (_, _) => Stir();
     }

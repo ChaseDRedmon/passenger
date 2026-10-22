@@ -10,10 +10,10 @@ using Passenger.App.Editors;
 namespace Passenger.App;
 
 /// <summary>The popups over the window the person works in (Go to File, Find Action, a breakpoint's properties, a
-/// change's old lines): one at a time, on the main window's layer or an editor window's, centred under its top (the
-/// toolbar, an editor window's tabs) or beside a point of it, kept inside it. A click outside one or Escape dismisses it, a
-/// breakpoint's popup and window keeping what was typed in them, as Rider's do; closed, the editor has the keys again. A
-/// UI-thread object of the window.</summary>
+/// change's old lines): one at a time, on the main window's layer or another of the IDE's windows' (<see cref="IdeKeys"/>),
+/// centred under its top or beside a point of it, kept inside it. A click outside one or Escape dismisses it, a
+/// breakpoint's popup and window keeping what was typed in them, as Rider's do; closed, what had the keys has them again.
+/// A UI-thread object of the window.</summary>
 public sealed class PopupHost
 {
     /// <summary>How far below the main window's top its popups open: under its toolbar.</summary>
@@ -23,16 +23,27 @@ public sealed class PopupHost
     /// under its toolbar.</summary>
     private const double EditorWindowPopupTop = 48;
 
+    /// <summary>How far below another window's top its popups open: under a diff's or merge's toolbar and the titles of its
+    /// sides, a tool window's header, a test frame's toolbar, where one at an editor window's place cut a side's title.</summary>
+    private const double OtherWindowPopupTop = 64;
+
     private readonly Panel overlay;
     private readonly ContentControl overlayHost;
     private readonly EditorArea editors;
     private readonly Func<BreakpointStore> breakpoints;
 
-    /// <summary>Each editor window's layer for popups, as the overlay is the main window's.</summary>
-    private readonly Dictionary<Window, (Panel Layer, ContentControl Host)> windowLayers = [];
+    /// <summary>Each other window's layer for popups, as the overlay is the main window's.</summary>
+    private readonly Dictionary<TopLevel, (Panel Layer, ContentControl Host)> windowLayers = [];
 
     /// <summary>The layer a popup shows on now, or last did; the main window's before any has.</summary>
     private (Panel Layer, ContentControl Host)? shown;
+
+    /// <summary>The window of the IDE's the person last worked in: its keys, a click in it or its coming to the front.</summary>
+    private TopLevel? worked;
+
+    /// <summary>The window other than the editors' a popup is over, and what had the keys there as it opened, which has
+    /// them back as it closes; null over the editors' windows, whose editor shown has them back.</summary>
+    private (TopLevel Window, IInputElement? Had)? over;
 
     /// <param name="overlay">The main window's layer over everything, and the host in it a popup goes in.</param>
     /// <param name="breakpoints">The open folder's breakpoints, which a breakpoint's popup dismissed keeps its edits in.</param>
@@ -43,12 +54,16 @@ public sealed class PopupHost
         this.editors = editors;
         this.breakpoints = breakpoints;
         overlay.PointerPressed += OnLayerPressed;
+        overlay.SizeChanged += (_, _) => Refit(overlay, overlayHost);
     }
 
     private (Panel Layer, ContentControl Host) Layers => shown ??= (overlay, overlayHost);
 
     /// <summary>Whether a popup is open.</summary>
     public bool IsOpen => Layers.Layer.IsVisible;
+
+    /// <summary>Whether a popup is open over this window.</summary>
+    public bool IsOpenOver(TopLevel window) => IsOpen && TopLevel.GetTopLevel(Layers.Layer) == window;
 
     /// <summary>What the open popup is (Go to File, a breakpoint's properties, the Breakpoints window), or null.</summary>
     public Control? Open => IsOpen ? Layers.Host.Content as Control : null;
@@ -63,8 +78,16 @@ public sealed class PopupHost
             Layers.Layer.IsVisible = false;
             Layers.Host.Content = null;
         }
+        if (!layer.IsVisible)
+        {
+            over = TopLevel.GetTopLevel(layer) is { } window && layer != overlay && editors.Windows.All(w => w.Window != window)
+                ? (window, window.FocusManager?.GetFocusedElement())
+                : null;
+        }
         shown = (layer, host);
         Thickness shadow = MakeRoom(popup, host);
+        // A layer never shown yet was never laid out: it covers what holds it.
+        Size room = layer.Bounds.Size is { Width: > 0 } laid ? laid : (layer.Parent as Visual)?.Bounds.Size ?? default;
         if (at is { } point)
         {
             popup.Measure(Size.Infinity);
@@ -72,8 +95,6 @@ public sealed class PopupHost
             Thickness inside = popup is TemplatedControl ? shadow : default;
             double width = (popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width) - inside.Left - inside.Right;
             double height = popup.DesiredSize.Height - inside.Top - inside.Bottom;
-            // A layer never shown yet was never laid out: it covers what holds it.
-            Size room = layer.Bounds.Size is { Width: > 0 } laid ? laid : (layer.Parent as Visual)?.Bounds.Size ?? default;
             host.HorizontalAlignment = HorizontalAlignment.Left;
             host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, room.Width - width - 8)) - shadow.Left,
                 Math.Clamp(point.Y, 8, Math.Max(8, room.Height - height - 8)) - shadow.Top, 0, 0);
@@ -81,10 +102,33 @@ public sealed class PopupHost
         else
         {
             host.HorizontalAlignment = HorizontalAlignment.Center;
-            host.Margin = new Thickness(0, (layer == overlay ? WindowPopupTop : EditorWindowPopupTop) - shadow.Top, 0, 0);
+            double top = layer == overlay ? WindowPopupTop : over is null ? EditorWindowPopupTop : OtherWindowPopupTop;
+            host.Margin = new Thickness(0, top - shadow.Top, 0, 0);
         }
+        Fit(popup, host, room);
         host.Content = popup;
         layer.IsVisible = true;
+    }
+
+    /// <summary>A popup no wider than the window it is over, its frame's shadow inside it, so one over a window narrower than
+    /// the popups' widths (a floating tool window, an editor window) shows its frame whole, where it stood out past both
+    /// sides; as the window is resized, it follows. Its height stays its own: a popup's list is as tall as its rows.</summary>
+    private static void Fit(Control popup, ContentControl host, Size room)
+    {
+        if (room.Width > 0)
+        {
+            Thickness outside = popup is TemplatedControl ? default : host.Padding;
+            popup.MaxWidth = Math.Max(0, room.Width - outside.Left - outside.Right);
+        }
+    }
+
+    /// <summary>A layer's popup fitted again to the window it is over, resized.</summary>
+    private static void Refit(Panel layer, ContentControl host)
+    {
+        if (layer.IsVisible && host.Content is Control popup)
+        {
+            Fit(popup, host, layer.Bounds.Size);
+        }
     }
 
     /// <summary>Room round a popup's frame for its shadow (Shell.axaml's Border.popup), taken from the place the popup
@@ -112,15 +156,24 @@ public sealed class PopupHost
         return room;
     }
 
-    /// <summary>Closes the popup; the editor shown has the keys again.</summary>
+    /// <summary>Closes the popup: what had the keys in a window other than the editors' has them again, else the editor
+    /// shown.</summary>
     public void Close()
     {
         Layers.Layer.IsVisible = false;
         Layers.Host.Content = null;
-        if (editors.Active is not null)
+        if (over is { } other)
+        {
+            if (other.Had is Visual had && TopLevel.GetTopLevel(had) == other.Window)
+            {
+                other.Had.Focus();
+            }
+        }
+        else if (editors.Active is not null)
         {
             editors.CodeEditor.Focus();
         }
+        over = null;
     }
 
     /// <summary>Closes the popup as a click outside it or Escape does: a breakpoint's popup or window keeps what was typed
@@ -141,14 +194,22 @@ public sealed class PopupHost
         }
     }
 
-    /// <summary>An editor window's own layer for popups, which its keys open there; gone with the window.</summary>
-    public void Attach(EditorWindow editorWindow)
+    /// <summary>A window's own layer for popups, over what it shows, which its keys open there; gone with the window.</summary>
+    public void Attach(TopLevel window)
     {
-        Window window = editorWindow.Window;
         ContentControl host = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
         Panel layer = new() { IsVisible = false, Background = Brushes.Transparent, Children = { host } };
         layer.PointerPressed += OnLayerPressed;
-        editorWindow.Layers.Children.Add(layer);
+        layer.SizeChanged += (_, _) => Refit(layer, host);
+        Control? shows = window.Content as Control;
+        window.Content = null;
+        Panel layers = new();
+        if (shows is not null)
+        {
+            layers.Children.Add(shows);
+        }
+        layers.Children.Add(layer);
+        window.Content = layers;
         windowLayers[window] = (layer, host);
         window.Closed += (_, _) =>
         {
@@ -157,15 +218,34 @@ public sealed class PopupHost
             {
                 shown = null;
             }
+            if (worked == window)
+            {
+                worked = null;
+            }
+            if (over?.Window == window)
+            {
+                over = null;
+            }
         };
     }
+
+    /// <summary>The window the person works in now: its keys, a click in it, its coming to the front.</summary>
+    public void WorkIn(TopLevel window) => worked = window;
 
     /// <summary>A point of a control as the popups of the window in front place one beside it.</summary>
     public Point? PointIn(Visual visual, Point point) => visual.TranslatePoint(point, InFront().Layer);
 
-    /// <summary>The popups' layer of the window the person works in: an editor window's, or the main window's.</summary>
-    private (Panel Layer, ContentControl Host) InFront() =>
-        editors.InFront is { } front && windowLayers.TryGetValue(front.Window, out (Panel Layer, ContentControl Host) layer) ? layer : (overlay, overlayHost);
+    /// <summary>The popups' layer of the window the person works in: one of the IDE's beside its editors' (a diff, a
+    /// floating tool window) while it was the last worked in, else the editors' in front, an editor window's or the main
+    /// window's.</summary>
+    private (Panel Layer, ContentControl Host) InFront()
+    {
+        if (worked is { } other && windowLayers.TryGetValue(other, out (Panel Layer, ContentControl Host) own) && editors.Windows.All(w => w.Window != other))
+        {
+            return own;
+        }
+        return editors.InFront is { } front && windowLayers.TryGetValue(front.Window, out (Panel Layer, ContentControl Host) layer) ? layer : (overlay, overlayHost);
+    }
 
     /// <summary>A press on a layer itself, outside the popup on it.</summary>
     private void OnLayerPressed(object? sender, PointerPressedEventArgs e)

@@ -31,8 +31,11 @@ public partial class MainWindow : Window
 
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
 
-    /// <summary>The popups over this window and its editor windows.</summary>
+    /// <summary>The popups over this window and the others it opens.</summary>
     private readonly PopupHost popups;
+
+    /// <summary>The keymap's keys in this window and every other it opens but a dialog.</summary>
+    private readonly IdeKeys windowKeys;
 
     /// <summary>What the last action came to, and the file shown's place and properties.</summary>
     private readonly StatusBar status;
@@ -63,7 +66,8 @@ public partial class MainWindow : Window
         navigator = new Navigation.Navigator(new Navigation.NavigatorParts(Editors, () => session, popups, status, path => OpenFile(path), TextOf));
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
         // editor actions go to the editor when it has the focus.
-        AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
+        windowKeys = new IdeKeys(this, keys, popups, OnKey, OnActivity, OnLeft);
+        windowKeys.Attach(this);
         AddActions();
         AddTitleBar();
         AddWelcome();
@@ -98,7 +102,7 @@ public partial class MainWindow : Window
         AddAgents();
         AddDiscord();
         AddShutdown();
-        AddEditorWindows();
+        AddOwnWindows();
         AddPreview();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
@@ -337,32 +341,13 @@ public partial class MainWindow : Window
         return null;
     }
 
-    /// <summary>A key's action that throws is reported as an IDE error, never the IDE's end. The window it was pressed in
-    /// (this one or an editor window) is the one the person works in.</summary>
-    private void OnKeyDownFirst(object? sender, KeyEventArgs e)
+    /// <summary>A key the keymap has in one of the IDE's windows (this one, an editor window, a diff, a floating tool
+    /// window): the window it was pressed in is the one the person works in, an IDE action runs there and an editor action
+    /// goes to that window's editor with the keys.</summary>
+    private void OnKey(TopLevel window, object? focused, KeyEventArgs e)
     {
-        try
-        {
-            Editors.Front(sender as TopLevel);
-            OnKey(e);
-        }
-        catch (Exception error)
-        {
-            IdeErrors.Report(error);
-            e.Handled = true;
-        }
-    }
-
-    private void OnKey(KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && popups.IsOpen)
-        {
-            // Escape closes what is over the window before anything under it hears it.
-            popups.Dismiss();
-            e.Handled = true;
-            return;
-        }
-        if (TerminalTakes(e) || DiffTakes(e))
+        Editors.Front(window);
+        if (TerminalTakes(focused, e))
         {
             return;
         }
@@ -384,20 +369,24 @@ public partial class MainWindow : Window
             }
             return;
         }
-        CodeEditor editor = Editors.CodeEditor;
-        if (editor.IsFocused && !shifted && action is EditorActions.Undo or EditorActions.Redo && UndoCommand(action == EditorActions.Redo, Editors.Active))
+        if (EditorWithKeys(window, focused) is not { } editor)
+        {
+            return;
+        }
+        bool own = editor == Editors.CodeEditor;
+        if (own && !shifted && action is EditorActions.Undo or EditorActions.Redo && UndoCommand(action == EditorActions.Redo, Editors.Active))
         {
             e.Handled = true;
         }
-        else if (editor.IsFocused && !shifted && assist.TakeKey(action))
+        else if (own && !shifted && assist.TakeKey(action))
         {
             e.Handled = true;
         }
-        else if (editor.IsFocused && (!shifted || EditorActions.IsMovement(action)) && editor.TryExecute(action, shifted))
+        else if ((!shifted || EditorActions.IsMovement(action)) && editor.TryExecute(action, shifted))
         {
             e.Handled = true;
         }
-        else if (action == EditorActions.Escape && editor.IsFocused && Editors.FindBar.IsVisible)
+        else if (own && action == EditorActions.Escape && Editors.FindBar.IsVisible)
         {
             // Escape with nothing of the editor's own to undo closes what sits over it, as in Rider.
             Editors.FindBar.Close();
@@ -405,10 +394,33 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>A diff in the window (Local History's) takes F7 and Shift+F7, Rider's next and previous difference there,
-    /// ahead of Smart Step Into's Shift+F7 everywhere else.</summary>
-    private bool DiffTakes(KeyEventArgs e) =>
-        e.Key == Key.F7 && FocusManager?.GetFocusedElement() is Visual focused && focused.FindAncestorOfType<Vcs.DiffView>(includeSelf: true) is not null;
+    /// <summary>The editor a window's editor actions go to while it has the keys: a side of a diff or a merge, or the
+    /// shown file's (the active group's, in this window or an editor window); none in a window whose keys are elsewhere.</summary>
+    private CodeEditor? EditorWithKeys(TopLevel window, object? focused)
+    {
+        if (focused is CodeEditor side && side != Editors.CodeEditor && (side.FindAncestorOfType<Vcs.DiffView>() is not null || side.FindAncestorOfType<Vcs.MergeView>() is not null))
+        {
+            return side;
+        }
+        CodeEditor shown = Editors.CodeEditor;
+        return shown.IsFocused && TopLevel.GetTopLevel(shown) == window ? shown : null;
+    }
+
+    /// <summary>A key or a click in any of the IDE's windows: the person at work, which the idle save and Discord wait out.</summary>
+    private void OnActivity()
+    {
+        RestartIdleSave();
+        Stir();
+    }
+
+    /// <summary>One of the IDE's windows left: Passenger left, unless another of its own came to the front.</summary>
+    private void OnLeft()
+    {
+        if (!OwnWindowActive())
+        {
+            SaveOnLeaving();
+        }
+    }
 
     public bool IsPopupOpen => popups.IsOpen;
 

@@ -69,14 +69,14 @@ public sealed class MergeView : DockPanel
         simple = [.. chunks.Select(c => c.IsConflict ? ThreeWayMerge.ResolveSimply(common[c.BaseStart..c.BaseEnd], leftLines[c.LeftStart..c.LeftEnd], rightLines[c.RightStart..c.RightEnd]) : null)];
         Texts = texts;
 
-        // Not in the IDE's window, which sends its editors their keys, each resolves its own (undo, a caret's moves).
-        Left = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true, Keymap = AppActions.Keymap() };
+        // The IDE's keymap sends each its keys from the merge's window (IdeKeys), as it does a diff's.
+        Left = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true };
         Left.Show(new TextDocument(texts.Left), SelectionSet.Single(0), default);
         result = new TextDocument(texts.Base);
         started = result.Snapshot;
-        Result = new CodeEditor { ChangeBackgrounds = true, Keymap = AppActions.Keymap() };
+        Result = new CodeEditor { ChangeBackgrounds = true };
         Result.Show(result, SelectionSet.Single(0), default);
-        Right = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true, Keymap = AppActions.Keymap() };
+        Right = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true };
         Right.Show(new TextDocument(texts.Right), SelectionSet.Single(0), default);
         state = [.. chunks.Select(c => new Resolution(c.BaseStart, c.BaseEnd, !c.LeftChanged, !c.RightChanged, false))];
         states[started] = state;
@@ -640,18 +640,26 @@ public sealed class MergeView : DockPanel
         return line + delta;
     }
 
+    /// <summary>Whether a key is the merge's own, which the IDE's keymap leaves to it: Rider's Visual Studio keymaps' F7 and
+    /// Shift+F7 (F8 too on Windows) for the next and previous difference, and Accept Left Side and Accept Right Side,
+    /// Ctrl+Cmd+Right and Left on the Mac, Ctrl+Alt+R and A elsewhere.</summary>
+    public static bool TakesKey(KeyEventArgs e) => IsStep(e) || IsAccept(e);
+
+    private static bool IsStep(KeyEventArgs e) =>
+        (e.Key == Key.F7 || (!OperatingSystem.IsMacOS() && e.Key == Key.F8)) && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift;
+
+    private static bool IsAccept(KeyEventArgs e) => OperatingSystem.IsMacOS()
+        ? e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Meta) && e.Key is Key.Right or Key.Left
+        : e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key is Key.R or Key.A;
+
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        bool mac = OperatingSystem.IsMacOS();
-        // Rider's Visual Studio keymaps: F7 and Shift+F7 (F8 too on Windows) for the next and previous difference; Accept
-        // Left Side and Accept Right Side, Ctrl+Cmd+Right and Left on the Mac, Ctrl+Alt+R and A elsewhere.
-        if ((e.Key == Key.F7 || (!mac && e.Key == Key.F8)) && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+        if (IsStep(e))
         {
             Step(e.KeyModifiers == KeyModifiers.Shift ? -1 : 1);
             e.Handled = true;
         }
-        else if (mac ? e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Meta) && e.Key is Key.Right or Key.Left
-            : e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Alt) && e.Key is Key.R or Key.A)
+        else if (IsAccept(e))
         {
             AcceptAtCaret(e.Key is Key.Right or Key.R ? MergeSide.Left : MergeSide.Right);
             e.Handled = true;

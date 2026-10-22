@@ -288,6 +288,44 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>The IDE's keys work in a diff's window as in the main one, the diff keeping its own: Find Action opens over
+    /// it and Escape closes that first, the keys back on the file's side; F7 is still the diff's next difference; an
+    /// editor's key goes to the side with the keys, not to the main window's editor; and Escape then closes the window.</summary>
+    [AvaloniaFact]
+    public void The_IDEs_keys_work_in_a_diffs_window_on_the_side_with_them_and_Escape_still_closes_it()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        window.Perform(AppActions.Save);
+        editor.GoTo(new TextPosition(0, 0));
+        Task<DiffWindow?> opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
+        Ui.Landed(() => opening.IsCompleted, "the diff open");
+        DiffWindow diff = opening.Result!;
+        DiffView view = diff.View;
+        Ui.Landed(() => view.Right.IsFocused, "the diff's side of the file to have the keys");
+
+        Ui.Run(diff, AppActions.FindAction);
+        Control popup = Assert.IsType<Passenger.App.Navigation.ActionPopup>(window.Popup);
+        Assert.True(diff.GetVisualDescendants().Contains(popup), "Find Action, pressed in the diff's window, opened over the main window");
+        Ui.Press(diff, "ESCAPE");
+        Assert.False(window.IsPopupOpen, "Escape left Find Action open over the diff");
+        Assert.True(diff.IsVisible, "Escape closed the diff along with Find Action over it");
+        Assert.True(view.Right.IsFocused, "Find Action, closed, left the diff's keys away from the file's side");
+
+        Ui.Press(diff, "F7");
+        Assert.Equal(2, view.Right.CaretPosition.Line);
+
+        Ui.Run(diff, EditorActions.Duplicate);
+        Assert.Equal("class Shop\n{\n    long int count;\n    long int count;\n\n    void Add() { count++; }\n}\n", Text(window));
+        Assert.Equal(new TextPosition(0, 0), editor.CaretPosition);
+
+        Ui.Press(diff, "ESCAPE");
+        Assert.False(diff.IsVisible, "Escape, with nothing over the diff, left its window open");
+        window.Close();
+    }
+
     /// <summary>The diff's side of the open file took the file's colours as the diff opened and kept them: opened before
     /// the language server answered, never the server's; opened before the server started again, the gone server's, which
     /// no longer follow the text, so a word typed before them left them on the wrong words.</summary>
