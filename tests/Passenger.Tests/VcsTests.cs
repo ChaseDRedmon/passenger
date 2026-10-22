@@ -32,6 +32,8 @@ public sealed class VcsTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
+    /// <summary>An edit's change bar, and a commit from the Commit window, made by the message's own key (Cmd+Enter, Ctrl+Enter
+    /// elsewhere) rather than a new line in it, which clears the bar.</summary>
     [AvaloniaFact]
     public void An_edit_shows_a_change_bar_and_committing_it_from_the_commit_window_clears_it()
     {
@@ -48,34 +50,16 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.Commit);
         Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs" && c.Kind == ChangeKind.Modified), "Shop.cs listed as modified");
         Assert.True(window.DockHost.IsShown(ToolWindowIds.Commit));
-        commit.Message = "Count with a long";
-        Task<bool> committed = commit.CommitAsync(push: false);
-        Ui.Landed(() => committed.IsCompleted, "the commit made");
-        Assert.True(committed.Result, window.Status);
-
-        // Committed: saved first, in the log, the bars gone and nothing left to commit.
-        Assert.Equal("Count with a long", Git("log", "-1", "--format=%s").Trim());
-        Assert.Contains("long int count;", File.ReadAllText(Path.Combine(folder, "Shop.cs")), StringComparison.Ordinal);
-        Ui.Landed(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes cleared");
-        Assert.Empty(commit.Rows);
-        Assert.Empty(commit.Message);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Cmd_enter_in_the_commit_message_commits_rather_than_starting_a_new_line()
-    {
-        MainWindow window = Open();
-        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
-        window.KeyTextInput("long ");
-        CommitView commit = window.CommitView;
-        window.Perform(AppActions.Commit);
-        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed as changed");
         Ui.Landed(() => window.FocusManager?.GetFocusedElement() is TextBox, "the commit message to have the keys");
         window.KeyTextInput("Count with a long");
         Ui.Press(window, OperatingSystem.IsMacOS() ? "meta Enter" : "control Enter");
         Ui.Landed(() => Git("log", "-1", "--format=%s").Trim() == "Count with a long",
             $"Committing from the message's own key: the log's last commit is '{Git("log", "-1", "--format=%s").Trim()}' and the message reads '{commit.Message}'");
+
+        // Committed: saved first, in the log, the bars gone and nothing left to commit.
+        Assert.Contains("long int count;", File.ReadAllText(Path.Combine(folder, "Shop.cs")), StringComparison.Ordinal);
+        Ui.Landed(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes cleared");
+        Assert.Empty(commit.Rows);
         Assert.Empty(commit.Message);
         window.Close();
     }
@@ -148,40 +132,6 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void Rollback_from_the_commit_window_restores_a_changed_file_and_deletes_a_new_one()
-    {
-        MainWindow window = Open();
-        string added = Path.Combine(folder, "Prices.cs");
-        File.WriteAllText(added, "class Prices { }\n");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        editor.GoTo(new TextPosition(0, 0));
-        window.KeyTextInput("sealed ");
-        window.Perform(AppActions.Save);
-        _ = window.Vcs.RefreshAsync();
-        CommitView commit = window.CommitView;
-        Ui.Landed(() => window.Vcs.Changes.Count == 2, "a changed file and a new one listed");
-        Assert.DoesNotContain(commit.Chosen, c => c.Kind == ChangeKind.Unversioned);
-
-        string? asked = null;
-        window.Confirm = (title, text, yes) =>
-        {
-            asked = text;
-            return Task.FromResult(true);
-        };
-        foreach (CommitRow row in commit.Rows.OfType<CommitRow>())
-        {
-            row.IsChosen = true;
-        }
-        window.Perform(AppActions.ShowCommit);
-        RollbackChosen(window);
-        AssertNothingChanged(window);
-        Assert.Contains("deleted", asked, StringComparison.Ordinal);
-        Assert.False(File.Exists(added));
-        Assert.Equal(Original, Text(window));
-        window.Close();
-    }
-
     /// <summary>A save writes the new text beside the file and moves it over the file. Git reading the folder in that
     /// moment (a read under way as Save is pressed) listed the temporary file as a new one in place of the file saved, and
     /// Rollback of what the Commit window listed deleted it and left the saved edit, as on the Windows runner.</summary>
@@ -206,6 +156,9 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Rollback from the Commit window, the new file chosen by hand (unversioned files are not chosen at first),
+    /// asks first, saying the new file is deleted, then puts back the changed file and deletes the new one, once another
+    /// program reading them lets them go (Windows refuses git meanwhile).</summary>
     [AvaloniaFact]
     public void Rollback_puts_back_a_file_another_program_was_reading_and_deletes_a_new_one_it_held_once_they_are_let_go()
     {
@@ -218,7 +171,13 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.Save);
         _ = window.Vcs.RefreshAsync();
         Ui.Landed(() => window.Vcs.Changes.Count == 2, "a changed file and a new one listed");
-        window.Confirm = (_, _, _) => Task.FromResult(true);
+        Assert.DoesNotContain(window.CommitView.Chosen, c => c.Kind == ChangeKind.Unversioned);
+        string? asked = null;
+        window.Confirm = (title, text, yes) =>
+        {
+            asked = text;
+            return Task.FromResult(true);
+        };
         foreach (CommitRow row in window.CommitView.Rows.OfType<CommitRow>())
         {
             row.IsChosen = true;
@@ -247,6 +206,7 @@ public sealed class VcsTests : IDisposable
             reading.Dispose();
             holding.Dispose();
         }
+        Assert.Contains("deleted", asked, StringComparison.Ordinal);
         Assert.Equal(Original, File.ReadAllText(shop));
         Assert.False(File.Exists(added), "The new file stayed after the program holding it let go");
         Ui.Landed(() => Text(window) == Original, "the open file at the last commit's text");
@@ -698,27 +658,10 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Annotations closed while their blame runs leave the gutter empty, and typing brings them back no more; and a
+    /// large file git does not track is said so, with nothing shown.</summary>
     [AvaloniaFact]
-    public void Annotating_a_large_file_git_does_not_track_says_so_and_shows_nothing()
-    {
-        // Larger than a pipe holds: git refuses the file before it reads the text it is given, so writing it fails.
-        string notes = Path.Combine(folder, "Notes.txt");
-        File.WriteAllText(notes, string.Concat(Enumerable.Repeat("A line of notes that nobody has committed yet.\n", 4500)));
-        Assert.True(new FileInfo(notes).Length > 200_000);
-        MainWindow window = Open();
-        window.OpenFile(notes);
-        Passenger.App.Workspace.OpenDocument opened = window.EditorArea.Active!;
-        Task annotating = window.ToggleAnnotationsAsync(opened);
-        Ui.Landed(() => annotating.IsCompleted, "the blame");
-        Assert.True(annotating.IsCompletedSuccessfully, $"Annotating the file failed: {annotating.Exception?.InnerException}");
-        Assert.Equal("Notes.txt is not tracked by Git", window.Status);
-        Assert.Empty(opened.GutterAnnotations);
-        Assert.False(window.Vcs.IsAnnotated(opened), "The annotations stayed open on a file with nothing to show");
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Closing_annotations_while_the_blame_runs_leaves_the_gutter_empty()
+    public void Closing_annotations_while_the_blame_runs_leaves_the_gutter_empty_and_a_large_file_git_does_not_track_shows_none()
     {
         MainWindow window = Open();
         Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
@@ -734,6 +677,19 @@ public sealed class VcsTests : IDisposable
         Ui.Hold(TimeSpan.FromSeconds(1), "past the pause after typing, which would blame the file were the annotations open");
         Ui.Settle();
         Assert.Empty(shop.GutterAnnotations);
+
+        // Larger than a pipe holds: git refuses the file before it reads the text it is given, so writing it fails.
+        string notes = Path.Combine(folder, "Notes.txt");
+        File.WriteAllText(notes, string.Concat(Enumerable.Repeat("A line of notes that nobody has committed yet.\n", 4500)));
+        Assert.True(new FileInfo(notes).Length > 200_000);
+        window.OpenFile(notes);
+        Passenger.App.Workspace.OpenDocument opened = window.EditorArea.Active!;
+        Task annotating = window.ToggleAnnotationsAsync(opened);
+        Ui.Landed(() => annotating.IsCompleted, "the blame");
+        Assert.True(annotating.IsCompletedSuccessfully, $"Annotating the file failed: {annotating.Exception?.InnerException}");
+        Assert.Equal("Notes.txt is not tracked by Git", window.Status);
+        Assert.Empty(opened.GutterAnnotations);
+        Assert.False(window.Vcs.IsAnnotated(opened), "The annotations stayed open on a file with nothing to show");
         window.Close();
     }
 
