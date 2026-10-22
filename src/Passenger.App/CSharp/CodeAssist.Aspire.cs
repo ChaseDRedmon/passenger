@@ -81,7 +81,15 @@ public sealed partial class CodeAssist
     /// the extension as it is chosen, at the warning's place as it then stands, as one command of global undo.</summary>
     public IReadOnlyList<EditorFix> AspireFixes(OpenDocument file, int offset)
     {
-        if (service()?.For(file) is not { Lsp: { } lsp } features || features.AspireRole != AspireRole.Service)
+        if (service()?.For(file) is not { Lsp: { } lsp } features)
+        {
+            return [];
+        }
+        if (features.AspireRole == AspireRole.AppHost)
+        {
+            return [.. features.AspireUnsetOn(lsp.PositionOf(offset).Line).DistinctBy(p => p.Name).Select(p => ParameterFix(file, p.Range, p.Name, p.Secret))];
+        }
+        if (features.AspireRole != AspireRole.Service)
         {
             return [];
         }
@@ -99,6 +107,67 @@ public sealed partial class CodeAssist
                     new AspireFixRequest(current.PlaceOf(at.Start), named, resource)),
                 _ => $"Added WithReference({resource}) to {named}", patience),
         };
+    }
+
+    /// <summary>The fix of an AppHost's warning that a parameter has no value in its configuration: its value asked for (masked
+    /// for a secret) and set in the AppHost's user secrets for a secret, else in its appsettings.json, as one command of global
+    /// undo; worked out again as it is chosen, refused once the parameter has a value or is gone.</summary>
+    private EditorFix ParameterFix(OpenDocument file, TextRange range, string name, bool secret) =>
+        new(secret ? $"Set {name} in the AppHost's user secrets…" : $"Set {name} in the AppHost's appsettings.json…", "Aspire AppHost parameter", range, string.Empty)
+        {
+            Again = _ => service()?.For(file)?.AspireUnsetOn(null).FirstOrDefault(p => p.Name == name) is { } now ? ParameterFix(file, now.Range, name, secret) : null,
+            Asks = new ValueAsked(secret ? $"The value of {name}, kept in the AppHost's user secrets, out of the project's files"
+                : $"The value of {name}, kept in the AppHost's appsettings.json", secret, (value, _) => Task.FromResult(SetParameter(file, name, secret, value))),
+        };
+
+    /// <summary>A parameter's value set in its AppHost's configuration (<see cref="AspireParameters.Setting"/>) as one command,
+    /// its file's text as the editor has it when open, the AppHost's warnings pulled again; what it says never holds the value.</summary>
+    private RefactorOutcome SetParameter(OpenDocument file, string name, bool secret, string value)
+    {
+        if (service() is not { } csharp || csharp.AspireAppHostOf?.Invoke(file.Path) is not { } host)
+        {
+            return RefactorOutcome.Refused($"{name} was not set: {file.Name} is no longer an AppHost's");
+        }
+        Func<string, string?> text = path => editors.Documents.FirstOrDefault(d => Passenger.Core.PathNames.Same(d.Path, path))?.Text.Snapshot.ToString()
+            ?? ServerPlaces.Read(path)?.ToString();
+        if (AspireParameters.HasValue(host, name, text))
+        {
+            return RefactorOutcome.Refused($"{name} was not set: the AppHost's configuration has a value for it already");
+        }
+        (string? path, string? changed, string? problem) = AspireParameters.Setting(host, name, secret, value, text);
+        if (path is null || changed is null)
+        {
+            return RefactorOutcome.Refused(problem ?? $"{name} was not set");
+        }
+        bool made = !File.Exists(path) && text(path) is null;
+        Passenger.Xaml.Features.XamlFileChange change = made ? new(path, null, changed) : new(path, now =>
+            AspireParameters.Setting(host, name, secret, value, _ => now) is { Text: { } then } ? [Difference(now, then)] : []);
+        if (made)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        }
+        if (ApplyFileChanges($"Set {name}", [change]) is { } refused)
+        {
+            return RefactorOutcome.Refused(refused);
+        }
+        csharp.For(file)?.RefreshDiagnostics();
+        string where = secret ? "the AppHost's user secrets" : $"the AppHost's {Path.GetFileName(path)}";
+        return new RefactorOutcome($"Set {name} in {where}", null, [new RefactoredFile(path, made ? "created" : "changed", [])], []);
+
+        static TextEdit Difference(string was, string now)
+        {
+            int start = 0;
+            while (start < was.Length && start < now.Length && was[start] == now[start])
+            {
+                start++;
+            }
+            int end = 0;
+            while (end < was.Length - start && end < now.Length - start && was[^(end + 1)] == now[^(end + 1)])
+            {
+                end++;
+            }
+            return new TextEdit(start, was.Length - start - end, now[start..^end]);
+        }
     }
 
     /// <summary>Rename's box for the resource whose name the caret is on in an AppHost's or a service's string, placed at the

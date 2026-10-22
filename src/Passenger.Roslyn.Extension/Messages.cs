@@ -25,12 +25,13 @@ public static class Handlers
     public const string AspireReferenceFix = "Passenger.Roslyn.Extension.AspireReferenceFix";
     public const string AspireRunResources = "Passenger.Roslyn.Extension.AspireRunResources";
     public const string AspireRename = "Passenger.Roslyn.Extension.AspireRename";
+    public const string AspireParameters = "Passenger.Roslyn.Extension.AspireParameters";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
         DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
-        AspireRename,
+        AspireRename, AspireParameters,
     ];
 }
 
@@ -82,6 +83,15 @@ public sealed record AspireRenameRequest([property: JsonPropertyName("at")] Plac
 /// <summary>The resource a rename would rename, by its name and the stretch of it at the place asked (none where no resource's
 /// name is), and once a new name is given, what renaming it changes or why it does not.</summary>
 public sealed record AspireRenaming(string? Name, Place? Start, Place? End, Refactored? Made);
+
+/// <summary>An AppHost file's parameters that take their value from its configuration alone are asked for.</summary>
+public sealed record AspireParametersRequest;
+
+/// <summary>A parameter an AppHost declares with no value of its own: its name, whether it is a secret, and where its name is.</summary>
+public sealed record AspireParameter(string Name, bool Secret, Place Start, Place End);
+
+/// <summary>The parameters an AppHost's file declares that take their value from its configuration alone.</summary>
+public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parameters);
 
 /// <summary>The AppHost whose proven project resources and source locations are read.</summary>
 public sealed record AspireResourcesRequest(string AppHost);

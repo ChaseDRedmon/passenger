@@ -40,6 +40,57 @@ public sealed partial class CSharpDocument
         return missing;
     }
 
+    /// <summary>The parameters the file's Aspire warnings say have no value in its AppHost's configuration, on a server's line
+    /// of the text as it stands (any line for null): each with where its name is, its name and whether it is a secret.</summary>
+    internal IReadOnlyList<(TextRange Range, string Name, bool Secret)> AspireUnsetOn(int? line)
+    {
+        List<(TextRange, string, bool)> unset = [];
+        foreach ((Diagnostic diagnostic, TextRange range) in diagnostics.PlacedRanges)
+        {
+            if (diagnostic.Source == AspireDiagnosticSource
+                && (line is not { } on || diagnostic.Range.Start.Line <= on && on <= diagnostic.Range.End.Line)
+                && diagnostic.Data is { ValueKind: JsonValueKind.Object } data
+                && data.TryGetProperty("parameter", out JsonElement parameter) && parameter.GetString() is { } name)
+            {
+                unset.Add((range, name, data.TryGetProperty("secret", out JsonElement secret) && secret.GetString() == "true"));
+            }
+        }
+        return unset;
+    }
+
+    /// <summary>An AppHost's parameters that take their value from its configuration alone and have none there (its
+    /// appsettings*.json, its user secrets), each a warning on its name; the files are read off the UI thread, values never.</summary>
+    private async Task<IReadOnlyList<Diagnostic>> AspireUnsetParametersAsync(LspDocument lsp, CancellationToken cancel)
+    {
+        if (service.AspireAppHostOf?.Invoke(document.Path) is not { } host)
+        {
+            return [];
+        }
+        try
+        {
+            AspireParametersFound found = await lsp.ExtensionAsync<AspireParametersFound>(Handlers.AspireParameters, new AspireParametersRequest(), cancel);
+            if (found.Parameters.Count == 0)
+            {
+                return [];
+            }
+            AspireParameter[] unset = await BackgroundWork.Run(() => found.Parameters
+                .Where(p => !Aspire.AspireParameters.HasValue(host, p.Name, path => ServerPlaces.Read(path)?.ToString())).ToArray());
+            return [.. unset.Select(p => new Diagnostic
+            {
+                Range = new LspRange(new LspPosition(p.Start.Line, p.Start.Character), new LspPosition(p.End.Line, p.End.Character)),
+                Severity = 2,
+                Source = AspireDiagnosticSource,
+                Message = $"Parameter '{p.Name}' has no value in the AppHost's configuration, so it asks for one as it runs. "
+                    + (p.Secret ? $"Set Parameters:{p.Name} in its user secrets." : $"Set Parameters:{p.Name} in its appsettings.json."),
+                Data = JsonSerializer.SerializeToElement(new Dictionary<string, string> { ["parameter"] = p.Name, ["secret"] = p.Secret ? "true" : "false" }),
+            })];
+        }
+        catch (LanguageServerFailed)
+        {
+            return [];
+        }
+    }
+
     private void ClearAspireDiagnostics()
     {
         if (diagnostics.Drop(d => d.Source == AspireDiagnosticSource, DiagnosticMarks.Marker) is { } markers)

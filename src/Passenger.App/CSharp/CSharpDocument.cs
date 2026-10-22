@@ -218,7 +218,8 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
         diagnostics.Pull(delay, cancel => PullAsync(lsp, cancel));
     }
 
-    /// <summary>The file's diagnostics, with Aspire's for a service's file (<see cref="AspireDiagnosticsAsync"/>), then its
+    /// <summary>The file's diagnostics, with Aspire's for a service's file (<see cref="AspireDiagnosticsAsync"/>) and an
+    /// AppHost's (<see cref="AspireUnsetParametersAsync"/>), then its
     /// inlay hints, each for the text as it stands. A later pull (an AppHost's edit, the server's refresh) cancels this one.</summary>
     private async Task PullAsync(LspDocument lsp, CancellationToken cancel)
     {
@@ -227,7 +228,12 @@ public sealed partial class CSharpDocument : IServerDocument, IDisposable
             return;
         }
         int version = document.Text.Version;
-        IReadOnlyList<Diagnostic> aspire = AspireRole == Aspire.AspireRole.Service ? await AspireDiagnosticsAsync(lsp, cancel) : [];
+        IReadOnlyList<Diagnostic> aspire = AspireRole switch
+        {
+            Aspire.AspireRole.Service => await AspireDiagnosticsAsync(lsp, cancel),
+            Aspire.AspireRole.AppHost => await AspireUnsetParametersAsync(lsp, cancel),
+            _ => [],
+        };
         if (cancel.IsCancellationRequested || version != document.Text.Version || Lsp != lsp)
         {
             return;

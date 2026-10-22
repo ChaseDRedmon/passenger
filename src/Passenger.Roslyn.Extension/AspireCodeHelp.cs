@@ -34,6 +34,13 @@ public sealed class AspireRename : IExtensionDocumentMessageHandler<AspireRename
         AspireSource.RenameAsync(document, message.At, message.NewName, cancellationToken);
 }
 
+/// <summary>The parameters an AppHost's file declares that take their value from its configuration alone.</summary>
+public sealed class AspireParameters : IExtensionDocumentMessageHandler<AspireParametersRequest, AspireParametersFound>
+{
+    public Task<AspireParametersFound> ExecuteAsync(AspireParametersRequest message, ExtensionMessageContext context, Document document, CancellationToken cancellationToken) =>
+        AspireSource.ParametersAsync(document, cancellationToken);
+}
+
 /// <summary>Shares semantic AppHost resource identities with configurations and gutter actions.</summary>
 public sealed class AspireRunResources : IExtensionWorkspaceMessageHandler<AspireResourcesRequest, AspireRunResourcesResult>
 {
@@ -713,6 +720,56 @@ internal static class AspireSource
             }
         }
         return described with { Made = new Refactored(null, [.. edits.Select(e => new FileChange(e.Key, false, e.Value))]) };
+    }
+
+    /// <summary>Each AddParameter of a document that gives no value of its own (only a name, and whether it is a secret), so the
+    /// AppHost takes it from its configuration's Parameters:NAME, with where its name is written.</summary>
+    public static async Task<AspireParametersFound> ParametersAsync(Document document, CancellationToken cancel)
+    {
+        SyntaxNode? root = await document.GetSyntaxRootAsync(cancel).ConfigureAwait(false);
+        SemanticModel? model = await document.GetSemanticModelAsync(cancel).ConfigureAwait(false);
+        if (root is null || model is null)
+        {
+            return new AspireParametersFound([]);
+        }
+        SourceText text = await document.GetTextAsync(cancel).ConfigureAwait(false);
+        List<AspireParameter> found = [];
+        foreach (InvocationExpressionSyntax call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (call.Expression is not MemberAccessExpressionSyntax { Name.Identifier.ValueText: "AddParameter" }
+                || model.GetSymbolInfo(call, cancel).Symbol is not IMethodSymbol { Name: "AddParameter" } method
+                || method.ContainingType.ToDisplayString() != "Aspire.Hosting.ParameterResourceBuilderExtensions" || method.ContainingAssembly.Name != "Aspire.Hosting")
+            {
+                continue;
+            }
+            string? name = null;
+            ExpressionSyntax? written = null;
+            bool secret = false;
+            bool valued = false;
+            foreach (ArgumentSyntax argument in call.ArgumentList.Arguments)
+            {
+                Optional<object?> constant = model.GetConstantValue(argument.Expression, cancel);
+                switch (AspireProjectDeclaration.Parameter(method, call, argument)?.Name)
+                {
+                    case "name" when constant is { HasValue: true, Value: string named }:
+                        (name, written) = (named, argument.Expression);
+                        break;
+                    case "secret" when constant is { HasValue: true, Value: bool isSecret }:
+                        secret = isSecret;
+                        break;
+                    default:
+                        // A value, a default or a getter of its own: the configuration is not all it has.
+                        valued = true;
+                        break;
+                }
+            }
+            if (name is not null && written is not null && !valued)
+            {
+                TextSpan span = written is LiteralExpressionSyntax literal && NameSpan(literal) is { } exact ? exact : written.Span;
+                found.Add(new AspireParameter(name, secret, PlaceAt(text, span.Start), PlaceAt(text, span.End)));
+            }
+        }
+        return new AspireParametersFound(found);
     }
 
     /// <summary>The stretch of a plain string literal that is its text, between its quotes; null for one written otherwise

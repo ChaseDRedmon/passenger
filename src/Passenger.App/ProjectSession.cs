@@ -724,6 +724,9 @@ public sealed class ProjectSession : IAsyncDisposable
                 // Razor's HTML is the HTML server's to answer.
                 HtmlServer = Web is { } web ? web.HtmlAsync : null,
                 AspireRoleOf = AspireFiles.RoleOf,
+                AspireAppHostOf = path => AspireFiles.AppHostOf(path) is { } host
+                    ? new AspireAppHostSettings(host, Projects.FirstOrDefault(p => PathNames.Same(p.Path, host))?.Property(Passenger.Host.CarriedProperties.UserSecretsId))
+                    : null,
             };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);

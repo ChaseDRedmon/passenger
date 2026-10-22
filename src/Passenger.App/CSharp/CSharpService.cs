@@ -1002,6 +1002,10 @@ public sealed class CSharpService : IAsyncDisposable
     /// service's ask Passenger's extension for Aspire's help; none for a service started without a session.</summary>
     public Func<string, Aspire.AspireRole>? AspireRoleOf { get; init; }
 
+    /// <summary>The AppHost an AppHost's C# file is of, as its parameters' values are read (its folder, its UserSecretsId); null
+    /// for any other file, and without a session.</summary>
+    public Func<string, Aspire.AspireAppHostSettings?>? AspireAppHostOf { get; init; }
+
     /// <summary>An AppHost's text changed, so its graph may have: each open service file's Aspire warnings go and are pulled
     /// again, no other file's.</summary>
     internal void AspireGraphChanged() => Each(document =>

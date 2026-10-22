@@ -385,7 +385,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "Applies the fix or refactoring with this title at a position (or over a selection to endLine:endColumn), as choosing " +
         "it from Alt+Enter does, and saves the files; of one that offers choices, choice names the one (as code_actions lists " +
         "them). XAML's Extract Resource and Extract Style take name as the new key or style's name (else their dialog's), " +
-        "replace every use of the value and extract the element's properties that are not bindings.")]
+        "replace every use of the value and extract the element's properties that are not bindings. An Aspire parameter's Set… " +
+        "takes name as its value.")]
     public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
         string? choice = null,
         string? name = null,
@@ -403,7 +404,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         int offset = Offset(served.Document, line, column);
         if (window.Assist.OwnFixes(served.Document, offset).FirstOrDefault(f => f.Title == title) is { } own)
         {
-            return await ApplyOwnFix(served.Document, own, patience);
+            return await ApplyOwnFix(served.Document, own, patience, name);
         }
         IReadOnlyList<EslintFix> linted = await LintFixes(served, offset);
         if (linted.FirstOrDefault(f => f.Title == title) is { } lint)

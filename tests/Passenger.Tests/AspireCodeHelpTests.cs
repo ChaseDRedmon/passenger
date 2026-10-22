@@ -141,6 +141,72 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
         }
     }
 
+    /// <summary>A parameter the AppHost declares with no value of its own is marked on its name until its configuration has
+    /// one; its fix asks for the value (masked for a secret) and sets it in the AppHost's user secrets for a secret (the run's
+    /// own, never the person's) or in its appsettings.json, the file's other values kept, its mark going, the value never
+    /// said; global undo takes each back. A parameter appsettings.json gives a value, or one with a value of its own, is not marked.</summary>
+    [AvaloniaFact]
+    public void A_parameter_with_no_value_is_marked_and_its_fix_sets_it_in_user_secrets_or_appsettings_and_undo_takes_it_back()
+    {
+        string secrets = Path.Combine(TestRun.UserSecrets, Project.SecretsId, "secrets.json");
+        string settings = project.PathOf("Host/appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(secrets)!);
+        File.Delete(secrets);
+        project.Write("Host/Program.cs", Project.Host.Replace("builder.Build().Run();",
+            "var password = builder.AddParameter(\"password\", secret: true);\nvar mode = builder.AddParameter(\"mode\");\n"
+            + "var given = builder.AddParameter(\"given\");\nvar valued = builder.AddParameter(\"valued\", \"own\");\nbuilder.Build().Run();", StringComparison.Ordinal));
+        string written = "{\n  \"Logging\": { \"LogLevel\": { \"Default\": \"Information\" } },\n  \"Parameters\": {\n    \"given\": \"set\"\n  }\n}\n";
+        project.Write("Host/appsettings.json", written);
+        MainWindow window = project.Open(project.PathOf("Host/Program.cs"));
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        try
+        {
+            Ui.WaitFor(() => Unset(window).SetEquals(["password", "mode"]), "the parameters with no value, and only those, to be marked");
+
+            Set(window, "AddParameter(\"pass", "Set password in the AppHost's user secrets…", secret: true, "s3cret-value");
+            Ui.WaitFor(() => File.Exists(secrets) && File.ReadAllText(secrets).Contains("\"Parameters:password\": \"s3cret-value\"", StringComparison.Ordinal),
+                "the secret to be set in the AppHost's user secrets");
+            Ui.WaitFor(() => Unset(window).SetEquals(["mode"]), "the secret's mark to go once it has a value");
+            Assert.True(window.Status == "Set password in the AppHost's user secrets", $"Setting the secret said: {window.Status}");
+
+            Set(window, "AddParameter(\"mo", "Set mode in the AppHost's appsettings.json…", secret: false, "fast");
+            Ui.WaitFor(() => File.ReadAllText(settings).Contains("\"mode\": \"fast\"", StringComparison.Ordinal), "the value to be set in appsettings.json");
+            Assert.Equal(written.Replace("\"given\": \"set\"\n", "\"given\": \"set\",\n    \"mode\": \"fast\"\n", StringComparison.Ordinal), File.ReadAllText(settings));
+            Ui.WaitFor(() => Unset(window).Count == 0, "every mark to go once each parameter has a value");
+
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.WaitFor(() => File.ReadAllText(settings) == written, "undo to take the value back out of appsettings.json");
+            Ui.Run(window, AppActions.FocusExplorer);
+            Ui.Run(window, EditorActions.Undo);
+            Ui.Settle();
+            Assert.False(File.Exists(secrets), $"Undo did not take back the user secrets it made: {window.Status}");
+        }
+        finally
+        {
+            window.Close();
+            File.Delete(secrets);
+        }
+
+        static void Set(MainWindow window, string after, string fix, bool secret, string value)
+        {
+            Ui.PlaceAfter(window.EditorArea.CodeEditor, after);
+            Ui.Run(window, AppActions.QuickFix);
+            Choose(window, fix);
+            Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), $"{fix} to ask for the value");
+            ConfirmDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>()));
+            TextBox box = Assert.Single(dialog.GetVisualDescendants().OfType<TextBox>());
+            Assert.True(secret == (box.PasswordChar != default), $"{fix}'s box {(secret ? "shows a secret as it is typed" : "masks a value that is no secret")}");
+            dialog.KeyTextInput(value);
+            Ui.Press(dialog, "ENTER");
+            Ui.Settle();
+            Assert.DoesNotContain(value, window.Status ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        static HashSet<string> Unset(MainWindow window) => [.. window.EditorArea.Active!.Markers
+            .Where(m => m.Message.StartsWith("Parameter '", StringComparison.Ordinal)).Select(m => m.Message.Split('\'')[1])];
+    }
+
     [AvaloniaFact]
     public void Connection_completion_offers_only_connected_resources_and_a_connection_warning_offers_a_native_reference_fix_undo_takes_back()
     {
@@ -411,6 +477,9 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
             builder.Build().Run();
             """;
 
+        /// <summary>The Host's UserSecretsId: its user secrets are kept under the run's own folder (TestRun.UserSecrets).</summary>
+        internal const string SecretsId = "passenger-aspire-help-host";
+
         internal const string Worker = "var builder = WebApplication.CreateBuilder(args);\nvar client = new HttpClient();\nclient.BaseAddress = new Uri(\"https+http://api\");\nbuilder.Build().Run();\n";
 
         internal const string Service = "var builder = WebApplication.CreateBuilder(args);\nvar missing = builder.Configuration.GetConnectionString(\"db\");\nvar known = builder.Configuration.GetConnectionString(\"connected\");\nbuilder.Build().Run();\n";
@@ -432,7 +501,7 @@ public sealed class AspireCodeHelpTests : IClassFixture<AspireCodeHelpTests.Proj
                 Put($"{name}/{name}.csproj", $"""
                     <Project Sdk="Microsoft.NET.Sdk">
                       <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.2" />
-                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle></PropertyGroup>
+                      <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>{TestProjects.Framework}</TargetFramework><ImplicitUsings>enable</ImplicitUsings><IsAspireHost>true</IsAspireHost><AspireUseCliBundle>false</AspireUseCliBundle>{(name == "Host" ? $"<UserSecretsId>{SecretsId}</UserSecretsId>" : "")}</PropertyGroup>
                       <ItemGroup><PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.2" /><ProjectReference Include="../Api/Api.csproj" /><ProjectReference Include="../Worker/Worker.csproj" /></ItemGroup>
                     </Project>
                     """);

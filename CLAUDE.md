@@ -242,7 +242,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   With's targets) and `CreateFromUsage` (a binding path's property or command, and a missing converter; the MVVM
   Toolkit known by its attributes' full names). `CSharp/CodeAssist.XamlEditing.cs` is the window's side (dialogs in
   `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
-  `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
+  `ApplyFileChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems, a C# change (typed or on disk) sent to every
   project whose XAML reads it (`XamlService.Reading`: its own and those referencing its project, each builder deciding
@@ -844,8 +844,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   service's it discovers, an `https+http://` address's host or a `services:` key) to the AppHost line declaring it, one
   declaration path with MCP's `definition` (`CodeAssist.AspireDeclarationAsync`), Rename on such a name, or on the name
   where the AppHost declares it, renames the resource there and wherever its AppHost's services read it (`AspireRename`,
-  worked out again as it is made, one command of global undo, MCP's `rename` too; `CodeAssist.RenameResourceAsync`),
-  and Edit Configurations and the gutter's
+  worked out again as it is made, one command of global undo, MCP's `rename` too; `CodeAssist.RenameResourceAsync`), an
+  AppHost's `AddParameter` with no value of its own and none in its configuration (`Parameters:NAME` in its folder's
+  appsettings*.json or its user secrets, `AspireParameters`, whose values are never read out) is marked on its name in
+  the AppHost's pull (`AspireUnsetParametersAsync`), its fix asking the value (`EditorFix.Asks`, the window's
+  `AskValueAsync` masking a secret as typed and holding no background work while it waits, an agent's
+  `apply_code_action` giving it as `name`) and setting it in the AppHost's user secrets (`Workspace/UserSecrets`, the
+  UserSecretsId's own, `PASSENGER_USER_SECRETS`' in a test run) for a secret, else in its appsettings.json, the file's
+  other characters kept (`JsonText`, launchSettings.json's editor too), one command of global undo, worked out again as
+  it is chosen, and Edit Configurations and the gutter's
   `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
