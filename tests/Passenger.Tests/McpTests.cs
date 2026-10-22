@@ -1731,8 +1731,20 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         {
             Assert.Fail($"{tool} failed: {text}{Said()}");
         }
+        if (text.StartsWith('[') || text.StartsWith('{'))
+        {
+            try
+            {
+                using JsonDocument json = JsonDocument.Parse(text);
+                return json.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                // Words that begin with a bracket, as a terminal's screen does under a prompt like "[me@host ~]$".
+            }
+        }
         // A tool that answers in words (stop's "Stopped") is a JSON string of them.
-        return text.StartsWith('[') || text.StartsWith('{') ? JsonDocument.Parse(text).RootElement.Clone() : JsonSerializer.SerializeToElement(text);
+        return JsonSerializer.SerializeToElement(text);
     }
 
     /// <summary>A tool's whole result, an error's included, within the time the tool may take, or until the test gives up
