@@ -36,8 +36,8 @@ projects alike:
 - **The rest of a full IDE:** a three-way merge for Git's conflicts, Local History, NuGet with vulnerable versions
   marked, four test frameworks and a terminal of its own.
 
-The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1) lists what is left before the first release. The
-pictures here are of a sample project committed to this repository, in your system's light or dark.
+What comes next is in the [milestones](https://github.com/Zaneris/passenger/milestones), the release in progress among
+them. The pictures here are of a sample project committed to this repository, in your system's light or dark.
 
 ## What it does
 
@@ -288,26 +288,41 @@ counts a call's whole time whatever progress it hears, so a long build or test r
 }
 ```
 
-This repository's own [`.mcp.json`](.mcp.json) runs [`tools/mcp.sh`](tools/mcp.sh) (`just mcp`): the last Debug build
-with `--mcp` over this folder, run from a clone of the build so rebuilding Passenger never changes the files under the
-agent's IDE.
+This repository's own [`.mcp.json`](.mcp.json) runs [`tools/mcp.sh`](tools/mcp.sh), the script `just mcp` runs too:
+the last Debug build with `--mcp` over this folder, run from a clone of the build so rebuilding Passenger never changes
+the files under the agent's IDE.
 
 ## Building
 
-You need the .NET 11 SDK (the release candidate works until it ships in November 2026) and
-[just](https://github.com/casey/just). To use what you build, Passenger needs what a release needs: a .NET SDK 10 or
+Building needs the .NET 11 SDK (11.0.100-rc.2 or later, as [`global.json`](global.json) asks, until .NET 11 ships in
+November 2026) and [just](https://github.com/casey/just). The tests need more:
+
+- **the .NET 10 SDK** beside it, since the programs the debugger's tests debug ([`tests/Debuggees`](tests/Debuggees))
+  and most projects the tests write run on .NET 10;
+- **Git**, which the IDE runs for its Git features and the tests for theirs;
+- on Linux, **the X11 and fontconfig libraries** [Passenger's Linux page](https://passenger-ide.net/linux) names, which
+  the headless tests draw their text with too;
+- **Node.js**, for the web languages' tests, which skip without it, saying why;
+- **a container engine running Linux containers** (Docker Desktop, Docker Engine, Colima, OrbStack), for the container
+  tests, which skip without one, saying why.
+
+**Python 3** runs the recipes that write or check generated files (`just icons`, `just file-icons`, `just themes`,
+`just unicode-widths`, `just notices`, `just test-times`) and some of the macOS ones (`just app-icon`,
+`just package-mac`, `just site-shots`). To use what you build, Passenger needs what a release needs: a .NET SDK 10 or
 later, Git, and Node.js for the web languages.
 
 ```sh
 just build                 # Debug build; warnings are errors
 just run [PATH]            # run it on a folder or solution (--theme dark|light, --look passenger, harbour, sorbet…)
-just test [FILTER]         # every test, the IDE driven whole on Avalonia's headless platform, or those matching
+just test [FILTER]         # every test, the IDE driven whole on Avalonia's headless platform, or those matching;
+                           # the results in artifacts/test-results
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
 just mcp [FOLDER]          # Passenger as an MCP server over a folder, from a clone of the last build
 just publish osx-arm64     # a self-contained Release build (win-x64, win-arm64, linux-x64, linux-arm64 too)
 just package-mac           # the macOS disk image, Apple Silicon; signed with PASSENGER_SIGN_IDENTITY, else ad hoc
 just package-win win-x64   # the Windows installer (or win-arm64), unsigned unless tools/package-win.sh's variables sign it
 just package-linux         # the Linux archive with its install.sh (linux-x64, or linux-arm64), as site/linux.html uses it
+just container-tools       # the tools Passenger debugs and profiles with inside a Linux container, where a build finds them
 just notices               # fail naming any package THIRD_PARTY_NOTICES.md does not name
 ```
 
@@ -321,8 +336,8 @@ pins, and on Windows and Linux only as nuget.org signed them (NuGet checks no si
 machine updates a lock file when you add or change a package; commit it with the change, since CI restores only what
 the lock files name.
 
-The website is [`site/`](site), plain HTML and CSS deployed to [passenger-ide.net](https://passenger-ide.net) by each
-push to main that touches it.
+The website is [`site/`](site), plain HTML and CSS deployed to [passenger-ide.net](https://passenger-ide.net) when the
+Site workflow is run by hand.
 
 ## Contributing
 
