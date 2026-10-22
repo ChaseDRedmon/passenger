@@ -22,14 +22,18 @@ public readonly record struct ConsoleRun(int Start, int Length, ConsoleStream St
 public sealed record ConsoleInput(Action<string> Send, Action Close);
 
 /// <summary>The one way output reaches a console (Run, Build and Debug alike), from any thread: terminal control codes are
-/// taken out as it comes, each stream's state kept from one write to the next, so a sequence split between two reads
-/// never shows as text, nor a "\r\n" split so as an extra line. The console takes what waits a batch at a time, at most
-/// once a frame and below the window's input and drawing, so a program that writes without pause never floods the
-/// window; what waits is never more than the console keeps, the oldest dropped first.</summary>
+/// taken out as it comes, each stream's state (a pump's its own) kept from one write to the next, so a sequence split
+/// between two reads never shows as text, nor a "\r\n" split so as an extra line. A program's output is read in by
+/// <see cref="PumpAsync"/>, the one loop from a reader into a console. The console takes what waits a batch at a time,
+/// at most once a frame and below the window's input and drawing, so a program that writes without pause never floods
+/// the window; what waits is never more than the console keeps, the oldest dropped first.</summary>
 public sealed class ConsoleSink
 {
     /// <summary>A frame's time: batches come no closer together than this.</summary>
     private static readonly TimeSpan Frame = TimeSpan.FromMilliseconds(16);
+
+    /// <summary>The longest line a pump tells its reader of whole: a longer one is told in pieces of this length.</summary>
+    private const int LongestLine = 16 * 1024;
 
     private readonly object gate = new();
     private readonly Action take;
@@ -61,13 +65,15 @@ public sealed class ConsoleSink
     }
 
     /// <summary>Adds what a stream wrote; from any thread.</summary>
-    public void Write(ReadOnlySpan<char> text, ConsoleStream stream = ConsoleStream.Output)
+    public void Write(ReadOnlySpan<char> text, ConsoleStream stream = ConsoleStream.Output) => Write(text, stream, streams[(int)stream]);
+
+    private void Write(ReadOnlySpan<char> text, ConsoleStream stream, ControlCodes codes)
     {
         bool post;
         lock (gate)
         {
             int before = waiting.Length;
-            streams[(int)stream].Strip(text, waiting);
+            codes.Strip(text, waiting);
             post = Added(before, stream);
         }
         if (post)
@@ -81,18 +87,108 @@ public sealed class ConsoleSink
 
     /// <summary>A stream has ended (its program has): a '\r' it held back, in case a '\n' came next, is let go, and an
     /// unfinished control sequence is dropped, so the next program's text starts clean.</summary>
-    public void End(ConsoleStream stream)
+    public void End(ConsoleStream stream) => End(stream, streams[(int)stream]);
+
+    private void End(ConsoleStream stream, ControlCodes codes)
     {
         bool post;
         lock (gate)
         {
             int before = waiting.Length;
-            streams[(int)stream].End(waiting);
+            codes.End(waiting);
             post = Added(before, stream);
         }
         if (post)
         {
             Post();
+        }
+    }
+
+    /// <summary>Reads a program's stream into the console as it comes, a read at a time (a prompt with no line end too),
+    /// with colour-code state of its own, so two streams shown alike (Compose's progress, on its standard error) never
+    /// break each other's sequences; and ends it there as it ends, however it does (a pipe broken as its program is killed
+    /// too): a '\r' held back is let go. Each line read is told to <paramref name="lines"/> when given ('\r', '\n' or both
+    /// ending it, the last at the end). Once <paramref name="letGo"/> is cancelled (its program ended, what still holds the
+    /// stream out of the kill's reach), what comes is dropped and nothing ended, since the console may be another program's
+    /// by then. From any thread; it never throws.</summary>
+    public async Task PumpAsync(TextReader reader, ConsoleStream stream, CancellationToken letGo = default, Action<string>? lines = null)
+    {
+        ControlCodes codes = new();
+        LineSplitter? split = lines is null ? null : new LineSplitter(lines);
+        char[] buffer = new char[8192];
+        try
+        {
+            int read;
+            while ((read = await reader.ReadAsync(buffer, letGo).ConfigureAwait(false)) > 0)
+            {
+                if (letGo.IsCancellationRequested)
+                {
+                    return;
+                }
+                Write(buffer.AsSpan(0, read), stream, codes);
+                split?.Add(buffer.AsSpan(0, read));
+            }
+        }
+        catch (OperationCanceledException) when (letGo.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ended) when (ended is IOException or ObjectDisposedException)
+        {
+            // Its pipe broken as its program was killed, or its reader put away: the stream has ended all the same.
+        }
+        End(stream, codes);
+        split?.End();
+    }
+
+    /// <summary>A stream's text told a line at a time as a reader's ReadLine ends them, at '\r', '\n' or "\r\n" (one split
+    /// between two reads too), the last line at the end, and one past <see cref="LongestLine"/> in pieces.</summary>
+    private sealed class LineSplitter(Action<string> told)
+    {
+        private readonly StringBuilder line = new();
+        private bool afterReturn;
+
+        public void Add(ReadOnlySpan<char> text)
+        {
+            while (text.Length > 0)
+            {
+                if (afterReturn)
+                {
+                    afterReturn = false;
+                    if (text[0] == '\n')
+                    {
+                        text = text[1..];
+                        continue;
+                    }
+                }
+                int end = text.IndexOfAny('\r', '\n');
+                int taken = Math.Min(end < 0 ? text.Length : end, LongestLine - line.Length);
+                line.Append(text[..taken]);
+                if (line.Length == LongestLine || taken == end)
+                {
+                    Tell();
+                }
+                if (taken == end)
+                {
+                    afterReturn = text[end] == '\r';
+                    taken++;
+                }
+                text = text[taken..];
+            }
+        }
+
+        public void End()
+        {
+            if (line.Length > 0)
+            {
+                Tell();
+            }
+        }
+
+        private void Tell()
+        {
+            told(line.ToString());
+            line.Clear();
         }
     }
 

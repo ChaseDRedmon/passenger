@@ -328,6 +328,44 @@ public sealed class DebugSessionsTests : IClassFixture<DebugSessionsTests.Pair>
         }
     }
 
+    /// <summary>A program's output followed from outside, as a container service's log is into its Debug tab, shows to its
+    /// last word once what follows it ends, as the container's end ends docker logs: a last line ended by a carriage return
+    /// alone comes whole with it, the carriage return let go rather than held for good for a line feed that never comes.</summary>
+    [AvaloniaFact]
+    public void Output_followed_from_outside_shows_its_last_line_ended_by_a_carriage_return_once_it_ends()
+    {
+        MainWindow window = pair.Open(Counter);
+        Process? looping = null;
+        try
+        {
+            ProcessStartInfo start = ChildProcesses.DotnetCommand([Debugging.Helpers.Debuggees.Program("LoopingConsoleApp"), "sleep"]);
+            start.RedirectStandardOutput = true;
+            looping = ChildProcesses.Start(start);
+            // What a container's log ends with as the container ends: a line, then one ended by a carriage return alone.
+            AdapterPlace place = Here(follow: false) with
+            {
+                Output = () => OperatingSystem.IsWindows()
+                    ? ChildProcesses.Command("powershell", ["-NoProfile", "-Command", "[Console]::Out.Write('first words' + [char]10 + 'last words' + [char]13)"])
+                    : ChildProcesses.Command("/bin/sh", ["-c", "printf 'first words\\nlast words\\r'"]),
+            };
+            Assert.Null(Ui.Await(window.Debugger.AttachAsync(looping.Id, "Followed", place: place), "the attach in its place"));
+            DebugSession followed = window.Debugger.SessionNamed("Followed")!;
+            Ui.WaitFor(() => window.Debugger.Output(followed).ToString().Contains("first words\nlast words\r", StringComparison.Ordinal),
+                $"the followed output's last line in its console with the carriage return that ended it, not held for good: [{window.Debugger.Output(followed)}]");
+            Task letGo = followed.DetachAsync();
+            Ui.WaitFor(() => letGo.IsCompleted && followed.State == DebugState.Ended, "the session to let its program go and end");
+        }
+        finally
+        {
+            window.Close();
+            if (looping is not null)
+            {
+                Processes.Kill(looping.Id);
+                looping.Dispose();
+            }
+        }
+    }
+
     /// <summary>A place whose adapter runs here, as a container's runs over docker exec: the IDE's own adapter given the flags
     /// a place's adapter is given, a program's output followed from outside when asked (DebuggableConsoleApp, which writes on
     /// for good), and whether the place still runs as given.</summary>

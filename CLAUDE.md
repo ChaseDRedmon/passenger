@@ -868,7 +868,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   workspace pull again after a pause, 1 s doubling to 30 s, and `LanguageServer.RefuseNext(method, n)` refuses one for a
   test; Roslyn holds a workspace pull open until the next change, so an answer lost after it was sent waits for another). Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
-  Rider's 1024 KB, and what is typed into it sent to the program. A run configuration is data (`RunConfiguration`: the
+  Rider's 1024 KB, and what is typed into it sent to the program; a program's output and errors are read into it by its
+  one pump (`ConsoleSink.PumpAsync`: a read at a time, colour-code state of its own, the stream ended there as it ends,
+  a last '\r' let go; a build's, a run's, a container's log and Compose's, the profiler's through its `ProgramPump`).
+  A run configuration is data (`RunConfiguration`: the
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
   cannot launch here saying why: a project whose framework references Microsoft.WindowsDesktop.App runs only on
   Windows (`ProjectModel.WindowsOnly`), so off Windows the Solution view marks it, `RunConfiguration.WhyNotHere` greys

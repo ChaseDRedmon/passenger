@@ -1179,7 +1179,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             start.RedirectStandardError = true;
             Process started = ChildProcesses.Start(start);
             watching = started;
-            Task pumped = Task.WhenAll(Pump(started.StandardOutput, ConsoleStream.Output), Pump(started.StandardError, ConsoleStream.Output));
+            Task pumped = Task.WhenAll(console.PumpAsync(started.StandardOutput, ConsoleStream.Output), console.PumpAsync(started.StandardError, ConsoleStream.Output));
             _ = Ended();
 
             // A watch that ends while the run lasts says so, rather than leaving its files unsynced unsaid.
@@ -1196,21 +1196,6 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             console.Write($"Compose's watch could not start: {failed.Message}\n", ConsoleStream.Error);
-        }
-
-        async Task Pump(StreamReader reader, ConsoleStream stream)
-        {
-            try
-            {
-                while (await reader.ReadLineAsync() is { } line)
-                {
-                    console.Write(line + "\n", stream);
-                }
-            }
-            catch (Exception ended) when (ended is IOException or ObjectDisposedException)
-            {
-                // Ended with the run.
-            }
         }
     }
 
@@ -1464,9 +1449,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         console.Write($"{ChildProcesses.Display(start)}\n");
         Queue<string> said = new();
         using Process process = ChildProcesses.Start(start);
-        Task output = Pump(process.StandardOutput, ConsoleStream.Output);
+        Task output = console.PumpAsync(process.StandardOutput, ConsoleStream.Output, lines: Line);
         // Compose writes its progress to standard error: the console's ordinary text, not an error's.
-        Task errors = Pump(process.StandardError, ConsoleStream.Output);
+        Task errors = console.PumpAsync(process.StandardError, ConsoleStream.Output, lines: Line);
         try
         {
             await process.WaitForExitAsync(cancel);
@@ -1484,24 +1469,21 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             return new ChildResult(process.ExitCode, string.Join('\n', said), string.Empty);
         }
 
-        async Task Pump(StreamReader reader, ConsoleStream stream)
+        // Each line read: its last lines say why it failed.
+        void Line(string line)
         {
-            while (await reader.ReadLineAsync() is { } line)
+            lock (said)
             {
-                console.Write(line + "\n", stream);
-                lock (said)
+                said.Enqueue(line);
+                if (said.Count > 8)
                 {
-                    said.Enqueue(line);
-                    if (said.Count > 8)
-                    {
-                        said.Dequeue();
-                    }
+                    said.Dequeue();
                 }
-                // An image's build that fails says where in the workspace's files, as a host build does.
-                if (Plan.Mode == ContainerMode.Images && BuildOutput.Parse(line, Plan.Paths) is { } problem)
-                {
-                    UiThread.Post(() => ProblemFound?.Invoke(this, problem));
-                }
+            }
+            // An image's build that fails says where in the workspace's files, as a host build does.
+            if (Plan.Mode == ContainerMode.Images && BuildOutput.Parse(line, Plan.Paths) is { } problem)
+            {
+                UiThread.Post(() => ProblemFound?.Invoke(this, problem));
             }
         }
     }

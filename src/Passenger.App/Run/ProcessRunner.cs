@@ -185,7 +185,7 @@ public sealed class ProcessRunner : IDisposable
             landing.Ended();
         }
         CancellationTokenSource letGo = new();
-        Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output, letGo.Token), Pump(started.StandardError, sink, ConsoleStream.Error, letGo.Token));
+        Task outputs = Task.WhenAll(sink.PumpAsync(started.StandardOutput, ConsoleStream.Output, letGo.Token), sink.PumpAsync(started.StandardError, ConsoleStream.Error, letGo.Token));
         _ = LandAsync(started, outputs, letGo, input, ending, landing);
         return null;
     }
@@ -280,24 +280,6 @@ public sealed class ProcessRunner : IDisposable
             WasStopped = true;
             ChildProcesses.Kill(started);
         }
-    }
-
-    /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end; once let
-    /// go of (its program ended, and what holds the stream is out of the kill's reach), what still comes is nobody's,
-    /// since the console may be another program's by then.</summary>
-    private static async Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream, CancellationToken letGo)
-    {
-        char[] buffer = new char[8192];
-        int read;
-        while ((read = await reader.ReadAsync(buffer, letGo)) > 0)
-        {
-            if (letGo.IsCancellationRequested)
-            {
-                return;
-            }
-            sink.Write(buffer.AsSpan(0, read), stream);
-        }
-        sink.End(stream);
     }
 
     private void Lines(string text)

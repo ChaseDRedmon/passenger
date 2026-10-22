@@ -246,7 +246,7 @@ public sealed class ProfilerCommands
             using (BackgroundWork.Scope())
             {
                 running = await ProfilingSession.StartAsync(target, SnapshotFolder,
-                    (text, error) => console.Write(text, error ? ConsoleStream.Error : ConsoleStream.Output), stop.Token);
+                    (reader, error, lines) => console.PumpAsync(reader, error ? ConsoleStream.Error : ConsoleStream.Output, lines: lines), stop.Token);
             }
             starting = null;
             profiled.Profiling = running;
@@ -255,7 +255,7 @@ public sealed class ProfilerCommands
             profiled.Profiled = program;
             ConsoleInput? input = running.Input is { } writer ? ProgramInput.Of(writer) : null;
             // Only its end puts the run away, however that comes: a snapshot leaves the program running.
-            _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() => Ended(profiled, program, inspected, console, input, landed)), TaskScheduler.Default);
+            _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() => Ended(profiled, program, inspected, input, landed)), TaskScheduler.Default);
             if (profiled.IsEnded)
             {
                 // Its folder was left as it started: it ends with the folder's other programs.
@@ -402,13 +402,11 @@ public sealed class ProfilerCommands
 
     /// <summary>A program Profile started has ended (by itself, killed, or with its folder) and the Run console has the last
     /// of what it wrote: a run still recording shows its snapshot, and the run is put away.</summary>
-    private void Ended(ProjectSession profiled, ProfiledProgram program, LiveApp? inspected, ConsoleSink console, ConsoleInput? input, TaskCompletionSource landed)
+    private void Ended(ProjectSession profiled, ProfiledProgram program, LiveApp? inspected, ConsoleInput? input, TaskCompletionSource landed)
     {
         try
         {
             inspected?.Dispose();
-            console.End(ConsoleStream.Output);
-            console.End(ConsoleStream.Error);
             OutputView run = parts.RunConsole;
             // Typing goes on to whatever has had the Run console since.
             if (run.Input == input)

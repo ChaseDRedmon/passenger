@@ -15,6 +15,11 @@ public sealed record ProfileTarget(string Program, IReadOnlyList<string> Argumen
     public string Name => Path.GetFileNameWithoutExtension(Program) is "dotnet" && Arguments.Count > 0 ? Path.GetFileNameWithoutExtension(Arguments[0]) : Path.GetFileNameWithoutExtension(Program);
 }
 
+/// <summary>How a program's standard output, or its standard error (<paramref name="error"/>), is read into its caller's
+/// console as it comes, to its end (the console's own pump), each line read also told to <paramref name="lines"/> when
+/// given; done once the stream has ended, on any thread.</summary>
+public delegate Task ProgramPump(TextReader reader, bool error, Action<string>? lines);
+
 /// <summary>A profiling run, as dotTrace's sampling mode makes one: the program is started held at a diagnostic port of
 /// its own (DOTNET_DiagnosticPorts, as dotnet-trace's --diagnostic-port does), so the run begins at its first
 /// instruction; the port is cleared in the program before it goes on, so a .NET program it starts is not held too. Or a
@@ -93,11 +98,11 @@ public sealed class ProfilingSession : IAsyncDisposable
         new EventPipeProvider(UiFrames.Provider, EventLevel.Informational),
     ];
 
-    /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>; the program's output
-    /// comes to <paramref name="output"/> as it is read, with whether it came on standard error, on any thread. A start that
-    /// fails, for whatever reason, is a <see cref="ProfilingException"/> saying why, with the program ended and the port's
-    /// listener gone, its socket too.</summary>
-    public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, Action<string, bool>? output = null, CancellationToken cancellation = default)
+    /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>; the program's output and
+    /// errors are read by <paramref name="pump"/>, its caller's console's, each to its end. A start that fails, for
+    /// whatever reason, is a <see cref="ProfilingException"/> saying why, with the program ended and the port's listener
+    /// gone, its socket too.</summary>
+    public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, ProgramPump pump, CancellationToken cancellation = default)
     {
         if (!Directory.Exists(target.WorkingDirectory))
         {
@@ -145,9 +150,15 @@ public sealed class ProfilingSession : IAsyncDisposable
             await StopListeningAsync(connecting, limit, port);
             throw new ProfilingException($"Could not start {Path.GetFileName(target.Program)} to profile {target.Name}: {error.Message}", error);
         }
-        // The end of what it wrote on its standard error, which says why when it ends before the profiler sees it.
-        string errors = string.Empty;
-        Task reading = Task.WhenAll(Read(process.StandardOutput, error: false), Read(process.StandardError, error: true));
+        // The last line it wrote on its standard error, which says why when it ends before the profiler sees it.
+        string? lastSaid = null;
+        Task reading = Task.WhenAll(pump(process.StandardOutput, false, null), pump(process.StandardError, true, line =>
+        {
+            if (line.Trim() is { Length: > 0 } said)
+            {
+                lastSaid = said.Length > 2000 ? said[^2000..] : said;
+            }
+        }));
 
         DiagnosticsClientConnector? connector = null;
         try
@@ -206,29 +217,6 @@ public sealed class ProfilingSession : IAsyncDisposable
             throw;
         }
 
-        // A read at a time, a prompt with no line end included.
-        async Task Read(StreamReader reader, bool error)
-        {
-            char[] buffer = new char[8192];
-            int read;
-            try
-            {
-                while ((read = await reader.ReadAsync(buffer)) > 0)
-                {
-                    output?.Invoke(new string(buffer, 0, read), error);
-                    if (error)
-                    {
-                        string written = errors + new string(buffer, 0, read);
-                        errors = written.Length > 2000 ? written[^2000..] : written;
-                    }
-                }
-            }
-            catch (Exception gone) when (gone is IOException or ObjectDisposedException)
-            {
-                // The run was put away while the program still wrote.
-            }
-        }
-
         // The last line it wrote on its standard error once it has ended, read to its end unless that takes a while.
         async Task<string?> SaidLastAsync()
         {
@@ -236,7 +224,7 @@ public sealed class ProfilingSession : IAsyncDisposable
             {
                 await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(2)));
             }
-            return errors.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.Length > 0);
+            return lastSaid;
         }
 
         // The program ended, and nothing of the run left: no connection, no listener, no socket.
