@@ -1775,7 +1775,8 @@ never counts on another having run before it: each shard lists the suite (`tools
 listing names no test or says discovery failed: xunit 3.2's runner can spoil its answer to the adapter's -assemblyInfo,
 xunit #3576) and `tools/test-shards.py` deals the classes
 by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one it lacks by its budget), the same deal in
-every shard, checked before any test runs to put every test in exactly one; inside a shard the collections keep their
+every shard, checked by the first shard before any test runs to put every test in exactly one (a listing of each
+hand, a VSTest discovery each, which the others need not repeat); inside a shard the collections keep their
 order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
 `tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 22 minutes fails (the
 whole run was an hour in one job a system; 20 until the MVP's last week grew macOS's classes to 72 minutes, which four
