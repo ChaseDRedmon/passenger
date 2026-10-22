@@ -165,7 +165,12 @@ public static class AspireOrchestration
             Save(Staged(program), ServiceSource(Read(Staged(program)).Text, program));
         }
         string hostProgram = HostSourcePath(Staged(host));
-        Save(hostProgram, HostSource(Read(hostProgram).Text, host, choice.Services));
+        Dictionary<string, BackingNeeds> needs = choice.Services.ToDictionary(service => service.Path, service => BackingService.Needs(service), PathNames.Comparer);
+        Save(hostProgram, HostSource(Read(hostProgram).Text, host, choice.Services, needs));
+        foreach (BackingService backing in BackingService.Known.Where(k => needs.Values.Any(n => n.Services.Contains(k))))
+        {
+            AddHosting(host, backing.AspirePackage, root, Staged, Copy);
+        }
         foreach (string project in new[] { choice.AppHost is null ? host : null, choice.ServiceDefaults is null ? defaults : null }.OfType<string>())
         {
             Check(SolutionEdits.AddProject(Staged(solution), null, Staged(project)));
@@ -281,13 +286,15 @@ public static class AspireOrchestration
         return Insert(text, insertions);
     }
 
-    private static string HostSource(string text, string host, IReadOnlyList<ProjectModel> services)
+    private static string HostSource(string text, string host, IReadOnlyList<ProjectModel> services, IReadOnlyDictionary<string, BackingNeeds> needs)
     {
         CompilationUnitSyntax root = Parse(text, host);
         (VariableDeclaratorSyntax builder, _) = Builder(root, ["DistributedApplication"], host);
         InvocationExpressionSyntax build = Build(root, builder, host);
         StatementSyntax statement = build.Ancestors().OfType<StatementSyntax>().First();
         List<string> additions = [];
+        Backing backing = new(root, builder.Identifier.Text);
+        List<(int At, string Text)> referenced = [];
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
         List<(InvocationExpressionSyntax Call, string Name, string? ProjectPath, string? ProjectType)> projects =
             [.. Calls(root, builder.Identifier.Text, "AddProject").Select(BindProjectArguments)];
@@ -325,14 +332,162 @@ public static class AspireOrchestration
             {
                 throw new InvalidOperationException($"The AppHost already uses resource name {name} for another resource. Add {service.Name} manually with a unique name.");
             }
+            // Each backing service it reads, by the name its connection string uses, referenced and waited for.
+            IReadOnlyList<string> uses = backing.Used(needs.GetValueOrDefault(service.Path) ?? new BackingNeeds([], []));
             if (!exists)
             {
-                additions.Add($"{builder.Identifier.Text}.AddProject({SymbolDisplay.FormatLiteral(name, true)}, {SymbolDisplay.FormatLiteral(relative, true)});");
+                additions.Add($"var {backing.Variable(name)} = {builder.Identifier.Text}.AddProject({SymbolDisplay.FormatLiteral(name, true)}, {SymbolDisplay.FormatLiteral(relative, true)}){References(uses, string.Empty)};");
+            }
+            else if (projects.FirstOrDefault(SameProject) is { Call: { } call } && uses.Count > 0)
+            {
+                string chain = call.Ancestors().OfType<StatementSyntax>().First().ToString();
+                referenced.Add((call.Span.End, References(uses, chain)));
             }
         }
-        return additions.Count == 0 ? text : text.Insert(statement.SpanStart,
-            string.Join(NewLine(text) + Indent(text, statement.SpanStart), additions) + NewLine(text) + Indent(text, statement.SpanStart));
+        List<(int At, string Text)> insertions = [.. referenced];
+        string eol = NewLine(text);
+        string indent = Indent(text, statement.SpanStart);
+        if (backing.Declarations.Count > 0)
+        {
+            StatementSyntax declared = builder.Ancestors().OfType<StatementSyntax>().First();
+            insertions.Add((declared.Span.End, eol + eol + string.Join(eol, backing.Declarations.Select(d => Indent(text, declared.SpanStart) + d))));
+        }
+        if (additions.Count > 0)
+        {
+            insertions.Add((statement.SpanStart, string.Join(eol + indent, additions) + eol + indent));
+        }
+        return Insert(text, insertions);
+
+        static string References(IReadOnlyList<string> uses, string chain) => string.Concat(uses
+            .Where(use => !chain.Contains($".WithReference({use})", StringComparison.Ordinal))
+            .Select(use => $".WithReference({use}).WaitFor({use})"));
     }
+
+    /// <summary>The backing services an AppHost declares for its services, as Add > Docker Compose finds them
+    /// (<see cref="BackingService.Needs"/>): each server once, by its service's name, a database of one that keeps them for each
+    /// connection string that names one (by the string's name, its database kept), any other by the string's name; a
+    /// resource the AppHost already declares by that name is its own, used through its variable.</summary>
+    private sealed class Backing(CompilationUnitSyntax root, string builder)
+    {
+        private readonly HashSet<string> taken = [.. root.DescendantNodes().OfType<VariableDeclaratorSyntax>().Select(v => v.Identifier.ValueText)];
+        private readonly Dictionary<string, string?> resources = new(StringComparer.OrdinalIgnoreCase);
+
+        public List<string> Declarations { get; } = [];
+
+        /// <summary>The variables a service references for what it reads, its resources declared as they are first wanted.</summary>
+        public IReadOnlyList<string> Used(BackingNeeds needs)
+        {
+            List<string> used = [];
+            foreach (BackingService service in needs.Services)
+            {
+                BackingConnection[] reading = [.. needs.Connections.Where(c => c.To == service)];
+                IEnumerable<string?> variables = reading.Length == 0 ? [Server(service)]
+                    : reading.Select(c => service.HasDatabases ? Database(service, c) : Declared(c.Name, $"{builder}.{service.AspireMethod}({Literal(c.Name)})"));
+                used.AddRange(variables.OfType<string>().Where(v => !used.Contains(v)));
+            }
+            return used;
+        }
+
+        private string? Server(BackingService service) => Declared(service.Service, $"{builder}.{service.AspireMethod}({Literal(service.Service)})");
+
+        private string? Database(BackingService service, BackingConnection connection)
+        {
+            if (Server(service) is not { } server)
+            {
+                return null;
+            }
+            string? database = service.Database(connection.Name, connection.Value);
+            string named = database is null || database == connection.Name ? Literal(connection.Name) : $"{Literal(connection.Name)}, {Literal(database)}";
+            return Declared(connection.Name, $"{server}.AddDatabase({named})");
+        }
+
+        /// <summary>The variable of the resource of a name: the AppHost's own when it declares one (none when not as a variable),
+        /// else one declared now with what adds it.</summary>
+        private string? Declared(string name, string adding)
+        {
+            if (resources.TryGetValue(name, out string? known))
+            {
+                return known;
+            }
+            if (root.DescendantNodes().OfType<InvocationExpressionSyntax>().FirstOrDefault(call => call.Expression is MemberAccessExpressionSyntax member
+                && member.Name.Identifier.ValueText.StartsWith("Add", StringComparison.Ordinal)
+                && call.ArgumentList.Arguments.FirstOrDefault()?.Expression is LiteralExpressionSyntax { Token.Value: string written }
+                && string.Equals(written, name, StringComparison.OrdinalIgnoreCase)) is { } own)
+            {
+                return resources[name] = own.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault()?.Identifier.ValueText;
+            }
+            string variable = Variable(name);
+            Declarations.Add($"var {variable} = {adding};");
+            return resources[name] = variable;
+        }
+
+        /// <summary>A local's name for a resource's: its words in camel case, never a keyword or a name the file has.</summary>
+        public string Variable(string name)
+        {
+            string[] words = [.. System.Text.RegularExpressions.Regex.Split(name, "[^A-Za-z0-9]+").Where(w => w.Length > 0)];
+            string made = words.Length == 0 ? "resource" : string.Concat(words.Select((w, i) => i == 0 ? char.ToLowerInvariant(w[0]) + w[1..] : char.ToUpperInvariant(w[0]) + w[1..]));
+            if (!char.IsLetter(made[0]) || SyntaxFacts.GetKeywordKind(made) != SyntaxKind.None)
+            {
+                made = "_" + made;
+            }
+            string variable = made;
+            for (int i = 2; !taken.Add(variable); i++)
+            {
+                variable = made + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            return variable;
+        }
+
+        private static string Literal(string text) => SymbolDisplay.FormatLiteral(text, true);
+    }
+
+    /// <summary>An AppHost given Aspire's hosting integration for a backing service, at the AppHost's own Aspire version: its
+    /// package reference, with its version, or under central package management without, the version in the
+    /// Directory.Packages.props that manages it (staged too).</summary>
+    private static void AddHosting(string host, string package, string root, Func<string, string> staged, Action<string> copy)
+    {
+        string stagedHost = staged(host);
+        string text = Read(stagedHost).Text;
+        if (System.Text.RegularExpressions.Regex.IsMatch(text, $"Include=\"{System.Text.RegularExpressions.Regex.Escape(package)}\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            return;
+        }
+        string? managing = null;
+        for (string? folder = Path.GetDirectoryName(host); folder is not null
+            && (PathNames.Same(folder, root) || PathNames.IsUnder(folder, root)); folder = Path.GetDirectoryName(folder))
+        {
+            string props = Path.Combine(folder, "Directory.Packages.props");
+            if (File.Exists(props))
+            {
+                managing = Read(props).Text.Contains("<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>", StringComparison.OrdinalIgnoreCase) ? props : null;
+                break;
+            }
+        }
+        string? version = AspireVersion(text) ?? (managing is null ? null : AspireVersion(Read(managing).Text));
+        if (version is null)
+        {
+            throw new InvalidOperationException($"The AppHost's Aspire version could not be read from its project, for {package} to be added at it. No files were changed.");
+        }
+        Check(ProjectEdits.AddPackage(stagedHost, package, managing is null ? version : null));
+        if (managing is not null)
+        {
+            copy(managing);
+            string props = staged(managing);
+            string held = Read(props).Text;
+            if (!held.Contains($"Include=\"{package}\"", StringComparison.OrdinalIgnoreCase)
+                && System.Text.RegularExpressions.Regex.Matches(held, "<PackageVersion\\b[^>]*/>").LastOrDefault() is { } last)
+            {
+                int lineEnd = held.IndexOf('\n', last.Index + last.Length);
+                Save(props, held.Insert(lineEnd < 0 ? held.Length : lineEnd + 1, $"{Indent(held, last.Index)}<PackageVersion Include=\"{package}\" Version=\"{version}\" />{NewLine(held)}"));
+            }
+        }
+    }
+
+    /// <summary>The Aspire version a project or Directory.Packages.props names: its AppHost SDK's, else its Aspire.Hosting.AppHost's.</summary>
+    private static string? AspireVersion(string text) =>
+        System.Text.RegularExpressions.Regex.Match(text,
+            "Aspire\\.AppHost\\.Sdk/(?<v>[0-9][^\"\\s;]*)|Name=\"Aspire\\.AppHost\\.Sdk\"\\s+Version=\"(?<v>[^\"]+)\"|Include=\"Aspire\\.Hosting\\.AppHost\"\\s+Version=\"(?<v>[^\"]+)\"",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase) is { Success: true } found ? found.Groups["v"].Value : null;
 
     private static (InvocationExpressionSyntax Call, string Name, string? ProjectPath, string? ProjectType) BindProjectArguments(InvocationExpressionSyntax call)
     {

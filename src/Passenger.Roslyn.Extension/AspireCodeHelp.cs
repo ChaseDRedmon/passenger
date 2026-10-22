@@ -398,6 +398,10 @@ internal static class AspireSource
                 }
                 edges.Add((source.Name, target.Name));
             }
+            else if (method.Name is "WaitFor" or "WaitForStart" or "WaitForCompletion" && method.ContainingType.ToDisplayString() == "Aspire.Hosting.ResourceBuilderExtensions")
+            {
+                // An order of starting, which gives the waiting resource nothing to read: no edge.
+            }
             else if (call.ArgumentList.Arguments.Any(a => ResourceType(model.GetTypeInfo(a.Expression, cancel).Type) is not null))
             {
                 return null;

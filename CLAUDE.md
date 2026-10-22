@@ -855,8 +855,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   Profile holds the chosen service at its start until recording begins (`ProfileAspireAsync`, `AspireServiceDialog`
   when several run). Add > Aspire Orchestration… (`AppActions.AddAspireOrchestration`, the solution's row or Find Action;
   `AspireOrchestration`, `AspireOrchestrationDialog`) adds an AppHost and ServiceDefaults from Aspire's templates and
-  references them, prepared under the state's `aspire-staging/` before any file is written, as one command of global
-  undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
+  references them, each service a local of the AppHost, with the backing services Add > Docker Compose's detection finds
+  for it (`BackingService.Needs`: a server once by its service's name, a database of Postgres, SQL Server or Mongo by
+  each connection string's name, its database kept, Redis and RabbitMQ by the connection string's name, else the server
+  itself), each `WithReference`d and `WaitFor`ed by the services that read it and its hosting integration referenced at
+  the AppHost's own Aspire version (its SDK's, under central package management in Directory.Packages.props), prepared
+  under the state's `aspire-staging/` before any file is written, as one command of global undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
   reading, never resource names guessed): a service that reads a connection string or service its AppHost never gives
   it is marked (`CSharpDocument.Aspire.cs`, in the file's `ServerDiagnostics`) with a WithReference fix, one of Passenger's
   own (`CodeAssist.AspireFixes`, through `EditorFixes`, an `EditorFix` made `Elsewhere`) listed first beside the server's
@@ -1130,7 +1134,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   beside it and a .dockerignore at the context, the solution's folder; or EnableSdkContainerSupport and
   ContainerRepository) and Add > Docker Compose on the solution (compose.yaml, a Dockerfile for each project chosen
   without one, the backing services its packages call for with healthchecks and connection strings, listed in Solution
-  Items), the text from `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
+  Items; `Workspace/BackingServices`, the detection Add > Aspire Orchestration shares), the text from
+  `Workspace/DockerFiles`, each Add one `Commands.Record` with every file watched before it is
   written and an open project or solution file taking its new text inside it (`FollowWritten`), and refused, saying so,
   while a project is still being evaluated. A project's image is aspnet when it or a project it references has the
   ASP.NET Core framework reference as evaluated, or its restore's `project.assets.json` says a package or reference
