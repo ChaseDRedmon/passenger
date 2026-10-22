@@ -35,6 +35,13 @@ public sealed record BuildRunParts(
 
     /// <summary>Where the window's container tools come from, which Debug of a container configuration puts in each service.</summary>
     public Func<Containers.ContainerToolsSource>? Tools { get; init; }
+
+    /// <summary>The dotnet <c>dev-certs</c> runs through for a container run's HTTPS services: the machine's, or a test's stand-in.</summary>
+    public Containers.DotnetWords? DevCertificates { get; init; }
+
+    /// <summary>Asks the person whether to make and trust the development certificate (true) or run over HTTP (false), given
+    /// the configuration, the services that serve HTTPS and whether there is none at all.</summary>
+    public Func<string, string, bool, Task<bool>>? AskCertificate { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of

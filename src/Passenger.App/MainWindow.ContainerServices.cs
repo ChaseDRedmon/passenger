@@ -10,6 +10,35 @@ namespace Passenger.App;
 /// run, its session ended first and, restarted, attached again.</summary>
 public partial class MainWindow
 {
+    /// <summary>The dotnet a container run's <c>dev-certs</c> runs through: the machine's, unless a test gives a stand-in.</summary>
+    public DotnetWords? DevCertificates { get; init; }
+
+    /// <summary>The question a container run asked last of its HTTPS development certificate, for the tests.</summary>
+    public CertificateQuestionDialog? CertificateQuestion { get; private set; }
+
+    /// <summary>Asks whether to make and trust the development certificate for a run's HTTPS services, or run them over HTTP;
+    /// an agent's own IDE (--mcp) has nobody to ask, and runs them over HTTP.</summary>
+    private async Task<bool> AskCertificateAsync(string configuration, string services, bool missing)
+    {
+        if (!AgentsAllowed)
+        {
+            return false;
+        }
+        CertificateQuestionDialog question = new(configuration, services, missing);
+        CertificateQuestion = question;
+        try
+        {
+            return await question.ShowDialog<bool>(this);
+        }
+        finally
+        {
+            if (CertificateQuestion == question)
+            {
+                CertificateQuestion = null;
+            }
+        }
+    }
+
     private void AddServiceActions(ContainersView view)
     {
         foreach ((string id, string title) in (ReadOnlySpan<(string, string)>)[

@@ -57,6 +57,8 @@ public partial class MainWindow
     {
         Reveal = project => containersView?.Reveal(project),
         Tools = () => ToolsSource,
+        DevCertificates = DevCertificates,
+        AskCertificate = AskCertificateAsync,
     };
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what

@@ -54,7 +54,7 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
     /// services held at their start (for the debugger or the profiler), and those of them whose code the debugger may change
     /// (DOTNET_MODIFIABLE_ASSEMBLIES=debug, which a profiled service goes without, since it would measure code built for
     /// changing).</summary>
-    public Func<IReadOnlyCollection<string>, IReadOnlyCollection<string>, CancellationToken, Task> WriteOverride { get; init; } = (_, _, _) => Task.CompletedTask;
+    public Func<IReadOnlyCollection<string>, IReadOnlyCollection<string>, DevelopmentCertificate.Exported?, CancellationToken, Task> WriteOverride { get; init; } = (_, _, _, _) => Task.CompletedTask;
 
     /// <summary>The .NET services Debug debugs: those the configuration marks Debug, else every .NET service it starts (Run
     /// with Hot Reload: every one it starts).</summary>
@@ -71,6 +71,13 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
 
     /// <summary>The <c>dotnet publish -t:PublishContainer</c> words that make an SDK container's image as deployed, or null.</summary>
     public IReadOnlyList<string>? Publish { get; init; }
+
+    /// <summary>The folder's place in the state for its container runs, where the development certificate is exported.</summary>
+    public string State { get; init; } = string.Empty;
+
+    /// <summary>The .NET services that serve HTTPS (Kestrel told an https address or port, or a port of HTTPS's), which take
+    /// the development certificate, or are told to serve HTTP instead when there is none.</summary>
+    public IReadOnlyList<string> Https { get; init; } = [];
 }
 
 /// <summary>Works out a container configuration's <see cref="ContainerPlan"/>: Compose's model of its files (a Dockerfile
@@ -195,11 +202,11 @@ public static class ContainerPlans
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
         // Written once the host's build is done: what fast mode mounts (its static web assets' folders) is that build's.
         bool pin = Overrides((await engine.StateAsync(cancel: cancel)).ComposeVersion);
-        async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, CancellationToken stop) =>
-            WriteJson(overrideFile, await OverrideAsync(model, dotnet, mode, labels, projects, state, pin, held, modifiable, stop), overriding: true);
+        async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken stop) =>
+            WriteJson(overrideFile, await OverrideAsync(model, dotnet, mode, labels, projects, state, pin, held, modifiable, certificate, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
-            await WriteOverride([], [], cancel);
+            await WriteOverride([], [], null, cancel);
         }
 
         DotnetService? launched = dotnet.FirstOrDefault(d => d.Service == configuration.LaunchService) ?? dotnet.FirstOrDefault(d => d.Starts && (start.Count == 0 || start.Contains(d.Service)));
@@ -215,6 +222,8 @@ public static class ContainerPlans
         {
             WriteOverride = WriteOverride,
             Publish = publish,
+            State = state,
+            Https = [.. model.Services.Where(s => dotnet.Any(d => d.Service == s.Name) && Serves(s)).Select(s => s.Name)],
         };
     }
 
@@ -416,7 +425,8 @@ public static class ContainerPlans
     /// project's user secrets where they serve; a service held for the debugger started held by its runtime until the debugger
     /// lets it go, its code open to Hot Reload. JSON, which Compose reads as YAML.</summary>
     private static async Task<JsonObject> OverrideAsync(ComposeModel model, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
-        IReadOnlyList<ProjectModel> projects, string state, bool pinPorts, IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, CancellationToken cancel)
+        IReadOnlyList<ProjectModel> projects, string state, bool pinPorts, IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable,
+        DevelopmentCertificate.Exported? certificate, CancellationToken cancel)
     {
         JsonObject services = [];
         foreach (ComposeService service in model.Services)
@@ -488,11 +498,15 @@ public static class ContainerPlans
                 {
                     environment["DOTNET_MODIFIABLE_ASSEMBLIES"] = "debug";
                 }
-                if (Serves(service) && await DevelopmentCertificate.ExportAsync(state, cancel) is { } certificate)
+                if (Serves(service) && certificate is { } exported)
                 {
-                    volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = certificate.Folder, ["target"] = "/https", ["read_only"] = true });
-                    environment["ASPNETCORE_Kestrel__Certificates__Default__Path"] = $"/https/{Path.GetFileName(certificate.File)}";
-                    environment["ASPNETCORE_Kestrel__Certificates__Default__Password"] = certificate.Password;
+                    volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = exported.Folder, ["target"] = "/https", ["read_only"] = true });
+                    environment["ASPNETCORE_Kestrel__Certificates__Default__Path"] = $"/https/{Path.GetFileName(exported.File)}";
+                    environment["ASPNETCORE_Kestrel__Certificates__Default__Password"] = exported.Password;
+                }
+                else if (Serves(service))
+                {
+                    OverHttp(service, environment);
                 }
                 if (development && UserSecrets(projects.FirstOrDefault(p => PathNames.Same(p.Path, built.Project))) is { } secrets)
                 {
@@ -563,6 +577,23 @@ public static class ContainerPlans
         catch (Exception unreadable) when (unreadable is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             return null;
+        }
+    }
+
+    /// <summary>A service that serves HTTPS told to serve HTTP for this run, there being no certificate to give it (the person
+    /// chose so, or the export failed): its https addresses as http, and its HTTPS ports among its HTTP ones, so it listens
+    /// where it would and Kestrel finds no HTTPS to want a certificate for.</summary>
+    private static void OverHttp(ComposeService service, JsonObject environment)
+    {
+        if (service.Environment.GetValueOrDefault("ASPNETCORE_URLS") is { } urls && urls.Contains("https:", StringComparison.OrdinalIgnoreCase))
+        {
+            environment["ASPNETCORE_URLS"] = urls.Replace("https:", "http:", StringComparison.OrdinalIgnoreCase);
+        }
+        if (service.Environment.GetValueOrDefault("ASPNETCORE_HTTPS_PORTS") is { Length: > 0 } https)
+        {
+            string http = service.Environment.GetValueOrDefault("ASPNETCORE_HTTP_PORTS") ?? string.Empty;
+            environment["ASPNETCORE_HTTP_PORTS"] = string.Join(';', (http + ";" + https).Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct());
+            environment["ASPNETCORE_HTTPS_PORTS"] = string.Empty;
         }
     }
 
@@ -647,20 +678,80 @@ public sealed class ComposeModelException(string name, string said) : LaunchExce
     public string Said { get; } = said;
 }
 
-/// <summary>ASP.NET Core's development certificate, exported once into the state for containers that serve HTTPS
-/// (<c>dotnet dev-certs https -ep … -p …</c>, through ChildProcesses), with a password of its own kept beside it and never
-/// written to a console.</summary>
+/// <summary>The .NET command line <c>dotnet dev-certs</c> runs through: the machine's (<see cref="DevelopmentCertificate.Machine"/>),
+/// or a test's stand-in, which never trusts a certificate on the machine it runs on.</summary>
+public delegate ProcessStartInfo DotnetWords(IReadOnlyList<string> words, string folder);
+
+/// <summary>ASP.NET Core's development certificate for containers that serve HTTPS: how it stands on this machine
+/// (<c>dotnet dev-certs https --check --trust</c>), made and trusted when the person asks (<c>--trust</c>, which the system
+/// may ask about too), and exported once into the state (<c>-ep … -p …</c>), with a password of its own kept beside it and
+/// never written to a console; each through ChildProcesses, bounded, saying why when it does not come.</summary>
 public static class DevelopmentCertificate
 {
     public sealed record Exported(string Folder, string File, string Password);
 
+    /// <summary>How this machine's development certificate stands.</summary>
+    public enum Standing
+    {
+        Trusted,
+        NotTrusted,
+        Missing,
+        Unknown,
+    }
+
+    /// <summary>The machine's own dotnet.</summary>
+    public static readonly DotnetWords Machine = (words, folder) => ChildProcesses.DotnetCommand(words, folder);
+
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
-    /// <summary>How long the export may take: one waiting on the system's certificate store (a locked keychain asking for
-    /// its password) leaves the service without HTTPS's certificate rather than the run waiting for good.</summary>
+    /// <summary>How long the export or the trust may take: one waiting on the system's certificate store (a locked keychain
+    /// asking for its password) is said rather than the run waiting for good.</summary>
     public static readonly TimeSpan ExportLimit = TimeSpan.FromSeconds(60);
 
-    public static async Task<Exported?> ExportAsync(string state, CancellationToken cancel)
+    /// <summary>How long the check may take, which asks nothing of the person.</summary>
+    public static readonly TimeSpan CheckLimit = TimeSpan.FromSeconds(30);
+
+    /// <summary>Whether a certificate is there and trusted, as dev-certs answers (6: none valid, 7: not trusted), and what it said.</summary>
+    public static async Task<(Standing Standing, string Said)> CheckAsync(DotnetWords dotnet, string folder, CancellationToken cancel)
+    {
+        try
+        {
+            ChildResult answered = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--check", "--trust"], folder), limit: CheckLimit, cancel: cancel,
+                answers: [6, 7]);
+            return (answered.ExitCode switch { 0 => Standing.Trusted, 6 => Standing.Missing, 7 => Standing.NotTrusted, _ => Standing.Unknown }, Said(answered));
+        }
+        catch (TimeoutException)
+        {
+            return (Standing.Unknown, $"dotnet dev-certs https --check did not answer within {CheckLimit.TotalSeconds:0} s");
+        }
+        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return (Standing.Unknown, failed.Message);
+        }
+    }
+
+    /// <summary>Makes the certificate if there is none and trusts it, as <c>dotnet dev-certs https --trust</c> does (the
+    /// system may ask the person too), the copy exported before let go: null once trusted, else why not.</summary>
+    public static async Task<string?> TrustAsync(DotnetWords dotnet, string folder, string state, CancellationToken cancel)
+    {
+        try
+        {
+            ChildResult trusted = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "--trust"], folder), limit: ExportLimit, cancel: cancel);
+            Forget(state);
+            return trusted.Succeeded ? null : $"dotnet dev-certs https --trust ended with exit code {trusted.ExitCode}: {Said(trusted)}";
+        }
+        catch (TimeoutException)
+        {
+            return $"dotnet dev-certs https --trust did not end within {ExportLimit.TotalSeconds:0} s (the system's certificate store may be asking for a password)";
+        }
+        catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return failed.Message;
+        }
+    }
+
+    /// <summary>The certificate exported into the state (once; again after <see cref="TrustAsync"/>), or why it is not.</summary>
+    public static async Task<(Exported? Certificate, string? Problem)> ExportAsync(DotnetWords dotnet, string state, CancellationToken cancel)
     {
         string folder = Path.Combine(state, "https");
         string file = Path.Combine(folder, "aspnetapp.pfx");
@@ -671,32 +762,55 @@ public static class DevelopmentCertificate
             Directory.CreateDirectory(folder);
             if (File.Exists(file) && File.Exists(kept))
             {
-                return new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim());
+                return (new Exported(folder, file, (await File.ReadAllTextAsync(kept, cancel)).Trim()), null);
             }
             string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-            ChildResult exported = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
+            ChildResult exported = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
             if (!exported.Succeeded || !File.Exists(file))
             {
-                IdeErrors.Write($"Containers: the development certificate could not be exported: {exported.Error.Trim()} {exported.Output.Trim()}".Trim());
-                return null;
+                return (null, $"dotnet dev-certs https -ep ended with exit code {exported.ExitCode}: {Said(exported)}");
             }
             await File.WriteAllTextAsync(kept, password, cancel);
             if (!OperatingSystem.IsWindows())
             {
                 File.SetUnixFileMode(kept, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
-            return new Exported(folder, file, password);
+            return (new Exported(folder, file, password), null);
         }
-        catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or TimeoutException)
+        catch (TimeoutException)
         {
-            IdeErrors.Write($"Containers: the development certificate could not be exported: {failed.Message}");
-            return null;
+            return (null, $"dotnet dev-certs https -ep did not end within {ExportLimit.TotalSeconds:0} s (the system's certificate store may be asking for a password)");
+        }
+        catch (Exception failed) when (failed is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or FileNotFoundException
+            or InvalidOperationException)
+        {
+            return (null, failed.Message);
         }
         finally
         {
             Gate.Release();
         }
     }
+
+    /// <summary>Lets go of the copy exported before, which a certificate made since no longer matches.</summary>
+    private static void Forget(string state)
+    {
+        try
+        {
+            string file = Path.Combine(state, "https", "aspnetapp.pfx");
+            if (File.Exists(file))
+            {
+                File.Delete(file);
+            }
+        }
+        catch (Exception kept) when (kept is IOException or UnauthorizedAccessException)
+        {
+            // An export kept stands until the next one replaces it.
+        }
+    }
+
+    private static string Said(ChildResult result) =>
+        string.Join(' ', ((string[])[result.Error.Trim(), result.Output.Trim()]).Where(s => s.Length > 0)) is { Length: > 0 } said ? said : "it said nothing";
 }
 
 /// <summary>A .NET service of a container run in its container, as the debugger and the profiler reach it: the container,
@@ -801,7 +915,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     }
 
     /// <summary>The override as the holds chosen say, each held service's code open to Hot Reload.</summary>
-    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. holds.Keys], [.. holds.Keys], cancel);
+    private Task WriteOverrideAsync(CancellationToken cancel) => Plan.WriteOverride([.. holds.Keys], [.. holds.Keys], Certificate, cancel);
 
     /// <summary>The service the profiler records, which Stop ends (<see cref="EndProfiling"/>, its snapshot read) before it
     /// takes the containers down; null when none is.</summary>
@@ -926,6 +1040,10 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     /// <summary>The workspace folder whose label is on what the run made (<see cref="FolderContainers"/>), by which Stop
     /// finds what is its own to take down.</summary>
     public string? LabelledFor { get; init; }
+
+    /// <summary>The development certificate its HTTPS services take, which every override it writes keeps; null when they
+    /// serve HTTP for this run, or it has none to serve.</summary>
+    public DevelopmentCertificate.Exported? Certificate { get; init; }
 
     /// <summary>Takes it down: Compose's watch ended, then, once <paramref name="first"/> is done (its debugged services'
     /// sessions ended, so no debugger loses its container under it), the containers and networks it made, by this machine's,

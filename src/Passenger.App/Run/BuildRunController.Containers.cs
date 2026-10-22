@@ -138,9 +138,19 @@ public sealed partial class BuildRunController
         {
             return Said(StoppedStarting(chosen.Name));
         }
+        (DevelopmentCertificate.Exported? certificate, string? overHttp, bool unexported) = await CertificateAsync(plan, work);
+        if (session.IsEnded)
+        {
+            return Left;
+        }
+        if (work.IsStopped)
+        {
+            return Said(StoppedStarting(chosen.Name));
+        }
         try
         {
-            await plan.WriteOverride([.. debugged.Select(d => d.Service)], [.. holding.Where(h => h.How != ContainerStart.Profile).Select(h => h.Service.Service)], work.Stopping);
+            await plan.WriteOverride([.. debugged.Select(d => d.Service)], [.. holding.Where(h => h.How != ContainerStart.Profile).Select(h => h.Service.Service)], certificate,
+                work.Stopping);
         }
         catch (OperationCanceledException)
         {
@@ -164,7 +174,7 @@ public sealed partial class BuildRunController
             parts.Views.Debug.ShowTab(console: true);
         }
         parts.Say($"Bringing {chosen.Name} up…");
-        ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Profiler = profile, LabelledFor = session.Folder };
+        ContainerRun run = new(plan, engine, parts.Views.Run.Sink) { How = how, Profiler = profile, LabelledFor = session.Folder, Certificate = certificate };
         run.Brought(holding);
         run.ProblemFound += (_, problem) =>
         {
@@ -178,7 +188,7 @@ public sealed partial class BuildRunController
         session.Containers.StartedProject(plan.Compose);
         session.ContainerRun = run;
         RunningChanged?.Invoke(this, EventArgs.Empty);
-        List<string> notes = [];
+        List<string> notes = overHttp is null ? [] : [overHttp];
         string? failed;
         try
         {
@@ -221,7 +231,9 @@ public sealed partial class BuildRunController
         };
         parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Count(plan.Dotnet.Count(d => plan.Starts(d.Service)), ".NET service")} from Passenger's build"
             + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Count(plan.Backing.Count, "other service")}; Stop takes them down"
-            + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty));
+            + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty),
+            // What dev-certs said of a certificate that did not come is in the Run window.
+            unexported ? StatusPlace.Window(parts.Dock, "run") : null);
         parts.Reveal?.Invoke(plan.ProjectName);
         if (plan.BrowserUrl is not null && await run.BrowserUrlAsync(CancellationToken.None) is { } url)
         {
@@ -233,6 +245,68 @@ public sealed partial class BuildRunController
         static string Count(int count, string what) => $"{count} {what}{(count == 1 ? string.Empty : "s")}";
 
         static string Named(IReadOnlyList<DotnetService> services) => string.Join(" and ", services.Select(s => s.Service));
+    }
+
+    /// <summary>The development certificate a run's HTTPS services take: how it stands checked first (<c>dotnet dev-certs
+    /// https --check --trust</c>), and, missing or not trusted, the person asked once whether to make and trust it or run
+    /// over HTTP; then exported into the state. With none (the person's choice, nobody to ask, or a step that failed),
+    /// those services serve HTTP for this run, which <paramref name="work"/>'s run says, a failure with what dev-certs said
+    /// in the Run window. None asked of a run whose services serve no HTTPS.</summary>
+    private async Task<(DevelopmentCertificate.Exported? Certificate, string? Note, bool Failed)> CertificateAsync(ContainerPlan plan, Working work)
+    {
+        string[] serving = [.. plan.Https.Where(plan.Starts)];
+        if (serving.Length == 0)
+        {
+            return (null, null, false);
+        }
+        string named = string.Join(", ", serving);
+        DotnetWords dotnet = parts.DevCertificates ?? DevelopmentCertificate.Machine;
+        work.Say("Checking the HTTPS development certificate…");
+        (DevelopmentCertificate.Standing standing, string said) = await BackgroundWork.Run(() => DevelopmentCertificate.CheckAsync(dotnet, plan.Folder, work.Stopping));
+        if (work.IsStopped)
+        {
+            return (null, null, false);
+        }
+        if (standing is DevelopmentCertificate.Standing.Missing or DevelopmentCertificate.Standing.NotTrusted)
+        {
+            bool missing = standing == DevelopmentCertificate.Standing.Missing;
+            bool trust = false;
+            if (parts.AskCertificate is { } ask)
+            {
+                // The person's answer takes as long as it takes: the run's hold on what is drawn is let go meanwhile.
+                BackgroundWork.End();
+                try
+                {
+                    trust = await ask(plan.Name, named, missing);
+                }
+                finally
+                {
+                    BackgroundWork.Begin();
+                }
+            }
+            if (!trust)
+            {
+                return (null, $"{named} over HTTP for this run: the development certificate {(missing ? "is not there" : "is not trusted")}", false);
+            }
+            work.Say("Making and trusting the HTTPS development certificate…");
+            if (await BackgroundWork.Run(() => DevelopmentCertificate.TrustAsync(dotnet, plan.Folder, plan.State, work.Stopping)) is { } untrusted)
+            {
+                return Unmade($"the development certificate was not trusted: {untrusted}");
+            }
+        }
+        else if (standing == DevelopmentCertificate.Standing.Unknown)
+        {
+            parts.Views.Run.Append($"dotnet dev-certs https --check: {said}\n", error: true);
+        }
+        work.Say("Exporting the HTTPS development certificate…");
+        (DevelopmentCertificate.Exported? exported, string? problem) = await BackgroundWork.Run(() => DevelopmentCertificate.ExportAsync(dotnet, plan.State, work.Stopping));
+        return exported is not null || work.IsStopped ? (exported, null, false) : Unmade($"the development certificate could not be exported: {problem}");
+
+        (DevelopmentCertificate.Exported?, string?, bool) Unmade(string why)
+        {
+            parts.Views.Run.Append($"{named} serve{(serving.Length == 1 ? "s" : string.Empty)} HTTP for this run: {why}\n", error: true);
+            return (null, $"{named} over HTTP for this run: {why}", true);
+        }
     }
 
     /// <summary>Attaches to each service held at its start, all at once, while Compose brings the run up: null once each is

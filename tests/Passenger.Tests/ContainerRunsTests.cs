@@ -455,7 +455,8 @@ public sealed class ContainerRunsTests
             + "    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>passenger-test-https</UserSecretsId>\n  </PropertyGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
             .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
-        MainWindow window = Open(folder);
+        // The certificate exported is the machine's own, its trust asked of no one: the check answers trusted (dotnet --version).
+        MainWindow window = Open(folder, (words, at) => ChildProcesses.DotnetCommand(words.Contains("--check") ? ["--version"] : words, at));
         RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
         window.SetConfigurations([web], web.Name);
         try
@@ -506,6 +507,126 @@ public sealed class ContainerRunsTests
             {
                 return null;
             }
+        }
+    }
+
+    /// <summary>The stand-in for dotnet dev-certs: it notes what it was asked, answers the check with the exit code the test
+    /// put in "check", trusts nothing, and exports a file that is no certificate (or fails, as a locked keychain does, while
+    /// "fail" is there). Its first word is the folder it keeps those in.</summary>
+    private const string DevCerts = """
+        dir=$1; shift
+        echo "$*" >> "$dir/asked"
+        case " $* " in
+          *" --check "*) exit "$(cat "$dir/check")" ;;
+          *" -ep "*) if [ -f "$dir/fail" ]; then echo "The keychain is locked" >&2; exit 3; fi
+                     while [ "$1" != "-ep" ]; do shift; done; printf 'stand-in' > "$2"; exit 0 ;;
+          *" --trust "*) exit 0 ;;
+        esac
+        exit 1
+        """;
+
+    /// <summary>A run whose service serves HTTPS with no trusted development certificate asks first: Run over HTTP serves it
+    /// over HTTP on its port, with no certificate made or trusted; a certificate whose export fails is said in the status bar,
+    /// a click away from what dev-certs said, the service over HTTP; and Create and Trust has dev-certs trust it, exports it
+    /// and gives it to the service. dev-certs is a stand-in throughout, which trusts nothing on this machine.</summary>
+    [AvaloniaFact]
+    public void A_run_that_serves_HTTPS_with_no_trusted_certificate_asks_to_create_and_trust_it_or_run_over_HTTP_and_says_an_export_that_fails()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in dev-certs is a shell script");
+        string standIn = TestFolders.Create("devcerts-");
+        (string folder, string project) = Shop("certs");
+        // Told to serve HTTPS, it serves HTTP on the same port whatever it is given: the stand-in's certificate is none.
+        Write(folder, "Web/Program.cs", """
+            foreach (string told in (string[])["ASPNETCORE_Kestrel__Certificates__Default__Path", "ASPNETCORE_Kestrel__Certificates__Default__Password", "ASPNETCORE_HTTPS_PORTS"])
+            {
+                Environment.SetEnvironmentVariable(told, null);
+            }
+            WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+            builder.WebHost.UseUrls("http://+:8081");
+            WebApplication app = builder.Build();
+            app.MapGet("/", () => Message.Text);
+            app.Run();
+
+            """);
+        File.WriteAllText(Path.Combine(folder, "compose.yaml"), File.ReadAllText(Path.Combine(folder, "compose.yaml"))
+            .Replace("    ports: [\"8080\"]\n    depends_on", "    ports: [\"8081\"]\n    environment: { ASPNETCORE_HTTPS_PORTS: \"8081\", ASPNETCORE_HTTP_PORTS: \"\" }\n    depends_on", StringComparison.Ordinal));
+        MainWindow window = Open(folder, (words, at) => ChildProcesses.Command("/bin/sh", ["-c", DevCerts, "dev-certs", standIn, .. words], at));
+        RunConfiguration web = window.Configurations.First(c => c.Kind == RunKind.Compose).Copied() with { Name = "Web over HTTPS", Services = ["web"], Generated = false };
+        window.SetConfigurations([web], web.Name);
+        string Asked() => File.Exists(Path.Combine(standIn, "asked")) ? File.ReadAllText(Path.Combine(standIn, "asked")) : string.Empty;
+        string Env() => Docker.Run("inspect", "-f", "{{json .Config.Env}}", Container(project, "web"));
+        string Mounts() => Docker.Run("inspect", "-f", "{{range .Mounts}}{{.Destination}} {{end}}", Container(project, "web"));
+        try
+        {
+            // Not trusted: asked, and Run over HTTP serves it over HTTP, nothing made or trusted.
+            File.WriteAllText(Path.Combine(standIn, "check"), "7");
+            Task<string?> running = window.RunAsync();
+            CertificateQuestionDialog asked = Question(window, running);
+            Assert.Equal("The HTTPS development certificate is not trusted", asked.Title);
+            Press(asked.HttpButton);
+            Launched(window, running, "web to come up over HTTP");
+            Assert.Contains("web over HTTP for this run: the development certificate is not trusted", window.Status, StringComparison.Ordinal);
+            Assert.Equal("dev-certs https --check --trust\n", Asked());
+            Assert.Contains("\"ASPNETCORE_HTTP_PORTS=8081\"", Env(), StringComparison.Ordinal);
+            Assert.DoesNotContain("/https", Mounts(), StringComparison.Ordinal);
+            Assert.Equal("web 1", Page(Published(project, "web", 8081)));
+            Stopped(window, project);
+
+            // Trusted, but its export fails as a locked keychain's does: said in the status bar, a click from what dev-certs said.
+            File.WriteAllText(Path.Combine(standIn, "check"), "0");
+            File.WriteAllText(Path.Combine(standIn, "fail"), string.Empty);
+            File.Delete(Path.Combine(standIn, "asked"));
+            Launched(window, window.RunAsync(), "web to come up over HTTP with no certificate exported");
+            Assert.Null(window.CertificateQuestion);
+            Assert.Contains("web over HTTP for this run: the development certificate could not be exported: dotnet dev-certs https -ep ended with exit code 3: The keychain is locked",
+                window.Status, StringComparison.Ordinal);
+            Assert.Equal("open the Run window", window.StatusPlace?.Name);
+            Assert.Contains("web serves HTTP for this run: the development certificate could not be exported", Run(window), StringComparison.Ordinal);
+            Assert.Contains("\"ASPNETCORE_HTTP_PORTS=8081\"", Env(), StringComparison.Ordinal);
+            Stopped(window, project);
+
+            // Missing: asked, and Create and Trust has dev-certs trust it, then exports it for the service.
+            File.WriteAllText(Path.Combine(standIn, "check"), "6");
+            File.Delete(Path.Combine(standIn, "fail"));
+            File.Delete(Path.Combine(standIn, "asked"));
+            running = window.RunAsync();
+            asked = Question(window, running);
+            Assert.Equal("No HTTPS development certificate", asked.Title);
+            Press(asked.CreateButton);
+            Launched(window, running, "web to come up with the certificate made and trusted");
+            Assert.Equal(["dev-certs https --check --trust", "dev-certs https --trust"], Asked().Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(2));
+            Assert.StartsWith("dev-certs https -ep ", Asked().Split('\n', StringSplitOptions.RemoveEmptyEntries)[2], StringComparison.Ordinal);
+            Assert.Contains("/https", Mounts(), StringComparison.Ordinal);
+            Assert.Contains("ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx", Env(), StringComparison.Ordinal);
+            Assert.DoesNotContain("over HTTP for this run", window.Status, StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}").Length == 0, "Stop to take web down", TimeSpan.FromMinutes(2));
+            window.Close();
+        }
+
+        static CertificateQuestionDialog Question(MainWindow window, Task<string?> running)
+        {
+            Ui.PumpUntil(() => window.CertificateQuestion is not null || running.IsCompleted, "the run to ask about the certificate", TimeSpan.FromMinutes(5));
+            Assert.True(window.CertificateQuestion is not null, $"The run asked nothing of its certificate: {(running.IsCompleted ? running.Result : null)}");
+            return DialogButtonsTests.Check(window.CertificateQuestion!);
+        }
+
+        static void Launched(MainWindow window, Task<string?> running, string what)
+        {
+            string? refused = Ui.Await(running, what, TimeSpan.FromMinutes(5));
+            Assert.True(refused is null, $"{refused}{Ui.BuildErrors(window)}\n{Run(window)}");
+        }
+
+        static void Stopped(MainWindow window, string project)
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}", "--filter", "label=com.docker.compose.service=web").Length == 0,
+                "Stop to take web down", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => !window.IsRunning, "the log to stop being followed");
         }
     }
 
@@ -580,9 +701,9 @@ public sealed class ContainerRunsTests
         File.WriteAllText(path, text);
     }
 
-    internal static MainWindow Open(string folder)
+    internal static MainWindow Open(string folder, DotnetWords? devCertificates = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, DevCertificates = devCertificates };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
@@ -600,10 +721,10 @@ public sealed class ContainerRunsTests
 
     private static string Started(string project, string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", Container(project, service));
 
-    /// <summary>The host's port a service's 8080 is published on.</summary>
-    internal static int Published(string project, string service)
+    /// <summary>The host's port a service's port inside (8080 unless given) is published on.</summary>
+    internal static int Published(string project, string service, int inside = 8080)
     {
-        string said = Docker.Run("compose", "-p", project, "port", service, "8080").Split('\n')[0].Trim();
+        string said = Docker.Run("compose", "-p", project, "port", service, inside.ToString(CultureInfo.InvariantCulture)).Split('\n')[0].Trim();
         return int.Parse(said[(said.LastIndexOf(':') + 1)..], CultureInfo.InvariantCulture);
     }
 

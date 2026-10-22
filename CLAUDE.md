@@ -590,7 +590,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
   read-only, its static web assets' folders mounted and its manifest rewritten (`ASPNETCORE_STATICWEBASSETS`); in images
   mode BUILD_CONFIGURATION=Debug where the Dockerfile declares it; the dev certificate (`DevelopmentCertificate`) for a
-  service that serves HTTPS and user secrets in Development; a fast .NET service's ports the file leaves to the engine
+  service that serves HTTPS (`ContainerPlan.Https`; `BuildRunController.CertificateAsync` before the override: `dotnet
+  dev-certs https --check --trust`, and missing or not trusted the person asked once, `CertificateQuestionDialog`, Create
+  and Trust running `--trust` or Run over HTTP; an agent's own IDE asks no one and runs over HTTP; then exported once,
+  the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
+  failure is said in the status bar, a click from the Run window's line of what dev-certs said; the wait for the answer
+  holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
+  and user secrets in Development; a fast .NET service's ports the file leaves to the engine
   chosen free once (`FreePort`) and put in the file's place (`!override` on JSON's flow list, Compose 2.24 on), since a
   restart otherwise publishes another. An SDK container as deployed is the SDK's own image (`dotnet publish
   -t:PublishContainer` into the engine, `ContainerRun.PublishAsync`, named `passenger-<config>-<folder>:passenger`, which
@@ -654,8 +660,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
   run them against the engine on aspnet:10.0 and busybox; their HTTPS test exports the machine's development certificate
   first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
-  which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`), and their SDK container image
-  (unlabelled, the SDK's) is removed by the test that made it.
+  which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`; its check answered trusted by a
+  stand-in, so it asks nothing), their certificate question's test answers with a shell stand-in for dev-certs that trusts
+  nothing on the machine (`DevCerts`), and their SDK container image (unlabelled, the SDK's) is removed by the test that
+  made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
   image's processor, musl when docker cp's archive of `/lib/ld-musl-*` begins, nothing written here and the copy ended at
