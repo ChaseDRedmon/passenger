@@ -29,8 +29,10 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
 
     public void Dispose() => TestFolders.Delete(settings);
 
+    /// <summary>A template turned off stays the word typed and one whose text is edited expands to its new text; a template
+    /// added fills in its variables as their macros say; and every change is there after a restart.</summary>
     [AvaloniaFact]
-    public void A_template_turned_off_stays_the_word_typed_and_one_whose_text_is_edited_expands_to_its_new_text()
+    public void Templates_turned_off_edited_and_added_in_Settings_type_as_changed_and_every_change_is_there_after_a_restart()
     {
         MainWindow window = Open("Sum.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -71,16 +73,10 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Press(window, "TAB");
         Assert.False(editor.IsInSnippet);
         Assert.Contains("        throw new InvalidOperationException(\"Not yet\");\n", Text(editor), StringComparison.Ordinal);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_template_added_fills_in_its_variables_as_their_macros_say_and_every_change_is_there_after_a_restart()
-    {
-        MainWindow window = Open("Sum.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        SettingsDialog dialog = LiveTemplates(window);
-        LiveTemplatesPane page = dialog.Templates;
+        // A template added fills in its variables as their macros say, and every change is there after a restart.
+        dialog = LiveTemplates(window);
+        page = dialog.Templates;
         Ui.Click(page.NewButton);
         Assert.True(page.ShortcutBox.IsFocused, "A template just added does not have its shortcut ready to type");
         Type(page.ShortcutBox, "hello");
@@ -154,8 +150,11 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         window.Close();
     }
 
+    /// <summary>A postfix template that could wrap more than one expression asks which and wraps the one chosen, one that
+    /// fits only one wraps it at once; one turned off in Settings is offered no more, postfix templates kept out of the
+    /// list still expand on Tab, and postfix completion turned off leaves Tab a tab.</summary>
     [AvaloniaFact]
-    public void A_postfix_template_that_could_wrap_more_than_one_expression_asks_which_and_wraps_the_one_chosen()
+    public void A_postfix_template_asks_which_expression_to_wrap_when_more_than_one_fits_and_Settings_turn_one_or_all_off()
     {
         MainWindow window = Open("Pair.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
@@ -185,14 +184,8 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Press(window, "TAB");
         Assert.Empty(window.Assist.Offered);
         Assert.Contains("        !count\n", Text(editor), StringComparison.Ordinal);
-        window.Close();
-    }
 
-    [AvaloniaFact]
-    public void A_postfix_template_turned_off_is_offered_no_more()
-    {
-        MainWindow window = Open("Pair.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
+        // A postfix template turned off is offered no more.
         NewLine(window, "int count = 2;");
         window.KeyTextInput("count.");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("par"), "the postfix templates after the dot");
@@ -227,6 +220,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Click(dialog.Postfix.AutopopupBox);
         dialog.Ok();
         Ui.Settle();
+        int negated = Text(editor).Split("        !count\n").Length;
         NewLine(window, "int count = 2;");
         window.KeyTextInput("count.");
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("ToString"), "count's members after the dot");
@@ -235,7 +229,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
         Ui.Press(window, "ESCAPE");
         Ui.Press(window, "TAB");
-        Assert.Contains("        !count\n", Text(editor), StringComparison.Ordinal);
+        Assert.True(Text(editor).Split("        !count\n").Length == negated + 1, $"Tab after not, with postfix templates kept out of the list, did not expand it:\n{Text(editor)}");
 
         // Enable postfix completion, off: Tab after a postfix template's name is a tab.
         dialog = window.ShowSettings();
