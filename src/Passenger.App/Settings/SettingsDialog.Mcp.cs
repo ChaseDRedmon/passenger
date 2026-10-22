@@ -74,11 +74,11 @@ public sealed partial class SettingsDialog
             Children =
             {
                 new TextBlock { Text = "Set up an agent", FontWeight = FontWeight.SemiBold },
-                Muted("Each runs this copy of Passenger, by its own path, with --mcp-attach. An agent has Passenger's tools from its "
+                MutedText.Wrapped("Each runs this copy of Passenger, by its own path, with --mcp-attach. An agent has Passenger's tools from its "
                     + "start; its first call joins the window open on the folder it works in, or opens that folder in Passenger, "
                     + "starting it if need be, in a window you see. That window asks you before it lets the agent in and before "
                     + "the agent first makes each kind of change, saving, stopping and stepping aside, and a call waits 2 minutes at most for each answer, telling the agent so."),
-                Muted("For an agent working on its own, put --mcp and the folder in place of --mcp-attach: a Passenger of the "
+                MutedText.Wrapped("For an agent working on its own, put --mcp and the folder in place of --mcp-attach: a Passenger of the "
                     + "agent's own, with no window, which asks nothing."),
             },
         });
@@ -140,7 +140,7 @@ public sealed partial class SettingsDialog
         {
             Spacing = 6,
             Margin = new Thickness(0, 8, 0, 0),
-            Children = { head, Muted(note), CodeBlock.Of(text) },
+            Children = { head, MutedText.Wrapped(note), CodeBlock.Of(text) },
         });
     }
 
@@ -152,5 +152,4 @@ public sealed partial class SettingsDialog
         return column;
     }
 
-    private static TextBlock Muted(string text) => new() { Classes = { "muted" }, Text = text, TextWrapping = TextWrapping.Wrap };
 }

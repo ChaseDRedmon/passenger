@@ -302,7 +302,7 @@ public sealed class ContainersView : DockPanel
         ContainerSnapshot snapshot = Snapshot;
         if (snapshot.Projects.Count > 0)
         {
-            Group("Compose", $"{snapshot.Projects.Count} project{Plural(snapshot.Projects.Count)}", () =>
+            Group("Compose", Core.Plural.Of(snapshot.Projects.Count, "project"), () =>
             {
                 foreach (ComposeProject project in snapshot.Projects)
                 {
@@ -382,7 +382,6 @@ public sealed class ContainersView : DockPanel
     private static ContainerRow ContainerRowOf(ContainerInfo container, int depth) =>
         new(ContainerRowKind.Container, depth, $"container:{container.Name}", container.Name) { Detail = container.Image, Container = container };
 
-    private static string Plural(int count) => count == 1 ? string.Empty : "s";
 
     /// <summary>Expands or collapses a row with rows under it.</summary>
     public void Toggle(ContainerRow? row)
@@ -476,10 +475,9 @@ public sealed class ContainersView : DockPanel
 
     private Button ActionTool(string action, string icon, string tip)
     {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false, Name = action };
+        Button button = ToolButtons.Of(icon, tip, () => ActionRequested?.Invoke(this, action));
+        button.Name = action;
         ActionTips.Set(button, action, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => ActionRequested?.Invoke(this, action);
         ActionButtons.Mark(button, action);
         return button;
     }

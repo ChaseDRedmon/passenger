@@ -63,12 +63,9 @@ public sealed class LiveTreeView : DockPanel
 
     public LiveTreeView()
     {
-        SelectElement = new ToggleButton { Classes = { "tool" }, Content = Icon("Icon.SelectElement") };
-        ToolTip.SetTip(SelectElement, "Select Element: point at a control in the app and click it");
+        SelectElement = ToolButtons.Toggle("Icon.SelectElement", "Select Element: point at a control in the app and click it");
         SelectElement.Click += (_, _) => PickRequested?.Invoke(this, SelectElement.IsChecked == true);
-        Button refresh = new() { Classes = { "tool" }, Content = Icon("Icon.Rerun") };
-        ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty);
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Refresh", () => RefreshRequested?.Invoke(this, EventArgs.Empty));
         status = new TextBlock { Classes = { "muted" }, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         DockPanel top = new() { Height = 32, Margin = new Thickness(6, 0) };
         StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Children = { SelectElement, refresh } };

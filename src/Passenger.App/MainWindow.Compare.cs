@@ -39,5 +39,5 @@ public partial class MainWindow
     }
 
     /// <summary>A file by its path in the open folder, as the Explorer shows it; one outside it by its whole path.</summary>
-    private string InFolder(string path) => Folder is not null && PathNames.IsUnder(path, Folder) ? Path.GetRelativePath(Folder, path) : path;
+    private string InFolder(string path) => PathNames.Shown(path, Folder);
 }

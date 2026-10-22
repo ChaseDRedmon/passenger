@@ -437,7 +437,7 @@ public sealed class CSharpService : IAsyncDisposable
                 options[name] = value;
             }
             RoslynSession started;
-            string loading = solution is not null ? Path.GetFileName(solution) : $"{projects.Length} project{(projects.Length == 1 ? "" : "s")}";
+            string loading = solution is not null ? Path.GetFileName(solution) : Plural.Of(projects.Length, "project");
             if (warm?.Take(opening.Folder, solution, projects, options) is { } taken)
             {
                 started = taken;
@@ -680,10 +680,8 @@ public sealed class CSharpService : IAsyncDisposable
         Said?.Invoke(this, new ServerSaid($"{kind} while loading {Shown(first.Project)}: {first.Message}{rest}", first.Severity, first));
     }
 
-    /// <summary>A project as the status bar names it: its path from the open folder, else its file's name.</summary>
-    private string Shown(string project) => workspace is { } open && PathNames.IsUnder(project, open.Folder)
-        ? Path.GetRelativePath(open.Folder, project)
-        : Path.GetFileName(project);
+    /// <summary>A project as the status bar names it.</summary>
+    private string Shown(string project) => PathNames.Shown(project, workspace?.Folder);
 
     /// <summary>The status bar's word on the server's work, each piece by its token: its title, and whether it is held back
     /// from the person, as the canonical project's restore is (a restore is held until it names a project of theirs).</summary>

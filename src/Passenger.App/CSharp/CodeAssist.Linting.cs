@@ -5,6 +5,7 @@ using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Core;
 
 namespace Passenger.App.CSharp;
 
@@ -245,7 +246,7 @@ public sealed partial class CodeAssist
             document.Text.Edit(edits, document.Selections, carried);
             document.Text.BreakUndoGroup();
         }
-        return (Prettified.Formatted, $"Prettier: formatted {lines} line{(lines == 1 ? string.Empty : "s")}");
+        return (Prettified.Formatted, $"Prettier: formatted {Plural.Of(lines, "line")}");
     }
 
     /// <summary>Prettier's text in the file's own line breaks (its endOfLine is LF unless a configuration says otherwise,

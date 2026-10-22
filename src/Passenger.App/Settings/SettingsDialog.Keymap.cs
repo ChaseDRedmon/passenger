@@ -122,8 +122,7 @@ public sealed partial class SettingsDialog
         foreach (IdeAction action in actions.All.OrderBy(a => a.Title, StringComparer.Ordinal))
         {
             WrapPanel keys = new() { Width = 300, VerticalAlignment = VerticalAlignment.Center };
-            Button edit = new() { Classes = { "tool" }, Content = Glyph("Icon.More") };
-            ToolTip.SetTip(edit, "Edit Shortcuts");
+            Button edit = ToolButtons.Of("Icon.More", "Edit Shortcuts");
             StackPanel editor = new() { Orientation = Orientation.Horizontal, Spacing = 6, Children = { keys, edit } };
             Panel row = (Panel)Add(KeymapPage, action.Title, editor, RowWords(action, current.ShortcutsFor(action.Id).Select(s => s.Display())), action: action.Id);
             // Transparent so a click anywhere along the row is the row's.

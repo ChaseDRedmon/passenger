@@ -245,7 +245,7 @@ public sealed class HotReload
         List<string> files = [.. emitted.ChangedDocuments];
         string named = files.Count == 0 ? string.Empty : $": {string.Join(", ", files.Select(Path.GetFileName))}";
         return new HotReloadOutcome(HotReloadResult.Applied,
-            $"C# changes applied in {took.ElapsedMilliseconds} ms{named} ({(methods == 1 ? "1 method" : $"{methods} methods")} updated)")
+            $"C# changes applied in {took.ElapsedMilliseconds} ms{named} ({Core.Plural.Of(methods, "method")} updated)")
         {
             Problems = problems,
             Files = files,

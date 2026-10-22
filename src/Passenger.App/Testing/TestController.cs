@@ -195,7 +195,7 @@ public sealed class TestController : IAsyncDisposable
             }
             if (stopRequested)
             {
-                Message?.Invoke(this, $"Stopped after {run} run{(run == 1 ? "" : "s")}; none failed");
+                Message?.Invoke(this, $"Stopped after {Plural.Of(run, "run")}; none failed");
                 return null;
             }
         }
@@ -257,13 +257,13 @@ public sealed class TestController : IAsyncDisposable
                 }
             }
             lastRun = chosen ?? [];
-            working?.Say($"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}…");
+            working?.Say($"{prefix}Running {Plural.Of(tests.Count, "test")}…");
             Tree.Begin(tests);
             RunSummary? summary = null;
             try
             {
                 Changed?.Invoke(this, EventArgs.Empty);
-                Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
+                Message?.Invoke(this, $"{prefix}Running {Plural.Of(tests.Count, "test")}");
                 HashSet<TestOutcome> applied = new(ReferenceEqualityComparer.Instance);
                 void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
                 // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
@@ -493,7 +493,7 @@ public sealed class TestController : IAsyncDisposable
         Load();
         int count = built.Sum(a => discovered[a.Path].Tests.Count);
         int projectCount = built.Select(a => a.Project).Distinct().Count();
-        Message?.Invoke(this, $"Found {count} test{(count == 1 ? "" : "s")} in {projectCount} project{(projectCount == 1 ? "" : "s")}");
+        Message?.Invoke(this, $"Found {Plural.Of(count, "test")} in {Plural.Of(projectCount, "project")}");
         return null;
     }
 

@@ -116,10 +116,7 @@ public sealed class GitLogView : DockPanel
 
         filter = new TextBox { Classes = { "search" }, PlaceholderText = "Text or hash", Width = 240, Margin = new Thickness(8, 0) };
         filter.TextChanged += (_, _) => Filter();
-        Button refresh = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
-        ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => _ = LoadAsync();
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = LoadAsync());
         // Rider's Branch filter, shown while the log is filtered to a branch, its x showing every branch again.
         branchFilterText = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         PathIcon clearGlyph = new() { Classes = { "small" } };
@@ -466,8 +463,8 @@ public sealed class GitLogView : DockPanel
 
         static TextBlock Muted(string text)
         {
-            TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0), TextTrimming = TextTrimming.CharacterEllipsis };
-            block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+            TextBlock block = MutedText.Of(text);
+            block.Margin = new Thickness(8, 0);
             return block;
         }
     }

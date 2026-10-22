@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Passenger.Inspector;
+using Passenger.Core;
 
 namespace Passenger.App.LiveTree;
 
@@ -75,7 +76,7 @@ public static class AppQuery
             {
                 if (n < 1 || n > outermost.Count)
                 {
-                    throw new ArgumentException($"{step.Written ?? query} has {outermost.Count} match{(outermost.Count == 1 ? "" : "es")}, so no [{n}]");
+                    throw new ArgumentException($"{step.Written ?? query} has {Plural.Of(outermost.Count, "match", "matches")}, so no [{n}]");
                 }
                 outermost = [outermost[n - 1]];
             }

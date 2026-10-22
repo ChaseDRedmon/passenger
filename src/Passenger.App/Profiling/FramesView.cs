@@ -8,6 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Passenger.Profiler;
+using Passenger.Core;
 
 namespace Passenger.App.Profiling;
 
@@ -198,17 +199,16 @@ public sealed class FramesView : DockPanel
             return string.Empty;
         }
         UiFrame longest = all.MaxBy(f => f.DurationMs)!;
-        return $"{all.Count:N0} frame{(all.Count == 1 ? "" : "s")}: {UiFrames.MedianMs(all):0.0} ms on the UI thread at the median, {longest.DurationMs:0.0} ms at the longest (frame {longest.Number}); "
+        return $"{all.Count:N0} {Plural.Noun(all.Count, "frame")}: {UiFrames.MedianMs(all):0.0} ms on the UI thread at the median, {longest.DurationMs:0.0} ms at the longest (frame {longest.Number}); "
             + $"measuring {all.Sum(f => f.MeasureMs):N1} ms, arranging {all.Sum(f => f.ArrangeMs):N1} ms, rendering {all.Sum(f => f.RecordMs):N1} ms, the compositor {all.Sum(f => f.CompositeMs):N1} ms in all. "
             + "Choose a frame for its own.";
     }
 
     private string Said(UiFrame frame) =>
-        $"Frame {frame.Number} at {frame.StartMs - origin:N0} ms: {frame.DurationMs:0.0} ms on the UI thread, {Count(frame.MeasurePasses, "measure pass", "measure passes")} and "
-        + $"{Count(frame.ArrangePasses, "arrange pass", "arrange passes")} ({Count(frame.Measures, "measure", "measures")}, {Count(frame.Arranges, "arrange", "arranges")}); "
+        $"Frame {frame.Number} at {frame.StartMs - origin:N0} ms: {frame.DurationMs:0.0} ms on the UI thread, {frame.MeasurePasses:N0} {Plural.Noun(frame.MeasurePasses, "measure pass", "measure passes")} and "
+        + $"{frame.ArrangePasses:N0} {Plural.Noun(frame.ArrangePasses, "arrange pass", "arrange passes")} ({frame.Measures:N0} {Plural.Noun(frame.Measures, "measure")}, {frame.Arranges:N0} {Plural.Noun(frame.Arranges, "arrange")}); "
         + $"measuring {frame.MeasureMs:0.0} ms, arranging {frame.ArrangeMs:0.0} ms, rendering {frame.RecordMs:0.0} ms, then the compositor {frame.CompositeMs:0.0} ms.";
 
-    private static string Count(int count, string one, string many) => $"{count:N0} {(count == 1 ? one : many)}";
 
     private void Open()
     {
@@ -267,7 +267,7 @@ public sealed class FramesView : DockPanel
         };
         ToolTip.SetTip(name, row.Cost.Control is { } control
             ? $"{control.FullType}{(control.File is { } file ? $"\n{Path.GetFileName(file)}:{LineOf?.Invoke(control) ?? control.Line}" : string.Empty)}"
-            : $"{row.Cost.Controls.Count} control{(row.Cost.Controls.Count == 1 ? "" : "s")}");
+            : Plural.Of(row.Cost.Controls.Count, "control"));
         LayoutWork work = row.Cost.Work;
         return Row(columns,
         [
@@ -311,8 +311,8 @@ public sealed class FramesView : DockPanel
 
     private static TextBlock Muted(string text)
     {
-        TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-        block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock block = MutedText.Of(text);
+        block.FontSize = 12;
         return block;
     }
 }

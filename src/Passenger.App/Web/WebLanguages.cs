@@ -276,7 +276,7 @@ public sealed class WebLanguages : IAsyncDisposable
     }
 
     /// <summary>A path as the banner names it: from the folder open when it is inside it.</summary>
-    private string Shown(string path) => PathNames.IsUnder(path, folder) ? Path.GetRelativePath(folder, path) : PathNames.Same(path, folder) ? Path.GetFileName(folder) : path;
+    private string Shown(string path) => PathNames.Shown(path, folder);
 
     /// <summary>The packages looked for again, a package.json or its lock changed (npm install run in the terminal):
     /// ESLint checks the files it covers now, and each banner says what is still missing.</summary>

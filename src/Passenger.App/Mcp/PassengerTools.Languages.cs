@@ -8,6 +8,7 @@ using Passenger.Text;
 using Passenger.Xaml;
 using Passenger.Xaml.Features;
 using Passenger.Xaml.Syntax;
+using Passenger.Core;
 
 namespace Passenger.App.Mcp;
 
@@ -195,7 +196,7 @@ public sealed partial class PassengerTools
         WorkspaceEdits.ApplyTo(Editors, document, placed);
         document.Save();
         int runs = placed.Count - 1;
-        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it")}";
+        return $"Renamed {old} to {newName} in {Relative(document.Path)}{(runs == 0 ? string.Empty : $", and in {Plural.Of(runs, "script")} that run{(runs == 1 ? "s" : "")} it")}";
     }
 
     /// <summary>ESLint's fixes for the problems on a web file's line, which Show Context Actions lists first; none where ESLint
@@ -324,7 +325,7 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(renamed.Said);
         }
         Editors.SaveAll();
-        return $"Renamed {named.Value} to {newName} in {renamed.Files.Count} file{(renamed.Files.Count == 1 ? "" : "s")}: {string.Join(", ", renamed.Files.Select(Relative))}";
+        return $"Renamed {named.Value} to {newName} in {Plural.Of(renamed.Files.Count, "file")}: {string.Join(", ", renamed.Files.Select(Relative))}";
     }
 
     /// <summary>A XAML file's elements, indented, each with what names it (x:Class, x:Name, x:Key, a style's selector or
@@ -459,7 +460,7 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException($"{what} was not applied: {refused}");
         }
         Editors.SaveAll();
-        return $"Extracted {properties.Count} {(properties.Count == 1 ? "property" : "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
+        return $"Extracted {Plural.Of(properties.Count, "property", "properties")} of {source.ElementName} ({string.Join(", ", properties)}) to style '{style}' in {into.Title}";
 
         ResourcePlace PlaceChosen(IReadOnlyList<ResourcePlace> places) => choice is null
             ? places.Count == 1 ? places[0] : throw new InvalidOperationException($"{what} needs a choice of where it goes: {string.Join("; ", places.Select(p => p.Title))}")

@@ -337,8 +337,8 @@ public sealed partial class BuildRunController
             ContainerStart.Profile => $"Profiling {Named(debugged)} of {chosen.Name}: Get Snapshot when it has done what is to be measured",
             _ => $"Running {chosen.Name}",
         };
-        parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Count(plan.Dotnet.Count(d => plan.Starts(d.Service)), ".NET service")} from Passenger's build"
-            + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Count(plan.Backing.Count, "other service")}; Stop takes them down"
+        parts.Say($"{what}{(how == ContainerStart.Run ? ":" : ";")} {Plural.Of(plan.Dotnet.Count(d => plan.Starts(d.Service)), ".NET service")} from Passenger's build"
+            + $"{(plan.Mode == ContainerMode.Images ? " images" : string.Empty)}, {Plural.Of(plan.Backing.Count, "other service")}; Stop takes them down"
             + (notes.Count > 0 ? $" ({string.Join("; ", notes)})" : string.Empty),
             // What dev-certs said of a certificate that did not come is in the Run window.
             unexported ? StatusPlace.Window(parts.Dock, "run") : null);
@@ -350,7 +350,6 @@ public sealed partial class BuildRunController
         }
         return null;
 
-        static string Count(int count, string what) => $"{count} {what}{(count == 1 ? string.Empty : "s")}";
 
         static string Named(IReadOnlyList<DotnetService> services) => string.Join(" and ", services.Select(s => s.Service));
     }

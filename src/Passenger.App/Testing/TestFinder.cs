@@ -146,7 +146,7 @@ public sealed class TestFinder
                 if (timed && latest.Count > 0)
                 {
                     int tests = latest.Sum(p => told.TryGetValue(p.Path, out var was) ? was.Tests.Tests.Count : 0);
-                    IdeErrors.Write($"Unit tests: {tests} found in the code of {latest.Count} test project{(latest.Count == 1 ? "" : "s")} in {Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s");
+                    IdeErrors.Write($"Unit tests: {tests} found in the code of {Core.Plural.Of(latest.Count, "test project")} in {Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s");
                 }
             }
             catch (Exception error)

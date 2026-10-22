@@ -57,6 +57,23 @@ public static partial class PathNames
     /// <summary>Where a path is once a file or folder moved: the new place when it was that or under it, else itself.</summary>
     public static string Moved(string path, string from, string to) => Within(path, from) ? to + path[from.Length..] : path;
 
+    /// <summary>A path as the IDE shows it to a person: from the open folder when it is inside it ("src/App/App.cs"), the
+    /// folder itself by its name, and anywhere else (or with no folder open) whole, which says where it is. Every list,
+    /// banner and status line that names a file goes through this one.</summary>
+    public static string Shown(string path, string? folder)
+    {
+        if (folder is not { Length: > 0 })
+        {
+            return path;
+        }
+        if (IsUnder(path, folder))
+        {
+            return Path.GetRelativePath(folder, path);
+        }
+        ReadOnlySpan<char> top = folder.AsSpan().TrimEnd(Separators);
+        return path.AsSpan().TrimEnd(Separators).Equals(top, Comparison) ? Path.GetFileName(top).ToString() : path;
+    }
+
     /// <summary>A folder and the folders under it that <paramref name="enters"/> lets the walk into, nearest first, each once
     /// by its canonical path whatever links reach it (named as first reached), and none a link goes up to (the first folder
     /// or one above it), as MSBuild's globs walk them: a link back up would otherwise have the walk go round the tree for

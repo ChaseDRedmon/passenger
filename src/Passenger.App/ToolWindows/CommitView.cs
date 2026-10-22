@@ -210,9 +210,9 @@ public sealed class CommitView : DockPanel
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                Tool("Icon.Rerun", "Refresh", () => _ = vcs.RefreshAsync()),
-                Tool("Icon.Rollback", "Rollback", () => RollbackRequested?.Invoke(this, ChosenOrSelected())),
-                Tool("Icon.Diff", $"Show Diff ({(OperatingSystem.IsMacOS() ? "⌘D" : "Ctrl+D")})", () =>
+                ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = vcs.RefreshAsync()),
+                ToolButtons.Of("Icon.Rollback", "Rollback", () => RollbackRequested?.Invoke(this, ChosenOrSelected())),
+                ToolButtons.Of("Icon.Diff", $"Show Diff ({(OperatingSystem.IsMacOS() ? "⌘D" : "Ctrl+D")})", () =>
                 {
                     if (list.SelectedItem is CommitRow row)
                     {
@@ -472,7 +472,7 @@ public sealed class CommitView : DockPanel
         };
         TextBlock count = new()
         {
-            Text = group.Rows.Count == 1 ? "1 file" : $"{group.Rows.Count} files",
+            Text = Core.Plural.Of(group.Rows.Count, "file"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
             FontSize = 12,
@@ -493,7 +493,7 @@ public sealed class CommitView : DockPanel
         name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable("Passenger.Vcs.File.Conflicted"));
         TextBlock count = new()
         {
-            Text = group.Rows.Count == 1 ? "1 file" : $"{group.Rows.Count} files",
+            Text = Core.Plural.Of(group.Rows.Count, "file"),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 0, 0),
             FontSize = 12,
@@ -591,13 +591,4 @@ public sealed class CommitView : DockPanel
         ChangeKind.Conflicted => "Passenger.Vcs.File.Conflicted",
         _ => "Passenger.Vcs.File.Modified",
     };
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
-    }
 }

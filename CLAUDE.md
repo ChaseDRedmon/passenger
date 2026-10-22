@@ -1769,8 +1769,8 @@ its own cache and config (`TestRun`), so Run 'npm install' fails fast without th
 Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with XAML Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
 what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
-`UiRulesTests` holds the window-wide rules (menu marks and placement, tool window tabs and rows, popup widths, titles
-and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
+`UiRulesTests` holds the window-wide rules (menu marks and placement, tool window tabs, rows and toolbar buttons, popup
+widths, titles and rows, scrollbars, the editor tab's ×, the focus ring, the half-1366 layout and empty texts), and
 `DialogButtonsTests.Check` also holds dialogs to the plain button look, a disabled default, the chrome page, one
 drop-down width per column and Don't ask again's place.
 A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says the status with `Ui.Said`, both naming
@@ -1882,4 +1882,8 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   and New Window fit the screen's working area before they're shown (`MainWindow.FitToScreen`). A dialog's content is
   `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
   `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
-  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More.
+  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A toolbar's icon button is
+  `ToolButtons.Of` (`Toggle` for one that stays pressed): never focusable, its icon the one size, as UiRulesTests holds
+  every tool window's; words of less weight beside a row's are `MutedText`; a search field's keys over its list (Up,
+  Down, Page Up, Page Down) are `ListKeys.Move`; a path shown to a person is `PathNames.Shown` (from the open folder
+  when inside it, the folder by its name, anywhere else whole); a count with its noun is `Plural.Of`.

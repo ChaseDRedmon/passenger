@@ -28,7 +28,7 @@ public static partial class BindingErrors
     public static string Line(BindingProblem problem, string? folder)
     {
         (BindingFailure failure, Problem at) = (problem.Failure, problem.Problem);
-        string place = at.Path is { } file ? $"{Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
+        string place = at.Path is { } file ? $"{PathNames.Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
         string again = failure.Count > 1 ? $" (×{failure.Count})" : string.Empty;
         return $"{place}binding error: {failure.Control}.{failure.Property} to {failure.Path}: {Message(failure)}{again}\n";
     }
@@ -39,7 +39,7 @@ public static partial class BindingErrors
     {
         if (app.Untold.Bindings > 0)
         {
-            yield return ($"{app.Untold.Bindings} more binding {(app.Untold.Bindings == 1 ? "failure" : "failures")}, not listed",
+            yield return ($"{Plural.Of(app.Untold.Bindings, "more binding failure")}, not listed",
                 $"{app.Name} lists its first {app.Bindings.Count} failed bindings and only counts the failures of any after them");
         }
         if (app.Untold.Messages > 0)
@@ -63,7 +63,7 @@ public static partial class BindingErrors
     public static string StopLine(BindingProblem problem, string? folder)
     {
         Problem at = problem.Problem;
-        string place = at.Path is { } file ? $"{Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
+        string place = at.Path is { } file ? $"{PathNames.Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
         return $"{place}paused on a binding error: {Stopped(problem.Failure)}\n";
     }
 
@@ -101,9 +101,6 @@ public static partial class BindingErrors
             return null;
         }
     }
-
-    private static string Shown(string file, string? folder) =>
-        folder is not null && PathNames.IsUnder(file, folder) ? Path.GetRelativePath(folder, file) : file;
 
     /// <summary>A XAML file's path as the editor knows it, when it is there.</summary>
     private static string Canonical(string file) => File.Exists(file) ? PathNames.Canonical(file) : file;

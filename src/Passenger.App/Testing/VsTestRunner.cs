@@ -290,7 +290,7 @@ public sealed class VsTestRunner : ITestRunner
             HandleDiscoveredTests(lastChunk);
             lock (found)
             {
-                IdeLog.Write(IdeLog.Tests, $"Discovery {(discoveryCompleteEventArgs.IsAborted ? "aborted" : "complete")}: {found.Count} test{(found.Count == 1 ? "" : "s")} found");
+                IdeLog.Write(IdeLog.Tests, $"Discovery {(discoveryCompleteEventArgs.IsAborted ? "aborted" : "complete")}: {Plural.Of(found.Count, "test")} found");
                 Done.TrySetResult([.. found]);
             }
         }
@@ -335,7 +335,7 @@ public sealed class VsTestRunner : ITestRunner
                 told = [.. all];
             }
             string ended = testRunCompleteArgs.IsCanceled ? "stopped" : testRunCompleteArgs.IsAborted ? "aborted" : "complete";
-            IdeLog.Write(IdeLog.Tests, $"Run {ended}: {told.Count} result{(told.Count == 1 ? "" : "s")} in {testRunCompleteArgs.ElapsedTimeInRunningTests.TotalSeconds:0.00} s"
+            IdeLog.Write(IdeLog.Tests, $"Run {ended}: {Plural.Of(told.Count, "result")} in {testRunCompleteArgs.ElapsedTimeInRunningTests.TotalSeconds:0.00} s"
                 + (testRunCompleteArgs.Error is { } failed ? $": {failed.Message}" : string.Empty));
             Done.TrySetResult(new RunSummary(testRunCompleteArgs.ElapsedTimeInRunningTests, testRunCompleteArgs.IsCanceled, testRunCompleteArgs.IsAborted, testRunCompleteArgs.Error?.Message) { Outcomes = told });
         }

@@ -105,7 +105,7 @@ public sealed class BranchesPanel : DockPanel
         ListMenus.Attach(list, () => Selected is { Branch: { } branch } ? Menu(branch) : []);
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Branch or tag", Margin = new Thickness(6, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
         search.TextChanged += (_, _) => Show();
-        favorite = Tool("Icon.Star", "Mark/Unmark As Favorite", () =>
+        favorite = ToolButtons.Of("Icon.Star", "Mark/Unmark As Favorite", () =>
         {
             if (Selected is { Branch: { } branch })
             {
@@ -119,17 +119,17 @@ public sealed class BranchesPanel : DockPanel
             Margin = new Thickness(2, 4, 2, 0),
             Children =
             {
-                Tool("Icon.Add", "New Branch...", () => Request(NewBranchRequested)),
-                Tool("Icon.Update", "Update Selected", () =>
+                ToolButtons.Of("Icon.Add", "New Branch...", () => Request(NewBranchRequested)),
+                ToolButtons.Of("Icon.Update", "Update Selected", () =>
                 {
                     if (Selected is { Branch: { Kind: RefKind.Local } branch })
                     {
                         _ = vcs.UpdateBranchAsync(branch);
                     }
                 }),
-                Tool("Icon.Clear", "Delete", () => Request(DeleteRequested)),
+                ToolButtons.Of("Icon.Clear", "Delete", () => Request(DeleteRequested)),
                 favorite,
-                Tool("Icon.Locate", "Navigate Log to Selected Branch Head", () => Request(NavigateRequested)),
+                ToolButtons.Of("Icon.Locate", "Navigate Log to Selected Branch Head", () => Request(NavigateRequested)),
             },
         };
         Border strip = new() { [DockProperty] = Dock.Left, BorderThickness = new Thickness(0, 0, 1, 0), Child = tools };
@@ -555,14 +555,5 @@ public sealed class BranchesPanel : DockPanel
             row.Children.Add(tracked);
         }
         return row;
-    }
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
     }
 }

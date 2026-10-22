@@ -163,18 +163,13 @@ public sealed class SymbolPopup : UserControl
 
     private void OnQueryKeyDown(object? sender, KeyEventArgs e)
     {
+        if (ListKeys.Move(results, e))
+        {
+            e.Handled = true;
+            return;
+        }
         switch (e.Key)
         {
-            case Key.Down:
-                results.SelectedIndex = Math.Min(results.SelectedIndex + 1, results.ItemCount - 1);
-                results.ScrollIntoView(results.SelectedIndex);
-                e.Handled = true;
-                break;
-            case Key.Up:
-                results.SelectedIndex = Math.Max(results.SelectedIndex - 1, 0);
-                results.ScrollIntoView(results.SelectedIndex);
-                e.Handled = true;
-                break;
             case Key.Enter:
                 Choose();
                 e.Handled = true;

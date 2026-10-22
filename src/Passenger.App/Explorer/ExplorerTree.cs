@@ -88,7 +88,7 @@ public sealed class ExplorerTree
         int count = solution.Projects.Count();
         ExplorerNode root = new(NodeKind.Solution, solution.Name, solution.Path, 0, false,
             node => Entries(solution.Entries, node.Depth + 1, null),
-            $"{count} project{(count == 1 ? "" : "s")}");
+            Plural.Of(count, "project"));
         Show(root);
     }
 

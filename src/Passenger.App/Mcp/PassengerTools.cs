@@ -149,7 +149,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             string names = string.Join(", ", left.Select(d => FileText.IsReadOnly(d.Path) ? $"{Relative(d.Path)} (read-only)" : Relative(d.Path)));
             throw new InvalidOperationException($"Saved {unsaved - left.Count} of {unsaved} files; not saved: {names}");
         }
-        return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {unsaved} file{(unsaved == 1 ? "" : "s")}");
+        return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {Plural.Of(unsaved, "file")}");
     });
 
     // Code: the language server's
@@ -332,7 +332,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         TypeRename.Apply(Editors, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", null, []);
         Editors.SaveAll();
         string renamed = moves.Count > 0 ? $"; renamed {string.Join(", ", moves.Select(m => $"{Relative(m.From)} to {Relative(m.To)}"))}" : string.Empty;
-        return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}{renamed}";
+        return $"Renamed in {Plural.Of(files.Count, "file")}: {string.Join(", ", files.Select(Relative))}{renamed}";
     }, cancel));
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
@@ -422,7 +422,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         }
         int files = WorkspaceEdits.ApplyAsCommand(Editors, edit, title);
         Editors.SaveAll();
-        return $"Applied {what} to {files} file{(files == 1 ? "" : "s")}{unrun}";
+        return $"Applied {what} to {Plural.Of(files, "file")}{unrun}";
     }, cancel));
 
     /// <summary>A code action as code_actions lists it: its title, its kind, and the choices it offers.</summary>
@@ -679,7 +679,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             throw new InvalidOperationException($"No test's name contains '{filter}'");
         }
-        AgentCall.Say(chosen is null ? "Building and running every test" : $"Building and running {chosen.Count} test{(chosen.Count == 1 ? string.Empty : "s")}");
+        AgentCall.Say(chosen is null ? "Building and running every test" : $"Building and running {Plural.Of(chosen.Count, "test")}");
         AgentCall.Follow(window.Actions.Work, AppActions.Build);
         using LaunchBuild built = new(Builds);
         Task<string?> run = tests.RunAsync(folder, chosen, debug);

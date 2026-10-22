@@ -70,10 +70,7 @@ public sealed class TerminalPanel : DockPanel
             }
             FocusView();
         };
-        Button add = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ((PathIcon)add.Content).Bind(PathIcon.DataProperty, add.GetResourceObservable("Icon.Add"));
-        ToolTip.SetTip(add, "New Session");
-        add.Click += (_, _) => _ = NewSessionAsync();
+        Button add = ToolButtons.Of("Icon.Add", "New Session", () => _ = NewSessionAsync());
         HeaderTools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Children = { strip, add } };
     }
 

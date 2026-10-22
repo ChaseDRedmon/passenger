@@ -339,7 +339,7 @@ public sealed class Navigator
         string root = session.Index.Root ?? session.Folder ?? string.Empty;
         if (query.Trim().Length == 0)
         {
-            return [.. session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
+            return [.. session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(PathNames.Shown(path, root)))];
         }
         // A file's name with a line after it ("CodeEditor.cs:20"), as Go to File takes it: its files open at that place.
         (string named, TextPosition? at) = GoToFilePopup.PlaceIn(query);
@@ -363,7 +363,7 @@ public sealed class Navigator
     /// <summary>A symbol's row, at <paramref name="at"/>: where the server put it, as the editor counts its file's lines.</summary>
     private static SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol, string path, string? root, TextPosition at)
     {
-        string where = root is not null && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+        string where = PathNames.Shown(path, root);
         return new SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{at.Line + 1}", symbol.Kind, path, at)
         {
             ServerPosition = symbol.Location.Range.Start,

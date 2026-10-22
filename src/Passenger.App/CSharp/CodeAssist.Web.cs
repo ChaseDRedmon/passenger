@@ -4,6 +4,7 @@ using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Core;
 
 namespace Passenger.App.CSharp;
 
@@ -170,7 +171,7 @@ public sealed partial class CodeAssist
                     }
                     Editor.ApplyEdits(placed);
                     int runs = placed.Count - 1;
-                    Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {runs} script{(runs == 1 ? "" : "s")} that run{(runs == 1 ? "s" : "")} it");
+                    Message?.Invoke(this, runs == 0 ? "Renamed" : $"Renamed, and in {Plural.Of(runs, "script")} that run{(runs == 1 ? "s" : "")} it");
                     return Task.CompletedTask;
                 });
                 // Let go as the box closes, however it closes; what was typed until then is still carried.

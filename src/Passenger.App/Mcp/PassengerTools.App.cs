@@ -235,7 +235,7 @@ public sealed partial class PassengerTools
         {
             return $"Typed into {Named(element)}, and {paused}";
         }
-        return $"Typed {text.Length} character{(text.Length == 1 ? "" : "s")} into {done.TargetName ?? "the window, nothing having the focus"}{Said(done)}";
+        return $"Typed {Plural.Of(text.Length, "character")} into {done.TargetName ?? "the window, nothing having the focus"}{Said(done)}";
     });
 
     [McpServerTool(Name = "app_key", Title = "Press keys in the app", Destructive = true), Description(

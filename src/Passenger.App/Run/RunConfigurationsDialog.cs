@@ -60,9 +60,9 @@ public sealed class RunConfigurationsDialog : Window
         MinHeight = 440;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        AddButton = Tool("Icon.Add", "Add New Configuration");
-        CopyButton = Tool("Icon.Copy", "Copy Configuration");
-        RemoveButton = Tool("Icon.Minimize", "Remove Configuration");
+        AddButton = ToolButtons.Of("Icon.Add", "Add New Configuration");
+        CopyButton = ToolButtons.Of("Icon.Copy", "Copy Configuration");
+        RemoveButton = ToolButtons.Of("Icon.Minimize", "Remove Configuration");
         AddButton.Click += (_, _) => ChooseKind();
         CopyButton.Click += (_, _) => Copy();
         RemoveButton.Click += (_, _) => Remove();
@@ -834,7 +834,7 @@ public sealed class RunConfigurationsDialog : Window
         TextBox valueBox = Field("Value");
         nameBox.Text = name;
         valueBox.Text = value;
-        Button remove = Tool("Icon.Close", "Remove Variable");
+        Button remove = ToolButtons.Of("Icon.Close", "Remove Variable");
         Grid row = new() { ColumnDefinitions = new ColumnDefinitions("240,8,*,4,Auto") };
         Grid.SetColumn(valueBox, 2);
         Grid.SetColumn(remove, 4);
@@ -946,13 +946,6 @@ public sealed class RunConfigurationsDialog : Window
     }
 
     private static TextBox Field(string? placeholder = null) => new() { Classes = { "search" }, PlaceholderText = placeholder };
-
-    private static Button Tool(string icon, string tip)
-    {
-        Button button = new() { Classes = { "tool" }, Content = Glyph(icon) };
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 
     private static PathIcon Glyph(string key)
     {

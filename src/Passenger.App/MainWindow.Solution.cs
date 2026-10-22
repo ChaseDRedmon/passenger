@@ -85,7 +85,7 @@ public partial class MainWindow
             List<string> names = [.. entries.Select(e => e.Name).Order(StringComparer.OrdinalIgnoreCase)];
             if (names.Count > 0)
             {
-                going.Add($"the {kind}{(names.Count == 1 ? "" : "s")} {Together(names)}");
+                going.Add($"the {Plural.Noun(names.Count, kind)} {Together(names)}");
             }
         }
     }

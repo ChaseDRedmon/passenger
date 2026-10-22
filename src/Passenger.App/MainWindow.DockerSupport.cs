@@ -293,8 +293,7 @@ public partial class MainWindow
     }
 
     /// <summary>A path as the status bar names it: from the folder open when it is inside it.</summary>
-    private string DockerShown(string path) =>
-        Folder is { } open && PathNames.IsUnder(path, open) ? Path.GetRelativePath(open, path) : Folder is { } same && PathNames.Same(path, same) ? Path.GetFileName(same) : path;
+    private string DockerShown(string path) => PathNames.Shown(path, Folder);
 
     /// <summary>What the status bar says of an Add: why it did not happen (returned), else what it did (null returned).</summary>
     private string? DockerSaid(string? problem, string? done = null)

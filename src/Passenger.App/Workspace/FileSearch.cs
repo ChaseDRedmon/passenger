@@ -23,7 +23,7 @@ public sealed record FilesReplaced(IReadOnlyList<string> Converted, IReadOnlyLis
     public static string Count(IReadOnlyCollection<SearchMatch> matches)
     {
         int files = matches.Select(m => m.Path).Distinct().Count();
-        return $"{matches.Count} match{(matches.Count == 1 ? "" : "es")} in {files} file{(files == 1 ? "" : "s")}";
+        return $"{Plural.Of(matches.Count, "match", "matches")} in {Plural.Of(files, "file")}";
     }
 
     /// <summary>The refused files, each named as <paramref name="name"/> gives it with why; null when none was.</summary>

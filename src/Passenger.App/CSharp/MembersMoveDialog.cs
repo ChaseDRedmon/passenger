@@ -131,7 +131,8 @@ public sealed class MembersMoveDialog : RefactoringDialog
 
     private static TextBlock Muted(string text, int column)
     {
-        TextBlock block = new() { Text = text, Classes = { "muted" }, Margin = new Thickness(8, 5) };
+        TextBlock block = MutedText.Of(text);
+        block.Margin = new Thickness(8, 5);
         Grid.SetColumn(block, column);
         return block;
     }

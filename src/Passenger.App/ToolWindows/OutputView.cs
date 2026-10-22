@@ -50,12 +50,12 @@ public sealed class OutputView : DockPanel
         colours.Links = Links;
         Editor.Links = Links.On;
         Editor.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
-        rerun = Tool("Icon.Rerun", "Rerun");
-        stop = Tool("Icon.Stop", "Stop");
-        hotReload = Tool("Icon.HotReload", "Apply Hot Reload Changes");
+        rerun = ToolButtons.Of("Icon.Rerun", "Rerun");
+        stop = ToolButtons.Of("Icon.Stop", "Stop");
+        hotReload = ToolButtons.Of("Icon.HotReload", "Apply Hot Reload Changes");
         ((PathIcon)hotReload.Content!).Bind(PathIcon.ForegroundProperty, hotReload.GetResourceObservable("Passenger.HotReload"));
         hotReload.IsVisible = false;
-        Button clear = Tool("Icon.Clear", "Clear");
+        Button clear = ToolButtons.Of("Icon.Clear", "Clear");
         stop.IsEnabled = false;
         rerun.Click += (_, _) => RerunClicked?.Invoke(this, EventArgs.Empty);
         stop.Click += (_, _) => StopClicked?.Invoke(this, EventArgs.Empty);
@@ -416,14 +416,6 @@ public sealed class OutputView : DockPanel
                 SendLine();
             }
         }
-    }
-
-    private static Button Tool(string icon, string tip)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        return button;
     }
 
     /// <summary>The console's coloured stretches (standard error, what was typed), in order and apart. They are kept in

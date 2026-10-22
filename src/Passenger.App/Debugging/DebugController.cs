@@ -1523,7 +1523,7 @@ public sealed class DebugController : IDisposable
             return said;
         }
         string[] paused = [.. live.Where(t => t.Session!.State == DebugState.Paused).Select(t => t.Name)];
-        return $"{said}; {live.Count} program{(live.Count == 1 ? string.Empty : "s")} debugged"
+        return $"{said}; {Plural.Of(live.Count, "program")} debugged"
             + (paused.Length > 0 ? $", {string.Join(" and ", paused)} paused" : string.Empty);
     }
 

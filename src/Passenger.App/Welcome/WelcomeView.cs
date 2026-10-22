@@ -205,12 +205,7 @@ public sealed class WelcomeView : UserControl
         }
         switch (e.Key)
         {
-            case Key.Down:
-                Move(1);
-                e.Handled = true;
-                break;
-            case Key.Up:
-                Move(-1);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when ListKeys.Move(list, e):
                 e.Handled = true;
                 break;
             case Key.Enter:
@@ -240,16 +235,6 @@ public sealed class WelcomeView : UserControl
             RemoveRequested?.Invoke(this, chosen);
             e.Handled = true;
         }
-    }
-
-    private void Move(int step)
-    {
-        if (list.ItemCount == 0)
-        {
-            return;
-        }
-        list.SelectedIndex = Math.Clamp(list.SelectedIndex + step, 0, list.ItemCount - 1);
-        list.ScrollIntoView(list.SelectedIndex);
     }
 
     private void OpenChosen()

@@ -474,6 +474,47 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         }
     }
 
+    /// <summary>Every tool window's toolbar buttons are made one way (ToolButtons, #390): each icon of the one size every
+    /// icon has, and none taking the keys from the list or editor it acts on, as Rider's toolbar buttons never do; only
+    /// the frame's own Options and Hide in a header are smaller. Copies of the helper had drifted on both.</summary>
+    [AvaloniaFact]
+    public void Every_tool_windows_toolbar_buttons_have_the_one_icon_size_and_never_take_the_keys()
+    {
+        MainWindow window = Open(1400, 880);
+        try
+        {
+            window.TerminalPanel.Shell = OperatingSystem.IsWindows() ? ("cmd.exe", []) : ("/bin/sh", []);
+            window.OpenFile(project.PathOf("Program.cs"));
+            Ui.Settle();
+            int seen = 0;
+            foreach (Passenger.App.Docking.ToolWindow tool in window.DockHost.Windows.ToList())
+            {
+                window.DockHost.Show(tool.Id);
+                Ui.Settle();
+                foreach (Button button in ToolWindowParts(window).OfType<Button>().Where(b => b.Classes.Contains("tool") && b.Bounds.Width > 0))
+                {
+                    if (button.GetVisualDescendants().OfType<PathIcon>().FirstOrDefault() is not { } icon)
+                    {
+                        continue;
+                    }
+                    seen++;
+                    bool frames = button.GetVisualParent() is StackPanel own && DockPanel.GetDock(own) == Dock.Right
+                        && own.GetVisualParent()?.GetVisualParent() is Border { Classes: var classes } && classes.Contains("toolHeader");
+                    double size = frames ? 10 : 16;
+                    string what = $"{tool.Title}'s {ToolTip.GetTip(button)}";
+                    Assert.False(button.Focusable, $"{what} takes the keys when clicked, where a toolbar's button leaves them with what it acts on");
+                    Assert.True(icon.Bounds.Width == size && icon.Bounds.Height == size,
+                        $"{what} has an icon {icon.Bounds.Width:0.#} by {icon.Bounds.Height:0.#}, where every toolbar icon is {size}");
+                }
+            }
+            Assert.True(seen >= 20, $"Only {seen} toolbar buttons were found in the tool windows");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void At_the_smallest_width_the_status_bars_path_never_draws_under_its_widgets()
     {

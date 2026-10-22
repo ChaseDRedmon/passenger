@@ -149,7 +149,7 @@ public sealed class UsageHighlighting
             }
             editor.SetUsageHighlights(uses, keep: true);
             string name = editor.Document.Snapshot.GetText(uses.First(u => Covers(u.Range, caret)).Range);
-            Message?.Invoke(this, $"{uses.Count} {(uses.Count == 1 ? "usage" : "usages")} of {name} found "
+            Message?.Invoke(this, $"{Core.Plural.Of(uses.Count, "usage")} of {name} found "
                 + $"(press {keys} again to remove the highlighting, Escape to remove all highlighting)");
         }
     }

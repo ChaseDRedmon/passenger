@@ -1930,7 +1930,7 @@ public sealed partial class CodeAssist
         {
             string path = paths[l.Uri];
             (int line, string code) = preview(path, l.Range.Start);
-            string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{line + 1}";
+            string shown = $"{PathNames.Shown(path, root)}:{line + 1}";
             return names?[i] is { } name
                 ? new Choice(name, shown, l)
                 : new Choice(shown, code, l, DetailIsCode: true);

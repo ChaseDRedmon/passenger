@@ -62,7 +62,7 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(failed);
         }
         int left = vcs.Conflicts.Count;
-        return left == 0 ? $"{Relative(full)} resolved; no conflicts are left" : $"{Relative(full)} resolved; {left} {(left == 1 ? "file is" : "files are")} still in conflict";
+        return left == 0 ? $"{Relative(full)} resolved; no conflicts are left" : $"{Relative(full)} resolved; {Plural.Of(left, "file")} {(left == 1 ? "is" : "are")} still in conflict";
     });
 
     [McpServerTool(Name = "vcs_diff", Title = "A file's changes", ReadOnly = true), Description(
@@ -91,7 +91,7 @@ public sealed partial class PassengerTools
         IReadOnlyList<FileChange> chosen = paths is null
             ? [.. vcs.Changes.Where(c => c.Kind is not ChangeKind.Unversioned)]
             : [.. paths.Select(Resolve).Select(p => vcs.Changes.FirstOrDefault(c => c.Path == p) ?? throw new ArgumentException($"{Relative(p)} has no changes to commit"))];
-        AgentCall.Say($"Committing {chosen.Count} file{(chosen.Count == 1 ? string.Empty : "s")}{(push ? " and pushing" : string.Empty)}");
+        AgentCall.Say($"Committing {Plural.Of(chosen.Count, "file")}{(push ? " and pushing" : string.Empty)}");
         CommitResult result = await vcs.CommitAsync(chosen, message, amend, push);
         if (!result.Commit.Succeeded)
         {

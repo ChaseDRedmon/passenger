@@ -47,10 +47,10 @@ public sealed class LiveTemplatesPane : DockPanel
         this.templates = [.. templates];
         this.changed = changed;
         Height = 560;
-        NewButton = Tool("Icon.Add", "New Template");
-        CloneButton = Tool("Icon.Copy", "Clone And Edit Template");
-        DeleteButton = Tool("Icon.Minimize", "Delete Template");
-        RestoreButton = Tool("Icon.Rollback", "Restore Default");
+        NewButton = ToolButtons.Of("Icon.Add", "New Template");
+        CloneButton = ToolButtons.Of("Icon.Copy", "Clone And Edit Template");
+        DeleteButton = ToolButtons.Of("Icon.Minimize", "Delete Template");
+        RestoreButton = ToolButtons.Of("Icon.Rollback", "Restore Default");
         NewButton.Click += (_, _) => New();
         CloneButton.Click += (_, _) => Clone();
         DeleteButton.Click += (_, _) => Delete();
@@ -477,13 +477,4 @@ public sealed class LiveTemplatesPane : DockPanel
     }
 
     private static TextBox Field() => new() { Classes = { "search" } };
-
-    private static Button Tool(string icon, string tip)
-    {
-        PathIcon glyph = new();
-        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-        Button button = new() { Classes = { "tool" }, Content = glyph };
-        ToolTip.SetTip(button, tip);
-        return button;
-    }
 }

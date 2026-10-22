@@ -288,7 +288,7 @@ public sealed class MemoryView : DockPanel
                 Action("Open Survived Objects", () => OpenDelta(Kind.Survived));
                 break;
             case SetPage set:
-                summary.Text = $"{set.Set.Count:N0} object{(set.Set.Count == 1 ? "" : "s")}, {Size(set.Set.Bytes)}, retained {Size(set.Set.RetainedBytes)}, in {set.Set.Snapshot.Name}";
+                summary.Text = $"{set.Set.Count:N0} {Core.Plural.Noun(set.Set.Count, "object")}, {Size(set.Set.Bytes)}, retained {Size(set.Set.RetainedBytes)}, in {set.Set.Snapshot.Name}";
                 objects.ItemsSource = set.Set.Objects;
                 objects.SelectedIndex = set.Set.Count > 0 ? 0 : -1;
                 ShowPaths(set.Paths);
@@ -613,8 +613,8 @@ public sealed class MemoryView : DockPanel
 
     private static TextBlock Muted(string text)
     {
-        TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-        block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock block = MutedText.Of(text);
+        block.FontSize = 12;
         return block;
     }
 

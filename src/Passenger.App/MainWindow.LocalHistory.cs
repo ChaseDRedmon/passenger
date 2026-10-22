@@ -177,7 +177,7 @@ public partial class MainWindow
         IReadOnlyList<HistoryRow> rows = await BackgroundWork.Run(() => isFolder ? HistoryRows.OfFolder(events, full) : HistoryRows.OfFile(events, known, full));
         if (rows.FirstOrDefault(r => r.Set == set) is not { } row)
         {
-            return $"No change set {set} is in the history of {Path.GetRelativePath(folder, full)}";
+            return $"No change set {set} is in the history of {PathNames.Shown(full, folder)}";
         }
         IReadOnlyList<(string Path, string? Version)> files = isFolder
             ? [.. (await BackgroundWork.Run(() => HistoryRows.Since(events, known, set, full))).Select(f => (f.Path, f.Then))]

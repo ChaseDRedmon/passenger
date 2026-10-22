@@ -366,11 +366,11 @@ public sealed partial class BuildRunController
         int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
         int warnings = problems.Count - errors;
         string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", BuildKind.Publish => "Publish", _ => "Build" };
-        string warned = warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "";
+        string warned = warnings > 0 ? $" with {Plural.Of(warnings, "warning")}" : "";
         FinishBuild(session.Builder.WasStopped ? new BuildOutcome(BuildStatus.Stopped, $"{noun} stopped")
             : code == 0 && publishing is { } publish ? Published(publish, warned)
             : code == 0 ? new BuildOutcome(BuildStatus.Succeeded, $"{noun} succeeded{warned}")
-            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}; "
+            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {Plural.Of(errors, "error")}, {Plural.Of(warnings, "warning")}; "
                 + (errors > 0 ? "Problems lists them" : $"dotnet exited with code {code}, the Build window says why")));
     }
 

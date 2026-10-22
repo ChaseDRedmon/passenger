@@ -397,7 +397,7 @@ public partial class MainWindow
                 recording => FollowMoved([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
             FilesChanged();
             Explorer.Reveal(PathNames.Canonical(target));
-            status.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
+            status.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {Plural.Of(files, "file")}"
                 + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
             return null;
         }

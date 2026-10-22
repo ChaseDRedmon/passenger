@@ -11,6 +11,7 @@ using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
+using Passenger.Core;
 
 namespace Passenger.App.Navigation;
 
@@ -116,9 +117,8 @@ public sealed class FindInFilesPopup : UserControl
         directoryBox.Text = choices.Start.Directory ?? string.Empty;
         recursive = new ToggleButton { Classes = { "option" }, Content = Glyph("Icon.Structure"), IsChecked = choices.Start.Recursive };
         ToolTip.SetTip(recursive, "Recursively (Alt+Y)");
-        Button browse = new() { Classes = { "tool" }, Content = Glyph("Icon.FolderOpen"), Margin = new Thickness(4, 0, 2, 0) };
-        ToolTip.SetTip(browse, "Choose a directory");
-        browse.Click += (_, _) => _ = BrowseAsync();
+        Button browse = ToolButtons.Of("Icon.FolderOpen", "Choose a directory", () => _ = BrowseAsync());
+        browse.Margin = new Thickness(4, 0, 2, 0);
         DockPanel directory = new() { Children = { recursive, browse, directoryBox } };
         DockPanel.SetDock(recursive, Dock.Right);
         DockPanel.SetDock(browse, Dock.Right);
@@ -285,7 +285,7 @@ public sealed class FindInFilesPopup : UserControl
 
     /// <summary>The matches' number as Rider says it: a thousand and more past the limit.</summary>
     private static string Count(int found) =>
-        found >= FileSearch.MostMatches ? $"{FileSearch.MostMatches}+ matches" : found == 1 ? "1 match" : $"{found} matches";
+        found >= FileSearch.MostMatches ? $"{FileSearch.MostMatches}+ matches" : Plural.Of(found, "match", "matches");
 
     public string Text
     {
@@ -430,7 +430,7 @@ public sealed class FindInFilesPopup : UserControl
                 return;
             }
             int files = found.Select(m => m.Path).Distinct().Count();
-            Show(found, found.Count == 0 ? "Nothing found" : $"{Count(found.Count)} in {files} file{(files == 1 ? "" : "s")}", (asked, where));
+            Show(found, found.Count == 0 ? "Nothing found" : $"{Count(found.Count)} in {Plural.Of(files, "file")}", (asked, where));
         }
         catch (OperationCanceledException)
         {
@@ -510,9 +510,7 @@ public sealed class FindInFilesPopup : UserControl
                 Choose();
                 e.Handled = true;
                 break;
-            case Key.Down or Key.Up when matches.Count > 0 && !InField():
-                results.SelectedIndex = Math.Clamp(results.SelectedIndex + (e.Key == Key.Down ? 1 : -1), 0, matches.Count - 1);
-                results.ScrollIntoView(results.SelectedIndex);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when !InField() && ListKeys.Move(results, e):
                 e.Handled = true;
                 break;
         }

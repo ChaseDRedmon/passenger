@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.Editor;
 using Passenger.Profiler;
+using Passenger.Core;
 
 namespace Passenger.App.Profiling;
 
@@ -208,10 +209,7 @@ public sealed class ProfilerView : DockPanel
         {
             left.Children.Add(page);
         }
-        Button open = new() { Classes = { "tool" }, Content = new PathIcon() };
-        ((PathIcon)open.Content).Bind(PathIcon.DataProperty, open.GetResourceObservable("Icon.FolderOpen"));
-        ToolTip.SetTip(open, "Open Snapshot");
-        open.Click += (_, _) => OpenSnapshotRequested?.Invoke(this, EventArgs.Empty);
+        Button open = ToolButtons.Of("Icon.FolderOpen", "Open Snapshot", () => OpenSnapshotRequested?.Invoke(this, EventArgs.Empty));
         heap = new Button { Name = "ProfilerGetMemorySnapshot", Content = "Get Memory Snapshot", IsVisible = false };
         heap.Click += (_, _) => MemoryRequested?.Invoke(this, EventArgs.Empty);
         StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { heap, stop, kill, open } };
@@ -288,7 +286,7 @@ public sealed class ProfilerView : DockPanel
         kept.ItemsSource = files;
         keptSummary.Text = files.Count == 0
             ? $"No snapshots yet. Each run's is kept in {folder}, the newest {Snapshots.Kept}."
-            : $"{files.Count} snapshot{(files.Count == 1 ? "" : "s")}, the newest first, kept in {folder}. Past {Snapshots.Kept}, the oldest go.";
+            : $"{Plural.Of(files.Count, "snapshot")}, the newest first, kept in {folder}. Past {Snapshots.Kept}, the oldest go.";
         pages[(int)ProfilerPage.Snapshots].IsEnabled = true;
         int current = Array.FindIndex(pages, p => p.IsChecked == true);
         ShowPage(Snapshot is null && Memory is null && !ticking.IsEnabled && files.Count > 0 ? ProfilerPage.Snapshots : (ProfilerPage)Math.Max(0, current));
@@ -442,7 +440,7 @@ public sealed class ProfilerView : DockPanel
         Snapshot = snapshot;
         Snapshot whole = snapshot.Whole;
         status.Text = ReferenceEquals(whole, snapshot)
-            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} thread{(snapshot.Threads.Count == 1 ? "" : "s")}, {snapshot.Samples:N0} samples"
+            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {Plural.Of(snapshot.Threads.Count, "thread")}, {snapshot.Samples:N0} samples"
             : $"{snapshotName}: {snapshot.StartMs - whole.StartMs:N0} to {snapshot.EndMs - whole.StartMs:N0} ms of {whole.Duration.TotalMilliseconds:N0}, {snapshot.Samples:N0} samples";
         foreach (ToggleButton page in pages)
         {
@@ -698,8 +696,8 @@ public sealed class ProfilerView : DockPanel
 
     private static TextBlock Muted(string text, double width)
     {
-        TextBlock block = new() { Text = text, VerticalAlignment = VerticalAlignment.Center, Width = width };
-        block.Bind(TextBlock.ForegroundProperty, block.GetResourceObservable("Passenger.TextMuted"));
+        TextBlock block = MutedText.Of(text);
+        block.Width = width;
         return block;
     }
 }

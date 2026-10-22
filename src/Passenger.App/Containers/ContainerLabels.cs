@@ -231,7 +231,7 @@ public static partial class ContainerLabels
             }
             if (removed.Count > 0)
             {
-                IdeErrors.Write($"Containers: removed {removed.Count} container{(removed.Count == 1 ? string.Empty : "s")} and networks an earlier Passenger left");
+                IdeErrors.Write($"Containers: removed {Plural.Of(removed.Count, "container")} and networks an earlier Passenger left");
             }
         }
         catch (Exception failed) when (failed is ContainerCommandException or TimeoutException or JsonException or System.ComponentModel.Win32Exception)

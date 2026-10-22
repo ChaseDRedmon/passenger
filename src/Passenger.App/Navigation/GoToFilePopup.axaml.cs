@@ -60,7 +60,7 @@ public partial class GoToFilePopup : UserControl
         (string query, At) = PlaceIn(Query.Text ?? string.Empty);
         string root = index.Root ?? string.Empty;
         IEnumerable<string> paths = query.Trim().Length == 0
-            ? recent.Select(full => Path.GetRelativePath(root, full))
+            ? recent.Select(full => Core.PathNames.Shown(full, root))
             : index.Search(query);
         List<FileHit> hits = paths.Select(p => new FileHit(Path.Combine(root, p), p)).ToList();
         Results.ItemsSource = hits;
@@ -71,18 +71,13 @@ public partial class GoToFilePopup : UserControl
 
     private void OnQueryKeyDown(object? sender, KeyEventArgs e)
     {
+        if (ListKeys.Move(Results, e))
+        {
+            e.Handled = true;
+            return;
+        }
         switch (e.Key)
         {
-            case Key.Down:
-                Results.SelectedIndex = Math.Min(Results.SelectedIndex + 1, Results.ItemCount - 1);
-                Results.ScrollIntoView(Results.SelectedIndex);
-                e.Handled = true;
-                break;
-            case Key.Up:
-                Results.SelectedIndex = Math.Max(Results.SelectedIndex - 1, 0);
-                Results.ScrollIntoView(Results.SelectedIndex);
-                e.Handled = true;
-                break;
             case Key.Enter:
                 Choose();
                 e.Handled = true;

@@ -85,10 +85,8 @@ public sealed class NuGetView : DockPanel
         prerelease = new CheckBox { Content = "Prerelease", VerticalAlignment = VerticalAlignment.Center };
         status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
-        Button refresh = new() { Classes = { "tool" }, Content = new PathIcon(), Margin = new Thickness(6, 0, 0, 0) };
-        ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
-        ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => _ = ReloadSourcesAsync();
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = ReloadSourcesAsync());
+        refresh.Margin = new Thickness(6, 0, 0, 0);
         typing = new Debounce(Pause, RefreshAsync);
         search.TextChanged += (_, _) => typing.Restart();
         prerelease.IsCheckedChanged += (_, _) => _ = RefreshAsync();
@@ -426,10 +424,10 @@ public sealed class NuGetView : DockPanel
     /// feeds that did not say.</summary>
     private static string Counted(IReadOnlyList<PackageRow> found, VulnerabilityData? known)
     {
-        string text = found.Count == 1 ? "1 package installed" : $"{found.Count} packages installed";
+        string text = $"{Plural.Of(found.Count, "package")} installed";
         if (found.Count(r => r.IsVulnerable) is int vulnerable and > 0)
         {
-            text += vulnerable == 1 ? ", 1 vulnerable" : $", {vulnerable} vulnerable";
+            text += $", {vulnerable} vulnerable";
         }
         if (known?.Failed is { Count: > 0 } failed)
         {
@@ -453,7 +451,7 @@ public sealed class NuGetView : DockPanel
         }
         if (answer.Unmapped > 0)
         {
-            said.Add(answer.Unmapped == 1 ? "1 package left out by package source mapping" : $"{answer.Unmapped} packages left out by package source mapping");
+            said.Add($"{Plural.Of(answer.Unmapped, "package")} left out by package source mapping");
         }
         return string.Join("; ", said);
     }

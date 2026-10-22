@@ -130,7 +130,7 @@ public sealed partial class CodeAssist
                 string? refused = ApplyXamlChanges(name, XamlRefactorings.ExtractStyle(file, source, styleName, chosen, place));
                 if (refused is null)
                 {
-                    Message?.Invoke(this, $"Extracted {chosen.Count} {(chosen.Count == 1 ? "property" : "properties")} of {source.ElementName} to style '{styleName}' in {place.Title}");
+                    Message?.Invoke(this, $"Extracted {Core.Plural.Of(chosen.Count, "property", "properties")} of {source.ElementName} to style '{styleName}' in {place.Title}");
                 }
                 return Task.FromResult(refused);
             });

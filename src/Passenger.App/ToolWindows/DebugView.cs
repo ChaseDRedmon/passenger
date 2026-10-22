@@ -195,9 +195,8 @@ public sealed class DebugView : DockPanel
         topBar.Bind(Border.BorderBrushProperty, topBar.GetResourceObservable("Passenger.Divider"));
 
         // Rider's toggle under the program's own buttons: pressed while every breakpoint is muted.
-        mute = new ToggleButton { Classes = { "tool" }, Content = new PathIcon() };
+        mute = ToolButtons.Toggle("Icon.MuteBreakpoints", "Mute Breakpoints");
         ActionTips.Set(mute, AppActions.MuteBreakpoints, "Mute Breakpoints");
-        ((PathIcon)mute.Content).Bind(PathIcon.DataProperty, mute.GetResourceObservable("Icon.MuteBreakpoints"));
         mute.Click += (_, _) => ActionRequested?.Invoke(this, AppActions.MuteBreakpoints);
 
         // A Debug window too short for its buttons (at 1400 by 880 the last went under the status bar) puts the rest behind More.
@@ -511,10 +510,8 @@ public sealed class DebugView : DockPanel
 
     private Button Tool(string action, string icon, string tip)
     {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
+        Button button = ToolButtons.Of(icon, tip, () => ActionRequested?.Invoke(this, action));
         ActionTips.Set(button, action, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => ActionRequested?.Invoke(this, action);
         tools[action] = button;
         return button;
     }

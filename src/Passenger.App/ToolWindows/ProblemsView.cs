@@ -417,7 +417,7 @@ public sealed class ProblemsView : DockPanel
         empty.IsVisible = rows.Count == 0;
     }
 
-    private static string Count(int count) => count == 1 ? "1 problem" : $"{count} problems";
+    private static string Count(int count) => Core.Plural.Of(count, "problem");
 
     /// <summary>Problems under their projects and files, as Rider groups the solution's.</summary>
     private void Grouped(IEnumerable<Problem> problems)

@@ -57,10 +57,9 @@ public sealed class AttachToProcessDialog : Window
         Search = new TextBox { Classes = { "search" }, Text = search, PlaceholderText = "Search by name, process ID, user or command line" };
         Search.TextChanged += (_, _) => ShowRows();
         Search.AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
-        Button refresh = new() { Classes = { "tool" }, Content = new PathIcon(), Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
-        ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => _ = RefreshAsync();
+        Button refresh = ToolButtons.Of("Icon.Rerun", "Refresh", () => _ = RefreshAsync());
+        refresh.Margin = new Thickness(6, 0, 0, 0);
+        refresh.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(refresh, Dock.Right);
         DockPanel top = new() { [DockPanel.DockProperty] = Dock.Top, Margin = new Thickness(0, 0, 0, 10), Children = { refresh, Search } };
 
@@ -224,25 +223,9 @@ public sealed class AttachToProcessDialog : Window
                 Attach();
                 e.Handled = true;
                 break;
-            case Key.Down or Key.Up:
-                Move(e.Key == Key.Down ? 1 : -1);
+            case Key.Up or Key.Down or Key.PageUp or Key.PageDown when ListKeys.Move(rows, e, i => Rows[i].Process is not null):
                 e.Handled = true;
                 break;
-        }
-    }
-
-    private void Move(int by)
-    {
-        IReadOnlyList<AttachRow> all = Rows;
-        int at = rows.SelectedIndex;
-        for (int next = at + by; next >= 0 && next < all.Count; next += by)
-        {
-            if (all[next].Process is not null)
-            {
-                rows.SelectedIndex = next;
-                rows.ScrollIntoView(next);
-                return;
-            }
         }
     }
 

@@ -64,10 +64,10 @@ public sealed class FrameViewer : Window, IOwnKeys
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                Tool("Icon.ZoomIn", $"Zoom In ({Keys("=")})", ZoomIn),
-                Tool("Icon.ZoomOut", $"Zoom Out ({Keys("-")})", ZoomOut),
-                Tool("Icon.ActualSize", $"Actual Size ({Keys("/")})", () => ZoomTo(1)),
-                Tool("Icon.ZoomFit", "Fit Zoom to Window", FitToWindow),
+                ToolButtons.Of("Icon.ZoomIn", $"Zoom In ({Keys("=")})", ZoomIn),
+                ToolButtons.Of("Icon.ZoomOut", $"Zoom Out ({Keys("-")})", ZoomOut),
+                ToolButtons.Of("Icon.ActualSize", $"Actual Size ({Keys("/")})", () => ZoomTo(1)),
+                ToolButtons.Of("Icon.ZoomFit", "Fit Zoom to Window", FitToWindow),
                 zoomText,
             },
         };
@@ -203,13 +203,4 @@ public sealed class FrameViewer : Window, IOwnKeys
     }
 
     private static string Keys(string key) => OperatingSystem.IsMacOS() ? $"⌘{key}" : $"Ctrl+{key}";
-
-    private static Button Tool(string icon, string tip, Action run)
-    {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false };
-        ToolTip.SetTip(button, tip);
-        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => run();
-        return button;
-    }
 }

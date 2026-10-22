@@ -236,7 +236,7 @@ public sealed partial class CodeAssist
         }
         string root = Path.GetDirectoryName(msbuild.Project ?? msbuild.Document.Path)!;
         List<Choice> choices = [.. found.Targets.Select(t => new Choice(t.Title,
-            PathNames.IsUnder(t.Place.Path, root) ? Path.GetRelativePath(root, t.Place.Path) : t.Place.Path, t))];
+            PathNames.Shown(t.Place.Path, root), t))];
         ShowModal(new ChoicePopup($"Declarations of {found.Symbol.Name}", choices), offset, "Go to Declaration", choice =>
         {
             if (choice?.Value is MSBuildTarget target)

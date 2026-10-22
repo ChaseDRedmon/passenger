@@ -501,7 +501,7 @@ public sealed class VcsController : IDisposable
         {
             return new CommitResult(Report(false, "The commit message is empty"), null, null);
         }
-        if (!Begin(Committing, chosen.Count == 1 ? "Committing 1 file…" : $"Committing {chosen.Count} files…", out Working? work))
+        if (!Begin(Committing, $"Committing {Plural.Of(chosen.Count, "file")}…", out Working? work))
         {
             return new CommitResult(Report(false, UnderWay(Committing)), null, null);
         }
@@ -820,7 +820,7 @@ public sealed class VcsController : IDisposable
             GitResult rolled = await repository.RollbackAsync(changes);
             ReloadOpenFiles();
             await RefreshAsync();
-            return Report(rolled.Succeeded, rolled.Succeeded ? $"Rolled back {Files(changes.Count)}" : rolled.Message);
+            return Report(rolled.Succeeded, rolled.Succeeded ? $"Rolled back {Plural.Of(changes.Count, "file")}" : rolled.Message);
         }, refused => refused);
     }
 
@@ -1139,7 +1139,6 @@ public sealed class VcsController : IDisposable
 
     private static string FirstLine(string message) => message.Trim().Split('\n')[0].Trim();
 
-    private static string Files(int count) => count == 1 ? "1 file" : $"{count} files";
 
     /// <summary>An open file as Git follows it: one handler for its edits and one for its saves, and one wait each for its
     /// bars and its blame, all dropped with it.</summary>
