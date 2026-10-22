@@ -10,8 +10,10 @@ namespace Passenger.Tests;
 /// (artifacts/container-tools), as <c>just container-tools</c> makes them: some seconds when they are up to date.</summary>
 internal static class ContainerPrograms
 {
-    /// <summary>The engine's processor, as .NET names it (x64, arm64).</summary>
-    public static string Processor() => Docker.Ask(["version", "--format", "{{.Server.Arch}}"]).Trim() == "arm64" ? "arm64" : "x64";
+    /// <summary>The engine's processor, as .NET names it (x64, arm64): Podman's own docker has no server apart in its version,
+    /// and words it in its info.</summary>
+    public static string Processor() =>
+        (Docker.Said("version", "--format", "{{.Server.Arch}}") ?? Docker.Said("info", "--format", "{{.Host.Arch}}")) == "arm64" ? "arm64" : "x64";
 
     /// <summary>Each system's publish, once a run: a second, as another test's IDE copies the tools into a container, would
     /// rewrite them under it, and the IDE would then look for them elsewhere (a download from the run's dead address).</summary>
