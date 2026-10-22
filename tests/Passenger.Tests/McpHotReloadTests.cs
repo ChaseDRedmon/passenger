@@ -7,8 +7,14 @@ namespace Passenger.Tests;
 
 /// <summary>An agent's Hot Reload, as Apply Hot Reload Changes is a person's: the edits it made in the editor applied to the
 /// program it debugs, and an edit the runtime cannot take named at its line, the program restarted for it only when asked.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
 {
+    public McpHotReloadTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
+
     /// <summary>An agent's debugging with no window, its tools' answers each checked once (the window's own steps are
     /// DebuggerTests' and HotReloadTests'): an exception breakpoint on a type, listed as Rider sets one and stopping where
     /// that type is thrown; Run to Cursor and Set Next Statement; and Hot Reload of an edit made while paused, then of one

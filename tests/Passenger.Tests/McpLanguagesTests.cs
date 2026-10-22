@@ -8,9 +8,10 @@ namespace Passenger.Tests;
 /// <summary>Agents using the code tools on every language Passenger serves, each answered by that language's own service as
 /// the window's commands are: Avalonia's and WPF's XAML through Passenger's own XAML (the galleries of XamlTests and
 /// WpfXamlTests, each in a folder of the test's own, restored), the web languages through their servers with the
-/// project's own ESLint and Prettier (skipped without a Node.js, as WebLanguagesTests are), and saying plainly what a
-/// language lacks.</summary>
-public sealed partial class McpTests
+/// project's own ESLint and Prettier (skipped without a Node.js, as WebLanguagesTests are), a compose file and a
+/// Dockerfile through theirs, MSBuild files through Passenger's own evaluation, and saying plainly what a language lacks.</summary>
+[Collection(Alone.Name)]
+public sealed class McpLanguagesTests : McpRig
 {
     /// <summary>Avalonia's XAML, and a library type it names decompiled once across sessions, another version's decompiled
     /// files unused for months pruned.</summary>
@@ -35,7 +36,7 @@ public sealed partial class McpTests
             Restore.Run(made);
         });
         // Another version's decompiled files, which no session has used for two months.
-        string stale = Path.Combine(settings, "MetadataAsSource", "Decompiled", "Avalonia.Controls", "0123456789abcdef");
+        string stale = Path.Combine(OwnState, "MetadataAsSource", "Decompiled", "Avalonia.Controls", "0123456789abcdef");
         Directory.CreateDirectory(stale);
         File.WriteAllText(Path.Combine(stale, "Avalonia.Controls.StackPanel.cs"), "// Decompiled from a version long gone\n");
         Directory.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromDays(60));
@@ -106,7 +107,7 @@ public sealed partial class McpTests
             Assert.True(decompiled == second, $"The second session decompiled the type again into another folder: {second}, the first's {decompiled}");
         }
         Assert.True(File.GetLastWriteTimeUtc(decompiled) == written, "The second session wrote the decompiled file again");
-        Assert.Single(Directory.GetDirectories(Path.Combine(settings, "MetadataAsSource", "Decompiled", "Avalonia.Controls")));
+        Assert.Single(Directory.GetDirectories(Path.Combine(OwnState, "MetadataAsSource", "Decompiled", "Avalonia.Controls")));
     }
 
     [Fact]
@@ -298,7 +299,7 @@ public sealed partial class McpTests
     private string Made(string name, Action<string> write)
     {
         string made = PathNames.Canonical(TestFolders.Create(name));
-        madeFolders.Add(made);
+        DeleteAtEnd(made);
         TestFolders.Prepare(() => write(made), made);
         return made;
     }
@@ -315,4 +316,38 @@ public sealed partial class McpTests
     }
 
     private static string[] Strings(JsonElement list) => [.. list.EnumerateArray().Select(e => e.GetString()!)];
+
+    /// <summary>An agent on a compose file and a Dockerfile: their servers' outline and problems, Passenger's own declarations
+    /// in the compose file (a service's, a build's Dockerfile), an image's registry page said, and the YAML server's layout,
+    /// saved. Skipped, as DockerFilesTests' are, without a Node.js that runs the YAML server.</summary>
+    [Fact]
+    public async Task An_agent_reads_a_compose_files_declarations_and_problems_and_formats_it_through_the_yaml_server()
+    {
+        DockerFilesTests.Shop.SkipWithoutNode(yaml: true);
+        const string Compose = "services:\n  web:\n    image:   nginx:1.27\n    ports: [ \"8080:80\" ]\n    depends_on:   [api]\n  api:\n    build: .\n";
+        string compose = Made("mcpcompose-", made =>
+        {
+            File.WriteAllText(Path.Combine(made, "compose.yaml"), Compose);
+            File.WriteAllText(Path.Combine(made, "Dockerfile"), "FROM alpine:3.20\nFROMM nothing\nENTRYPOINT [\"sh\"]\n");
+        });
+        await using McpClient client = await Start(["--mcp", compose]);
+
+        // Passenger's declarations: the service depends_on names, and the build's Dockerfile.
+        JsonElement service = Assert.Single((await Call(client, "definition", At(Compose, "compose.yaml", "[ap"))).EnumerateArray());
+        Assert.Equal(("compose.yaml", 6, 3), (service.GetProperty("path").GetString(), service.GetProperty("line").GetInt32(), service.GetProperty("column").GetInt32()));
+        JsonElement dockerfile = Assert.Single((await Call(client, "definition", At(Compose, "compose.yaml", "build: ."))).EnumerateArray());
+        Assert.Equal(("Dockerfile", 1), (dockerfile.GetProperty("path").GetString(), dockerfile.GetProperty("line").GetInt32()));
+        CallToolResult image = await Result(client, "definition", At(Compose, "compose.yaml", "image:   ngi"));
+        Assert.True(image.IsError == true && Text(image).Contains("https://hub.docker.com/_/nginx", StringComparison.Ordinal), $"definition on an image answered: {Text(image)}");
+
+        // The YAML server's outline, and the Dockerfile server's problem.
+        string outline = (await Call(client, "outline", new() { ["path"] = "compose.yaml" })).GetString()!;
+        Assert.True(outline.Contains("web (", StringComparison.Ordinal) && outline.Contains("depends_on (", StringComparison.Ordinal), $"The compose file's outline is not its server's:\n{outline}");
+        JsonElement problem = Assert.Single((await Call(client, "diagnostics", new() { ["path"] = "Dockerfile" })).EnumerateArray());
+        Assert.Contains("Unknown instruction: FROMM", problem.GetProperty("message").GetString(), StringComparison.Ordinal);
+
+        // The YAML server's layout, saved.
+        Assert.StartsWith("Reformatted", (await Call(client, "format", new() { ["path"] = "compose.yaml" })).GetString(), StringComparison.Ordinal);
+        Assert.Equal("services:\n  web:\n    image: nginx:1.27\n    ports: [\"8080:80\"]\n    depends_on: [api]\n  api:\n    build: .\n", File.ReadAllText(Path.Combine(compose, "compose.yaml")));
+    }
 }

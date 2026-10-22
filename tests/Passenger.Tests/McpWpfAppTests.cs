@@ -9,17 +9,15 @@ namespace Passenger.Tests;
 /// <summary>Agents testing a WPF app Passenger runs, through the same tools as an Avalonia app's: tests/Debuggees/WpfTreeApp
 /// (a counter's button, a name box that greets on Enter, a misspelt binding, a drop-down and a list to scroll), written into a
 /// folder of the test's own and restored from the run's feed. WPF runs on Windows alone, so elsewhere the test skips.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpWpfAppTests : McpRig
 {
-    /// <summary>Folders a test made for itself, removed with the class once the Passengers that worked in them have gone.</summary>
-    private readonly List<string> madeFolders = [];
-
     [Fact]
     public async Task An_agent_runs_a_wpf_app_sees_it_clicks_its_button_types_into_it_and_reads_its_failed_bindings()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "WPF runs on Windows alone");
         string wpf = PathNames.Canonical(TestFolders.Create("mcpwpf-"));
-        madeFolders.Add(wpf);
+        DeleteAtEnd(wpf);
         TestFolders.Prepare(() =>
         {
             foreach (string file in Directory.GetFiles(Debuggees.Source("WpfTreeApp")))

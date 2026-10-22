@@ -11,7 +11,8 @@ namespace Passenger.Tests;
 /// <summary>An agent on a window debugging two programs at once: debug_state lists both, a debugging tool that names
 /// neither is refused while it cannot tell which is meant, one that names a program acts on it alone, stop with a
 /// program's name ends that one, and debug_detach lets go of the one it names.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpSessionsTests : McpRig
 {
     /// <summary>Both launched, then one launched and one attached to, in one window over the pair: the agent steps and stops
     /// the one it names, and lets go of the one the debugger attached to, which runs on to its end while the other stays
@@ -21,7 +22,7 @@ public sealed partial class McpTests
     public void An_agent_names_which_of_two_programs_debugged_at_once_it_acts_on_or_detaches_and_is_refused_when_it_names_none_it_can_tell()
     {
         string pair = TestFolders.Create("pair-");
-        madeFolders.Add(pair);
+        DeleteAtEnd(pair);
         DebugSessionsTests.Pair.WriteTo(pair);
         Restore.Run(pair);
         string counter = Path.Combine(PathNames.Canonical(pair), "Shared", "Counter.cs");

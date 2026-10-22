@@ -11,8 +11,14 @@ namespace Passenger.Tests;
 /// <summary>The IDE's own windows for an agent: Find in Files in the window's scopes and masks, a file's Local History read
 /// and reverted, what Problems and the Build window list beyond a build's answer, the person's settings read and changed as
 /// Settings changes them, and Attach Profiler on a program already running.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpIdeTests : McpRig, IClassFixture<RestoredFolders>
 {
+    public McpIdeTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
+
     [Fact]
     public async Task An_agent_finds_text_in_the_windows_scopes_reverts_a_file_through_local_history_and_reads_problems_and_the_build_window()
     {
@@ -124,7 +130,7 @@ public sealed partial class McpTests
     [AvaloniaFact]
     public void An_agent_reads_and_changes_the_persons_settings_as_settings_does_once_they_allow_it()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
         window.Show();
         window.KeepSettings();
         window.OpenFolder(Folder);
@@ -156,7 +162,7 @@ public sealed partial class McpTests
             Assert.Equal(48, window.Settings.EditorFontSize);
             Assert.Equal(48, window.EditorArea.CodeEditor.FontSize);
             Assert.Equal(global::Passenger.App.Settings.BuildResultsMode.Always, window.Settings.ShowBuildResults);
-            WaitFor(() => Ui.Shared(Path.Combine(settings, "settings.json")).Contains("\"editorFontSize\": 48", StringComparison.Ordinal), "settings.json to keep the agent's change");
+            WaitFor(() => Ui.Shared(Path.Combine(OwnState, "settings.json")).Contains("\"editorFontSize\": 48", StringComparison.Ordinal), "settings.json to keep the agent's change");
 
             // What Settings lacks, or an agent may not change, changes nothing.
             foreach ((Dictionary<string, object> changes, string said) in new (Dictionary<string, object>, string)[]
@@ -219,7 +225,7 @@ public sealed partial class McpTests
     public async Task An_agent_reads_a_razor_components_errors_names_and_usages_through_roslyns_razor()
     {
         string blazor = PathNames.Canonical(TestFolders.Create("mcp-razor-"));
-        madeFolders.Add(blazor);
+        DeleteAtEnd(blazor);
         TestFolders.Prepare(() =>
         {
             BlazorApp.Create(blazor);

@@ -621,7 +621,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ShowContainerFiles`); with no engine or no buildx nothing is shown or said per file. A check costs well under a
   second (buildx's 0.1–0.6 s, a base image's metadata read from its registry the first time; Compose's about 50 ms a
   run).
-  Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpTests.Containers.cs`, `EngineChecksTests`; not
+  Its tests (`ContainersTests`, `ContainerDetailsTests`, `McpContainersTests`, `EngineChecksTests`; not
   `ContainerConfigurationsTests` nor `ContainerDetailsTests`' test of Inspect's unmasked copies, which need no engine,
   and `EngineChecksTests`' agent's fix, which needs Node.js too) skip saying why unless `docker info`'s
   OSType is linux (`EngineChecksTests`' Dockerfile one without buildx too; its stopped engine is `StandInCli`'s), use
@@ -1150,8 +1150,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
   last word); the headless `--mcp` IDE
   starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
-  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests.Actions`
-  holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
+  container configuration debugs each service in a session of its own, answering with them (`sessions`); `McpTests`' actions
+  test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
   `find_in_files`/`replace_in_files` are the window's own search in its scopes and masks once `FileIndex.IsWalking` is
@@ -1455,7 +1455,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process, whose input never
   reaches a question Passenger asks the person for an agent nor Settings (`MainWindow.KeptFromAgents`, given to the
   inspector's `Agent.Guard`, weighed at each event the driver sends); a headless test gets a dispatcher of its own, so
-  one test a run inspects Passenger in the test process (`McpTests.AvaloniaApp`'s person's window). Binding values
+  one test a run inspects Passenger in the test process (`McpAvaloniaAppTests`' person's window). Binding values
   (`BindingValues.cs`, protocol v4 `values`): each element by its XamlSourceInfo place (a root by x:Class), of several
   instances the one nearest the element chosen in the Live Visual Tree, each binding's path walked from Avalonia's
   binding expression nodes. Paused, the IDE evaluates `Wire.ReadValues` on the UI thread (the stop's, else the main
@@ -1691,7 +1691,7 @@ a server that was only slow. Nothing changes those variables afterwards; a test 
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
 log, history or Git signing and hooks. Nor does a test start the person's Passenger: the run sets `PASSENGER_START=headless`, so an agent's
 `--mcp-attach` with no window to join starts this build with `--headless` (a person's window on the headless platform,
-ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpTests.Attach.cs`). No test
+ended with its input) as the proxy's child, in the proxy's own PASSENGER_SETTINGS (`McpAttachTests`). No test
 reaches a registry through a Dockerfile it opens: the run sets `PASSENGER_BUILDKIT_CHECKS=off`, the default of Check
 Dockerfiles with BuildKit (`Containers.BuildKitChecks`), which `EngineChecksTests`' one test of it turns on in its window's
 Settings. Nor does a container run mount the person's user secrets: the run points `PASSENGER_USER_SECRETS` at its own
@@ -1803,7 +1803,7 @@ settle), so a settle between its keys can lose it. Find Usages, Safe Delete and 
 make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per location on the UI thread. A test that opens a dialog holds it to `DialogButtonsTests.Check`
 (centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
 programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
-Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests.WpfApp.cs` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
+Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpWpfAppTests` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
 the self-contained one at the tests' own target, whose runtime pack for this system the tests' project downloads
@@ -1814,9 +1814,9 @@ values by the pointer and the keys (`People`: an object holding another, and a l
 (`UiRulesTests.HoldsToPopupRules`, for a popup PopupHost does not show). `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
 ("rename" typed into its console renames the customer on the UI thread, which it names UI). `DebuggedAppsTests` (Alone)
 debug BindingErrorsApp and LiveTreeApp at once (a solution over both), choosing each one's Debug tab in turn, and
-`McpTests.DebuggedApps.cs` has an agent's app tools name one by its tab's name. `AvaloniaFramesTests` (Alone) profile,
+`McpAvaloniaAppTests` has an agent's app tools name one by its tab's name. `AvaloniaFramesTests` (Alone) profile,
 debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `DebugSessionsTests` (Alone) debug two
-programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpTests.Sessions.cs` has an agent name
+programs at once (`Pair`: First and Second, which share Shared/Counter.cs), and `McpSessionsTests` has an agent name
 which; its test of a session elsewhere has the adapter let its program go rather than killing the adapter, since on
 Windows a killed debugger takes its program with it. `ContainerDebuggingTests` (Alone, skipped saying why without a Linux
 engine) attach through Attach to Process to a program in a container they start themselves (`Turns`: a .NET 10 console
@@ -1828,20 +1828,20 @@ into `artifacts/container-tools` (seconds when up to date, a minute or two the f
 images and publishes for both. `ContainerProfilingTests` (Alone, skipped the same way) profile `Spins` (a program that
 spins in `Hot.Spin` and keeps `Keepsake`s, saying how many, made once a run, `Spins.Shared`) in containers they start:
 chosen in Attach Profiler's dialog, debugged there first, held at its start (let go once recording), and memory
-snapshots compared; `McpTests.ContainerProfile.cs` has an agent profile it with `attach` and `container`. `ContainerRunDebuggingTests`
+snapshots compared; `McpContainerProfileTests` has an agent profile it with `attach` and `container`. `ContainerRunDebuggingTests`
 (Alone) debug ContainerRunsTests' Compose solution (`ContainerRunsTests.Shop`, its Program.cs stopping in Main and in a
 request's handler), run it with Hot Reload, and in images mode build its apps here with `-p:PathMap=…=/src/` copied into
 aspnet:10.0 by Dockerfiles of their own, so no SDK image is pulled; a request is asked again while nothing listens yet,
 since the attach lets the service go a moment before Kestrel listens. `ContainerRunProfilingTests` (Alone) profile that
-solution, web spinning from its start (`Spinning`, which `McpTests.ContainerProfile.cs`' agent profiles too): web's hot
+solution, web spinning from its start (`Spinning`, which `McpContainerProfileTests`' agent profiles too): web's hot
 method leads web's own (a web app's idle threads wait in the runtime's code). `ContainerServicesTests` (Alone) act on one
 service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
-dead release feed), which then runs on unheld (`McpTests.ContainerDebugging.cs`' agent restarts and stops one with `container_action`);
+dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
-and `McpTests.ContainerDebugging.cs`' agent is refused a run that would replace the person's own cache, stops a run as it
+and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it
 comes up, gives up on `debug_start` once its containers are made and ends its `--mcp` IDE with a
 run up, each leaving no container of the project. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
@@ -1857,11 +1857,15 @@ Microsoft.WindowsDesktop.App.Ref is a `PackageDownload` at Directory.Packages.pr
 the tests check against the version the SDK's KnownFrameworkReference gives the target, failing with the version to
 pin when an SDK changes it; off Windows the app sets EnableWindowsTargeting and MarkupCompile builds it there too.
 
-The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
-project through it, others attach to a window with `--mcp-attach` (its sockets in the folder named for the run's
-`PASSENGER_SETTINGS`) and change what the window shows, once it lets them in and the person answers its questions.
+The MCP server's tests are agents using the SDK's own client, in classes over `McpRig` (each `Alone`, and those that
+work in its Sum project given `RestoredFolders`, taken as a test first names it): `McpTests` starts `Passenger --mcp`
+and works and debugs a project through it, `McpWindowTests` and `McpAttachTests` attach to a window with
+`--mcp-attach` (its sockets in the folder named for the run's `PASSENGER_SETTINGS`) and change what the window shows,
+once it lets them in and the person answers its questions, and `McpProcessesTests`, `McpIdeTests`,
+`McpLanguagesTests`, `McpRefactorTests`, `McpHotReloadTests`, `McpSessionsTests` and the container classes take the
+rest by what the tools reach; each checks a tool's answer, leaving the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
-client can drop its own when the call's token is cancelled. `McpTests.AvaloniaApp.cs` drive `tests/Debuggees/AgentApp`
+client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
 (headless, its popups windows of their own; `AgentAppFolder` writes and restores it once per class from
 `AvaloniaApp.HeadlessProject()`, which LiveTreeApp and BindingErrorsApp also use). The Windows on Arm VM runs a test
 filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's

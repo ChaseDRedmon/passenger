@@ -15,8 +15,14 @@ namespace Passenger.Tests;
 /// other, every caller following; what the agent reads back and what is on disk after, the project still building after
 /// the member moves and the server's refactorings (RefactoringDialogsTests build after each of the dialogs' own), and the
 /// person's Undo taking each change back whole.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpRefactorTests : McpRig, IClassFixture<RestoredFolders>
 {
+    public McpRefactorTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
+
     private const string Calc = "namespace Shop;\n\npublic static class Calc\n{\n    public static int Scale(int value, int factor, int unused) => value * factor;\n\n"
         + "    public static int Twice(int value) => Scale(value, 2, 0);\n\n    /// <summary>Never called.</summary>\n    public static int Unused(int value) => value + 1;\n}\n";
 

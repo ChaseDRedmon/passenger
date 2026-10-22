@@ -21,8 +21,14 @@ namespace Passenger.Tests;
 /// agent works there, and a window closed is found again at the next call. A window on another folder is never joined,
 /// and on a person's window an agent's open of another folder is theirs to allow; an agent let in on one folder is asked
 /// again once the person opens another there, and Settings keep a folder let in always from another window meanwhile.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpAttachTests : McpRig, IClassFixture<RestoredFolders>
 {
+    public McpAttachTests(RestoredFolders folders)
+        : base(folders)
+    {
+    }
+
     [AvaloniaFact]
     public void Cancelling_an_attach_during_initialization_closes_its_stream_and_a_queued_call_does_not_lose_the_join()
     {
@@ -249,7 +255,7 @@ public sealed partial class McpTests
         // A state of the agent's own, where no window of this run's listens, its path longer than the 104 bytes macOS allows a
         // socket's; the run starts Passenger headless (TestRun).
         string root = TestFolders.Create("mcp-state-");
-        madeFolders.Add(root);
+        DeleteAtEnd(root);
         string state = Path.Combine(root, new string('s', 60), new string('t', 60));
         string notes = Plain("mcp-start-");
         Process proxy = StartPassenger(["--mcp-attach"], notes, new() { ["PASSENGER_SETTINGS"] = state });
@@ -268,7 +274,7 @@ public sealed partial class McpTests
         }
         // The state's sockets are in a folder of its own, short whatever the state's path, never the run's or the person's.
         string sockets = McpHost.SocketFolderFor(state);
-        madeFolders.Add(sockets);
+        DeleteAtEnd(sockets);
         Assert.NotEqual(McpHost.SocketFolder, sockets);
         // A Passenger it starts is its child from the moment it starts, well before that Passenger listens anywhere.
         Assert.True(Started(proxy).Length == 0, $"Listing the tools started a Passenger: {string.Join("; ", Started(proxy).Select(Processes.Describe))}");
@@ -308,13 +314,13 @@ public sealed partial class McpTests
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has no SIGTERM for an agent's client to send");
         string root = TestFolders.Create("mcp-term-");
-        madeFolders.Add(root);
+        DeleteAtEnd(root);
         string state = Path.Combine(root, "state");
         string notes = Plain("mcp-term-");
         Process proxy = StartPassenger(["--mcp-attach"], notes, new() { ["PASSENGER_SETTINGS"] = state });
         McpClient client = await Connect(proxy, ["--mcp-attach"]);
         string sockets = McpHost.SocketFolderFor(state);
-        madeFolders.Add(sockets);
+        DeleteAtEnd(sockets);
         // Its first call starts Passenger on the folder, whose window asks; given up once that window listens.
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
         Task<CallToolResult> waiting = CallGivingUp(client, "workspace", new(), giveUp.Token);
@@ -342,7 +348,7 @@ public sealed partial class McpTests
     {
         string wanted = Plain("mcp-wanted-");
         string unrelated = Plain("mcp-unrelated-");
-        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = OwnState };
         first.Show();
         first.KeepLayout();
         first.KeepSettings();
@@ -581,7 +587,7 @@ public sealed partial class McpTests
     public void Settings_gives_each_agent_its_setup_for_this_copy_and_copies_it_whole()
     {
         string project = Plain("mcp-setup-");
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
         window.Show();
         window.OpenFolder(project);
         Ui.Settle();
@@ -750,7 +756,7 @@ public sealed partial class McpTests
     {
         string own = Plain("mcp-own-");
         string other = Plain("mcp-other-");
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = OwnState };
         window.Show();
         window.KeepLayout();
         window.KeepSettings();
@@ -785,14 +791,14 @@ public sealed partial class McpTests
     {
         string taken = Plain("mcp-taken-");
         string kept = Plain("mcp-kept-");
-        MainWindow settingsWindow = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow settingsWindow = new() { Width = 1200, Height = 800, StateFolder = OwnState };
         settingsWindow.Show();
         settingsWindow.KeepLayout();
         settingsWindow.KeepSettings();
         settingsWindow.OpenFolder(taken);
         Ui.Settle();
         settingsWindow.ApplySettings(settingsWindow.Settings with { AgentFolders = [PathNames.Canonical(taken)] });
-        MainWindow asking = new() { Width = 1200, Height = 800, StateFolder = settings };
+        MainWindow asking = new() { Width = 1200, Height = 800, StateFolder = OwnState };
         asking.Show();
         asking.KeepLayout();
         asking.KeepSettings();
@@ -835,29 +841,6 @@ public sealed partial class McpTests
     /// <summary>An edit of Notes.txt, as <see cref="Plain"/> writes it, that adds a word.</summary>
     private static Dictionary<string, object?> Note(string word) => new() { ["path"] = "Notes.txt", ["oldText"] = "notes", ["newText"] = $"notes {word}" };
 
-    /// <summary>A folder of the test's own with one text file, which opens with no language server to wait for.</summary>
-    private string Plain(string name)
-    {
-        string made = TestFolders.Create(name);
-        File.WriteAllText(Path.Combine(made, "Notes.txt"), "notes\n");
-        madeFolders.Add(made);
-        return made;
-    }
-
-    /// <summary>The window's question whether an agent may work there, once asked, held to the dialogs' rules.</summary>
-    private AgentAdmissionDialog Admission(MainWindow window, string what)
-    {
-        WaitFor(() => window.OwnedWindows.OfType<AgentAdmissionDialog>().Any(d => d.IsVisible), what);
-        return DialogButtonsTests.Check(window.OwnedWindows.OfType<AgentAdmissionDialog>().Single(d => d.IsVisible));
-    }
-
-    /// <summary>The agent's session ended, the window's loop running meanwhile.</summary>
-    private void Gone(McpClient client) => Await(Task.Run(async () =>
-    {
-        await client.DisposeAsync();
-        return true;
-    }), "the agent going");
-
     /// <summary>The process a window's socket is named for (<c>PID-WINDOW.sock</c>).</summary>
     private static int McpHostProcess(string socket) => int.Parse(Path.GetFileNameWithoutExtension(socket).Split('-')[0], System.Globalization.CultureInfo.InvariantCulture);
 
@@ -878,15 +861,5 @@ public sealed partial class McpTests
                 return false;
             }
         })];
-    }
-
-    /// <summary>Waits off the UI thread for a condition, failing with what Passenger said meanwhile.</summary>
-    private async Task Until(Func<bool> condition, string what)
-    {
-        TimeSpan limit = TimeSpan.FromMinutes(2);
-        if (!await Waiting.UntilAsync(condition, limit, Cancel, TimeSpan.FromMilliseconds(100)))
-        {
-            throw new TimeoutException($"Waited {limit.Scaled().TotalSeconds} s for {what}.{Said()}");
-        }
     }
 }

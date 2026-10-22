@@ -7,7 +7,8 @@ namespace Passenger.Tests;
 /// <summary>An agent's profile of a program in a container (attach with container): recorded there, its hot method named at
 /// its line from the PDB in the container, and the heap's types from a memory snapshot taken there. Skips, saying why,
 /// where no Linux engine runs.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpContainerProfileTests : McpRig
 {
     [Fact]
     public async Task An_agent_profiles_a_program_in_a_container_its_hot_method_at_its_line_and_its_heap()
@@ -41,7 +42,7 @@ public sealed partial class McpTests
         (string shop, string project) = ContainerRunProfilingTests.Shop("agent");
         // Whichever service it launches spins.
         ContainerRunsTests.Write(shop, "Api/Program.cs", ContainerRunProfilingTests.Spinning);
-        madeFolders.Add(shop);
+        DeleteAtEnd(shop);
         await using McpClient client = await Start(["--mcp", shop]);
         try
         {

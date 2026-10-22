@@ -8,7 +8,8 @@ namespace Passenger.Tests;
 /// service in a session of its own, answering with each one's state, and its container_action on a debugged service goes
 /// through the run; debug_processes lists a program in a container Passenger did not start, and debug_attach attaches to
 /// it there. Skipped, saying why, where no Linux engine runs.</summary>
-public sealed partial class McpTests
+[Collection(Alone.Name)]
+public sealed class McpContainerDebuggingTests : McpRig
 {
     /// <summary>debug_start of a compose configuration debugs each service; container_action's restart of a debugged one
     /// ends its session, restarts it held and attaches again, so it stops in Main again, and its stop ends the session
@@ -20,7 +21,7 @@ public sealed partial class McpTests
         CancellationToken test = TestContext.Current.CancellationToken;
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentdebug");
-        madeFolders.Add(shop);
+        DeleteAtEnd(shop);
         string Started(string service) => Docker.Run("inspect", "-f", "{{.State.StartedAt}}", ContainerRunsTests.Container(project, service));
         await using McpClient client = await Start(["--mcp", shop]);
         foreach (string app in (string[])["Web", "Api"])
@@ -105,7 +106,7 @@ public sealed partial class McpTests
         CancellationToken test = TestContext.Current.CancellationToken;
         await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
         (string shop, string project) = ContainerRunsTests.Shop("agentgone");
-        madeFolders.Add(shop);
+        DeleteAtEnd(shop);
         bool Up() => Docker.Said("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}") is { Length: > 0 };
         McpClient client = await Start(["--mcp", shop]);
         try
@@ -164,7 +165,7 @@ public sealed partial class McpTests
         // The headless IDE's log, whose last lines say how its start and end went.
         string LogTail()
         {
-            string log = Path.Combine(settings, "logs", "passenger.log");
+            string log = Path.Combine(OwnState, "logs", "passenger.log");
             if (!File.Exists(log))
             {
                 return "(no log)";

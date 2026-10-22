@@ -13,7 +13,7 @@ using Debuggees = Passenger.Tests.Debugging.Helpers.Debuggees;
 
 namespace Passenger.Tests;
 
-/// <summary>The Avalonia app McpTests' agents run and drive: tests/Debuggees/AgentApp (a counter's button, a name box that
+/// <summary>The Avalonia app McpAvaloniaAppTests' agents run and drive: tests/Debuggees/AgentApp (a counter's button, a name box that
 /// greets on Enter, a binding and a misspelt one, a drop-down and a list to scroll), written once for the class with a project file on
 /// the tests' own Avalonia and restored. Headless, so nothing of it shows on the screen. Its window's tag holds a lone '\r',
 /// which XamlIl counts as a line's end and the editor does not, so every place below it the app reports is a line on from
@@ -43,10 +43,13 @@ public sealed class AgentAppFolder : IDisposable
 
 /// <summary>Agents testing the Avalonia app Passenger runs as a person would: they look at it through the pictures it draws
 /// and its visual tree, click, type, press keys and scroll through its window's own input, read its failed bindings, and
-/// find Passenger's own controls by name.</summary>
-public sealed partial class McpTests
+/// find Passenger's own controls by name; and the app of the Debug tab they name, of two debugged at once.</summary>
+[Collection(Alone.Name)]
+public sealed class McpAvaloniaAppTests : McpRig, IClassFixture<AgentAppFolder>
 {
     private readonly string appFolder;
+
+    public McpAvaloniaAppTests(AgentAppFolder app) => appFolder = app.Folder;
 
     /// <summary>Run, driven and looked at, then profiled until it ends by itself once its window has been drawn
     /// ("--quit-once-drawn"), not for a time that a loaded machine's app may not have drawn in; and an app that draws nothing
@@ -338,15 +341,41 @@ public sealed partial class McpTests
         return $"MainWindow.axaml:{text.AsSpan(0, at).Count('\n') + 1}:{at - text.LastIndexOf('\n', at)}";
     }
 
-    /// <summary>What a tool answered in words, or an error's words.</summary>
-    private static string Text(JsonElement answer) => answer.ValueKind == JsonValueKind.String ? answer.GetString()! : answer.GetRawText();
-
-    private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
-
-    /// <summary>A PNG's width and height, from its header.</summary>
-    private static (int Width, int Height) PngSize(byte[] png)
+    /// <summary>An agent on a window debugging two Avalonia apps at once (<see cref="DebuggedAppsTests"/>' pair): its app tools act
+    /// on the app of the Debug tab it names, by the name debug_state lists, else on the chosen tab's; the failed bindings it
+    /// reads name the program each failed in.</summary>
+    [AvaloniaFact]
+    public void An_agents_app_tools_read_the_app_of_the_debug_tab_it_names_and_the_chosen_tabs_by_default()
     {
-        Assert.Equal([0x89, (byte)'P', (byte)'N', (byte)'G'], png[..4]);
-        return (BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16, 4)), BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20, 4)));
+        string apps = TestFolders.Create("apps-");
+        DeleteAtEnd(apps);
+        Restore.Run(DebuggedAppsTests.WriteTo(apps));
+        MainWindow window = AgentsWindow(apps);
+        DebuggedAppsTests.Debug(window, "BindingErrorsApp", "Caption");
+        DebuggedAppsTests.Debug(window, "LiveTreeApp", "Delete");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            string chosen = Text(Unasked(window, client, "app_tree"));
+            Assert.True(chosen.Contains("Delete", StringComparison.Ordinal) && !chosen.Contains("Caption", StringComparison.Ordinal),
+                $"The agent's app_tree naming no app was not the chosen tab's, LiveTreeApp's: {chosen}");
+            string named = Text(Unasked(window, client, "app_tree", new() { ["app"] = "BindingErrorsApp" }));
+            Assert.True(named.Contains("Caption", StringComparison.Ordinal) && !named.Contains("Delete", StringComparison.Ordinal),
+                $"The agent's app_tree naming BindingErrorsApp was not that app's: {named}");
+            JsonElement failures = Unasked(window, client, "app_binding_errors");
+            Assert.True(failures.EnumerateArray().Any(f => f.GetProperty("app").GetString() == "BindingErrorsApp" && f.GetProperty("path").GetString() == "Nmae"),
+                $"The first app's failed binding was not listed under its name: {failures}");
+            Assert.Equal("Stopped", Unasked(window, client, "stop").GetString());
+            WaitFor(() => !window.Debugger.IsDebugging, "both apps to end");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
     }
 }
