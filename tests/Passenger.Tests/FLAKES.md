@@ -8,6 +8,16 @@ pattern shows. A **race in the IDE** is fixed in the IDE; waiting longer or tryi
 To add one: a line under its date, newest first, naming the test, the run, the cause in a sentence and the commit
 that fixed it, in one of the forms below. A failure not yet understood goes in only once it is.
 
+## 2026-10-21
+
+- `ContainersTests`' no docker or engine not running, the Mac beside two agents' Docker test runs: "The IDE was not
+  quiet within 90 s", background work begun at ProcessRunner.cs:237, at its first settle. The test before it had closed
+  a window streaming a container's log, and the stream's end was heard only once this test had begun: the console's
+  word of it went to the earlier test's dispatcher, shut down by then, which dropped it, so the hold it was to let go of
+  stayed (an end heard late, put in by hand, did it every time). **Race in the IDE**, fixed in fe11c0e7 (work the window
+  will never run lets go of its hold; and a program whose output a job it left still holds is ended with that job after
+  ChildProcesses' grace, as `RunAsync`'s is, rather than holding the console for good).
+
 ## 2026-10-20
 
 - `TypeRenameTests`' form and partial class renames, the Mac, three times in four class runs once: "Form1.cs changed on
