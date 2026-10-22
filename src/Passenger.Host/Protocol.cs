@@ -238,6 +238,10 @@ public sealed record ProjectInsight
     /// <summary>The project file and its imports outside <see cref="Installed"/>, as they were when evaluated.</summary>
     public IReadOnlyList<Stamp> Inputs { get; init; } = [];
 
+    /// <summary>The folders its items' wildcards walked, as they were (<see cref="EvaluatedProject.Folders"/>'): a file come
+    /// into or gone from one changes its item counts.</summary>
+    public IReadOnlyList<Stamp> Folders { get; init; } = [];
+
     public double Seconds { get; init; }
 }
 

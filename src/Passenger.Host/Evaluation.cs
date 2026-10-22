@@ -127,7 +127,6 @@ internal static class Evaluation
         Project first = each[0];
         HashSet<string> excluded = OutsideRoots(first);
         List<EvaluatedItem> items = Items(each);
-        string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
         return new EvaluatedProject
         {
             Path = path,
@@ -145,15 +144,22 @@ internal static class Evaluation
                 .Select(Stamps.File)
                 .Concat(LookedFor(path, first))
                 .DistinctBy(s => s.Path, PathComparer)],
-            // A file the project takes from elsewhere (../Shared/*.cs) has its own folder stamped, not all under it: a file
-            // at the repository's top (a README packed with every project) would have the whole repository walked.
-            Folders = [.. folders, .. items
-                .Where(i => !i.Path.StartsWith(own, PathComparison))
-                .Select(i => Path.GetDirectoryName(i.Path)!)
-                .Distinct(PathComparer)
-                .Where(d => !folders.Any(f => PathComparer.Equals(f.Path, d)) && Directory.Exists(d))
-                .Select(Stamps.Folder)],
+            Folders = Folders(path, folders, items),
         };
+    }
+
+    /// <summary>The folders a project's files come from, stamped: those under its own (<see cref="Walked"/>, stamped before
+    /// it was evaluated), and the folder of each file it takes from elsewhere (../Shared/*.cs), not all under it: a file at
+    /// the repository's top (a README packed with every project) would have the whole repository walked.</summary>
+    internal static IReadOnlyList<Stamp> Folders(string path, IReadOnlyList<Stamp> walked, IEnumerable<EvaluatedItem> items)
+    {
+        string own = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
+        return [.. walked, .. items
+            .Where(i => !i.Path.StartsWith(own, PathComparison))
+            .Select(i => Path.GetDirectoryName(i.Path)!)
+            .Distinct(PathComparer)
+            .Where(d => !walked.Any(f => PathComparer.Equals(f.Path, d)) && Directory.Exists(d))
+            .Select(Stamps.Folder)];
     }
 
     private static Project Load(string path, ProjectCollection collection, EvaluationContext context, IReadOnlyDictionary<string, string> properties, string? framework)
@@ -220,7 +226,7 @@ internal static class Evaluation
 
     /// <summary>The project's files, every evaluation's, each once: of the file item types and those the project names as
     /// such, but those it hides (Visible false).</summary>
-    private static List<EvaluatedItem> Items(IReadOnlyList<Project> evaluations)
+    internal static List<EvaluatedItem> Items(IReadOnlyList<Project> evaluations)
     {
         List<EvaluatedItem> items = [];
         HashSet<(string, string)> seen = [];
@@ -320,7 +326,7 @@ internal static class Evaluation
     }
 
     /// <summary>Every folder under a project's that a wildcard would enter, stamped: each once whatever links reach it, and
-    /// none a link goes up to (<see cref="PathNames.FoldersUnder"/>), the nearest first up to the limit.</summary>
+    /// none a link goes up to (<see cref="PathNames.FoldersUnder"/>), the nearest first up to the limit, several read at once.</summary>
     internal static IReadOnlyList<Stamp> Walked(string folder) =>
-        [.. PathNames.FoldersUnder(folder, sub => Stamps.Counts(Path.GetFileName(sub), folder: true)).Take(FolderLimit).Select(Stamps.Folder)];
+        [.. PathNames.FoldersUnder(folder, sub => Stamps.Counts(Path.GetFileName(sub), folder: true)).Take(FolderLimit).AsParallel().AsOrdered().Select(Stamps.Folder)];
 }

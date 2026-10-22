@@ -12,8 +12,8 @@ namespace Passenger.Host;
 /// <summary>One project evaluated for the code help in its MSBuild files: the open files' text read in place of the disk's
 /// (each put in the evaluation's own collection under its path, so the project and whatever imports it read it), a
 /// multi-targeted project's first framework evaluated, and what the evaluation knows read out (properties and where each
-/// was set, items, targets, imports, the errors and warnings it logged). Answers are kept while what they read holds and
-/// the texts are the same, so asking again after a pause with nothing typed costs nothing.</summary>
+/// was set, items, targets, imports, the errors and warnings it logged). Answers are kept while the files they read and the
+/// folders their wildcards walked hold and the texts are the same, so asking again with nothing typed costs a look at those.</summary>
 internal static class Inspection
 {
     /// <summary>How many includes an item type or an element lists, and the longest value kept: enough to show, never the
@@ -38,7 +38,8 @@ internal static class Inspection
             {
                 (string Key, ProjectInsight Insight) kept = Cache[found];
                 Cache.RemoveAt(found);
-                if (kept.Insight.Inputs.All(Stamps.Holds))
+                // The folders at once: each is a read of the folder, thousands of them for a large project.
+                if (kept.Insight.Inputs.All(Stamps.Holds) && kept.Insight.Folders.AsParallel().All(Stamps.Holds))
                 {
                     Cache.Add(kept);
                     return kept.Insight;
@@ -90,6 +91,8 @@ internal static class Inspection
             // An open file whose XML does not read: evaluated from the disk's text, every place in it would be another text's.
             return Failed(asked, file, problems, began);
         }
+        // Stamped before they are read: a file come or gone once evaluation has begun changes the stamps too.
+        IReadOnlyList<Stamp> walked = Evaluation.Walked(Path.GetDirectoryName(asked.Project)!);
         List<Project> loaded = [];
         try
         {
@@ -104,7 +107,7 @@ internal static class Inspection
                 project = Load(asked.Project, collection, context, global, first);
                 loaded.Add(project);
             }
-            return Read(project, framework, file, [.. problems, .. logged.Found], Stopwatch.GetElapsedTime(began).TotalSeconds);
+            return Read(project, framework, file, walked, [.. problems, .. logged.Found], Stopwatch.GetElapsedTime(began).TotalSeconds);
         }
         catch (Exception error) when (error is InvalidProjectFileException or IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         {
@@ -166,7 +169,7 @@ internal static class Inspection
         _ => new InsightDiagnostic(true, null, error.Message, path, 0, 0),
     };
 
-    private static ProjectInsight Read(Project project, string? framework, Stamp file, List<InsightDiagnostic> diagnostics, double seconds)
+    private static ProjectInsight Read(Project project, string? framework, Stamp file, IReadOnlyList<Stamp> walked, List<InsightDiagnostic> diagnostics, double seconds)
     {
         List<string> roots = [.. Evaluation.OutsideRoots(project)];
         bool Installed(string path) => roots.Any(root => path.StartsWith(root, PathComparison));
@@ -271,6 +274,7 @@ internal static class Inspection
             Installed = roots,
             Inputs = [file, .. project.Imports.Select(i => i.ImportedProject.FullPath).Distinct(StringComparer.Ordinal).Where(i => !Installed(i)).Select(Stamps.File)
                 .Concat(Evaluation.LookedFor(project.FullPath, project)).DistinctBy(s => s.Path, StringComparer.Ordinal)],
+            Folders = Evaluation.Folders(project.FullPath, walked, Evaluation.Items([project])),
             Files = files.Paths,
             Seconds = seconds,
         };
