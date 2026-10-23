@@ -127,7 +127,7 @@ internal static class Docker
         // An IDE's in a test run of this machine whose process is gone: the state it labels with is that run's own.
         static bool IsDeadRuns(string state, string process) =>
             process.Split('-')[0] is var id && ContainerLabels.IsGone(process)
-            && state == ContainerLabels.StateValueOf(Path.Combine(Path.GetTempPath(), TestRun.Prefix + id, "settings"));
+            && state == ContainerLabels.StateValueOf(Path.Combine(Path.GetTempPath(), TestRun.Prefix + id + TestRun.Unindexed, "settings"));
     }
 
     /// <summary>Runs docker to its end off the caller's thread, which may be the window's: its continuations never wait on it.</summary>

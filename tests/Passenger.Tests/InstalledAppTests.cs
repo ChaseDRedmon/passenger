@@ -24,7 +24,9 @@ public sealed class InstalledAppTests : McpRig, IClassFixture<RestoredFolders>
         DeleteAtEnd(bundle);
         string app = Path.Combine(Directory.CreateDirectory(Path.Combine(bundle, "Passenger.app", "Contents")).FullName, "MacOS");
         await CopyBuild(app);
-        await RunsFromCopy(app, "wrote inside the app bundle, breaking its seal");
+        // Through dotnet, outside the bundle: macOS takes a program started from inside an app bundle whose seal does not hold
+        // (this clone has none) for a damaged app, and puts its refusal in front of the person.
+        await RunsFromCopy(app, "wrote inside the app bundle, breaking its seal", throughDotnet: true);
     }
 
     [Fact]
@@ -114,11 +116,13 @@ public sealed class InstalledAppTests : McpRig, IClassFixture<RestoredFolders>
 
     /// <summary>Has an agent ask the C# server of the app in a folder about a file, then checks that the server wrote its
     /// caches in its copy in the state's cache and nothing in the app's own server folder.</summary>
-    private async Task RunsFromCopy(string app, string wrote)
+    private async Task RunsFromCopy(string app, string wrote, bool throughDotnet = false)
     {
         string roslyn = Path.Combine(app, "roslyn");
         string[] before = Listing(roslyn);
-        await using (McpClient client = await Start(["--mcp", Folder], executable: Path.Combine(app, "Passenger")))
+        await using (McpClient client = throughDotnet
+            ? await Start([Path.Combine(app, "Passenger.dll"), "--mcp", Folder], executable: Dotnet.Host())
+            : await Start(["--mcp", Folder], executable: Path.Combine(app, "Passenger")))
         {
             // Answered by the server once it has loaded the project.
             Assert.Contains((await Call(client, "diagnostics", new() { ["path"] = "Helper.cs" })).EnumerateArray(),

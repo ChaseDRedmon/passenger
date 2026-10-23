@@ -294,6 +294,9 @@ aspire and requests scenes run `tools/site-shots/services`, an AppHost that need
 - **macOS**: a Unix socket path holds 104 bytes; `codesign` takes a dotted folder under `Contents/MacOS` for a bundle (so
   the web servers live in Resources); TMPDIR is reached through the /var link, so a build or restore of a test's project
   goes by its real path, and two spellings of one project restored at once collide.
+- **macOS's "damaged" dialog** comes from a Passenger.app whose seal no longer holds being read or started: a mounted disk image
+  whose file was replaced under it (`just package-mac` ejects one first) or a bundle written into (#450). Tests never start a
+  program inside an unsigned bundle, and the run's folder ends in `.noindex`, so Spotlight reads none of what a run makes.
 - **Linux**: file systems tell letter case apart, so a test of another letter case skips there.
 - **MSBuild**: a build through another spelling of a project's path deletes what the first wrote (IncrementalClean;
   the terminal's shell is given its folder as PWD, #413). It keeps no idle node unless the process's nice value is 0.

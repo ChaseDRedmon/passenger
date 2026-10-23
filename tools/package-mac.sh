@@ -277,6 +277,20 @@ xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000
 # volume gave the picture and its folder, which the compressed image keeps.
 python3 -I "$root/tools/dmg-layout.py" write "$mount" "$volume_name"
 detach
+# A mount of the image being replaced (Finder's, from opening it) reads the new file's bytes by its path as its own, and
+# Finder then calls its Passenger.app damaged: such a mount is ejected first, or the package stops saying so.
+if [ -f "$image" ]; then
+    for disk in $(hdiutil info -plist | python3 -I -c '
+import os, plistlib, sys
+for image in plistlib.loads(sys.stdin.buffer.read()).get("images", []):
+    path = image.get("image-path", "")
+    if os.path.exists(path) and os.path.samefile(path, sys.argv[1]):
+        print(min(entity["dev-entry"] for entity in image.get("system-entities", []) if "dev-entry" in entity))
+' "$image"); do
+        hdiutil detach "$disk" -quiet || fail "$image is mounted ($disk) and could not be ejected: eject it, then package again"
+        echo "package-mac: ejected $disk, a mount of the image being replaced" >&2
+    done
+fi
 # LZMA: about a quarter smaller than zlib or LZFSE (ULFO) to download; macOS reads it from 10.15, and the app needs 13.
 retry_hdiutil "$image" convert "$work/image.dmg" -format ULMO -o "$image"
 rm -f "$work/image.dmg"

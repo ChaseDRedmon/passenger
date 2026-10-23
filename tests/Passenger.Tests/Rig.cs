@@ -39,8 +39,12 @@ public sealed class TestRun : IDisposable
 {
     internal const string Prefix = "passenger-run-";
 
+    /// <summary>What ends the run's folder's name: Spotlight indexes the system's temporary folder but passes over a folder
+    /// so named, so it reads none of a run's thousands of files, nor the stand-in apps whose seals tests break.</summary>
+    internal const string Unindexed = ".noindex";
+
     /// <summary>The run's folder, named for the test process.</summary>
-    public static string Root { get; } = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public static string Root { get; } = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + Unindexed);
 
     /// <summary>The IDE's state folder for the whole run.</summary>
     public static string Settings => Path.Combine(Root, "settings");
@@ -95,7 +99,8 @@ public sealed class TestRun : IDisposable
         foreach (string left in Directory.EnumerateDirectories(Path.GetTempPath(), Prefix + "*"))
         {
             // A run still going has its process; one killed has none, and only an id reused since keeps its folder.
-            if (int.TryParse(Path.GetFileName(left)[Prefix.Length..], out int id) && (id == Environment.ProcessId || !Processes.IsRunning(id)))
+            if (int.TryParse(Path.GetFileName(left)[Prefix.Length..].Replace(Unindexed, string.Empty, StringComparison.Ordinal), out int id)
+                && (id == Environment.ProcessId || !Processes.IsRunning(id)))
             {
                 TestFolders.Delete(left);
             }

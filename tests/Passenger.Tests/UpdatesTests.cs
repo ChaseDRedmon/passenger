@@ -583,6 +583,8 @@ public sealed class UpdatesTests : IClassFixture<UpdatesTests.DiskImages>, IDisp
         string disk = Path.Combine(folder, "volume.dmg");
         Tool("/usr/bin/hdiutil", "create", "-size", "20m", "-fs", "HFS+", "-volname", "Passenger Tests", "-ov", disk, "-quiet");
         Tool("/usr/bin/hdiutil", "attach", disk, "-nobrowse", "-noautoopen", "-mountpoint", volume, "-quiet");
+        // Spotlight indexes a volume whatever folder it is mounted in, unless it holds this marker (TestRun.Unindexed's why).
+        File.WriteAllText(Path.Combine(volume, ".metadata_never_index"), string.Empty);
         try
         {
             AppBundle copy = new(images, folder, volume);
