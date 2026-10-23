@@ -11,15 +11,14 @@ namespace Passenger.App.Mcp;
 public sealed partial class PassengerTools
 {
     [McpServerTool(Name = "hot_reload", Title = "Apply Hot Reload changes", Destructive = true), Description(
-        "Applies the edits made since the launch or the last apply to the running program, as Apply Hot Reload Changes does: " +
-        "a debug_start launch, paused or running (Edit and Continue), or a run with Hot Reload (saved for dotnet watch). The " +
-        "edits are the editors', saved or not. Returns the result (applied, nothingToApply, restartNeeded, errors, failed), " +
-        "what it said, what was updated, each edit it could not apply or compile (file, line, ENC id), and whether the program " +
-        "was restarted (restart true, or Settings' Always restart for a rude edit, on by default) and the new session. " +
-        "debug_continue and debug_step also apply edits made while paused.")]
+        "Applies the editors' edits (saved or not) since the launch or the last apply to the running program, as Apply Hot " +
+        "Reload Changes does: a debug_start launch, paused or running (Edit and Continue), or a run with Hot Reload (saved for " +
+        "dotnet watch). Returns the result (applied, nothingToApply, restartNeeded, errors, failed), what it said and updated, " +
+        "each edit it could not apply (file, line, ENC id), and whether the program restarted, with its new session. " +
+        "debug_continue and debug_step apply edits made while paused too.")]
     public Task<HotReloadInfo> HotReload(
         [Description("Restart when an edit needs it (true) or keep the code running (false); Settings' choice by default")] bool? restart = null,
-        [Description("After a restart, how long to wait for a stop (an app with a window: its UI)")] int waitSeconds = 30,
+        int waitSeconds = 30,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugController debugger = Session.Debug;

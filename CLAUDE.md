@@ -1773,14 +1773,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   OpenCode 1's opencode.json with a 10-minute timeout, which progress starts over, and OpenCode 2's `mcp.servers` with
   Code Mode off and a 30-minute execution timeout, which progress does not: checked against both by hand, #255) naming
   this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy, and says when `--mcp FOLDER` (asks
-  nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent to
-  begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
+  nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent the parameters
+  several tools share, to begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
-  angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
+  angle brackets never unicode escapes), and every tool is `McpHost.Lean`'s (no null default or null type, no title in its annotations). An
   agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpDebuggingTests until
-  Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call), so it says each thing once: the
-  element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
-  own write in the instructions; lines and columns from 1 never per parameter. Nor does it hold a tool another covers (the
+  Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call, which 0.2.0 reached at 61,990
+  bytes; its folds and trim below took it to 46,321, so 15.7 KB are free), so it says each thing once: the element query
+  (`control`, `filter`) in `app_tree`'s description, and every app_ tool's `app` and `window` in `app_windows`'; the wait
+  for an agent's own write, and the parameters several tools share (`configuration`, `arguments`, `waitSeconds`,
+  `session`, `resource`), in the instructions; a tool's title once (`Lean` drops the SDK's copy in its annotations); a
+  parameter described only where its tool's description does not already name what it takes; lines and columns from 1
+  never per parameter. Nor does it hold a tool another covers (the
   owner's call, 0.2.0): `open` shows a file at a line and column, the app_ tools with `app` ide picture Passenger's own
   windows and type into its editor at the caret, `ide_action` saves (`app.saveAll`), `hierarchy` has implementations,
   `debug_continue` runs to a line, `debug_evaluate` sets a `value`, `breakpoint_set` and `nuget_install` take `remove`, and

@@ -31,10 +31,12 @@ public sealed class McpDebuggingTests : McpRig, IClassFixture<RestoredFolders>
         Assert.True(testsRun.Contains("Testing Platform", StringComparison.Ordinal) && testsRun.Contains("xUnit v3", StringComparison.Ordinal),
             $"tests_run tells an agent its tests run otherwise than they do: {testsRun}");
         // What every session pays to read says each thing once: the app_ tools' element query in app_tree's description alone
-        // (it was in nine tools), and no optional parameter's null default or type; the list was 69 KB, held under 60 KB until
-        // Aspire's resources and telemetry took it to 60.6 KB, and is held under 62 KB (the owner's call).
+        // (it was in nine tools), no optional parameter's null default or type, and a tool's title not again in its annotations;
+        // the list was 69 KB, held under 60 KB until Aspire's resources and telemetry took it to 60.6 KB, and is held under
+        // 62 KB (the owner's call), which 0.2.0 reached before its tools another covered were folded and its words trimmed.
         Assert.Equal(["app_tree"], tools.Where(t => JsonSerializer.Serialize(t.ProtocolTool).Contains("#Panel/Button", StringComparison.Ordinal)).Select(t => t.Name));
         Assert.DoesNotContain(tools, t => SaysNothing(t.ProtocolTool.InputSchema));
+        Assert.DoesNotContain(tools, t => t.ProtocolTool.Annotations?.Title is not null);
         int listed = tools.Sum(t => JsonSerializer.Serialize(t.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions).Length);
         Assert.True(listed < 62_000, $"The tools an agent reads as each session starts take {listed} bytes");
 
