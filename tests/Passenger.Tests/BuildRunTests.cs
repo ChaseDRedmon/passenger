@@ -988,7 +988,14 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             // Its nodes end with it: what it writes is the same, and nothing of it outlives the test.
             window.KeyTextInput($"\"{Dotnet.Host()}\" build -nodeReuse:false && echo built-0 || echo built-1");
             Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => Said(shell) is not null, $"the terminal's build to end:\n{TerminalTests.Screen(shell)}", TimeSpan.FromMinutes(3));
+            try
+            {
+                Ui.WaitFor(() => Said(shell) is not null, "the terminal's build to end", TimeSpan.FromMinutes(3));
+            }
+            catch (TimeoutException waited)
+            {
+                throw new TimeoutException($"{waited.Message}. The terminal shows:\n{TerminalTests.Screen(shell)}", waited);
+            }
             Assert.True(Said(shell) == "built-0", $"The build typed in the terminal failed:\n{TerminalTests.Screen(shell)}");
 
             RunConfigurationsDialog dialog = DialogButtonsTests.Check(window.ShowRunConfigurations());
