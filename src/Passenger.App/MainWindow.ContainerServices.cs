@@ -52,9 +52,10 @@ public partial class MainWindow
     private string lastServiceWindow = ToolWindowIds.Containers;
 
     /// <summary>What a service action acts on: a .NET service of a run (<paramref name="Run"/>, by its <paramref name="Name"/>
-    /// there), one that runs now (<paramref name="Runs"/>) or an AppHost's project resource that does not, which Debug and
-    /// Run without Debugger start (<paramref name="Resource"/> as the Aspire window chose it, else found by its name as the
-    /// action runs); or why there is none.</summary>
+    /// there), one among its run's services now (<paramref name="Runs"/>: running, or a container run's left unstarted, which
+    /// its actions start) or an AppHost's project resource that does not run, which Debug and Run without Debugger start
+    /// (<paramref name="Resource"/> as the Aspire window chose it, else found by its name as the action runs); or why there is
+    /// none.</summary>
     private sealed record ServiceAim(ServiceRun? Run, string? Name, bool Runs, AspireSelection? Resource, string? WhyNot)
     {
         public static ServiceAim Refused(string why) => new(null, null, false, null, why);
@@ -128,7 +129,7 @@ public partial class MainWindow
     /// (<see cref="BuildRunController.ServiceOf"/>); an AppHost's resource that does not run, Debug and Run without Debugger
     /// starting it where it advertises a start, Attach and Profile needing it running.</summary>
     private string? WhyNotOn(string id, ServiceAim aim) =>
-        aim.WhyNot ?? (aim.Runs ? buildRun.ServiceOf(aim.Run!, aim.Name).WhyNot
+        aim.WhyNot ?? (aim.Runs ? aim.Run is ContainerRun ? buildRun.WhyNotOnService(id, aim.Name) : buildRun.ServiceOf(aim.Run!, aim.Name).WhyNot
             : id is not (AppActions.ServiceDebug or AppActions.ServiceRun) ? $"{aim.Name} of {aim.Run!.Name} is not running: Debug Service starts it"
             : aim.Resource is { } chosen && StartOf(chosen.Resource) is null ? $"{aim.Name} of {aim.Run!.Name} advertises no start command"
             : null);
@@ -232,7 +233,8 @@ public partial class MainWindow
         }
         if (ServiceOfRow(row) is { } service && buildRun.ServiceOfRun(service).Service is not null)
         {
-            if (action == "restart")
+            // One the run left unstarted has no container to start: the run starts it, as its Restart does.
+            if (action == "restart" || action == "start" && buildRun.LeftUnstarted(service))
             {
                 return await buildRun.RestartServiceAsync(service);
             }

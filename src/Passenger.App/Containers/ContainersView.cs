@@ -123,7 +123,7 @@ public sealed class ContainersView : DockPanel
             Item(AppActions.ContainerRemove),
         ]);
         empty = new TextBlock { Classes = { "emptyText" }, Text = "Reading what the engine holds…" };
-        nothingChosen = new TextBlock { Classes = { "emptyText" }, Text = "Choose a container or a Compose project to see its log and stats" };
+        nothingChosen = new TextBlock { Classes = { "emptyText" }, Text = NothingChosen };
 
         StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (string name in RunWindows.Tabs.Where(tab => tab is LogTab or StatsTab or FilesTab or DetailsTab or TelemetryTab))
@@ -179,6 +179,10 @@ public sealed class ContainersView : DockPanel
 
     /// <summary>The label Aspire's orchestrator (DCP) puts on every container it makes.</summary>
     private const string OrchestratorLabel = "com.microsoft.developer.usvc-dev.uid";
+
+    /// <summary>The .NET services the folder's container run of a Compose project (by its name) left unstarted, as its
+    /// configuration says Don't start, listed under it as not started; none for any other project.</summary>
+    public Func<string, IReadOnlyList<string>>? UnstartedOf { get; set; }
 
     /// <summary>The AppHost a container is of (its key and name), when the folder runs one whose resources name it.</summary>
     public Func<ContainerInfo, (string Key, string Name)?>? AppHostOf { get; set; }
@@ -363,6 +367,21 @@ public sealed class ContainersView : DockPanel
                             rows.AddRange(containers.Select(c => ContainerRowOf(c, 3)));
                         }
                     }
+                    // What its run left unstarted has no container yet, so the engine lists none: said not started, as an
+                    // AppHost's resource is.
+                    foreach (string service in UnstartedOf?.Invoke(project.Name) ?? [])
+                    {
+                        if (project.Services.All(s => s.Service != service))
+                        {
+                            rows.Add(new ContainerRow(ContainerRowKind.Service, 2, $"service:{project.Name}/{service}", service)
+                            {
+                                Detail = NotStarted,
+                                Project = project,
+                                Service = service,
+                                LeftUnstarted = true,
+                            });
+                        }
+                    }
                 }
             });
         }
@@ -458,6 +477,11 @@ public sealed class ContainersView : DockPanel
         }
     }
 
+    private const string NothingChosen = "Choose a container or a Compose project to see its log and stats";
+
+    /// <summary>How a service its run left unstarted is said, as an AppHost's resource so left is.</summary>
+    public const string NotStarted = Aspire.AspireAppRun.NotStarted;
+
     private static ContainerRow ContainerRowOf(ContainerInfo container, int depth) =>
         new(ContainerRowKind.Container, depth, $"container:{container.Name}", container.Name) { Detail = container.Image, Container = container };
 
@@ -483,7 +507,9 @@ public sealed class ContainersView : DockPanel
         ContainerRow? row = Chosen;
         bool container = row?.Container is not null;
         bool detailed = row is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } && row.Containers.Count > 0;
-        bool streams = shown && row is { Kind: ContainerRowKind.Project or ContainerRowKind.AppHost or ContainerRowKind.Service or ContainerRowKind.Container };
+        // A service its run left unstarted has no container to stream from: the pane says what starts it.
+        bool streams = shown && row is { Kind: ContainerRowKind.Project or ContainerRowKind.AppHost or ContainerRowKind.Service or ContainerRowKind.Container, LeftUnstarted: false };
+        nothingChosen.Text = row is { LeftUnstarted: true } ? ContainerCommands.NotStarted(row) : NothingChosen;
         TelemetrySource? telemetry = (row?.Project?.Name ?? row?.Container?.Project) is { } project ? TelemetryOf?.Invoke(project) : null;
         tabs[FilesTab].IsVisible = container;
         tabs[DetailsTab].IsVisible = detailed;
@@ -585,7 +611,7 @@ public sealed class ContainersView : DockPanel
             Expands = row.Expands,
             Expanded = row.Expanded,
             State = runs ? StateOf(containers) : RunState.None,
-            StateTip = string.Join(", ", containers.Select(c => $"{c.Name}: {c.Status}")),
+            StateTip = row.LeftUnstarted ? $"{NotStarted}: {ContainerCommands.StartsIt}" : string.Join(", ", containers.Select(c => $"{c.Name}: {c.Status}")),
             Health = serves ? containers.Select(c => c.Health).FirstOrDefault(h => h is not null) : null,
             Links = serves ? [.. containers.SelectMany(c => c.Ports).Distinct().Take(3).Select(port =>
                 new RunLink(port.ToString(), containers.Any(c => c.IsRunning) ? port.LinkOn(State?.Endpoint) : null))] : [],

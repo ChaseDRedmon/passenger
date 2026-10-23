@@ -44,7 +44,8 @@ public partial class MainWindow
         actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = containersView!.RefreshAsync()));
         actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(Chosen()!))
         {
-            WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } ? null : "No Compose service is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } chosen
+                ? chosen.LeftUnstarted ? ContainerCommands.NotStarted(chosen) : null : "No Compose service is chosen in the Containers window",
             Works = AppActions.ContainerScale,
         });
         actions.Add(new IdeAction(AppActions.ContainerPrune, "Prune…", "Containers", context => _ = PruneAsync(Chosen()))
@@ -70,6 +71,7 @@ public partial class MainWindow
         view.ActionRequested += (_, action) => Request(action);
         view.LinkClicked += (_, link) => OpenLink(link);
         view.TelemetryOf = project => session.ContainerRun is { } run && run.Plan.ProjectName == project ? run.Telemetry : null;
+        view.UnstartedOf = project => buildRun.Containers is { } run && run.Plan.ProjectName == project ? run.Unstarted : [];
         view.StateRead += (_, state) => ShowEngine(state);
         view.Files.Opened += (_, copy) => OpenCopy(copy);
         view.Files.Problem += (_, problem) => status.Text = problem;

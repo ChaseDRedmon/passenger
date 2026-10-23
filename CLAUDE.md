@@ -776,7 +776,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   JSON's flow list, Compose 2.24 on), since a
   restart otherwise publishes another. A configuration whose every service is marked Don't start runs nothing, saying so
   (`up` given none would start them all); a .NET service marked Don't start that a started one depends on is left out of
-  the override's .NET part, Compose starting it from its own image, which the run says (`ContainerPlan.Notes`). Before `up`,
+  the override's .NET part, Compose starting it from its own image, which the run says (`ContainerPlan.Notes`). A .NET
+  service marked Don't start is started later in its run, as an AppHost's resource is (`ServiceRun.LeftUnstarted`,
+  `StartLater`; `BuildRunController.StartLaterAsync`): the Containers window lists it under its project, no container yet,
+  as Not started (`ContainersView.UnstartedOf`, `ContainerRow.LeftUnstarted`, every container action greyed saying so but
+  Start), and its Debug, Run without Debugger, Profile and Start (the window's rows, the gutter, an agent's `run`,
+  `debug_start` or `profile` naming it as `resource`) start it held as chosen (for the debugger, unheld, or once for the
+  profiler, `ContainerRun.heldOnce`), Attach refusing: its project built here first in fast mode (fast mode's refusal of
+  it, `DotnetService.Unfit`, kept from the plan until then), the person's own containers of it asked about as `up`'s are,
+  then the plan runs it from Passenger's build (`ContainerPlan.StartingLater`: the override's `Writer` given the plan's
+  .NET services, so its stage, entrypoint, mounts, certificate and hold are the others') and the run's restart makes it
+  (`up --detach --no-deps --force-recreate`, its image built first as deployed by `--build`, its dependencies left as the
+  run has them), attached to where held as a restart attaches. From then on it is the run's: Stop takes it down, Rerun
+  builds and restarts it, and a Rerun run whole or a start of its configuration that ends its run starts it again
+  (`ContainerRun.StartedLater`, carried by `StartContainersAsync`). Before `up`,
   containers of its project of the services it makes (`ContainerPlan.Touched`: those it starts and what they depend on)
   that lack this process's labels are the person's own, which `up` would make again and Stop then remove: the person is
   asked (`ReplaceContainersDialog`: Replace Them, after which they are the run's, or Cancel), and a run an agent's call
@@ -2238,9 +2251,12 @@ method leads web's own (a web app's idle threads wait in the runtime's code). `C
 service of that solution's run from the Containers window's rows and the gutter, the others never restarted (web published on
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
-dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`,
-reads the run in `workspace`, runs a service as a resource and reads its log, and, a second compose file in Web/ making
-web two configurations', is refused a start of it until one is chosen, then starts web and api alone as resources);
+dead release feed), which then runs on unheld, and start both marked Don't start later from their rows (web's Run, api's
+Debug stopping in its Main), Rerun restarting web's changed build as the run's (`McpContainerDebuggingTests`' agent restarts
+and stops one with `container_action`, reads the run in `workspace`, runs a service as a resource and reads its log, and, a
+second compose file in Web/ making web two configurations', is refused a start of it until one is chosen, then starts web
+and api alone as resources; and its `debug_start` of web, marked Don't start by a .dcproj's launch profile, starts it later
+in that run, stopped in its Main, Stop leaving no container);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it

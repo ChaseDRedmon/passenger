@@ -13,8 +13,9 @@ public sealed record StartUnderWay(Working Work, Task Ended, IReadOnlyCollection
 /// every kind of run: the held start's attach (a session per service held, all at once, while the run comes up), Debug
 /// (restarted held and attached, kept for the run's restarts and a Rerun), Attach (as it runs), Run without Debugger (its
 /// session let go, unheld from its next restart), Restart (its session ended first, held again where debugged and attached
-/// again), and the restart for an edit Hot Reload cannot apply (only the services whose project holds it). What a kind
-/// does its own way (how a service restarts, where its program is) is the run's.</summary>
+/// again), and the restart for an edit Hot Reload cannot apply (only the services whose project holds it); of one the run
+/// left unstarted (Don't start), Debug, Run and Profile start it later (<see cref="StartLaterAsync"/>) and Attach refuses.
+/// What a kind does its own way (how a service restarts, where its program is) is the run's.</summary>
 public sealed partial class BuildRunController
 {
     /// <summary>What a person chose for each .NET service of a configuration's run as it ran (debugged, or run without the
@@ -212,7 +213,83 @@ public sealed partial class BuildRunController
         {
             return (null, name is null ? $"No .NET service of {run.Name} is chosen" : $"{name} is not a .NET service of {run.Name}");
         }
-        return service.Starts ? (service, null) : (null, $"{run.Name} does not start {name}");
+        // One it left unstarted is acted on too: its Debug, Run and Profile start it later.
+        return service.Starts ? (service, null)
+            : run.LeftUnstarted(service) ? run.WhyNotStartedLater(service) is { } unfit ? (null, unfit) : (service, null)
+            : (null, $"{run.Name} does not start {name}");
+    }
+
+    /// <summary>Why one of a service's actions (<see cref="AppActions.ServiceDebug"/> and the rest) cannot act on a .NET service
+    /// of the container run under way now, or null: Attach has nothing to reach in one the run left unstarted.</summary>
+    public string? WhyNotOnService(string action, string? name) => ServiceOfRun(name) is ({ } service, null)
+        ? action == AppActions.ServiceAttach && Containers!.LeftUnstarted(service) ? NotStarted(Containers, service.Name) : null
+        : ServiceOfRun(name).WhyNot;
+
+    /// <summary>Whether the container run under way left a .NET service unstarted (marked Don't start), not started since.</summary>
+    public bool LeftUnstarted(string name) => Containers is { } run && run.ServiceNamed(name) is { } service && run.LeftUnstarted(service);
+
+    /// <summary>How a service the run left unstarted is said where an action has nothing to reach in it.</summary>
+    private static string NotStarted(ServiceRun run, string name) =>
+        $"{name} of {run.Name} is not started: its configuration says Don't start; its Run, Debug or Profile starts it";
+
+    /// <summary>A .NET service the run left unstarted (Don't start) started later by its action, the rest left as they run:
+    /// its project built here first where its program runs that build (fast mode; as deployed its image is built as it
+    /// starts), containers of it Passenger did not make asked about first, then started held as chosen (once for the profiler
+    /// when <paramref name="profiled"/>) and attached to where held, as a restart attaches; the run's from then on (Stop takes
+    /// it down, Rerun keeps it started). Null once started, else why not.</summary>
+    private async Task<string?> StartLaterAsync(ServiceRun run, IRunService service, Working work, string why, bool profiled = false)
+    {
+        if (run.WhyNotStartedLater(service) is { } unfit)
+        {
+            return unfit;
+        }
+        if (run.BuildsBeforeRestart)
+        {
+            work.Say($"Building {Path.GetFileNameWithoutExtension(service.Project)}…");
+            BuildOutcome built;
+            using (work.Stopping.Register(() => UiThread.Post(() =>
+            {
+                if (!session.IsEnded)
+                {
+                    session.Builder.Stop();
+                }
+            })))
+            {
+                built = await BuildProjectsAsync([service.Project]);
+            }
+            work.Stopping.ThrowIfCancellationRequested();
+            if (!built.Succeeded)
+            {
+                return built.Message;
+            }
+        }
+        if (run is ContainerRun containers
+            && await ReplacesOthersAsync($"{service.Name} of {containers.Name}", containers.Plan with { Touched = [service.Name] }, containers.Engine, work) is { } kept)
+        {
+            return kept;
+        }
+        if (run.IsStopped || session.IsEnded)
+        {
+            throw new OperationCanceledException(work.Stopping);
+        }
+        if (run.StartLater(service, profiled) is { } refused)
+        {
+            return refused;
+        }
+        work.Say($"Starting {service.Name}…");
+        string? failed = await RestartServicesAsync(run, [service], work, why);
+        if (failed is not null || !profiled)
+        {
+            return failed;
+        }
+        // Held for the profiler alone, it waits at its start until the recording lets it go: one that cannot be recorded is
+        // made again unheld, rather than waiting there for good.
+        if (await AttachAsync(run, service, Task.CompletedTask, [], work.Stopping, RunStart.Profile) is not { } unrecorded)
+        {
+            return null;
+        }
+        string? unheld = await run.RestartAsync([service], CancellationToken.None, "to run without the profiler, which could not attach");
+        return $"{unrecorded}; {service.Name} {(unheld is null ? "restarted to run without the profiler" : $"could not be restarted to run without it: {unheld}")}";
     }
 
     /// <summary>Debug of one .NET service of the container run under way (<see cref="DebugServiceAsync(ServiceRun, string)"/>).</summary>
@@ -220,7 +297,8 @@ public sealed partial class BuildRunController
 
     /// <summary>Debug of one .NET service of a run, the others left as they run: its session ended, its program made again
     /// held at its start, and a session attached in a Debug tab of its own, so its startup stops at its breakpoints; kept for
-    /// the run's restarts and a Rerun until chosen otherwise. Null once attached, else why not.</summary>
+    /// the run's restarts and a Rerun until chosen otherwise. One the run left unstarted is started now, held. Null once
+    /// attached, else why not.</summary>
     public Task<string?> DebugServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ServiceDebug, $"Restarting {name} to debug it…", async (run, service, work) =>
     {
         Choose(run, name, debug: true);
@@ -228,17 +306,24 @@ public sealed partial class BuildRunController
         await run.HoldAsync(name, RunStart.Debug, work.Stopping);
         parts.Dock.Show(ToolWindowIds.Debug);
         parts.Views.Debug.ShowTab(console: true);
-        return Done(await RestartServicesAsync(run, [service], work, "to debug it from its start"),
-            $"Debugging {name} of {run.Name} from its start; the rest run on as they were");
+        // One the run left unstarted is started now, held, as a restart would hold it.
+        return run.LeftUnstarted(service)
+            ? Done(await StartLaterAsync(run, service, work, "to debug it from its start"), $"Debugging {name} of {run.Name} from its start, started now; the rest run on as they were")
+            : Done(await RestartServicesAsync(run, [service], work, "to debug it from its start"), $"Debugging {name} of {run.Name} from its start; the rest run on as they were");
     });
 
     /// <summary>Attach to one .NET service of the container run under way (<see cref="AttachServiceAsync(ServiceRun, string)"/>).</summary>
     public Task<string?> AttachServiceAsync(string name) => AttachServiceAsync(Containers, name);
 
     /// <summary>Attach to one .NET service of a run as it runs, no restart: its startup has run already, which is said
-    /// (Debug restarts it held to stop there). A restart attaches to it again. Null once attached, else why not.</summary>
+    /// (Debug restarts it held to stop there). A restart attaches to it again. One the run left unstarted has no program to
+    /// reach, which is said. Null once attached, else why not.</summary>
     public Task<string?> AttachServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ServiceAttach, $"Attaching the debugger to {name}…", async (run, service, work) =>
     {
+        if (run.LeftUnstarted(service))
+        {
+            return Said(NotStarted(run, name));
+        }
         await EndSessionsAsync(run, [service]);
         run.AttachedRunning.Add(name);
         parts.Dock.Show(ToolWindowIds.Debug);
@@ -259,7 +344,8 @@ public sealed partial class BuildRunController
     /// <summary>Run without debugger of one .NET service of a run, kept as Debug's choice is: its session let go (detached,
     /// not restarted), the program running on as it is, held at its start, its next restart making it anew unheld; or, where
     /// its kind restarts it so (<see cref="ServiceRun.RestartsToRunWithoutDebugger"/>), restarted unheld at once, only when it
-    /// is held or debugged. One running unheld with nothing debugging it is left as it is, said. Null once done, else why not.</summary>
+    /// is held or debugged. One running unheld with nothing debugging it is left as it is, said; one the run left unstarted
+    /// is started now, unheld. Null once done, else why not.</summary>
     public Task<string?> RunServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ServiceRun,
         $"Running {name} without the debugger…", async (run, service, work) =>
     {
@@ -268,6 +354,10 @@ public sealed partial class BuildRunController
         Choose(run, name, debug: false);
         run.AttachedRunning.Remove(name);
         await run.HoldAsync(name, null, work.Stopping);
+        if (run.LeftUnstarted(service))
+        {
+            return Done(await StartLaterAsync(run, service, work, "to run it"), $"{name} of {run.Name} started, without the debugger; the rest run on as they were");
+        }
         if (!held && !debugged)
         {
             return Done(null, $"{name} of {run.Name} already runs without the debugger: nothing restarted");
@@ -284,15 +374,19 @@ public sealed partial class BuildRunController
     public Task<string?> RestartServiceAsync(string name) => RestartServiceAsync(Containers, name);
 
     /// <summary>Restart of one .NET service from its window or an agent, through its run: its session ended first,
-    /// restarted (held again where it is debugged), and attached to again. Null once done, else why not.</summary>
+    /// restarted (held again where it is debugged), and attached to again; one the run left unstarted started, as its Start
+    /// in the Containers window asks. Null once done, else why not.</summary>
     public Task<string?> RestartServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ContainerRestart, $"Restarting {name}…", async (run, service, work) =>
-        Done(await RestartServicesAsync(run, [service], work, "restarted from its window"), $"{run.Name}: restarted {name}"));
+        run.LeftUnstarted(service)
+            ? Done(await StartLaterAsync(run, service, work, "started from its window"), $"{run.Name}: started {name}")
+            : Done(await RestartServicesAsync(run, [service], work, "restarted from its window"), $"{run.Name}: restarted {name}"));
 
     /// <summary>Profile of one .NET service of a run as it runs: its program where its kind runs it, recorded by the one
-    /// recording of a service (<see cref="BuildRunParts.ProfileService"/>), which Stop, a restart and Rerun read first. Null
-    /// once it records, else why not (said).</summary>
+    /// recording of a service (<see cref="BuildRunParts.ProfileService"/>), which Stop, a restart and Rerun read first; one
+    /// the run left unstarted started now, held for the profiler until it records. Null once it records, else why not (said).</summary>
     public Task<string?> ProfileServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ServiceProfile, $"Attaching the profiler to {name}…",
-        async (run, service, work) => await AttachAsync(run, service, Task.CompletedTask, [], work.Stopping, RunStart.Profile, asItRuns: true) is { } refused
+        async (run, service, work) => await (run.LeftUnstarted(service) ? StartLaterAsync(run, service, work, "to profile it from its start", profiled: true)
+            : AttachAsync(run, service, Task.CompletedTask, [], work.Stopping, RunStart.Profile, asItRuns: true)) is { } refused
             ? Said(refused) : null);
 
     /// <summary>Ends what reaches one .NET service of the container run from here (its session, the profiler's recording),
