@@ -1921,6 +1921,71 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         return (items, read, frame);
     }
 
+    /// <summary>Typing on into an open completion list narrows it off the UI thread and shows it in the rows the list has:
+    /// as each letter narrows a statement's list, the controls on screen are the ones that showed it before, their words
+    /// changed in place, where every row's controls were made anew at each key; and a key into a list of hundreds more
+    /// items (a file with the usings a project's implicit ones bring, against one with none) costs the UI thread, from the
+    /// key to the narrower list shown, about what it does in the shorter one, its items scored and made into rows on the
+    /// thread pool. What the window allocates is the count, not a time a busy machine stretches.</summary>
+    [AvaloniaFact]
+    public void Typing_into_a_completion_list_narrows_it_off_the_UI_thread_in_the_rows_it_shows()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        window.OpenFolder(project.Folder);
+        window.OpenFile(project.PathOf("Bare.cs"));
+        Ui.Settle();
+        Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
+        (int fewItems, long fewKey) = Narrowed(window, project.PathOf("Bare.cs"));
+        (int manyItems, long manyKey) = Narrowed(window, project.PathOf("Used.cs"));
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"A key narrowing a statement's list of {fewItems} items allocated {fewKey / 1024} KB on the UI thread; of {manyItems} items, {manyKey / 1024} KB");
+        Assert.True(manyItems > fewItems + 300, $"With the usings a statement's completion listed {manyItems} items, against {fewItems} without");
+        // The server's thousand is a list it says is incomplete, asked for again at each key and gathered with the templates.
+        Assert.True(manyKey <= fewKey + (32 * 1024),
+            $"A key narrowing a list of {manyItems} items allocated {manyKey / 1024} KB on the UI thread, against {fewKey / 1024} KB for {fewItems} items: it scored them or made their rows there");
+        window.Close();
+    }
+
+    /// <summary>A statement's list in a file, opened by an S and narrowed a letter at a time: how many items it has, and the
+    /// least the UI thread allocates from a key to the narrower list shown; each key's rows shown in the controls the list
+    /// showed before it.</summary>
+    private static (int Items, long Key) Narrowed(MainWindow window, string path)
+    {
+        window.OpenFile(path);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.PlaceAfter(editor, "        int total = 0;");
+        window.KeyTextInput(" ");
+        editor.Focus();
+        Ui.Settle();
+        Passenger.Lsp.LspDocument lsp = window.CSharpService!.For(window.EditorArea.Active!)!.Lsp!;
+        int caret = editor.Selections.Primary.Caret;
+        int items = Task.Run(() => lsp.CompletionAsync(caret, null)).GetAwaiter().GetResult().List?.Items.Count ?? 0;
+        window.KeyTextInput("S");
+        Ui.WaitFor(() => window.Assist.CompletionNarrowedBy == "S", $"a statement's list in {Path.GetFileName(path)}");
+        string typed = "S";
+        long key = long.MaxValue;
+        foreach (string letter in new[] { "y", "s", "t" })
+        {
+            IReadOnlyList<Avalonia.Controls.Control> shown = window.Assist.CompletionRowControls;
+            Assert.True(shown.Count > 0, $"No row of the list is on screen narrowed by '{typed}'");
+            typed += letter;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput(letter);
+            Ui.Pumped(() => window.Assist.CompletionNarrowedBy == typed, TimeSpan.FromSeconds(30));
+            key = Math.Min(key, GC.GetAllocatedBytesForCurrentThread() - before);
+            Assert.True(window.Assist.CompletionNarrowedBy == typed, $"The list never showed its rows for '{typed}'");
+            Assert.True(window.Assist.CompletionLabels.FirstOrDefault()?.StartsWith(typed, StringComparison.OrdinalIgnoreCase) == true,
+                $"Narrowed by '{typed}' the list shows {string.Join(", ", window.Assist.CompletionLabels.Take(5))} first");
+            Ui.Settle();
+            IReadOnlyList<Avalonia.Controls.Control> now = window.Assist.CompletionRowControls;
+            Assert.True(now.Count > 0 && now.All(row => shown.Contains(row)),
+                $"Narrowed by '{typed}', {now.Count(row => !shown.Contains(row))} of the list's {now.Count} rows on screen are controls made for the key");
+        }
+        Ui.Press(window, "ESCAPE");
+        return (items, key);
+    }
+
     /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it.</summary>
     public sealed class Project : SharedProject
     {

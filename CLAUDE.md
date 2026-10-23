@@ -441,7 +441,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   server (C#'s, a web language's, ESLint's) are a `ServerDiagnostics` (one pull at a time after a pause, as background
   work, what each asks of its server its own; the reports carried with the text), drawn by `DiagnosticMarks`; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
-  over the editor; `WorkspaceEdits` applies renames and fixes across files (a code action through `ApplyAsCommand`, one
+  over the editor. Completion's list is narrowed off the UI thread (`Filter`: scored and made into rows through
+  `BackgroundWork.Run`, shown as it lands unless a later key's filter was asked for since; what commits or moves the
+  choice, a commit character, Enter, Tab and the arrows, narrows it at once should its filter not have landed,
+  `FilterNow`), and the popup keeps its rows (`CompletionPopup`'s `CompletionSlot`s, each row's controls,
+  `CompletionRowView`, changing its words in place as the list narrows, never made anew at a key); `WorkspaceEdits` applies renames and fixes across files (a code action through `ApplyAsCommand`, one
   command of global undo, which keeps a command that changed a file not open). `UsageHighlighting` asks the server's
   `documentHighlight` once a split's caret rests and is Highlight Usages in File. `CodeAssist.Surround.cs` is Surround With
   and Complete Current Statement, from the file's syntax with no server (surround templates are `LiveTemplates` entries

@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
@@ -179,18 +180,49 @@ internal sealed partial class InfoCard : Border
     private static partial System.Text.RegularExpressions.Regex MarkdownLink();
 }
 
-/// <summary>One completion row: the badge for its kind (a coloured letter, as Rider's are), its
-/// label and the detail the server gives (a type, a namespace).</summary>
-internal sealed record CompletionRow(Lsp.CompletionItem Item, string Letter, IBrush Badge, string Detail)
+/// <summary>One completion row: the badge for its kind (a coloured letter, as Rider's are, its colour the theme's resource
+/// of that key, found as it is shown), its label and the detail the server gives (a type, a namespace). Made where the list
+/// is filtered, off the UI thread.</summary>
+internal sealed record CompletionRow(Lsp.CompletionItem Item, string Letter, string BadgeKey, string Detail)
 {
     public string Label => Item.Label + (Item.LabelDetails?.Detail ?? string.Empty);
 }
 
-/// <summary>The completion list: rows under the caret, the selected one highlighted, ten at a time.</summary>
+/// <summary>A place in the completion list, kept from one filter to the next: the row it shows now, which its control
+/// follows (<see cref="CompletionRowView"/>).</summary>
+internal sealed class CompletionSlot(CompletionRow row)
+{
+    private CompletionRow row = row;
+
+    public CompletionRow Row
+    {
+        get => row;
+        set
+        {
+            if (!ReferenceEquals(row, value))
+            {
+                row = value;
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>The slot shows another row.</summary>
+    public event EventHandler? Changed;
+}
+
+/// <summary>The completion list: rows under the caret, the selected one highlighted, ten at a time. Its places are kept as
+/// the list is filtered (<see cref="CompletionSlot"/>), each given the row it shows now, so a key that narrows the list
+/// changes the words in the rows' controls rather than making them anew: the list's containers and their controls stay.</summary>
 internal sealed class CompletionPopup : Border
 {
     // Styled as the Border it is, so the theme's Border.popup reaches it.
     protected override Type StyleKeyOverride => typeof(Border);
+
+    private readonly AvaloniaList<CompletionSlot> slots = [];
+
+    /// <summary>The item the selection was last said to be on, so a filter that leaves it there says nothing.</summary>
+    private Lsp.CompletionItem? told;
 
     public CompletionPopup()
     {
@@ -202,21 +234,48 @@ internal sealed class CompletionPopup : Border
         {
             Classes = { "tree" },
             MaxHeight = 26 * 10,
-            ItemTemplate = new FuncDataTemplate<CompletionRow>((row, _) => Row(row), supportsRecycling: false),
+            ItemsSource = slots,
+            ItemTemplate = new FuncDataTemplate<CompletionSlot>((_, _) => new CompletionRowView(this), supportsRecycling: true),
         };
+        List.SelectionChanged += (_, _) => FollowSelected();
         Child = List;
     }
 
     public ListBox List { get; }
 
-    public CompletionRow? Selected => List.SelectedItem as CompletionRow;
+    /// <summary>The selection moved to another item: another row chosen, or the row chosen showing another item.</summary>
+    public event EventHandler? SelectedChanged;
 
-    public IReadOnlyList<CompletionRow> Rows => List.ItemsSource as IReadOnlyList<CompletionRow> ?? [];
+    /// <summary>A XAML colour's own swatch for its badge, null for an item badged by its kind.</summary>
+    public Func<Lsp.CompletionItem, IBrush?>? Swatch { get; set; }
 
+    public CompletionRow? Selected => (List.SelectedItem as CompletionSlot)?.Row;
+
+    public IReadOnlyList<CompletionRow> Rows => [.. slots.Select(s => s.Row)];
+
+    /// <summary>Rows in the list's places, the first chosen: the places there already show their new rows, the rest are
+    /// added or taken away at the end.</summary>
     public void Show(IReadOnlyList<CompletionRow> rows)
     {
-        List.ItemsSource = rows;
-        List.SelectedIndex = rows.Count > 0 ? 0 : -1;
+        int kept = Math.Min(rows.Count, slots.Count);
+        for (int i = 0; i < kept; i++)
+        {
+            slots[i].Row = rows[i];
+        }
+        if (slots.Count > rows.Count)
+        {
+            slots.RemoveRange(rows.Count, slots.Count - rows.Count);
+        }
+        else if (rows.Count > kept)
+        {
+            slots.AddRange(rows.Skip(kept).Select(row => new CompletionSlot(row)));
+        }
+        int first = rows.Count > 0 ? 0 : -1;
+        if (List.SelectedIndex != first)
+        {
+            List.SelectedIndex = first;
+        }
+        FollowSelected();
         if (rows.Count > 0)
         {
             List.ScrollIntoView(0);
@@ -234,57 +293,102 @@ internal sealed class CompletionPopup : Border
         List.ScrollIntoView(List.SelectedIndex);
     }
 
-    private static Control Row(CompletionRow? row)
+    private void FollowSelected()
     {
-        if (row is null)
+        Lsp.CompletionItem? now = Selected?.Item;
+        if (!ReferenceEquals(now, told))
         {
-            return new TextBlock();
+            told = now;
+            SelectedChanged?.Invoke(this, EventArgs.Empty);
         }
-        return new DockPanel
+    }
+}
+
+/// <summary>A completion row's controls, made once for a place in the list and kept: the slot it is given (its data
+/// context) is followed, its words and badge changed in place as the slot shows another row.</summary>
+internal sealed class CompletionRowView : DockPanel
+{
+    private readonly CompletionPopup popup;
+    private readonly Border badge;
+    private readonly TextBlock letter;
+    private readonly TextBlock detail;
+    private readonly TextBlock label;
+    private CompletionSlot? slot;
+
+    public CompletionRowView(CompletionPopup popup)
+    {
+        this.popup = popup;
+        Height = ListRow.Height;
+        letter = new TextBlock
         {
-            Height = ListRow.Height,
-            Children =
-            {
-                new Border
-                {
-                    Width = 16,
-                    Height = 16,
-                    Classes = { "kindBadge" },
-                    Background = row.Badge,
-                    Margin = new Thickness(0, 0, 8, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Child = new TextBlock
-                    {
-                        Text = row.Letter,
-                        FontSize = 10,
-                        FontWeight = FontWeight.Bold,
-                        Foreground = InfoCard.Brush("Passenger.BadgeText"),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                    },
-                },
-                new TextBlock
-                {
-                    [DockPanel.DockProperty] = Dock.Right,
-                    Text = row.Detail,
-                    Foreground = InfoCard.Brush("Passenger.TextMuted"),
-                    FontSize = 12,
-                    Margin = new Thickness(12, 0, 4, 0),
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxWidth = 200,
-                    VerticalAlignment = VerticalAlignment.Center,
-                },
-                new TextBlock
-                {
-                    Text = row.Label,
-                    FontFamily = Fonts.Mono,
-                    FontFeatures = Fonts.NoLigatures,
-                    FontSize = 12.5,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    VerticalAlignment = VerticalAlignment.Center,
-                },
-            },
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            Foreground = InfoCard.Brush("Passenger.BadgeText"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
         };
+        badge = new Border
+        {
+            Width = 16,
+            Height = 16,
+            Classes = { "kindBadge" },
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = letter,
+        };
+        detail = new TextBlock
+        {
+            [DockPanel.DockProperty] = Dock.Right,
+            Foreground = InfoCard.Brush("Passenger.TextMuted"),
+            FontSize = 12,
+            Margin = new Thickness(12, 0, 4, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 200,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        label = new TextBlock
+        {
+            FontFamily = Fonts.Mono,
+            FontFeatures = Fonts.NoLigatures,
+            FontSize = 12.5,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Children.Add(badge);
+        Children.Add(detail);
+        Children.Add(label);
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (slot is not null)
+        {
+            slot.Changed -= OnSlotChanged;
+        }
+        slot = DataContext as CompletionSlot;
+        if (slot is not null)
+        {
+            slot.Changed += OnSlotChanged;
+            Show(slot.Row);
+        }
+    }
+
+    private void OnSlotChanged(object? sender, EventArgs e)
+    {
+        if (sender is CompletionSlot changed && changed == slot)
+        {
+            Show(changed.Row);
+        }
+    }
+
+    private void Show(CompletionRow row)
+    {
+        IBrush? swatch = popup.Swatch?.Invoke(row.Item);
+        letter.Text = swatch is null ? row.Letter : string.Empty;
+        badge.Background = swatch ?? InfoCard.Brush(row.BadgeKey);
+        detail.Text = row.Detail;
+        label.Text = row.Label;
     }
 }
 

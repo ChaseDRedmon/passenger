@@ -168,7 +168,8 @@ public sealed partial class CodeAssist
             FollowLayer();
         };
         completion.List.DoubleTapped += (_, _) => _ = Commit();
-        completion.List.SelectionChanged += (_, _) => _ = DescribeSelected();
+        completion.SelectedChanged += (_, _) => _ = DescribeSelected();
+        completion.Swatch = Swatch;
     }
 
     /// <summary>A place to go: a file and a line and column (from zero).</summary>
@@ -193,6 +194,14 @@ public sealed partial class CodeAssist
 
     /// <summary>The completion list's rows, in order, each with the detail it shows on its right, while it shows.</summary>
     public IReadOnlyList<(string Label, string Detail)> CompletionDetails => completion.IsVisible ? [.. completion.Rows.Select(r => (r.Item.Label, r.Detail))] : [];
+
+    /// <summary>What was typed of the name the completion list shows its rows for, while it shows.</summary>
+    public string? CompletionNarrowedBy => completion.IsVisible ? filtered?.Typed : null;
+
+    /// <summary>The controls showing the completion list's rows on screen, while it shows.</summary>
+    public IReadOnlyList<Control> CompletionRowControls => completion.IsVisible
+        ? [.. completion.List.GetRealizedContainers().OfType<ListBoxItem>().Select(row => row.Presenter?.Child).OfType<Control>()]
+        : [];
 
     /// <summary>What the hover card says while it shows, null otherwise.</summary>
     public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
@@ -296,6 +305,12 @@ public sealed partial class CodeAssist
     /// Tab and Escape, and Escape for a card.</summary>
     public bool TakeKey(string action)
     {
+        if (open is not null && action is EditorActions.Up or EditorActions.Down or EditorActions.PageUp or EditorActions.PageDown
+            or EditorActions.NewLine or EditorActions.Indent)
+        {
+            // From the rows of the name as typed, whose filter landing later would have chosen its first row again.
+            FilterNow();
+        }
         if (completion.IsVisible)
         {
             switch (action)
@@ -497,13 +512,18 @@ public sealed partial class CodeAssist
     /// in Rider, and nothing commits before a letter of the name is typed.</summary>
     private int? CommitsOn(string text)
     {
-        if (open is null || text.Length != 1 || text == " " || completion.Selected is not { } row
-            || templatesOffered.ContainsKey(row.Item) || postfixOffered.ContainsKey(row.Item))
+        if (open is null || text.Length != 1 || text == " ")
         {
             return null;
         }
         int end = Editor.Selections.Primary.Caret - 1;
         if (end <= open.Start || end > Editor.Document.Snapshot.Length || Editor.Document.Snapshot[end] != text[0])
+        {
+            return null;
+        }
+        // The item chosen among the rows of the name as typed before the character, its filter landed or not.
+        FilterNow(end);
+        if (open is null || completion.Selected is not { } row || templatesOffered.ContainsKey(row.Item) || postfixOffered.ContainsKey(row.Item))
         {
             return null;
         }
@@ -687,20 +707,29 @@ public sealed partial class CodeAssist
         }
     }
 
-    /// <summary>The list narrowed to what has been typed since it opened: prefix matches first (an
-    /// exact-case one first of those), then CamelHumps, then anywhere in the name.</summary>
-    private void Filter()
+    /// <summary>What a list is narrowed by: the text typed since it opened, what of it an item with no filter text of its
+    /// own is matched by, and how alike two scores must be to keep the list's own order.</summary>
+    private readonly record struct Narrowing(Completion List, string Typed, string Bare, int Alike);
+
+    /// <summary>How many filters were asked for, the last the only one shown when it lands; and what the rows shown were
+    /// filtered by.</summary>
+    private int filters;
+    private (Completion List, string Typed)? filtered;
+
+    /// <summary>What the open list is narrowed by with the name typed up to <paramref name="end"/> (the caret when not
+    /// given); null, the list closed, once the caret has left the name or what is typed is no name.</summary>
+    private Narrowing? NarrowedBy(int? end = null)
     {
         if (open is null)
         {
-            return;
+            return null;
         }
         TextSnapshot text = Editor.Document.Snapshot;
-        int caret = Editor.Selections.Primary.Caret;
+        int caret = end ?? Editor.Selections.Primary.Caret;
         if (caret < open.Start || Editor.Selections.HasMultiple)
         {
             CloseCompletion();
-            return;
+            return null;
         }
         string typed = text.GetText(open.Start, caret - open.Start);
         // A web server's items may replace what came before the name (TypeScript's the member's dot), there as it asked.
@@ -714,20 +743,76 @@ public sealed partial class CodeAssist
         if (!led && !typed.All(IsWordChar))
         {
             CloseCompletion();
-            return;
+            return null;
         }
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
-        string bare = led ? typed[skip..] : typed;
-        List<CompletionRow> rows = [.. Shown(open.Items, typed, bare, alike).Select(item => Swatched(Row(item)))];
-        if (rows.Count == 0)
+        return new Narrowing(open, typed, led ? typed[skip..] : typed, alike);
+    }
+
+    /// <summary>The list narrowed to what has been typed since it opened: prefix matches first (an exact-case one first of
+    /// those), then CamelHumps, then anywhere in the name. Scored and made into rows on the thread pool, since a
+    /// statement's list is every type in reach, and shown as it lands unless a later key's filter was asked for since.</summary>
+    private void Filter()
+    {
+        if (NarrowedBy() is not { } narrowing)
+        {
+            return;
+        }
+        _ = FilterAsync(narrowing, ++filters);
+    }
+
+    private async Task FilterAsync(Narrowing narrowing, int asked)
+    {
+        CompletionRow[] rows = await BackgroundWork.Run(() => Rows(narrowing));
+        if (asked == filters && open == narrowing.List)
+        {
+            ShowRows(narrowing, rows);
+        }
+    }
+
+    /// <summary>The list shown for the name as typed up to <paramref name="end"/>, filtered here should its filter not have
+    /// landed yet: what commits or moves the choice must find the rows of the name as typed.</summary>
+    private void FilterNow(int? end = null)
+    {
+        if (NarrowedBy(end) is not { } narrowing || filtered == (narrowing.List, narrowing.Typed))
+        {
+            return;
+        }
+        filters++;
+        ShowRows(narrowing, Rows(narrowing));
+    }
+
+    private void ShowRows(Narrowing narrowing, CompletionRow[] rows)
+    {
+        if (rows.Length == 0)
         {
             CloseCompletion();
             return;
         }
+        bool opening = !completion.IsVisible;
         completion.Show(rows);
+        filtered = (narrowing.List, narrowing.Typed);
         completion.IsVisible = true;
-        Place(completion, open.Start, above: false);
+        Place(completion, narrowing.List.Start, above: false);
+        if (opening && msbuildOffered.Count > 0)
+        {
+            // An MSBuild list's first item's documentation beside it as it opens, which its selection came too early to show.
+            _ = DescribeSelected();
+        }
+    }
+
+    /// <summary>The rows a list shows narrowed (<see cref="Shown"/>), each badged by its kind; reads nothing of the window's,
+    /// so it runs off the UI thread.</summary>
+    private static CompletionRow[] Rows(Narrowing narrowing)
+    {
+        CompletionItem[] shown = Shown(narrowing.List.Items, narrowing.Typed, narrowing.Bare, narrowing.Alike);
+        CompletionRow[] rows = new CompletionRow[shown.Length];
+        for (int i = 0; i < shown.Length; i++)
+        {
+            rows[i] = Row(shown[i]);
+        }
+        return rows;
     }
 
     /// <summary>The most rows the list shows.</summary>
@@ -804,7 +889,8 @@ public sealed partial class CodeAssist
     /// <summary>The chosen item in place of the name typed, up to <paramref name="end"/> (the caret when not given).</summary>
     private async Task CommitCore(int? end = null)
     {
-        if (open is null || completion.Selected is not { } row)
+        FilterNow(end);
+        if (open is null || !completion.IsVisible || completion.Selected is not { } row)
         {
             return;
         }
@@ -2511,11 +2597,11 @@ public sealed partial class CodeAssist
         return identifier;
     }
 
-    /// <summary>A XAML colour's row badged with the colour itself, as Rider shows a colour in its list.</summary>
-    private CompletionRow Swatched(CompletionRow row) =>
-        xamlOffered.TryGetValue(row.Item, out XamlItem? item) && KnownColours.Parse(item.Colour) is { } colour
-            ? row with { Letter = string.Empty, Badge = new SolidColorBrush(Color.FromArgb(colour.A, colour.R, colour.G, colour.B)) }
-            : row;
+    /// <summary>A XAML colour's badge, the colour itself, as Rider shows a colour in its list; null for any other item.</summary>
+    private IBrush? Swatch(CompletionItem item) =>
+        xamlOffered.TryGetValue(item, out XamlItem? offered) && KnownColours.Parse(offered.Colour) is { } colour
+            ? new SolidColorBrush(Color.FromArgb(colour.A, colour.R, colour.G, colour.B))
+            : null;
 
     /// <summary>A row's badge: the letter and colour Rider gives each kind of completion.</summary>
     private static CompletionRow Row(CompletionItem item)
@@ -2542,7 +2628,7 @@ public sealed partial class CodeAssist
             _ => ("·", "Passenger.TextMuted"),
         };
         string detail = item.LabelDetails?.Description ?? item.Detail ?? string.Empty;
-        return new CompletionRow(item, letter, InfoCard.Brush(brush), detail);
+        return new CompletionRow(item, letter, brush, detail);
     }
 
     /// <summary>An open completion list: every item the server gave, and where the word it completes

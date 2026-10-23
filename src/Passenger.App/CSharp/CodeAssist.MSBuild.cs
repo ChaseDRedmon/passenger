@@ -101,8 +101,6 @@ public sealed partial class CodeAssist
             msbuildWordCharacters = list.WordCharacters;
             open = new Completion(items, Math.Min(list.Start, Editor.Selections.Primary.Caret), [], list.Incomplete);
             Filter();
-            // The first item's documentation beside the list as it opens, which its selection came too early to show.
-            _ = DescribeSelected();
         }
         catch (OperationCanceledException)
         {
