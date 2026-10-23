@@ -7,7 +7,8 @@
 # capture's command line; SITE_SHOTS_REUSE=1 takes the pictures in
 # the copy the last run made, without making it again, and SITE_SHOTS_THEMES=dark (or light) takes one theme's.
 # A step's point is in the window's logical units: half the picture's pixels. The agent scene's agent is agent.py, run
-# by python3 through --agent.
+# by python3 through --agent; the themes scene's twelve captures, one per look, are stacked into one picture by
+# themes.py, an SVG that sips draws.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -26,7 +27,7 @@ if [[ ! -x "$passenger" ]]; then
 fi
 command -v cwebp > /dev/null || { echo "site-shots: cwebp is not on the PATH (brew install webp)" >&2; exit 2; }
 
-all_scenes=(editor debugger git find-in-files profiler xaml project-files web live-tree agent)
+all_scenes=(editor debugger git find-in-files profiler xaml project-files web live-tree agent themes)
 scenes=("$@")
 if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=("${all_scenes[@]}")
@@ -125,11 +126,44 @@ shot() {
     mkdir -p "$state"
     PASSENGER_SETTINGS="$state" "$passenger" "$folder/Greenhouse.slnx" --theme "$theme" --look passenger \
         --size 1200x750 --scale 2 ${extra[@]+"${extra[@]}"} "$@" --screenshot "$png"
-    cwebp -quiet -q "$quality" -m 6 "$png" -o "$images/$name-$theme.webp"
-    if (($(wc -c < "$images/$name-$theme.webp") > most)); then
-        cwebp -quiet -size "$most" -pass 6 -m 6 "$png" -o "$images/$name-$theme.webp"
+    encode "$png" "$images/$name-$theme.webp"
+}
+
+# A capture to the site's WebP: at the quality above, or at the most bytes when a busy picture would take more.
+encode() {
+    local png=$1 webp=$2
+    cwebp -quiet -q "$quality" -m 6 "$png" -o "$webp"
+    if (($(wc -c < "$webp") > most)); then
+        cwebp -quiet -size "$most" -pass 6 -m 6 "$png" -o "$webp"
     fi
-    echo "site-shots: $images/$name-$theme.webp ($(($(wc -c < "$images/$name-$theme.webp") / 1024)) KB)"
+    echo "site-shots: $webp ($(($(wc -c < "$webp") / 1024)) KB)"
+}
+
+# The themes scene: the same window in every look, Themes.cs' Look in its order, each over a copy of the solution file
+# named after its look, so its title bar and Solution view name it; then stacked by themes.py, Passenger's own in front.
+looks=(Passenger Harbour Sorbet Nocturne Saffron Bonbon Ledger Slate Orbit Nightjar Moss Phosphor)
+themes() {
+    local theme=$1 look lower state
+    mkdir -p "$work/png/themes"
+    for look in "${looks[@]}"; do
+        lower=$(tr '[:upper:]' '[:lower:]' <<< "$look")
+        state="$tmp/passenger-site-shots/state/themes-$lower-$theme"
+        rm -rf "$state"
+        mkdir -p "$state"
+        cp "$folder/Greenhouse.slnx" "$folder/$look.slnx"
+        # The class's doc comment, keywords, types, a lambda and numbers in the editor, the Explorer beside it.
+        if ! PASSENGER_SETTINGS="$state" "$passenger" "$folder/$look.slnx" --theme "$theme" --look "$lower" \
+            --size 932x530 --scale 2 ${extra[@]+"${extra[@]}"} --file src/Greenhouse.Core/WateringPlan.cs \
+            --caret 4:21 --screenshot "$work/png/themes/$lower-$theme.png"; then
+            rm -f "$folder/$look.slnx"
+            exit 1
+        fi
+        # Gone again at once: the other scenes' Commit window would list it as a file never added.
+        rm -f "$folder/$look.slnx"
+    done
+    python3 -I "$repo/tools/site-shots/themes.py" "$theme" "$work/png/themes" "$work/themes-$theme.svg"
+    sips -s format png "$work/themes-$theme.svg" --out "$work/png/themes-$theme.png" > /dev/null
+    encode "$work/png/themes-$theme.png" "$images/themes-$theme.webp"
 }
 
 scene() {
@@ -148,7 +182,7 @@ scene() {
             # The Commit window from its stripe button, then the Git window's log, widened past its dates (its splitter
             # dragged right), with a commit on the merged branch chosen and its details.
             shot "$name" "$theme" --file src/Greenhouse.Core/WateringPlan.cs --caret 26:9 --click 20,95 --key "meta+9" \
-                --drag 808,600,920,600 --click 414,602 --hover 700,200 ;;
+                --drag 808,600,975,600 --click 414,602 --hover 700,200 ;;
         find-in-files)
             # The popup's matches across the solution and the first one's preview.
             shot "$name" "$theme" --file src/Greenhouse.Cli/Program.cs --key "meta+shift+F" --type "Litres" \
@@ -184,6 +218,8 @@ scene() {
                 --agent "python3 -I \"$repo/tools/site-shots/agent.py\"" --key "meta+shift+F12" \
                 --key "meta+shift+A" --type "Live Visual Tree" --key enter --wait 3000 --click 1020,387 --wait 2000 \
                 --key "meta+control+1" --drag 700,444,700,404 --drag 1155,124,1155,148 --wait 1000 --hover 600,300 ;;
+        themes)
+            themes "$theme" ;;
     esac
 }
 

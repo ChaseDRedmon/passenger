@@ -115,7 +115,8 @@ mcp folder="":
     @tools/mcp.sh {{folder}}
 
 # The site's pictures, site/images/<scene>-<dark|light>.webp, taken again from the sample solution in tools/site-shots
-# (after just build; macOS, with cwebp, and python3 for the agent scene's agent): just site-shots [SCENE...]
+# (after just build; macOS, with cwebp and sips, and python3 for the agent scene's agent and the themes scene's stack):
+# just site-shots [SCENE...]
 [unix]
 site-shots *scenes:
     tools/site-shots/shots.sh {{scenes}}
