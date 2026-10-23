@@ -679,7 +679,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   INSERT's column list against each row of its VALUES, SQL Server's MERGE source's columns, a SET's or a WHERE's
   `column = @p` either way round), since EF names an INSERT's and an UPDATE's parameters `@p0`, `@p1`…; a secret's as dots
   with its size left out, '?' where the app does not log values; a log heard before its command kept masked; the row's
-  tooltip, the command's tab and an agent's `run_output` all show these), and each request
+  tooltip, the command's tab and an agent's `output` all show these), and each request
   the route it reached in its program's project (`RouteRequests.Fits`, a literal template before one with parameters,
   looked for again as routes are read, `Reroute`). A request opens where its exception was thrown in the folder's code,
   else at its route's handler; a command's text opens read-only, its parameters as a comment over it, from a copy under the

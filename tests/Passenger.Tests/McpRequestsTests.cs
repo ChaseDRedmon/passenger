@@ -53,7 +53,7 @@ public sealed class McpRequestsTests : McpRig
             string[] signUp = [];
             Assert.True(await Waiting.UntilAsync(async () =>
             {
-                said = (await Call(client, "run_output", new() { ["requests"] = true })).GetString()!;
+                said = (await Call(client, "output", new() { ["requests"] = true })).GetString()!;
                 string[] lines = said.Split('\n');
                 int at = Array.FindIndex(lines, l => l.StartsWith("GET /sign-up/ada 200", StringComparison.Ordinal));
                 signUp = at < 0 ? [] : [.. lines.Skip(at + 1).TakeWhile(l => l.StartsWith("  ", StringComparison.Ordinal))];
