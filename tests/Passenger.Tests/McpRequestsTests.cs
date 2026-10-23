@@ -46,6 +46,22 @@ public sealed class McpRequestsTests : McpRig
             Assert.EndsWith(" N+1", request, StringComparison.Ordinal);
             Assert.Equal(3, said.Split('\n').Count(l => l.Contains("run 3 times in this request", StringComparison.Ordinal)));
             Assert.Contains("FROM \"Orders\"", said, StringComparison.Ordinal);
+
+            // A sign-up writes, changes and looks up a customer's Password column, through parameters EF names @p0, @p1…:
+            // the agent reads each of their values as dots, by the column its command's text has it fill or meet.
+            Assert.Equal("signed up", LiveRequestsTests.Get(http, $"http://127.0.0.1:{port.Port}/sign-up/ada"));
+            string[] signUp = [];
+            Assert.True(await Waiting.UntilAsync(async () =>
+            {
+                said = (await Call(client, "run_output", new() { ["requests"] = true })).GetString()!;
+                string[] lines = said.Split('\n');
+                int at = Array.FindIndex(lines, l => l.StartsWith("GET /sign-up/ada 200", StringComparison.Ordinal));
+                signUp = at < 0 ? [] : [.. lines.Skip(at + 1).TakeWhile(l => l.StartsWith("  ", StringComparison.Ordinal))];
+                return signUp.Length == 3 && signUp.All(l => l.Contains("='", StringComparison.Ordinal));
+            }, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken), $"The agent never read the sign-up's three commands with their parameters: {said}");
+            Assert.All(signUp, l => Assert.Contains($"='{Passenger.App.Containers.ContainerSecrets.Masked}'", l, StringComparison.Ordinal));
+            Assert.True(!said.Contains("ada-first", StringComparison.Ordinal) && !said.Contains("ada-second", StringComparison.Ordinal),
+                $"The agent read a value of the Password column in the clear: {string.Join('\n', signUp)}");
         }
         finally
         {

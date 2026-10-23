@@ -673,14 +673,21 @@ window or takes the focus; it shows everything but the system's own window chrom
   or takes out, every other row keeping its control; it marks a command its request ran `LiveCommand.RepeatedAt` times or
   more (counted by its text, `LiveRequest.ByText`) as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
   non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), gives each command the
-  parameters its log names (`CommandParameters`: each value as `ContainerSecrets.Shown` shows a value of that name, a
-  secret's as dots, '?' where the app does not log values; a log heard before its command kept masked), and each request
+  parameters its log names (a log matched to its command by the command's text trimmed, as EF logs it, SaveChanges' ending
+  in a line break; `CommandParameters`: each value as `ContainerSecrets.Shown` shows a value of that name, or as a
+  secret's where the column the command's text has it fill or meet is named as one (`CommandParameters.Columns`: an
+  INSERT's column list against each row of its VALUES, SQL Server's MERGE source's columns, a SET's or a WHERE's
+  `column = @p` either way round), since EF names an INSERT's and an UPDATE's parameters `@p0`, `@p1`…; a secret's as dots
+  with its size left out, '?' where the app does not log values; a log heard before its command kept masked; the row's
+  tooltip, the command's tab and an agent's `run_output` all show these), and each request
   the route it reached in its program's project (`RouteRequests.Fits`, a literal template before one with parameters,
   looked for again as routes are read, `Reroute`). A request opens where its exception was thrown in the folder's code,
   else at its route's handler; a command's text opens read-only, its parameters as a comment over it, from a copy under the
   state's `cache/requests/` (`RequestLog.IsCommandCopy`, `MainWindow.OpenSql`, as an EF Core query's SQL the debugger read
   opens, its bar saying so: `OpenDocument.Origin`). `LiveRequestsTests` run a web app on EF Core and SQLite
-  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback, and hold
+  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback (a
+  sign-up writes, changes and looks up a customer's Password column, its values dots in the row's tooltip, the command's
+  tab and, in `McpRequestsTests`, the agent's answer), and hold
   a request heard with 500 listed to what one costs the UI thread with 5 (the app's events stood in for by the profiler's);
   `LiveRequestsDebuggingTests` (Alone) debug it, `McpRequestsTests` have an agent read it, and `ContainerServicesTests`
   follow a Compose run's services in their containers.
