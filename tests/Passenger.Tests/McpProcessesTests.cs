@@ -159,11 +159,15 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
     /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs (and has profiled)
     /// a program, debugs another and builds the project and its language server loads it. Each program writes its id to a
     /// file named for how it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once
-    /// the folder has a linger file, the build run a step that would take ten minutes, as a slow tool or a hung test would.</summary>
+    /// the folder has a linger file, the build run a step that would take ten minutes, as a slow tool or a hung test would.
+    /// The two programs are two launch profiles' configurations: Debug of the configuration Run runs would end that run
+    /// first (#408).</summary>
     [Fact]
     public async Task A_Passenger_killed_while_it_loads_runs_profiles_debugs_and_builds_a_project_leaves_none_of_it_running()
     {
         Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{Folder}\", args[0] + \".pid\"), Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        Directory.CreateDirectory(Path.Combine(Folder, "Properties"));
+        Write("Properties/launchSettings.json", "{\n  \"profiles\": {\n    \"Ran\": { \"commandName\": \"Project\" },\n    \"Debugged\": { \"commandName\": \"Project\" }\n  }\n}\n");
         Write("Sum.csproj", $"""
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
@@ -191,11 +195,11 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         {
             client = await Connect(passenger, ["--mcp", Folder]);
             int load = await WrittenId("load.pid", "the language server's load of the project");
-            await Call(client, "run", new() { ["arguments"] = "run", ["waitSeconds"] = 1 });
+            await Call(client, "run", new() { ["configuration"] = "Sum: Ran", ["arguments"] = "run", ["waitSeconds"] = 1 });
             int run = await WrittenId("run.pid", "the program Run started");
             // The Run console is Run's program's, so the profiler attaches to it rather than start another there.
             await Call(client, "profile", new() { ["attach"] = true, ["seconds"] = 1 });
-            await Call(client, "debug_start", new() { ["arguments"] = "debug", ["waitSeconds"] = 1 });
+            await Call(client, "debug_start", new() { ["configuration"] = "Sum: Debugged", ["arguments"] = "debug", ["waitSeconds"] = 1 });
             int debugged = await WrittenId("debug.pid", "the program debugged");
             File.WriteAllText(Path.Combine(Folder, "linger"), string.Empty);
             // The build never ends: the test gives its call up once it has seen the step start.

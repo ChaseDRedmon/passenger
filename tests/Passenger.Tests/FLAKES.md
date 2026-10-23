@@ -8,6 +8,15 @@ pattern shows. A **race in the IDE** is fixed in the IDE; waiting longer or tryi
 To add one: a line under its date, newest first, naming the test, the run, the cause in a sentence and the commit
 that fixed it, in one of the forms below. A failure not yet understood goes in only once it is.
 
+## 2026-10-23
+
+- `McpProcessesTests`' Passenger killed while it loads, runs, profiles, debugs and builds (#443), every run on 0.2.0 since
+  cd9ac656: "Assert.Subset() Failure", the program the agent's `run` started no longer among Passenger's processes when
+  the test listed them. `run`'s answer had not changed: its program was running after it and after the profiler's attach,
+  and was gone once `debug_start` had answered, since #408 (cd9ac656) makes Debug of the configuration Run runs end that
+  run first and the test debugged the configuration it had run. Neither race: **the test**, which now runs one launch
+  profile's configuration and debugs another's, so both programs run until Passenger is killed.
+
 ## 2026-10-22
 
 - `AspireTests`' real AppHost command (`A_real_AppHost_command_observes_confirmation_cancel_and_server_validated_input_from_the_window`),
