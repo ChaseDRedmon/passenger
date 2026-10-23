@@ -49,10 +49,6 @@ public sealed record ServiceProgram(int Id, AdapterPlace? Place, Profiler.Profil
 /// process), said as the service's action's failure.</summary>
 public sealed class ServiceUnreachedException(string message, Exception? inner = null) : Exception(message, inner);
 
-/// <summary>Has the profiler record a service held at its start (<see cref="ServiceRun.Profiler"/>), which lets it go once
-/// recording: null once it records, else why not.</summary>
-public delegate Task<string?> ServiceProfiler(IRunService service, ServiceProgram program, CancellationToken stop);
-
 /// <summary>A run of several .NET services, the one model every kind of it is (a container run; an Aspire AppHost's run
 /// next): it lists its .NET services, and keeps for each what it is held at its start for (the debugger, quietly for Hot
 /// Reload; none: unheld), the sessions that reach it from here, whether it was attached to as it ran, and the one the
@@ -79,15 +75,15 @@ public abstract class ServiceRun
     /// <summary>How it was started: run, debugged, run with Hot Reload through the debugger, or profiled.</summary>
     public RunStart How { get; init; }
 
-    /// <summary>What has the profiler record the service Profile holds at its start; null for any other start.</summary>
-    public ServiceProfiler? Profiler { get; init; }
-
     /// <summary>The Debug tabs of the services debugged (or attached to for Hot Reload), by their names: Stop ends them before
     /// it takes their programs.</summary>
     public HashSet<string> Debugged { get; } = new(StringComparer.Ordinal);
 
     /// <summary>The services attached to as they ran (Attach, not held at their start), which a restart attaches to again.</summary>
     public HashSet<string> AttachedRunning { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>A service as the profiler window and the status bar name what is recorded: by the run too.</summary>
+    public virtual string NameOf(IRunService service) => $"{service.Name} of {Name}";
 
     /// <summary>The service the profiler records, which Stop ends (<see cref="EndProfiling"/>, its snapshot read) before it
     /// takes the programs; null when none is.</summary>

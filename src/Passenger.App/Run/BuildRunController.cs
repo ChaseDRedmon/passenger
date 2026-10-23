@@ -60,9 +60,10 @@ public sealed record BuildRunParts(
     /// way that asks nothing, saying so.</summary>
     public bool AsksNoOne { get; init; }
 
-    /// <summary>Has the window's profiler record a service of a run of services as it runs, where its kind runs it (in its
-    /// container, or on this machine): null once it records, else why not.</summary>
-    public Func<ServiceRun, IRunService, CancellationToken, Task<string?>>? ProfileService { get; init; }
+    /// <summary>Has the window's profiler record a service's program of a run of services where its kind runs it (in its
+    /// container, or on this machine), held at its start (a run's Profile, which the recording lets go) or as it runs (its
+    /// last argument): null once it records, the run's Stop then reading its snapshot first, else why not.</summary>
+    public Func<ServiceRun, IRunService, ServiceProgram, bool, CancellationToken, Task<string?>>? ProfileService { get; init; }
 }
 
 /// <summary>A session's Build, Run and Debug as the window shows them: builds, rebuilds and cleans of the solution or of

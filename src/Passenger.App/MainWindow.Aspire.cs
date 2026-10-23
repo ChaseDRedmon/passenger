@@ -174,9 +174,6 @@ public partial class MainWindow
             }
         };
         next.Aspire.RestartCommand = (app, service, build, cancel) => RestartAspireCommandAsync(next, app, service, build, cancel);
-        // The service a configuration's Profile holds at its start, recorded through the run of services as it starts.
-        next.Aspire.ProfileStart = (app, service, program, stop) => session == next && !next.IsEnded && profiler is { } commands
-            ? commands.RecordHeldServiceAsync(app, service, program, stop) : Task.FromResult<string?>("The service profiler is unavailable");
         next.Aspire.Changed += (_, _) =>
         {
             if (session == next && !next.IsEnded)
@@ -392,21 +389,10 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The run of services' profile of a service as it runs, where its kind runs it: an Aspire service on this
-    /// machine, a container run's in its container. Null once it records, else why not.</summary>
-    private Task<string?> ProfileRunServiceAsync(ServiceRun run, IRunService service, CancellationToken stop)
-    {
-        if (profiler is not { } commands)
-        {
-            return Task.FromResult<string?>("The profiler is not available");
-        }
-        return service switch
-        {
-            AspireResourceRun { ProcessId: int process } aspire => commands.AttachAsync(process, aspire.Plan.Name, aspire.Plan.Built ?? aspire.Plan.Program),
-            Containers.DotnetService dotnet => commands.AttachServiceAsync(dotnet, run.Name),
-            _ => Task.FromResult<string?>($"{service.Name} has no program to profile"),
-        };
-    }
+    /// <summary>The run of services' one recording of a service, either kind's, held at its start or as it runs: the window's
+    /// profiler's. Null once it records, else why not.</summary>
+    private Task<string?> RecordRunServiceAsync(ServiceRun run, IRunService service, ServiceProgram program, bool asItRuns, CancellationToken stop) =>
+        profiler is { } commands ? commands.RecordServiceAsync(run, service, program, asItRuns, stop) : Task.FromResult<string?>("The profiler is not available");
 
     /// <summary>The Aspire window's (and an agent's) Debug or Run without Debugger of a resource that does not run now (one
     /// the window ran before): the choice kept, and its AppHost asked to start it; one that runs goes through the run of

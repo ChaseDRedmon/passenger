@@ -279,16 +279,13 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         {
             throw new LaunchException(why);
         }
-        AspireAppRun? made = null;
         AspireAppRun app = new(configuration, mode, group)
         {
             ProfileTarget = profileTarget,
             BuildBegan = began,
             OverHttp = https.OverHttp is not null,
             Restarting = (run, resource, build, cancel) => (RestartCommand ?? throw new InvalidOperationException("Aspire resource restart is unavailable"))(run, resource, build, cancel),
-            Profiler = (service, program, stop) => (ProfileStart ?? throw new LaunchException("The service profiler is unavailable"))(made!, service, program, stop),
         };
-        made = app;
         if (https.OverHttp is { } note)
         {
             app.Notes.Add(note);

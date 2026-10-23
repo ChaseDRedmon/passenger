@@ -895,6 +895,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     public override bool Refused(Exception failure) => failure is IOException or UnauthorizedAccessException or ContainerToolsException or ContainerCommandException
         or TimeoutException;
 
+    /// <summary>A run that starts one service (a gutter icon's configuration) is named for it already.</summary>
+    public override string NameOf(IRunService service) => Plan.Start is [{ } only] && only == service.Name ? Name : base.NameOf(service);
+
     /// <summary>The run's .NET service by its name in the run.</summary>
     private DotnetService Dotnet(IRunService service) => Plan.Dotnet.First(d => d.Service == service.Name);
 

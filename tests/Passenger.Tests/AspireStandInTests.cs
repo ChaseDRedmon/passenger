@@ -527,6 +527,62 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>Profile of an Aspire service as it runs (the stand-in's API, started by the IDE as DCP asks) records it through
+    /// its AppHost's run, as a container run's service is recorded through its run: Stop reads its snapshot before the API's
+    /// program goes, so the trace keeps its rundown and names the API's own code, which ran before the recording began.</summary>
+    [AvaloniaFact]
+    public void Stop_reads_the_profile_of_an_Aspire_service_as_it_runs_before_its_program_goes()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the run session: {answer}");
+            int api = Api(window);
+            backend.PushResource(ApiResource());
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.Name == "apiservice"), "the API's row");
+            Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
+            FindAction(window, "Profile Aspire Resource");
+            Ui.WaitFor(() => window.Profiling?.ProcessId == api, $"Profile to record the API as it runs ({window.Status})");
+            Ui.Hold(TimeSpan.FromSeconds(1), "the profiler to sample the API as it runs");
+
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Ui.WaitFor(() => window.ProfilerView.Snapshot is not null || (window.Status ?? string.Empty).StartsWith("The snapshot could not be read", StringComparison.Ordinal),
+                "Stop to read the API's snapshot", TimeSpan.FromMinutes(2));
+            Passenger.Profiler.Snapshot snapshot = window.ProfilerView.Snapshot ?? throw new Xunit.Sdk.XunitException($"Stop read no snapshot of the API: {window.Status}");
+            Assert.True(Named(snapshot.All), "Stop took the API's program before reading its recording: the trace lost its rundown, and the API's own code is unnamed");
+            Ui.WaitFor(() => !Processes.IsRunning(api) && window.AspireRuntime.Apps.Count == 0, "Stop to end the API and its AppHost once its snapshot was read");
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        static bool Named(Passenger.Profiler.CallNode node) =>
+            node.Module.Contains(StandInAppHost.Api, StringComparison.Ordinal) || node.Children.Any(Named);
+    }
+
+    /// <summary>The stand-in API's program, once the IDE has started it as DCP asked.</summary>
+    private static int Api(MainWindow window)
+    {
+        Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.Any(service => service.ProcessId is > 0), "the API started as DCP asked");
+        return window.AspireRuntime.Apps.Single().Services.Single().ProcessId!.Value;
+    }
+
+    /// <summary>The stand-in API as its AppHost's resource service says it runs.</summary>
+    private Resource ApiResource() => new()
+    {
+        Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running",
+        Properties = { new ResourceProperty { Name = "project.path", Value = Google.Protobuf.WellKnownTypes.Value.ForString(PathNames.Canonical(project.ApiProject)) } },
+    };
+
     /// <summary>A service its run configuration says not to start is Not started, never a failure: the IDE refuses DCP's first
     /// start of it, and the resource DCP then calls FailedToStart has a muted dot and a tip saying why and how it runs, in its
     /// row and in its Details.</summary>

@@ -550,9 +550,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   Aspire AppHost's run (`AspireAppRun`) both are: it lists its .NET services (`IRunService`: name, project, whether it
   starts) and keeps for each what it is held at its start for (`HeldFor`, `HoldAsync`: the debugger, quietly for Hot
   Reload, or unheld), the sessions that reach it from here (`Debugged`, by `SessionName`; `AttachedRunning`) and the one
-  the profiler records (`Profiled`, `EndProfiling`); `EndSessionsAsync` is Stop's order, every session and recording ended
-  before the programs go, which a container run's Stop and an AppHost's (`StopAppAsync`; the window's close and the
-  folder's end in `CloseAsync`) take. What is done to a service is written once over it (`BuildRunController.Services.cs`,
+  the profiler records (`Profiled`, `EndProfiling`); `EndSessionsAsync` is Stop's order, written once, every session and
+  recording ended before the programs go (a recording that cannot end logged, never Passenger's error), which every stop of
+  a service or a run takes: a container run's Stop, an AppHost's (`StopAppAsync`), one service's (`StopResourceAsync`, as
+  DCP stops it), a restart, a program's own end (`Finished`) and the folder's end (`CloseAsync`, its `closing`: each session
+  closed, the recording the folder's profiler's to let go); a kind ends a service's session its own way (`EndSessionAsync`:
+  by name, or an Aspire start's own). The profiler records a service of either kind one way, held at its start by its run's
+  Profile or as it runs (the window's and an agent's Profile of a service, Attach Profiler with one to profile):
+  `ProfilerCommands.RecordServiceAsync`, given the program `ProgramAsync` found through `BuildRunParts.ProfileService`,
+  which sets `Profiled` and `EndProfiling`, so Stop, a restart and Rerun read its snapshot first. What is done to a service is written once over it (`BuildRunController.Services.cs`,
   each action given its run): the held start's attach (`AttachAllAsync` as a container run comes up, `AttachStartAsync` as
   DCP starts an Aspire service), Debug, Attach, Run without Debugger, Restart and Profile (`DebugServiceAsync`,
   `AttachServiceAsync`, `RunServiceAsync`, `RestartServiceAsync`, `ProfileServiceAsync`, under `OnServiceAsync`), the
@@ -788,11 +794,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   `BuildRunController.ProfileContainersAsync`) brings it up as Run does, its log in the Run console, with one .NET service held
   at its start (`ContainerPlan.Profiled`: of those marked Debug, else every one it starts, the launched service, else the
   first; the profiler window follows one program), without DOTNET_MODIFIABLE_ASSEMBLIES, which would measure code built for
-  changing; the run's `ServiceProfiler` has the tools' `trace --resume` record it there, which lets it go, and the run is
-  handed over only once up (a failed start disposes the recording). Get Snapshot ends the recording and the containers run
-  on; Stop ends it first (`ServiceRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach
-  Profiler with a container run up (and nothing debugged) records that service as it runs (`ServiceInContainerAsync`,
-  `ContainerRun.ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
+  changing; the one recording of a service (`ProfilerCommands.RecordServiceAsync`) has the tools' `trace --resume` record it
+  there, which lets it go, the profiler window following it from then (a start that fails after takes its containers down
+  with Stop's order, its snapshot read). Get Snapshot ends the recording and the containers run on; Stop ends it first
+  (`ServiceRun.Profiled`/`EndProfiling`, the snapshot read) so its trace keeps its rundown. Attach Profiler with a container
+  run up (and nothing debugged) records that service as it runs, through its run (`ProfileServiceAsync`, the place
+  `ContainerRun.ProgramAsync` gives, `ProfilePlaceOf`). The override's held and Hot Reload services are given apart (`ContainerPlan.WriteOverride(held,
   modifiable)`), and the run keeps what each service is held for (`ServiceRun.HeldFor`, `HoldAsync`) and which containers
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
   no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
@@ -921,7 +928,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   commands (`MainWindow.RestartAspireCommandAsync`: restart, or stop, its project's build here and start for an edit), the
   service found by its name and project whether its program still runs, its program gone before its build; Run without
   Debugger restarts it unheld. Profile of a configuration holds the chosen service at its start through the model, no code
-  made changeable, and the run's profiler records it from there (`ProfilerCommands.RecordHeldServiceAsync`,
+  made changeable, and the one recording of a service records it from there (`ProfilerCommands.RecordServiceAsync`,
   `ProfilingSession.AttachAsync`'s `resume`), letting it go once recording, Stop reading its snapshot before the programs go
   (`ProfileAspireAsync`, `AspireServiceDialog` when several run). Rerun reads, before anything is built, what changed since
   the build each program runs began (`BuiltInputs.ChangedSince`: code, project, XAML and settings files under its folder and
