@@ -995,8 +995,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   own console (a compose service's log), `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
   `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation) beside the container run, each
-  resource in one shape with what reaches its .NET service from here (its container's id too), and `telemetry` reads
-  their logs and traces (Mcp below).
+  resource in one shape with what reaches its .NET service from here (its container's id too), `container_action` given a
+  resource runs one of its advertised commands, and `telemetry` reads their logs and traces (Mcp below).
 - `src/Passenger.App/Telemetry` (#405): a run's structured logs and traces, one implementation for every kind of run.
   `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
@@ -1416,7 +1416,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   Compose configuration whose model has it (`ComposeTargetAsync`, refused naming them when several do, and for attach and
   stop refused saying no run has it). `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
   `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
-  `McpTests`' actions
+  `container_action` given an AppHost resource runs one of its advertised commands by its name, or start, stop and
+  restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`: asking
+  no one, as an agent's run asks no one about the certificate, a command that asks the person for input refused): there,
+  since the Aspire window's rows are the Containers window's, rather than in a tool or a run tool's parameter of their
+  own, which every session's list would pay more for. `McpTests`' actions
   test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
@@ -2204,7 +2208,8 @@ Profile asks which service in `AspireServiceDialog`;
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
 have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
-applicationUrl) and its resource service's calls ended (`AspireInteractionHost.Drop`); AspireStandInTests' windows run a
+applicationUrl), its resource service's calls ended (`AspireInteractionHost.Drop`) and its resource's commands run through
+`container_action` (`AspireInteractionHost.Commands`); AspireStandInTests' windows run a
 stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`, a shell script, so skipped on Windows); and
 `AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine.
 `ContainerTelemetryTests` run a compose app whose ASP.NET Core service sends OpenTelemetry (its packages the ones the

@@ -144,6 +144,59 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
         Assert.Empty(resources.Errors);
     }
 
+    /// <summary>An agent runs an AppHost resource's advertised commands through container_action, as the Aspire window's menu
+    /// does: by the command's name, or restart as Aspire's resource-restart; a confirmation asks no one (the agent's call is its
+    /// own, and nobody would answer a headless IDE's question), while one that asks the person for input, one the resource
+    /// lacks and one not enabled now are refused saying why, the AppHost never asked; workspace lists the commands it may run
+    /// and how the AppHost's run was started.</summary>
+    [Fact]
+    public async Task An_agent_runs_an_AppHost_resources_commands_through_container_action_and_is_refused_those_it_cannot()
+    {
+        project.Reset();
+        await using AspireInteractionHost resources = await AspireInteractionHost.StartAsync(project.KeyFile);
+        Passenger.App.Aspire.Protocol.Resource api = new() { Name = "api-owned-instance", DisplayName = "api", Uid = "api", ResourceType = "Project", State = "Running" };
+        api.Commands.Add(new Passenger.App.Aspire.Protocol.ResourceCommand
+        {
+            Name = "resource-restart", DisplayName = "Restart", State = Passenger.App.Aspire.Protocol.ResourceCommandState.Enabled, ConfirmationMessage = "Restart api?",
+        });
+        api.Commands.Add(new Passenger.App.Aspire.Protocol.ResourceCommand { Name = "passenger-ping", DisplayName = "Ping", State = Passenger.App.Aspire.Protocol.ResourceCommandState.Enabled });
+        api.Commands.Add(new Passenger.App.Aspire.Protocol.ResourceCommand { Name = "resource-start", DisplayName = "Start", State = Passenger.App.Aspire.Protocol.ResourceCommandState.Disabled });
+        api.Commands.Add(new Passenger.App.Aspire.Protocol.ResourceCommand
+        {
+            Name = "passenger-seed", DisplayName = "Seed", State = Passenger.App.Aspire.Protocol.ResourceCommandState.Enabled,
+            ArgumentInputs = { new Passenger.App.Aspire.Protocol.InteractionInput { Name = "rows", Label = "Rows", InputType = Passenger.App.Aspire.Protocol.InputType.Number } },
+        });
+        resources.PushResource(api);
+        project.Serve(resources);
+        await using McpClient client = await Start(["--mcp", project.Folder], languageServer: false);
+        string host = PathNames.Canonical(project.ProjectFile);
+        await Running(client, host);
+
+        JsonElement app = Assert.Single((await Call(client, "workspace")).GetProperty("aspireApps").EnumerateArray());
+        Assert.Equal("run", app.GetProperty("how").GetString());
+        JsonElement listed = Assert.Single(app.GetProperty("resources").EnumerateArray());
+        Assert.Equal(["resource-restart", "passenger-ping", "passenger-seed"], listed.GetProperty("commands").EnumerateArray().Select(c => c.GetString()));
+        string target = listed.GetProperty("target").GetString()!;
+
+        // By the resource's display name and Aspire's restart, then by its target and the command's own name.
+        Assert.Equal("api-owned-instance: resource-restart Succeeded", Text(await Call(client, "container_action", new() { ["container"] = "api", ["action"] = "restart" })));
+        Assert.Equal("api-owned-instance: passenger-ping Succeeded", Text(await Call(client, "container_action", new() { ["container"] = target, ["action"] = "passenger-ping" })));
+        Assert.Equal(["resource-restart", "passenger-ping"], resources.Commands.Select(command => command.CommandName));
+        Assert.All(resources.Commands, command => Assert.Equal("api-owned-instance", command.ResourceName));
+
+        foreach ((string action, string why) in ((string, string)[])[
+            ("explode", "its commands are resource-restart, passenger-ping, resource-start, passenger-seed"),
+            ("start", "resource-start is not enabled now"),
+            ("passenger-seed", "asks for input the person gives")])
+        {
+            CallToolResult refused = await Result(client, "container_action", new() { ["container"] = target, ["action"] = action });
+            Assert.True(refused.IsError == true && Text(refused).Contains(why, StringComparison.Ordinal), $"container_action {action} on the resource answered: {Text(refused)}");
+        }
+        Assert.Equal(2, resources.Commands.Length);
+        Assert.Equal("Stopped", (await Call(client, "stop")).GetString());
+        Assert.Empty(resources.Errors);
+    }
+
     /// <summary>The stand-in AppHost run by the agent from its Aspire configuration, up once its Passenger lists it with its
     /// resource from the stand-in resource service.</summary>
     private async Task Running(McpClient client, string host)

@@ -69,11 +69,20 @@ public sealed partial class PassengerTools
         return new ContainerExec(result.ExitCode, result.Output, result.Error.Length > 0 ? result.Error : null);
     });
 
+    // An AppHost resource's commands are this tool's, as the Aspire window's rows are the Containers window's: a parameter
+    // here costs every session's list less than a tool, or a command parameter on the run tools, of its own.
     [McpServerTool(Name = "container_action", Title = "Start, stop, restart or remove a container", Destructive = true), Description(
         "As the Containers window's buttons: start, stop, restart or remove a container (its name or id), a Compose project " +
-        "(remove takes it down, its volumes kept) or a project/service. Volumes and images are not its to remove.")]
-    public Task<string> ContainerAction(string container, [Description("start, stop, restart or remove")] string action, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "(remove takes it down, its volumes kept) or a project/service. Volumes and images are not its to remove. Given an " +
+        "Aspire resource (its target), runs one of its commands as the Aspire window does.")]
+    public Task<string> ContainerAction(string container, [Description("start, stop, restart or remove; a resource's command")] string action,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (await AspireCommandOfAsync(container, action, cancel) is ({ } appHost, { } resource, { } command))
+        {
+            AgentCall.Say($"Running {resource}'s {command}");
+            return $"{resource}: {command} {await window.ExecuteAspireResourceCommandAsync(appHost, resource, command, cancel)}";
+        }
         if (!ContainerCommands.AgentActions.Contains(action))
         {
             throw new ArgumentException($"{action} is not an action: start, stop, restart or remove");

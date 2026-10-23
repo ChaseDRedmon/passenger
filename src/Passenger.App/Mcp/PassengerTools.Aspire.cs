@@ -199,6 +199,25 @@ public sealed partial class PassengerTools
             is { ValueKind: JsonValueKind.String } id ? id.GetString() : null,
     }, app, Session.Aspire.FindService(new AspireSelection(app.Configuration.Project, resource)));
 
+    /// <summary>The AppHost resource command an agent's container_action names: an owned AppHost's resource, by its name or
+    /// target, and the command its action names (its own name, or start, stop or restart as Aspire's resource-… one); none
+    /// when it names no resource (a container), refused listing the resource's commands when it has none of that name.</summary>
+    private async Task<(string? AppHost, string? Resource, string? Command)> AspireCommandOfAsync(string container, string action, CancellationToken cancel)
+    {
+        bool qualified = container.Contains("::", StringComparison.Ordinal);
+        if (!qualified && !Session.Aspire.Apps.Any(app => !app.IsTest && !app.Stopping)
+            || await window.ResolveOwnedAspireResourceAsync(container, null, cancel, allowMissing: !qualified) is not { } selected)
+        {
+            return default;
+        }
+        AspireResourceCommand[] shown = [.. selected.Resource.Commands.Where(command => !command.Hidden)];
+        AspireResourceCommand named = shown.FirstOrDefault(command => command.Name == action) ?? shown.FirstOrDefault(command => command.Name == $"resource-{action}")
+            ?? throw new ArgumentException($"{selected.Resource.Name} has no command {action}: "
+                + (shown.Length == 0 ? "it has none" : $"its commands are {string.Join(", ", shown.Select(command => command.Name))}"));
+        return named.Enabled ? (selected.AppHostPath, selected.Resource.Name, named.Name)
+            : throw new InvalidOperationException($"{selected.Resource.Name}'s {named.Name} is not enabled now ({selected.Resource.State ?? "Unknown"})");
+    }
+
     private static string? SafeUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) && uri.Scheme is "http" or "https"
         ? new UriBuilder(uri) { UserName = string.Empty, Password = string.Empty, Query = string.Empty, Fragment = string.Empty }.Uri.AbsoluteUri : null;
 }
@@ -207,8 +226,8 @@ public sealed record AspireAppInfo(string AppHostPath, int ProcessId, string Sta
 
 /// <summary>A resource of a run of services as an agent's workspace has it, an AppHost's resource and the container run's
 /// compose service alike: its name, type (Project for a .NET service), state and health, the target the tools' resource
-/// takes; an AppHost's generation, display name, addresses, relationships and enabled commands, a compose service's
-/// published ports; its container (an id, or a compose service's container's name); and for a
+/// takes; an AppHost's generation, display name, addresses, relationships and enabled commands (container_action runs
+/// them), a compose service's published ports; its container (an id, or a compose service's container's name); and for a
 /// .NET service what reaches it from here: what it is held at its start for, the Debug tab debugging it (debug tools'
 /// session) and that session's state, and whether the profiler records it.</summary>
 public sealed record ResourceInfo(string Name, string? Type, string? State, string? Health)

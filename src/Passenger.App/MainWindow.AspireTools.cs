@@ -221,7 +221,7 @@ public partial class MainWindow
         {
             AspireResourceCommand command = fresh.Resource.Commands.SingleOrDefault(command => command.Enabled && command.Name is "stop" or "resource-stop")
                 ?? throw new InvalidOperationException("The resource does not advertise one enabled stop command");
-            await ExecuteAspireCommandAsync(current, fresh, command.Name, () => current.Aspire.FindApp(selection.AppHostPath) == app && !app.Stopping, cancel);
+            await ExecuteAspireCommandAsync(current, fresh, command.Name, () => current.Aspire.FindApp(selection.AppHostPath) == app && !app.Stopping, cancel, forAgent: true);
             return null;
         }
         AspireResourceRun? previous = action is "run" or "debug" ? current.Aspire.FindService(fresh)

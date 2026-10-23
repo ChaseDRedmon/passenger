@@ -283,6 +283,9 @@ public partial class MainWindow
         return new(AspireClient.CanonicalAppHost(appHost), selected);
     }
 
+    /// <summary>An agent's run of an AppHost resource's command (container_action), as the Aspire window's menu runs it but
+    /// asking no one: the agent's call is its confirmation, as an agent's run asks no one about the certificate, and a command
+    /// that asks for input the person gives is refused. What it answered, its output after it; a failure is thrown.</summary>
     public async Task<string> ExecuteAspireResourceCommandAsync(string appHost, string resource, string command, CancellationToken cancel = default)
     {
         ProjectSession current = session;
@@ -291,10 +294,11 @@ public partial class MainWindow
         {
             throw new InvalidOperationException("The solution was closed");
         }
-        return await ExecuteAspireCommandAsync(current, selection, command, () => true, cancel);
+        return await ExecuteAspireCommandAsync(current, selection, command, () => true, cancel, forAgent: true);
     }
 
-    private async Task<string> ExecuteAspireCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel)
+    private async Task<string> ExecuteAspireCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel,
+        bool forAgent = false)
     {
         if (session != current || current.IsEnded || !isCurrent())
         {
@@ -302,6 +306,10 @@ public partial class MainWindow
         }
         AspireResourceCommand advertised = selection.Resource.Commands.FirstOrDefault(candidate => candidate.Name == command)
             ?? throw new InvalidOperationException("The resource does not advertise this command");
+        if (forAgent && advertised.HasArguments)
+        {
+            throw new InvalidOperationException($"{advertised.DisplayName} asks for input the person gives: it runs from the Aspire window");
+        }
         AspireAppRun? app = current.Aspire.FindApp(selection.AppHostPath);
         if (app?.Interactions is not { } connection)
         {
@@ -313,13 +321,14 @@ public partial class MainWindow
             return "Resource command completed";
         }
         ResourceCommandResponse? result = await connection.ExecuteCommandAsync(AspireCli(), selection, command,
-            () => session == current && !current.IsEnded && isCurrent(), cancel);
+            () => session == current && !current.IsEnded && isCurrent(), cancel, confirmed: forAgent);
         if (result is null)
         {
             return "Resource command canceled";
         }
         ShowAspireCommandResult(app, command, result);
-        return $"{result.Kind}: {result.Message}";
+        return $"{result.Kind}{(result.Message.Length > 0 ? $": {result.Message}" : string.Empty)}"
+            + (result.Result is { Value.Length: > 0 } output ? $"\n{output.Value}" : string.Empty);
     }
 
     private static void ShowAspireCommandResult(AspireAppRun app, string command, ResourceCommandResponse result)
