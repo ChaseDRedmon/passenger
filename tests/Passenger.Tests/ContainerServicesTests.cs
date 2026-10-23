@@ -126,6 +126,45 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
         window.Close();
     }
 
+    /// <summary>A container run's .NET services followed by the Requests window through Passenger's tools in their containers
+    /// (trace --requests), each request listed with the service that served it; and a route's request sent from the folder's
+    /// code goes to the port the engine published for its service (#417's send address).</summary>
+    [AvaloniaFact]
+    public void The_requests_window_follows_each_service_in_its_container_and_a_routes_request_goes_to_its_published_port()
+    {
+        Assert.SkipWhen(tools.WhyNot is not null, tools.WhyNot ?? string.Empty);
+        (string folder, string project) = ContainerRunsTests.Shop("requests");
+        MainWindow window = ContainerRunsTests.Open(folder, languageServer: true);
+        Assert.True(window.SelectConfiguration("Compose: compose.yaml"));
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Requests);
+            Ui.Launched(window, window.RunAsync(), "the services to come up", TimeSpan.FromMinutes(5));
+            Ui.WaitFor(() => window.Requests.Following.Contains("web of", StringComparison.Ordinal) && window.Requests.Following.Contains("api of", StringComparison.Ordinal),
+                "the Requests window to follow both services in their containers", TimeSpan.FromMinutes(2));
+            Assert.Equal("web 1", ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "web")).GetAwaiter().GetResult());
+            Assert.Equal("api 1", ContainerRunDebuggingTests.Get(ContainerRunsTests.Published(project, "api")).GetAwaiter().GetResult());
+            Ui.WaitFor(() => window.RequestLog.Requests.Count(r => r.Path == "/" && r.Status == 200) == 2, "both services' requests, listed as they ended", TimeSpan.FromSeconds(30));
+            Assert.Equal(["api of Compose: compose.yaml", "web of Compose: compose.yaml"], window.RequestLog.Requests.Select(r => r.From).Order(StringComparer.Ordinal));
+            // Each reached its own project's route, read from its code.
+            Assert.All(window.RequestLog.Requests, r => Assert.True(r.Route is { } route && route.Project.Contains(r.From[..3], StringComparison.OrdinalIgnoreCase),
+                $"{r.From}'s request reached {r.Route?.Project ?? "no route"}"));
+
+            // web's route sent from the code goes to the port the engine published for web, not its launch profile's.
+            Passenger.Roslyn.Extension.WebRoute webRoute = window.Session.Routes.All.Single(r => r.Project.Contains("Web", StringComparison.Ordinal) && r.Template == "/");
+            Task<string?> sent = window.SendRouteAsync(webRoute);
+            Ui.WaitFor(() => sent.IsCompleted && window.Endpoints.Response.Response is not null, "web's answer to the route's request", TimeSpan.FromMinutes(1));
+            Assert.Null(sent.Result);
+            Assert.True(window.Endpoints.Response.Passed, $"web's route did not answer from its container: {window.Endpoints.Response.Summary}");
+            Assert.Contains("web 1", window.Endpoints.Response.Shown, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Docker.Stopped(window, project, "Stop to take every container down");
+        }
+        window.Close();
+    }
+
     /// <summary>Debug of one service whose debugger cannot attach after its restart (no container tools to put in it: none
     /// here, and no release to download them from) says why, and makes it again unheld, so it runs on without the debugger
     /// rather than waiting at its runtime's start for one that never comes.</summary>

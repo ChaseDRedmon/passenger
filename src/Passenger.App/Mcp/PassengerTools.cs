@@ -103,7 +103,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         "The open folder and solution, its projects (output type, frameworks), the run configurations and the chosen one, " +
         "the language server's state, the open files (unsaved ones marked) and the active file with its caret, and the Aspire " +
         "AppHosts and container run under way: each resource's state, hold, debug session and the target the tools' resource takes. " +
-        "routes adds the web projects' routes, read from their code: methods, template, parameters with their source, handler, place.")]
+        "routes adds the web projects' routes, read from their code.")]
     public Task<Workspace> GetWorkspace(bool routes = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Workspace answered = await RunsWorkspace(Snapshot(), cancel);
@@ -706,9 +706,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
         "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
-        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire or compose service's own.")]
-    public Task<string> RunOutput(int lines = 200, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire or compose service's own. " +
+        "requests: the running web apps' requests and their SQL instead.")]
+    public Task<string> RunOutput(int lines = 200, string? resource = null, bool requests = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (requests)
+        {
+            return await window.RequestsForAgentAsync(lines, cancel);
+        }
         if (resource is not null)
         {
             if (await ComposeTargetAsync(resource, null, starts: false, cancel) is { } compose)

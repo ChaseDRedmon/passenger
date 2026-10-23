@@ -15,7 +15,7 @@ public sealed class LiveRequestsTests
         using Microsoft.EntityFrameworkCore;
 
         WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-        builder.Services.AddDbContext<Shop>(options => options.UseSqlite("Data Source=" + Path.Combine(AppContext.BaseDirectory, "shop.db")));
+        builder.Services.AddDbContext<Shop>(options => options.UseSqlite("Data Source=" + Path.Combine(AppContext.BaseDirectory, "shop.db")).EnableSensitiveDataLogging());
         WebApplication app = builder.Build();
         using (IServiceScope scope = app.Services.CreateScope())
         {
@@ -28,6 +28,11 @@ public sealed class LiveRequestsTests
 
         app.MapGet("/orders/{id:int}", (int id, Shop db) => db.Orders.Single(o => o.Id == id).Customer);
         app.MapGet("/orders", (Shop db) => string.Join(", ", db.Orders.ToList().Select(o => $"{o.Customer}: {db.Lines.Count(l => l.OrderId == o.Id)}")));
+        app.MapGet("/sign-in/{name}", (string name, Shop db) =>
+        {
+            string password = name + "-secret";
+            return db.Orders.Any(o => o.Customer == password) ? "in" : "out";
+        });
         app.MapGet("/boom", Fail);
         app.Run();
 
@@ -60,18 +65,12 @@ public sealed class LiveRequestsTests
     {
         using HeldPort port = new();
         string folder = TestFolders.Create("requests-");
-        AvaloniaApp.UseFeed(folder);
-        TestFolders.Write(folder, "Shop.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")
-            .With($"  <ItemGroup>\n    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\" />\n  </ItemGroup>\n"));
-        TestFolders.Write(folder, "Properties/launchSettings.json",
-            $"{{\n  \"profiles\": {{\n    \"http\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port.Port}\" }}\n  }}\n}}\n");
-        TestFolders.Write(folder, "Program.cs", Program);
-        Restore.Run(folder);
+        WriteShop(folder, port.Port);
         MainWindow window = Ui.OpenFolder(folder);
         try
         {
             window.ShowToolWindow(ToolWindowIds.Requests);
-            Ui.WaitFor(() => window.Session.Routes.All.Count == 3, "the app's three routes, read from its code", TimeSpan.FromMinutes(3));
+            Ui.WaitFor(() => window.Session.Routes.All.Count == 4, "the app's four routes, read from its code", TimeSpan.FromMinutes(3));
             port.LetGo(Path.Combine(folder, "gate"));
             Assert.True(window.SelectConfiguration("Shop: http"), $"No configuration Shop: http among {string.Join(", ", window.Configurations.Select(c => c.Name))}");
             Ui.Launched(window, window.RunAsync(), "the shop to start", TimeSpan.FromMinutes(2));
@@ -91,13 +90,14 @@ public sealed class LiveRequestsTests
             {
                 Assert.Equal("Grace", Get(client, $"http://127.0.0.1:{port.Port}/orders/2"));
                 Assert.Equal("Ada: 0, Grace: 0, Linus: 0", Get(client, $"http://127.0.0.1:{port.Port}/orders"));
+                Assert.Equal("out", Get(client, $"http://127.0.0.1:{port.Port}/sign-in/ada"));
                 HttpResponseMessage failed = Task.Run(() => client.GetAsync($"http://127.0.0.1:{port.Port}/boom")).GetAwaiter().GetResult();
                 Assert.Equal(500, (int)failed.StatusCode);
             }
             try
             {
-                Ui.WaitFor(() => window.RequestLog.Requests.Count(r => r.Status is not null) == 3 && window.RequestLog.Requests.Sum(r => r.Commands.Count) == 5,
-                    "the three requests, listed as they ended, with their five commands", TimeSpan.FromSeconds(30));
+                Ui.WaitFor(() => window.RequestLog.Requests.Count(r => r.Status is not null) == 4 && window.RequestLog.Requests.Sum(r => r.Commands.Count) == 6,
+                    "the four requests, listed as they ended, with their six commands", TimeSpan.FromSeconds(30));
             }
             catch (TimeoutException)
             {
@@ -110,6 +110,14 @@ public sealed class LiveRequestsTests
             LiveCommand read = Assert.Single(one.Commands);
             Assert.Contains("FROM \"Orders\"", read.Text, StringComparison.Ordinal);
             Assert.Equal(2, read.Reads);
+            // The app logs its parameters' values (EF's sensitive data logging): shown, but a secret's never in the clear.
+            Ui.WaitFor(() => read.Parameters is not null, "the command's parameters, from EF Core's log of it");
+            Assert.True(System.Text.RegularExpressions.Regex.IsMatch(read.Parameters!, @"^@\w*id\w*='2'"), $"{read.Parameters}; the console: {string.Join(" | ", window.BottomPanel.Run.Document.Snapshot.ToString().Split('\n').Where(l => l.Contains("Parameters", StringComparison.Ordinal)))}");
+            LiveCommand signIn = Assert.Single(window.RequestLog.Requests.Single(r => r.Path == "/sign-in/ada").Commands);
+            Ui.WaitFor(() => signIn.Parameters is not null, "the sign-in's parameters");
+            Assert.Matches(@"^@\w*password\w*='" + Passenger.App.Containers.ContainerSecrets.Masked + "'", signIn.Parameters);
+            Assert.DoesNotContain("ada-secret", signIn.Parameters, StringComparison.Ordinal);
+            Assert.DoesNotContain("ada-secret", window.Requests.Rows.OfType<RequestsView.CommandRow>().Select(r => r.Command.Text + r.Command.Parameters).Aggregate(string.Empty, string.Concat), StringComparison.Ordinal);
             Assert.False(one.HasRepeats, "A request that ran one command was marked as an N+1");
 
             // The orders' list counts each order's lines with a command of its own: the same text three times, an N+1.
@@ -119,7 +127,7 @@ public sealed class LiveRequestsTests
             Assert.Equal([false, true, true, true], all.Commands.Select(c => c.Repeated));
             Assert.Equal(3, all.Commands[1].Runs);
             // Listed newest first, each request followed by its commands.
-            Assert.Equal(["/boom", "/orders", "/orders/2"], window.Requests.Rows.OfType<LiveRequest>().Select(r => r.Path));
+            Assert.Equal(["/boom", "/sign-in/ada", "/orders", "/orders/2"], window.Requests.Rows.OfType<LiveRequest>().Select(r => r.Path));
 
             LiveRequest boom = window.RequestLog.Requests.Single(r => r.Path == "/boom");
             Assert.Equal(500, boom.Status);
@@ -133,7 +141,7 @@ public sealed class LiveRequestsTests
             Ui.WaitFor(() => window.EditorArea.CodeEditor.CaretPosition.Line == LineOf("static string Fail()"), "the line that threw, opened");
             window.Requests.Open(window.Requests.Rows.OfType<RequestsView.CommandRow>().First(r => r.Request == one));
             Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith(".sql", StringComparison.Ordinal) == true, "the command's text, opened in a tab");
-            Assert.Equal(read.Text, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+            Assert.Equal($"-- {read.Parameters}\n{read.Text}", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
             Assert.True(window.EditorArea.CodeEditor.IsReadOnly, "A command's text opened as something to edit");
         }
         finally
@@ -144,7 +152,20 @@ public sealed class LiveRequestsTests
         }
     }
 
-    private static string Get(HttpClient client, string url) => Task.Run(() => client.GetStringAsync(url)).GetAwaiter().GetResult();
+    /// <summary>The shop written into a folder and restored from the run's local feed, its launch profile serving at the port
+    /// given: this class's and an agent's test of the requests (McpRequestsTests).</summary>
+    internal static void WriteShop(string folder, int port)
+    {
+        AvaloniaApp.UseFeed(folder);
+        TestFolders.Write(folder, "Shop.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")
+            .With($"  <ItemGroup>\n    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\" />\n  </ItemGroup>\n"));
+        TestFolders.Write(folder, "Properties/launchSettings.json",
+            $"{{\n  \"profiles\": {{\n    \"http\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }}\n  }}\n}}\n");
+        TestFolders.Write(folder, "Program.cs", Program);
+        Restore.Run(folder);
+    }
+
+    internal static string Get(HttpClient client, string url) => Task.Run(() => client.GetStringAsync(url)).GetAwaiter().GetResult();
 
     private static int LineOf(string text) => Array.FindIndex(Program.Split('\n'), l => l.Contains(text, StringComparison.Ordinal));
 }
