@@ -586,12 +586,21 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`BuildsBeforeRestart`), which failures are its own to say (`Refused`), its sessions' names and group (`SessionName`,
   `Group`), whether each start of a held service is attached to by the start itself, once, a restart then waiting for that
   attach rather than attaching again (`AttachesItsStarts`: an Aspire service's, whose start DCP asks for), whether Run
-  without Debugger restarts it unheld rather than letting its session go (`RestartsToRunWithoutDebugger`, Aspire's), and
-  what an attach tells it (`Attached`: an Aspire start keeps its tab and session). Both kinds share too how a run is
+  without Debugger restarts it unheld rather than letting its session go (`RestartsToRunWithoutDebugger`, Aspire's; only
+  one held or debugged, one running unheld that nothing debugs left as it is, said), and what an attach tells it
+  (`Attached`: an Aspire start keeps its tab and session). A held start the debugger cannot reach runs on unheld, said, in
+  either kind (a container run's service made anew unheld; an Aspire start let go at its diagnostic port, its runtime's
+  diagnostics off said as `ServiceProgram.WhyNot`), never left waiting at its start. Both kinds share too how a run is
   started (`RunStart`: Run, Debug, Run with Hot Reload, Profile), its certificate (`BuildRunController.Certificate.cs`) and
   one start at a time of what it starts (`TakeStartAsync`, a `StartUnderWay` in `ProjectSession.Starting`, which the
   folder's end ends): a start of a container configuration, or of an AppHost a start under way also starts, ends that one
-  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has. Rerun follows the configuration chosen
+  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has. Debug or Run of a configuration that
+  runs ends that run and starts it again, an AppHost's (`RunAspireAsync`, its group stopped first) as a container run's and a
+  plain program's in the Run console (`TakeConsoleAsync`); "Already running" is said only of what shares the Run console,
+  naming it (`AlreadyRunning`), an AppHost running beside anything; each start is under its own action's work (Debug's,
+  Profile's, Run's) and says itself in a container run's words (`AspireStarted`: "Debugging X: Y under the debugger"); and a
+  start of one resource (the AppHost gutter's, an agent's `resource`) keeps its configuration's Don't start, setting only
+  its target's entry (`MainWindow.Targeting`). Rerun follows the configuration chosen
   (`BuildRunController.RerunAsync`): its AppHost's when it runs (what changed restarted), else its container run in fast mode
   (the services whose build changed restarted), else what the Run console has stopped and the chosen run again, another
   configuration's AppHost running on; what changed is read by one stamp of a build's output (`BuiltInputs.Stamp`, a file
@@ -944,8 +953,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   restart's own start is the one attach (a restart waits for it, `AspireAppRun.NextStart`); its session is named by its
   AppHost and resource (`SessionName`), so a restart takes its ended tab. Its restart is its AppHost's own resource
   commands (`MainWindow.RestartAspireCommandAsync`: restart, or stop, its project's build here and start for an edit), the
-  service found by its name and project whether its program still runs, its program gone before its build; Run without
-  Debugger restarts it unheld. Profile of a configuration holds the chosen service at its start through the model, no code
+  service found by its name and project whether its program still runs, its program gone before its build; the Aspire
+  window's and an agent's Restart command of a .NET service goes through the run (`MainWindow.ResourceCommandAsync`,
+  `RestartServiceAsync`), so one attached as it ran is attached again, as a container's Restart does; Run without
+  Debugger restarts it unheld when held or debugged. Profile of a configuration holds the chosen service at its start through the model, no code
   made changeable, and the one recording of a service records it from there (`ProfilerCommands.RecordServiceAsync`,
   `ProfilingSession.AttachAsync`'s `resume`), letting it go once recording, Stop reading its snapshot before the programs go
   (`ProfileAspireAsync`, `AspireServiceDialog` when several run); the start waits as long as the AppHost takes to ask for
@@ -1453,8 +1464,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   nothing and answered as it stands. `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
   `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
   `container_action` given an AppHost resource runs one of its advertised commands by its name, or start, stop and
-  restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`: asking
-  no one, as an agent's run asks no one about the certificate, a command that asks the person for input refused): there,
+  restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`, through
+  the window's `ResourceCommandAsync`, a .NET service's Restart through its run; asking no one, as an agent's run asks no
+  one about the certificate, a command that asks the person for input refused): there,
   since the Aspire window's rows are the Containers window's, rather than in a tool or a run tool's parameter of their
   own, which every session's list would pay more for. `McpTests`' actions
   test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change

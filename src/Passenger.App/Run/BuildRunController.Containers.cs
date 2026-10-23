@@ -27,9 +27,10 @@ public sealed partial class BuildRunController
         {
             return Said($"{configuration.Name} runs no containers");
         }
-        if (IsRunning && session.ContainerRun is not { IsStopped: false })
+        // The Run console is one program's: another configuration's plain program there is named; a container run gives way.
+        if (RunsInConsole && session.ContainerRun is not { IsStopped: false })
         {
-            return Said("Already running");
+            return Said(AlreadyRunning());
         }
         string action = how == RunStart.Debug ? AppActions.Debug : AppActions.RunProgram;
         if (parts.Work.Begin(action, $"Working out how to {(how == RunStart.Debug ? "debug" : "run")} {configuration.Name}…") is not { } work)

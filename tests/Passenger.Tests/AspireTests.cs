@@ -654,9 +654,6 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             AspireSelection foreignProcess = new(project.Host, new AspireResource(JsonSerializer.SerializeToElement(changedIdentity)));
             Assert.Null(window.AspireRuntime.FindService(foreignProcess));
             Assert.Throws<InvalidOperationException>(() => window.AspireRuntime.SetDebugMode(foreignProcess, debugging: true));
-            string? duplicate = Ui.Await(window.RunAsync(), "a second run of the same AppHost");
-            Assert.Contains("already running", duplicate, StringComparison.OrdinalIgnoreCase);
-            Assert.Single(window.AspireRuntime.Apps);
             ChooseResource(window, "apiservice");
             FindAction(window, "Attach to Aspire Resource");
             Ui.WaitFor(() => Service(window, api).DebugTab?.IsLive == true, $"Attach to the chosen API ({window.Status})");

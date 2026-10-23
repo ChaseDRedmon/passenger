@@ -57,6 +57,21 @@ public partial class MainWindow
         };
     }
 
+    /// <summary>An Aspire configuration that starts one of its AppHost's resources for a gutter icon or an agent: that one
+    /// debugged (or run), the rest run, and those its configuration says not to start still not started; only the target's
+    /// entry is set.</summary>
+    internal static RunConfiguration Targeting(RunConfiguration configuration, IEnumerable<(string Name, string Project)> resources, string target, bool debug)
+    {
+        (string Name, string Project)[] each = [.. resources];
+        return configuration with
+        {
+            ServiceProjects = each.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
+            ServiceActions = each.ToDictionary(resource => resource.Name, resource => resource.Name == target ? debug ? ServiceStart.Debug : ServiceStart.Run
+                : configuration.ServiceActions.GetValueOrDefault(resource.Name) == ServiceStart.DontStart ? ServiceStart.DontStart : ServiceStart.Run, StringComparer.Ordinal),
+            LaunchService = target,
+        };
+    }
+
     internal async Task<bool> StartAspireToolResourceAsync(string target, RunConfiguration configuration,
         string? arguments, RunStart mode, CancellationToken cancel)
     {
@@ -81,17 +96,11 @@ public partial class MainWindow
         {
             throw new InvalidOperationException("The resource must identify one project proven by the AppHost's AddProject declarations");
         }
-        RunConfiguration selected = configuration with
-        {
-            ServiceProjects = resources.ToDictionary(resource => resource.Name, resource => resource.Project, StringComparer.Ordinal),
-            ServiceActions = resources.ToDictionary(resource => resource.Name,
-                resource => resource.Name == name && mode != RunStart.Run ? ServiceStart.Debug : ServiceStart.Run, StringComparer.Ordinal),
-            LaunchService = name,
-        };
-        // Run mode keeps unproven, dynamically added projects out of the debugger; the proven target overrides it.
+        RunConfiguration selected = Targeting(configuration, resources.Select(resource => (resource.Name, resource.Project)), name, debug: mode != RunStart.Run);
+        // The target marked Debug alone keeps unproven, dynamically added projects out of the debugger, under Debug's work too.
         string? problem = mode == RunStart.Profile
             ? await buildRun.ProfileAspireAsync(selected, arguments, cancel)
-            : await buildRun.RunAspireAsync(selected, arguments, RunStart.Run, cancel);
+            : await buildRun.RunAspireAsync(selected, arguments, mode == RunStart.Debug ? RunStart.Debug : RunStart.Run, cancel);
         if (session != current || current.IsEnded)
         {
             throw new InvalidOperationException("The solution was closed");

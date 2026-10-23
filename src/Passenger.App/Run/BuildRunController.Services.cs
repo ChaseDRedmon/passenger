@@ -258,14 +258,20 @@ public sealed partial class BuildRunController
 
     /// <summary>Run without debugger of one .NET service of a run, kept as Debug's choice is: its session let go (detached,
     /// not restarted), the program running on as it is, held at its start, its next restart making it anew unheld; or, where
-    /// its kind restarts it so (<see cref="ServiceRun.RestartsToRunWithoutDebugger"/>), restarted unheld at once. Null once
-    /// done, else why not.</summary>
+    /// its kind restarts it so (<see cref="ServiceRun.RestartsToRunWithoutDebugger"/>), restarted unheld at once, only when it
+    /// is held or debugged. One running unheld with nothing debugging it is left as it is, said. Null once done, else why not.</summary>
     public Task<string?> RunServiceAsync(ServiceRun? run, string name) => OnServiceAsync(run, name, AppActions.ServiceRun,
-        run?.RestartsToRunWithoutDebugger == true ? $"Restarting {name} without the debugger…" : $"Letting go of {name}…", async (run, service, work) =>
+        $"Running {name} without the debugger…", async (run, service, work) =>
     {
+        bool held = run.HeldFor(name) is not null;
+        bool debugged = run.Debugged.Contains(run.SessionName(service)) && session.Debug.SessionNamed(run.SessionName(service)) is { State: not Debugging.DebugState.Ended };
         Choose(run, name, debug: false);
         run.AttachedRunning.Remove(name);
         await run.HoldAsync(name, null, work.Stopping);
+        if (!held && !debugged)
+        {
+            return Done(null, $"{name} of {run.Name} already runs without the debugger: nothing restarted");
+        }
         if (run.RestartsToRunWithoutDebugger)
         {
             return Done(await RestartServicesAsync(run, [service], work, "to run without the debugger"), $"{name} of {run.Name} restarted without the debugger");

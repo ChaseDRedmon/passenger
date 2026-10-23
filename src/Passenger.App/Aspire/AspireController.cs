@@ -889,7 +889,18 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             // The run of services' one attach to this start, whose session (or recording) lets it go.
             if (held is { } purpose && await (AttachStart ?? throw new LaunchException("The debugger is unavailable"))(app, resource, purpose, cancellation) is { } unattached)
             {
-                throw new LaunchException(unattached);
+                if (purpose == RunStart.Profile)
+                {
+                    throw new LaunchException(unattached);
+                }
+                // Held for a debugger that could not reach it, it would wait at its start for good: it runs on unheld, its hold for
+                // the run let go, said, as a container run's service restarted held does.
+                await app.HoldAsync(serviceName, null, CancellationToken.None);
+                resource.Held = null;
+                await LetGoAsync(resource.ProcessId);
+                string said = $"{serviceName} of {app.Name} runs without the debugger, which could not attach: {unattached}";
+                app.Console.Append(said + "\n", error: true);
+                RunsUndebugged?.Invoke(this, said);
             }
             cancellation.ThrowIfCancellationRequested();
             if (profiling)
@@ -910,6 +921,24 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             app.Landed(resource, failure);
         }
     }
+
+    /// <summary>A service held at its start for a debugger that could not reach it, which then runs on unheld: said.</summary>
+    public event EventHandler<string>? RunsUndebugged;
+
+    /// <summary>Lets a program held at its runtime's start go, through its own diagnostic port; one already going, or gone, is
+    /// left as it is.</summary>
+    private static Task LetGoAsync(int? process) => process is not int id ? Task.CompletedTask : BackgroundWork.Run(() =>
+    {
+        try
+        {
+            new Microsoft.Diagnostics.NETCore.Client.DiagnosticsClient(id).ResumeRuntime();
+        }
+        catch (Exception gone) when (gone is Microsoft.Diagnostics.NETCore.Client.DiagnosticsClientException or IOException or TimeoutException
+            or UnauthorizedAccessException or InvalidOperationException)
+        {
+            IdeLog.Write(IdeLog.Ide, $"Aspire: process {id} was not held at its start to let go ({gone.Message})");
+        }
+    });
 
     /// <summary>What a service is held at its start for, its first start in a run: as a person chose it as the configuration
     /// last ran, else debugged where the configuration marks it Debug, or, with none marked, where DCP's request says (a
@@ -1284,8 +1313,19 @@ public sealed class AspireAppRun : ServiceRun
     /// when it started held (with DOTNET_MODIFIABLE_ASSEMBLIES=debug).</summary>
     public override Task<ServiceProgram?> ProgramAsync(IRunService service, Task up, CancellationToken stop) =>
         ServiceNamed(service.Name) is AspireResourceRun { ProcessId: int id } running
-            ? Task.FromResult<ServiceProgram?>(new ServiceProgram(id, null, null) { HotReload = running.Held is not null, App = running.Inspection })
+            ? Task.FromResult<ServiceProgram?>(new ServiceProgram(id, null, null)
+            {
+                HotReload = running.Held is not null,
+                App = running.Inspection,
+                WhyNot = DiagnosticsOff(running.Plan.Environment),
+            })
             : throw new ServiceUnreachedException($"{service.Name} of {Name} has no program running");
+
+    /// <summary>Why no debugger or profiler can reach a program its environment starts with its runtime's diagnostics off (which
+    /// no hold then holds either), as Passenger's container tools say it of a container's; null when they are on.</summary>
+    private static string? DiagnosticsOff(IReadOnlyDictionary<string, string> environment) =>
+        environment.GetValueOrDefault("DOTNET_EnableDiagnostics") == "0" || environment.GetValueOrDefault("DOTNET_EnableDiagnostics_Debugger") == "0"
+            ? "Its runtime was started with DOTNET_EnableDiagnostics=0, which turns its debugger off: nothing can attach to it" : null;
 
     /// <summary>Restarts services through the AppHost, one after another, each waited for until its next start has started
     /// and been attached to (a held one) as it started; built between its stop and its start when asked.</summary>

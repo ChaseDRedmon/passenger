@@ -147,7 +147,7 @@ public partial class MainWindow
         }
         Func<AspireSelection, string, Func<bool>, CancellationToken, Task> executeCommand = async (selected, command, isCurrent, cancel) =>
         {
-            await ExecuteAspireCommandAsync(next, selected, command, isCurrent, cancel);
+            await ResourceCommandAsync(next, selected, command, isCurrent, cancel);
         };
         view.LinkClicked += (_, link) => OpenLink(link);
         view.AppSelectionChanged += (_, app) =>
@@ -291,7 +291,22 @@ public partial class MainWindow
         {
             throw new InvalidOperationException("The solution was closed");
         }
-        return await ExecuteAspireCommandAsync(current, selection, command, () => true, cancel, forAgent: true);
+        return await ResourceCommandAsync(current, selection, command, () => true, cancel, forAgent: true);
+    }
+
+    /// <summary>A resource command a person or an agent runs: Restart of a .NET service of the AppHost the window runs goes
+    /// through its run of services, as a container's Restart does (its session ended first, held again where debugged, one
+    /// attached as it ran attached again); any other goes to the AppHost, an agent's asking no one. What it said, else throws
+    /// why not.</summary>
+    private async Task<string> ResourceCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel,
+        bool forAgent = false)
+    {
+        if (command is "restart" or "resource-restart" && current.Aspire.FindService(selection) is IRunService service
+            && current.Aspire.FindApp(selection.AppHostPath) is { IsTest: false } app)
+        {
+            return await buildRun.RestartServiceAsync(app, service.Name) is { } failed ? throw new InvalidOperationException(failed) : $"{app.Name}: restarted {service.Name}";
+        }
+        return await ExecuteAspireCommandAsync(current, selection, command, isCurrent, cancel, forAgent);
     }
 
     private async Task<string> ExecuteAspireCommandAsync(ProjectSession current, AspireSelection selection, string command, Func<bool> isCurrent, CancellationToken cancel,
