@@ -681,7 +681,7 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             Aspire.AspireSelection target = (await window.ResolveOwnedAspireResourceAsync(resource, null, cancel))!;
             Aspire.AspireResourceRun service = Session.Aspire.FindService(target)
-                ?? throw new InvalidOperationException($"{resource} is no .NET service Passenger runs for its AppHost; aspire_telemetry reads its logs");
+                ?? throw new InvalidOperationException($"{resource} is no .NET service Passenger runs for its AppHost; telemetry reads its logs");
             service.Console.Flush();
             return Tail(service.Console.Document.Snapshot, lines);
         }

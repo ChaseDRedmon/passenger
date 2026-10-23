@@ -70,8 +70,7 @@ public partial class MainWindow
         string[] ownedAppHosts = [];
         PrepareAspireContainerCleanup(next);
         view.BindActions(Actions, id => Request(id));
-        view.TelemetryProvider = path => next.Aspire.FindApp(path) is { DashboardEndpoint: { } endpoint } app
-            ? (endpoint, app.DashboardApiKey) : null;
+        view.TelemetryProvider = path => next.Aspire.FindApp(path)?.Telemetry;
         view.SelectContainer = id => _ = ShowAspireContainerAsync(next, id);
         if (aspireDisplayChanged is not null)
         {

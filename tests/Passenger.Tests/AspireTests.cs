@@ -463,7 +463,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
                 "a live trace with a child span");
             AspireTrace trace = window.Aspire.TraceList.Items.OfType<AspireTrace>().First(trace => trace.Spans.Count >= 2);
             ClickListItem(window, window.Aspire.TraceList, trace);
-            AspireView.SpanRow child = window.Aspire.SpanList.Items.OfType<AspireView.SpanRow>().First(row => row.Depth > 0);
+            Passenger.App.Telemetry.TelemetryView.SpanRow child = window.Aspire.SpanList.Items.OfType<Passenger.App.Telemetry.TelemetryView.SpanRow>().First(row => row.Depth > 0);
             ClickListItem(window, window.Aspire.SpanList, child);
             string spanId = child.Span.SpanId;
             string[] before = window.Aspire.TraceList.Items.OfType<AspireTrace>().Select(item => item.TraceId).ToArray();
@@ -471,7 +471,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Ui.WaitFor(() => window.Aspire.TraceList.Items.OfType<AspireTrace>().Any(item => !before.Contains(item.TraceId)),
                 "the next native telemetry batch");
             Assert.Equal(trace.TraceId, Assert.IsType<AspireTrace>(window.Aspire.TraceList.SelectedItem).TraceId);
-            Assert.Equal(spanId, Assert.IsType<AspireView.SpanRow>(window.Aspire.SpanList.SelectedItem).Span.SpanId);
+            Assert.Equal(spanId, Assert.IsType<Passenger.App.Telemetry.TelemetryView.SpanRow>(window.Aspire.SpanList.SelectedItem).Span.SpanId);
         }
         catch (TimeoutException error)
         {
@@ -492,12 +492,12 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         index = item switch
         {
             AspireTrace trace => list.Items.OfType<AspireTrace>().ToList().FindIndex(current => current.TraceId == trace.TraceId),
-            AspireView.SpanRow span => list.Items.OfType<AspireView.SpanRow>().ToList().FindIndex(current => current.Span.SpanId == span.Span.SpanId),
+            Passenger.App.Telemetry.TelemetryView.SpanRow span => list.Items.OfType<Passenger.App.Telemetry.TelemetryView.SpanRow>().ToList().FindIndex(current => current.Span.SpanId == span.Span.SpanId),
             _ => list.Items.IndexOf(item),
         };
         Assert.True(index >= 0);
         ListBoxItem row = Assert.IsType<ListBoxItem>(list.ContainerFromIndex(0));
-        string geometry = $"index={index}, depth={(item as AspireView.SpanRow)?.Depth}, selectedBefore={Identity(list.SelectedItem)}";
+        string geometry = $"index={index}, depth={(item as Passenger.App.Telemetry.TelemetryView.SpanRow)?.Depth}, selectedBefore={Identity(list.SelectedItem)}";
         try
         {
             Ui.Click(row, settle: false);
@@ -523,9 +523,9 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         {
             Assert.Equal(traceItem.TraceId, Assert.IsType<AspireTrace>(list.SelectedItem).TraceId);
         }
-        else if (item is AspireView.SpanRow spanItem)
+        else if (item is Passenger.App.Telemetry.TelemetryView.SpanRow spanItem)
         {
-            Assert.Equal(spanItem.Span.SpanId, Assert.IsType<AspireView.SpanRow>(list.SelectedItem).Span.SpanId);
+            Assert.Equal(spanItem.Span.SpanId, Assert.IsType<Passenger.App.Telemetry.TelemetryView.SpanRow>(list.SelectedItem).Span.SpanId);
         }
         else
         {
@@ -535,7 +535,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         static string Identity(object? value) => value switch
         {
             AspireTrace trace => trace.TraceId,
-            AspireView.SpanRow span => span.Span.SpanId,
+            Passenger.App.Telemetry.TelemetryView.SpanRow span => span.Span.SpanId,
             _ => value?.ToString() ?? "<none>",
         };
 

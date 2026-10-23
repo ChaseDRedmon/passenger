@@ -20,7 +20,7 @@ using Passenger.Core;
 namespace Passenger.Tests;
 
 /// <summary>Aspire for an agent: <c>run</c>, <c>debug_start</c>, <c>debug_attach</c>, <c>profile</c> and <c>stop</c> on an
-/// owned AppHost's resource, <c>aspire_telemetry</c> on its logs and traces, and an agent's start given up on or its
+/// owned AppHost's resource, <c>telemetry</c> on its logs and traces, and an agent's start given up on or its
 /// Passenger's input ended taking down what the start made. Those needing the <c>aspire</c> CLI skip without it.</summary>
 [Collection(Alone.Name)]
 public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
@@ -36,14 +36,14 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         await using McpClient client = await Start(["--mcp", Folder]);
         IList<McpClientTool> tools = await Exchange("Listing Aspire tools", TimeSpan.FromMinutes(1),
             cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
-        foreach (string name in new[] { "run", "debug_start", "debug_attach", "profile", "stop", "aspire_telemetry" })
+        foreach (string name in new[] { "run", "debug_start", "debug_attach", "profile", "stop", "telemetry" })
         {
             McpClientTool tool = Assert.Single(tools, tool => tool.Name == name);
             Assert.True(tool.ProtocolTool.InputSchema.GetProperty("properties").TryGetProperty("resource", out _));
         }
-        Assert.Equal("aspire_telemetry", Assert.Single(tools, tool => tool.Name.StartsWith("aspire_", StringComparison.Ordinal)).Name);
+        Assert.DoesNotContain(tools, tool => tool.Name.StartsWith("aspire_", StringComparison.Ordinal));
 
-        foreach (string name in new[] { "stop", "debug_attach", "aspire_telemetry" })
+        foreach (string name in new[] { "stop", "debug_attach", "telemetry" })
         {
             CallToolResult unowned = await Result(client, name,
                 new() { ["resource"] = Path.Combine(Folder, "Sum.csproj") + "::missing" });
@@ -128,7 +128,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             && resource.GetProperty("state").GetString() == "Running")).ToArray();
         Assert.Equal(resources[0].GetProperty("displayName").GetString(), resources[1].GetProperty("displayName").GetString());
         Assert.NotEqual(resources[0].GetProperty("target").GetString(), resources[1].GetProperty("target").GetString());
-        foreach (string tool in new[] { "stop", "debug_attach", "aspire_telemetry" })
+        foreach (string tool in new[] { "stop", "debug_attach", "telemetry" })
         {
             CallToolResult refused = await Result(client, tool, new() { ["resource"] = "apiservice" });
             Assert.True(refused.IsError == true && Text(refused).Contains("ambiguous", StringComparison.Ordinal),
@@ -142,10 +142,10 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             Assert.Equal(app.GetProperty("appHostPath").GetString() + "::" + resource.GetProperty("name").GetString(), target);
             if (resource.GetProperty("name").GetString() != "apiservice")
             {
-                CallToolResult refused = await Result(client, "aspire_telemetry", new() { ["resource"] = app.GetProperty("appHostPath").GetString() + "::apiservice" });
+                CallToolResult refused = await Result(client, "telemetry", new() { ["resource"] = app.GetProperty("appHostPath").GetString() + "::apiservice" });
                 Assert.True(refused.IsError == true, "A running qualified target accepted the cold declaration alias");
             }
-            JsonElement logs = await Call(client, "aspire_telemetry", new() { ["resource"] = target, ["limit"] = 1 });
+            JsonElement logs = await Call(client, "telemetry", new() { ["resource"] = target, ["limit"] = 1 });
             Assert.InRange(logs.GetProperty("logs").GetArrayLength(), 0, 1);
         }
     }
@@ -299,11 +299,11 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
         }
         Assert.True(await Waiting.UntilAsync(async () =>
         {
-            JsonElement logs = await Call(client, "aspire_telemetry", new() { ["resource"] = target, ["limit"] = 1 });
+            JsonElement logs = await Call(client, "telemetry", new() { ["resource"] = target, ["limit"] = 1 });
             Assert.InRange(logs.GetProperty("logs").GetArrayLength(), 0, 1);
             return logs.GetProperty("logs").GetArrayLength() == 1;
         }, TimeSpan.FromMinutes(1), Cancel), "Native HTTP telemetry did not return a bounded log snapshot");
-        JsonElement traces = await Call(client, "aspire_telemetry", new() { ["resource"] = target, ["kind"] = "traces", ["limit"] = 1 });
+        JsonElement traces = await Call(client, "telemetry", new() { ["resource"] = target, ["kind"] = "traces", ["limit"] = 1 });
         Assert.InRange(traces.GetProperty("traces").GetArrayLength(), 0, 1);
 
         await Call(client, "stop", new() { ["resource"] = target });

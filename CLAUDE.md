@@ -864,7 +864,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
   window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`) shows the resources as a tree, their consoles merged with
-  Find, their logs and traces; its buttons are registered actions (`MainWindow.AspireActions.cs`), its links open through
+  Find, their logs and traces (its Structured logs and Traces pages, the Telemetry view's, below); its buttons are registered actions (`MainWindow.AspireActions.cs`), its links open through
   `Browse`, and a resource's Details leave out every environment value (`ContainerSecrets` masks the rest). An AppHost the
   window starts is a run of services (`AspireAppRun`, the model above), its services the IDE runs on this machine as DCP
   asks (`AspireController.StartResourceAsync`, each start an `AspireResourceRun` under a `ProcessRunner`, its console its
@@ -914,8 +914,32 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
   own console, `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
-  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation), and `aspire_telemetry` reads
+  `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation), and `telemetry` reads
   their logs and traces.
+- `src/Passenger.App/Telemetry` (#405): a run's structured logs and traces, one implementation for every kind of run.
+  `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
+  and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
+  services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either. `TelemetryView` is the
+  one view of them (logs, traces put together by id, a span tree, a log's trace and a span's logs a click apart, chosen as
+  the other page streams them), streaming only the page its host shows: the Aspire window's Structured logs and Traces
+  pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, its Logs and Traces a segment apart), shown for
+  a Compose project of the window's container run that collects telemetry, a service's or container's row its own
+  records alone (`TelemetrySource.Of`), there because the Containers window is where a run's services are chosen and
+  their logs read already, where the Run window shows one console and chooses no service. An agent's `telemetry` (not
+  named for Aspire: `PassengerTools.Telemetry.cs`) reads the same: a Compose service of the container run that collects
+  telemetry by its name, an AppHost's resource or AppHost, or the one run there is.
+  A container run collects telemetry when its configuration's Collect logs and traces is on (Edit Configurations'
+  Compose, Dockerfile and SDK container pages, `RunConfiguration.Telemetry`, off by default since its image is pulled
+  the first time; the image is never pulled otherwise): `ContainerTelemetry` puts Aspire's standalone dashboard
+  (`ContainerTelemetry.Image`, MIT) in Passenger's override as the service `passenger-dashboard`, Passenger's labels on
+  it (Stop and the folder's end take it with the run, Stop with the .NET services when backing services are kept), on
+  the networks of the .NET services it hears from, its OTLP endpoint reached on them alone and sent to with a key of the
+  run's (`x-otlp-api-key`), its frontend's telemetry API published on this machine's loopback alone and asked with
+  another (`Dashboard__Api__*`); each .NET service the run starts is told `OTEL_EXPORTER_OTLP_ENDPOINT` (its gRPC port, or
+  its HTTP one for a service whose files say `http/protobuf`), the headers, `OTEL_SERVICE_NAME` (its Compose name) and
+  one-second batches, and depends on it, unless its own files name an endpoint, whose name and headers stay theirs too.
+  Once `up` has brought it up the run reads its API's port (`compose port`, `ContainerTelemetry.ReadAsync`), said in the
+  run's notes when it cannot (an engine on another machine, whose loopback this one cannot read).
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -2066,7 +2090,12 @@ its execution listener; `AspireExecutionServerTests` speak to the execution serv
 have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
 applicationUrl) and its resource service's calls ended (`AspireInteractionHost.Drop`); AspireStandInTests' windows run a
 stand-in aspire CLI of their own (`MainWindow.AspireCliFrom`, a shell script, so skipped on Windows); and
-`AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine. `WpfPreviewTests` (Windows only)
+`AspireContainerRecoveryTests` remove a dead owner's recorded container through a stand-in engine.
+`ContainerTelemetryTests` run a compose app whose ASP.NET Core service sends OpenTelemetry (its packages the ones the
+AspireGraphs' ServiceDefaults put in the package cache, `OpenTelemetryVersion`) with Collect logs and traces chosen in
+Edit Configurations, find its log and the request's trace in the Containers window's Telemetry tab and through an
+agent's `telemetry`, and see Stop take the dashboard; they skip, saying what to pull, unless the engine holds the
+dashboard's image and aspnet:10.0. `WpfPreviewTests` (Windows only)
 preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.

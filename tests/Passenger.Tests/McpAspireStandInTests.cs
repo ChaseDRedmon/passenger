@@ -32,7 +32,7 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
         foreach (Dictionary<string, object?> asked in (Dictionary<string, object?>[])[new() { ["appHost"] = host, ["limit"] = 1 }, new() { ["resource"] = api, ["limit"] = 1 }])
         {
             int before = dashboard.Requests.Length;
-            JsonElement answer = await Call(client, "aspire_telemetry", asked);
+            JsonElement answer = await Call(client, "telemetry", asked);
             JsonElement log = Assert.Single(answer.GetProperty("logs").EnumerateArray());
             Assert.Equal("api-owned-instance", log.GetProperty("resourceName").GetString());
             Assert.Equal("42", log.GetProperty("attributes").GetProperty("code.line.number").GetString());
@@ -73,7 +73,7 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
             {
                 asked["traceId"] = traceId;
             }
-            CallToolResult answer = await Result(client, "aspire_telemetry", asked);
+            CallToolResult answer = await Result(client, "telemetry", asked);
             if (empty)
             {
                 Assert.True(answer.IsError != true, $"{said}: {Text(answer)}");
@@ -108,7 +108,7 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
             await using McpClient client = await Start(["--mcp", project.Folder], languageServer: false);
             string host = PathNames.Canonical(project.ProjectFile);
             await Running(client, host);
-            CallToolResult refused = await Result(client, "aspire_telemetry", new() { ["appHost"] = host });
+            CallToolResult refused = await Result(client, "telemetry", new() { ["appHost"] = host });
             Assert.True(refused.IsError == true && Text(refused).Contains("loopback", StringComparison.Ordinal), $"{elsewhere}: {Text(refused)}");
             Assert.DoesNotContain(File.ReadAllText(project.DashboardKeyFile), Text(refused), StringComparison.Ordinal);
             Assert.Empty(dashboard.Requests);

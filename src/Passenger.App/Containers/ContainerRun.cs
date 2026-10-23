@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Passenger.App.Debugging;
 using Passenger.App.Run;
+using Passenger.App.Telemetry;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -78,6 +79,9 @@ public sealed record ContainerPlan(string Name, string Folder, string ProjectNam
     /// <summary>What the run says of itself as it comes up (a service marked Don't start that another depends on, one run as
     /// the person on this Linux engine), after its status.</summary>
     public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>The dashboard it runs beside its services when its configuration collects logs and traces; null when not.</summary>
+    public ContainerTelemetry? Telemetry { get; init; }
 }
 
 /// <summary>Works out a container configuration's <see cref="ContainerPlan"/>: Compose's model of its files (a Dockerfile
@@ -220,6 +224,11 @@ public static class ContainerPlans
             }
         }
 
+        ContainerTelemetry? telemetry = configuration.Telemetry ? ContainerTelemetry.New() : null;
+        if (telemetry is not null && model[ContainerTelemetry.Service] is not null)
+        {
+            throw new LaunchException($"{configuration.Name} cannot collect logs and traces: a service of its own is named {ContainerTelemetry.Service}, Passenger's dashboard's name");
+        }
         string overrideFile = Path.Combine(state, $"{file}.override.yaml");
         compose.InsertRange(compose.IndexOf("--project-directory"), ["-f", overrideFile]);
         // Written once the host's build is done: what fast mode mounts (its static web assets' folders) is that build's.
@@ -230,7 +239,7 @@ public static class ContainerPlans
         // Each port Passenger pins is chosen once for the plan: every override it writes after (a hold, a restart) keeps it.
         Dictionary<(string Service, int Port), int> pinned = [];
         async Task WriteOverride(IReadOnlyCollection<string> held, IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, CancellationToken stop) =>
-            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, keepId, stop), overriding: true);
+            WriteJson(overrideFile, await OverrideAsync(model, projectName, dotnet, mode, labels, projects, state, pin ? pinned : null, held, modifiable, certificate, keepId, telemetry, stop), overriding: true);
         if (mode == ContainerMode.Images || dotnet.Count == 0)
         {
             await WriteOverride([], [], null, cancel);
@@ -253,6 +262,7 @@ public static class ContainerPlans
             Https = [.. model.Services.Where(s => dotnet.Any(d => d.Service == s.Name) && Serves(s)).Select(s => s.Name)],
             Touched = touched,
             Notes = notes,
+            Telemetry = telemetry,
         };
     }
 
@@ -472,9 +482,10 @@ public static class ContainerPlans
     /// to Hot Reload. JSON, which Compose reads as YAML.</summary>
     private static async Task<JsonObject> OverrideAsync(ComposeModel model, string project, IReadOnlyList<DotnetService> dotnet, ContainerMode mode, IReadOnlyList<string> labels,
         IReadOnlyList<ProjectModel> projects, string state, Dictionary<(string Service, int Port), int>? pinned, IReadOnlyCollection<string> held,
-        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, bool keepId, CancellationToken cancel)
+        IReadOnlyCollection<string> modifiable, DevelopmentCertificate.Exported? certificate, bool keepId, ContainerTelemetry? telemetry, CancellationToken cancel)
     {
         JsonObject services = [];
+        HashSet<string> heard = new(StringComparer.Ordinal);
         string? owner = OperatingSystem.IsLinux() ? DotnetProcesses.UserAndGroup : null;
         foreach (ComposeService service in model.Services)
         {
@@ -575,6 +586,10 @@ public static class ContainerPlans
                     volumes.Add(new JsonObject { ["type"] = "bind", ["source"] = own.Folder, ["target"] = $"{AppData}/Microsoft/UserSecrets/{own.Id}", ["read_only"] = true });
                     environment["APPDATA"] = AppData;
                 }
+                if (telemetry is not null && telemetry.Tell(service, entry, environment))
+                {
+                    heard.UnionWith(service.Networks);
+                }
                 if (volumes.Count > 0)
                 {
                     entry["volumes"] = volumes;
@@ -585,6 +600,10 @@ public static class ContainerPlans
                 }
             }
             services[service.Name] = entry;
+        }
+        if (telemetry is not null)
+        {
+            services[ContainerTelemetry.Service] = telemetry.Entry(Labels(labels), heard);
         }
         JsonObject made = new() { ["services"] = services };
         JsonObject networks = [];
@@ -1059,8 +1078,21 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         {
             Watch();
         }
+        if (Plan.Telemetry is { } dashboard)
+        {
+            (telemetry, string? why) = await dashboard.ReadAsync(engine, Plan.Compose, Plan.Folder, cancel);
+            if (why is not null)
+            {
+                Notes.Add($"no logs and traces: {why}");
+            }
+        }
         return null;
     }
+
+    private TelemetrySource? telemetry;
+
+    /// <summary>Its dashboard's telemetry API once up, while it runs (its configuration's Collect logs and traces).</summary>
+    public override TelemetrySource? Telemetry => IsStopped ? null : telemetry;
 
     /// <summary>Compose's own watch of the services that declare <c>develop.watch</c>, while the run lasts.</summary>
     private void Watch()
@@ -1119,7 +1151,8 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             ChildProcesses.Kill(watch);
             watching = null;
         }
-        IReadOnlyList<string>? only = Plan.KeepBacking && Plan.Backing.Count > 0 ? [.. Plan.Dotnet.Select(d => d.Service)] : null;
+        IReadOnlyList<string>? only = Plan.KeepBacking && Plan.Backing.Count > 0
+            ? [.. Plan.Dotnet.Select(d => d.Service), .. Plan.Telemetry is null ? [] : (string[])[ContainerTelemetry.Service]] : null;
         Task up = upEnded.Task;
         bool coming = !up.IsCompleted || cut;
         stopping = BackgroundWork.Run(async () =>

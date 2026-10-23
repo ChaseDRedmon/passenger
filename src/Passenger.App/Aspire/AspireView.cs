@@ -7,6 +7,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Passenger.App.ToolWindows;
 using Passenger.App.Containers;
+using Passenger.App.Telemetry;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -23,19 +24,12 @@ public sealed class AspireView : DockPanel, IDisposable
     private readonly TextBlock readiness = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Dictionary<string, (ToggleButton Tab, Control Page)> pages = new(StringComparer.Ordinal);
     private readonly TextBlock consoleStatus = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly TextBlock logsStatus = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly TextBlock tracesStatus = new() { Classes = { "muted" }, Margin = new Thickness(6, 2), TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly OutputView resourceDetails = new(toolbar: false);
-    private readonly OutputView logDetails = new(toolbar: false);
-    private readonly OutputView spanDetails = new(toolbar: false);
     private readonly Button debug;
     private readonly Button profile;
     private readonly Button attach;
     private readonly Button noDebug;
-    private readonly Button logTrace;
-    private readonly Button spanLogs;
     private IReadOnlyList<AspireResource> resources = [];
-    private IReadOnlyList<AspireTrace> traces = [];
     private CancellationTokenSource? reading;
     private readonly CancellationTokenSource commandLifetime = new();
     private int generation;
@@ -52,8 +46,6 @@ public sealed class AspireView : DockPanel, IDisposable
     /// <summary>Discover or Refresh asked while the window was hidden, which their actions show it for first: done as it shows.</summary>
     private bool discoverWhenShown;
     private bool refreshWhenShown;
-    private CancellationTokenSource? telemetryReading;
-    private (Uri Endpoint, string ApiKey, string Page, string AppHost)? telemetrySource;
     private readonly Dictionary<string, TreeViewItem> resourceNodes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> streamedResources = new(StringComparer.Ordinal);
     private Func<string, bool>? requestAction;
@@ -63,9 +55,6 @@ public sealed class AspireView : DockPanel, IDisposable
     private string? pendingCommand;
     private AspireSelection? pendingCommandSelection;
     private Uri? pendingLink;
-    private readonly object telemetryGate = new();
-    private Action? pendingTelemetry;
-    private bool telemetryQueued;
 
     public AspireView(AspireClient? client = null)
     {
@@ -120,17 +109,10 @@ public sealed class AspireView : DockPanel, IDisposable
         Console = new OutputView(toolbar: false) { Limit = OutputView.DefaultLimitKb * 1024 };
         Find = new Editors.FindBar();
         Find.Attach(Console.Editor);
-        StructuredLogs = List<AspireStructuredLog>(log => log.ToString(), "Aspire structured logs");
-        TraceList = List<AspireTrace>(trace => trace.ToString(), "Aspire traces");
-        SpanList = List<SpanRow>(span => new string(' ', Math.Min(span.Depth, 32) * 2) + span.Span, "Trace span hierarchy");
-        StructuredLogs.SelectionChanged += (_, _) => ShowLog();
-        TraceList.SelectionChanged += (_, _) => ShowTrace();
-        SpanList.SelectionChanged += (_, _) => ShowSpan();
-        logTrace = ActionButton("Show trace", "Select the structured log's trace and span", AppActions.AspireShowTrace);
-        spanLogs = ActionButton("Show related logs", "Select a retained log for this trace and span", AppActions.AspireShowRelatedLogs);
-        logTrace.IsEnabled = false;
-        spanLogs.IsEnabled = false;
-        foreach (OutputView output in new[] { Console, resourceDetails, logDetails, spanDetails })
+        Telemetry.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
+        Telemetry.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
+        Telemetry.PageWanted += (_, wanted) => ShowPage(wanted == TelemetryPage.Logs ? "Structured logs" : "Traces");
+        foreach (OutputView output in new[] { Console, resourceDetails })
         {
             output.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
             output.Links.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
@@ -146,15 +128,8 @@ public sealed class AspireView : DockPanel, IDisposable
         AddPage("Resources", WithHeader(commands, resourceDetails), tabs);
         AddPage("Console", WithHeader(new StackPanel { Children = { consoleStatus,
             ActionButton("Find", "Find in merged resource logs", AppActions.AspireLogFind) } }, WithHeader(Find, Console)), tabs);
-        DockPanel logs = WithHeader(new StackPanel { Children = { logsStatus, logTrace } }, Split(StructuredLogs, logDetails));
-        AddPage("Structured logs", logs, tabs);
-        Grid traceBody = new() { ColumnDefinitions = new ColumnDefinitions("*,1,2*") };
-        traceBody.Children.Add(TraceList);
-        traceBody.Children.Add(new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 });
-        Control spanBody = WithHeader(spanLogs, Split(SpanList, spanDetails, GridResizeDirection.Columns));
-        spanBody[Grid.ColumnProperty] = 2;
-        traceBody.Children.Add(spanBody);
-        AddPage("Traces", WithHeader(tracesStatus, traceBody), tabs);
+        AddPage("Structured logs", Telemetry.LogsPage, tabs);
+        AddPage("Traces", Telemetry.TracesPage, tabs);
         AddPage("AppHost console", WithHeader(readiness, appHostConsole), tabs);
         ScrollViewer pageTabs = new()
         {
@@ -184,9 +159,11 @@ public sealed class AspireView : DockPanel, IDisposable
     public TreeView ResourceList { get; }
     public Editors.FindBar Find { get; }
     public OutputView Console { get; }
-    public ListBox StructuredLogs { get; }
-    public ListBox TraceList { get; }
-    public ListBox SpanList { get; }
+    /// <summary>The AppHost's structured logs and traces, the Telemetry view every kind of run shows them in.</summary>
+    public TelemetryView Telemetry { get; } = new();
+    public ListBox StructuredLogs => Telemetry.StructuredLogs;
+    public ListBox TraceList => Telemetry.TraceList;
+    public ListBox SpanList => Telemetry.SpanList;
     public AspireApp? SelectedApp => AppSelector.SelectedItem as AspireApp;
     public AspireResource? SelectedResource => (ResourceList.SelectedItem as TreeViewItem)?.Tag as AspireResource;
     public AspireSelection? Selection => SelectedApp is { } app && SelectedResource is { } resource ? new(app.AppHostPath, resource) : null;
@@ -200,7 +177,7 @@ public sealed class AspireView : DockPanel, IDisposable
     public Func<AspireSelection, CancellationToken, IAsyncEnumerable<IReadOnlyList<AspireConsoleLog>>?>? ConsoleProvider { get; set; }
 
     /// <summary>Returns this app's dashboard endpoint and key on the UI thread. Null means no owned telemetry.</summary>
-    public Func<string, (Uri Endpoint, string ApiKey)?>? TelemetryProvider { get; set; }
+    public Func<string, TelemetrySource?>? TelemetryProvider { get; set; }
 
     public void SetDisplayVisible(bool visible)
     {
@@ -278,21 +255,9 @@ public sealed class AspireView : DockPanel, IDisposable
 
     public void OpenFind() => Find.Open(replace: false);
 
-    public void ShowSelectedTrace()
-    {
-        if (StructuredLogs.SelectedItem is AspireStructuredLog log)
-        {
-            SelectTrace(log.TraceId, log.SpanId);
-        }
-    }
+    public void ShowSelectedTrace() => Telemetry.ShowSelectedTrace();
 
-    public void ShowRelatedLogs()
-    {
-        if (TraceList.SelectedItem is AspireTrace trace && SpanList.SelectedItem is SpanRow row)
-        {
-            SelectLogs(trace.TraceId, row.Span.SpanId);
-        }
-    }
+    public void ShowRelatedLogs() => Telemetry.ShowRelatedLogs();
 
     public string? TakePendingCommand()
     {
@@ -754,121 +719,9 @@ public sealed class AspireView : DockPanel, IDisposable
         return Task.CompletedTask;
     }
 
-    private void UpdateTelemetry()
-    {
-        (Uri Endpoint, string ApiKey, string Page, string AppHost)? next =
-            !disposed && displayVisible && currentPage is ("Structured logs" or "Traces")
-            && SelectedApp is { } selected && TelemetryProvider?.Invoke(selected.AppHostPath) is { } source
-                ? (source.Endpoint, source.ApiKey, currentPage, selected.AppHostPath) : null;
-        if (telemetryReading is not null && telemetrySource == next)
-        {
-            return;
-        }
-        telemetryReading?.Cancel();
-        telemetryReading?.Dispose();
-        telemetryReading = null;
-        telemetrySource = next;
-        if (next is not { } dashboard)
-        {
-            return;
-        }
-        telemetryReading = new CancellationTokenSource();
-        CancellationToken cancel = telemetryReading.Token;
-        _ = WatchTelemetryAsync(dashboard.Endpoint, dashboard.ApiKey, currentPage, cancel);
-    }
-
-    private async Task WatchTelemetryAsync(Uri endpoint, string key, string name, CancellationToken cancel)
-    {
-        TextBlock label = name == "Traces" ? tracesStatus : logsStatus;
-        label.Text = "Connecting to dashboard telemetry…";
-        try
-        {
-            if (name == "Structured logs")
-            {
-                await AspireTelemetry.WatchLogsAsync(endpoint, key, logs => PostTelemetry(() =>
-                {
-                    if (disposed || cancel.IsCancellationRequested || !displayVisible || currentPage != name)
-                    {
-                        return;
-                    }
-                    AspireStructuredLog? selected = StructuredLogs.SelectedItem as AspireStructuredLog;
-                    StructuredLogs.ItemsSource = logs;
-                    StructuredLogs.SelectedItem = logs.FirstOrDefault(log => log.Data.GetRawText() == selected?.Data.GetRawText());
-                    logsStatus.Text = $"Live · {logs.Count} retained structured logs";
-                }, cancel), cancel).ConfigureAwait(false);
-            }
-            else
-            {
-                await AspireTelemetry.WatchTracesAsync(endpoint, key, found => PostTelemetry(() =>
-                {
-                    if (disposed || cancel.IsCancellationRequested || !displayVisible || currentPage != name)
-                    {
-                        return;
-                    }
-                    string? selected = (TraceList.SelectedItem as AspireTrace)?.TraceId;
-                    string? selectedSpan = (SpanList.SelectedItem as SpanRow)?.Span.SpanId;
-                    traces = found;
-                    TraceList.ItemsSource = traces;
-                    TraceList.SelectedItem = traces.FirstOrDefault(trace => trace.TraceId == selected);
-                    if (selected is not null && (TraceList.SelectedItem as AspireTrace)?.TraceId == selected
-                        && SpanList.Items.OfType<SpanRow>().FirstOrDefault(row => row.Span.SpanId == selectedSpan) is { } span)
-                    {
-                        SpanList.SelectedItem = span;
-                    }
-                    tracesStatus.Text = $"Live · {traces.Count} retained traces";
-                }, cancel), cancel).ConfigureAwait(false);
-            }
-            UiThread.Post(() =>
-            {
-                if (!disposed && !cancel.IsCancellationRequested)
-                {
-                    label.Text = "Telemetry ended. Refresh to reconnect.";
-                }
-            });
-        }
-        catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
-        catch (Exception error) when (Expected(error) || error is System.Net.Http.HttpRequestException)
-        {
-            string reason = ContainerSecrets.InValue(error.Message.Replace(key, ContainerSecrets.Masked, StringComparison.Ordinal));
-            reason = reason.Replace('\r', ' ').Replace('\n', ' ');
-            reason = reason.Length > 512 ? reason[..512] : reason;
-            UiThread.Post(() =>
-            {
-                if (!disposed && !cancel.IsCancellationRequested)
-                {
-                    label.Text = $"Dashboard telemetry unavailable: {reason} Refresh to reconnect.";
-                }
-            });
-        }
-    }
-
-    private void PostTelemetry(Action update, CancellationToken cancel)
-    {
-        lock (telemetryGate)
-        {
-            if (cancel.IsCancellationRequested)
-            {
-                return;
-            }
-            pendingTelemetry = update;
-            if (telemetryQueued)
-            {
-                return;
-            }
-            telemetryQueued = true;
-        }
-        UiThread.Post(() =>
-        {
-            Action? apply;
-            lock (telemetryGate)
-            {
-                apply = pendingTelemetry;
-                pendingTelemetry = null;
-                telemetryQueued = false;
-            }
-            apply?.Invoke();
-        });
-    }
+    private void UpdateTelemetry() =>
+        Telemetry.Watch(!disposed && displayVisible && SelectedApp is { } selected ? TelemetryProvider?.Invoke(selected.AppHostPath) : null,
+            currentPage switch { "Structured logs" => TelemetryPage.Logs, "Traces" => TelemetryPage.Traces, _ => null });
 
     private async Task WorkAsync(int version, CancellationToken cancel, Func<Task> work)
     {
@@ -925,20 +778,9 @@ public sealed class AspireView : DockPanel, IDisposable
 
     private void ClearTelemetry()
     {
-        telemetryReading?.Cancel();
-        telemetryReading?.Dispose();
-        telemetryReading = null;
-        telemetrySource = null;
         Console.Clear();
-        StructuredLogs.ItemsSource = Array.Empty<AspireStructuredLog>();
-        traces = [];
-        TraceList.ItemsSource = traces;
-        SpanList.ItemsSource = Array.Empty<SpanRow>();
-        logDetails.Clear();
-        spanDetails.Clear();
+        Telemetry.Clear();
         consoleStatus.Text = "Open Console for merged live resource logs.";
-        logsStatus.Text = "Open Structured logs for live dashboard telemetry.";
-        tracesStatus.Text = "Open Traces for live dashboard telemetry.";
     }
 
     private void SetVisibleResources(string? selectedName)
@@ -1072,137 +914,6 @@ public sealed class AspireView : DockPanel, IDisposable
         resourceDetails.Append(JsonSerializer.Serialize(resource.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
     }
 
-    private void ShowLog()
-    {
-        logDetails.Clear();
-        logTrace.IsEnabled = false;
-        if (StructuredLogs.SelectedItem is not AspireStructuredLog log)
-        {
-            return;
-        }
-        logDetails.Append(JsonSerializer.Serialize(log.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
-        AppendSource(logDetails, log.Data);
-        AppendException(logDetails, log.Data);
-        logTrace.IsEnabled = !string.IsNullOrEmpty(log.TraceId);
-    }
-
-    public void SelectTrace(string? traceId, string? spanId = null)
-    {
-        UiThread.Check();
-        AspireTrace? trace = traces.FirstOrDefault(item => item.TraceId == traceId);
-        if (trace is null)
-        {
-            logsStatus.Text = "The correlated trace is outside this bounded snapshot. Select its service and refresh Traces.";
-            return;
-        }
-        TraceList.SelectedItem = trace;
-        if (spanId is not null)
-        {
-            SpanList.SelectedItem = SpanList.Items.OfType<SpanRow>().FirstOrDefault(row => row.Span.SpanId == spanId);
-        }
-        ShowPage("Traces");
-    }
-
-    public void SelectLogs(string traceId, string? spanId = null)
-    {
-        UiThread.Check();
-        AspireStructuredLog? log = StructuredLogs.Items.OfType<AspireStructuredLog>()
-            .FirstOrDefault(item => item.TraceId == traceId && (spanId is null || item.SpanId == spanId));
-        if (log is null)
-        {
-            tracesStatus.Text = "No correlated log is retained in this resource snapshot. Select the span's service and refresh logs.";
-            return;
-        }
-        StructuredLogs.SelectedItem = log;
-        ShowPage("Structured logs");
-    }
-
-    private void ShowTrace()
-    {
-        spanDetails.Clear();
-        if (TraceList.SelectedItem is not AspireTrace trace)
-        {
-            SpanList.ItemsSource = Array.Empty<SpanRow>();
-            return;
-        }
-        List<SpanRow> rows = [];
-        HashSet<string> visited = new(StringComparer.Ordinal);
-        Dictionary<string, AspireSpan[]> children = trace.Spans.GroupBy(span => span.ParentSpanId ?? string.Empty)
-            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
-        HashSet<string> ids = trace.Spans.Select(span => span.SpanId).ToHashSet(StringComparer.Ordinal);
-        foreach (AspireSpan root in trace.Spans.Where(span => span.ParentSpanId is null || !ids.Contains(span.ParentSpanId)))
-        {
-            Walk(root);
-        }
-        foreach (AspireSpan orphan in trace.Spans)
-        {
-            Walk(orphan);
-        }
-        SpanList.ItemsSource = rows;
-        SpanList.SelectedItem = rows.FirstOrDefault();
-
-        void Walk(AspireSpan root)
-        {
-            Stack<(AspireSpan Span, int Depth)> pending = new();
-            pending.Push((root, 0));
-            while (pending.TryPop(out (AspireSpan Span, int Depth) next))
-            {
-                if (!visited.Add(next.Span.SpanId))
-                {
-                    continue;
-                }
-                rows.Add(new(next.Span, next.Depth));
-                if (children.TryGetValue(next.Span.SpanId, out AspireSpan[]? descendants))
-                {
-                    foreach (AspireSpan child in descendants.Reverse())
-                    {
-                        pending.Push((child, next.Depth + 1));
-                    }
-                }
-            }
-        }
-    }
-
-    private void ShowSpan()
-    {
-        spanDetails.Clear();
-        spanLogs.IsEnabled = false;
-        if (SpanList.SelectedItem is SpanRow row)
-        {
-            spanDetails.Append(JsonSerializer.Serialize(row.Span.Data, new JsonSerializerOptions { WriteIndented = true }) + "\n");
-            AppendSource(spanDetails, row.Span.Data);
-            AppendException(spanDetails, row.Span.Data);
-            spanLogs.IsEnabled = true;
-        }
-    }
-
-    private static void AppendException(OutputView output, JsonElement data)
-    {
-        if (AspireJson.String(data, "exception") is { Length: > 0 } exception)
-        {
-            output.Append($"\n{exception}\n", error: true);
-        }
-        foreach (JsonProperty attribute in AspireJson.Properties(data, "attributes"))
-        {
-            if (attribute.Name == "exception.stacktrace" && attribute.Value.ValueKind == JsonValueKind.String)
-            {
-                output.Append($"\n{attribute.Value.GetString()}\n", error: true);
-            }
-        }
-    }
-
-    private static void AppendSource(OutputView output, JsonElement data)
-    {
-        JsonProperty[] attributes = AspireJson.Properties(data, "attributes").ToArray();
-        string? path = attributes.FirstOrDefault(item => item.Name is "code.file.path" or "code.filepath").Value.ValueKind == JsonValueKind.String
-            ? attributes.First(item => item.Name is "code.file.path" or "code.filepath").Value.GetString() : null;
-        JsonElement line = attributes.FirstOrDefault(item => item.Name is "code.line.number" or "code.lineno").Value;
-        if (path is not null && int.TryParse(line.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : line.ToString(), out int number) && number > 0)
-        {
-            output.Append($"\nSource: at telemetry in {path}:line {number}\n");
-        }
-    }
-
     private void AddPage(string name, Control content, StackPanel tabs)
     {
         ToggleButton tab = ToolTabs.Tab(name, false);
@@ -1325,9 +1036,7 @@ public sealed class AspireView : DockPanel, IDisposable
             disposed = true;
             SetAppHostConsole(null);
             Find.Detach();
-            telemetryReading?.Cancel();
-            telemetryReading?.Dispose();
-            telemetryReading = null;
+            Telemetry.Dispose();
             commandLifetime.Cancel();
             commandLifetime.Dispose();
             StopConsole();
@@ -1338,6 +1047,4 @@ public sealed class AspireView : DockPanel, IDisposable
             ResetApp();
         }
     }
-
-    public sealed record SpanRow(AspireSpan Span, int Depth);
 }
