@@ -84,12 +84,18 @@ public sealed class TerminalSession : IAsyncDisposable
         {
             environment["LANG"] = "en_US.UTF-8";
         }
+        string cwd = Directory.Exists(folder) ? folder : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!OperatingSystem.IsWindows())
+        {
+            // A shell keeps an inherited PWD naming its folder through a link, and a build there by it undoes the IDE's (#413).
+            environment.TryAdd("PWD", cwd);
+        }
         PtyOptions options = new()
         {
             Name = "Passenger",
             Cols = Screen.Columns,
             Rows = Screen.Rows,
-            Cwd = Directory.Exists(folder) ? folder : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Cwd = cwd,
             App = app,
             CommandLine = args,
             Environment = environment,

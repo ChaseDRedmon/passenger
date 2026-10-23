@@ -1173,7 +1173,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty, which tells a program's end from
   the spawn on, so the start looks once more after listening: `sh -c "exit 3"` can end first); on Windows PowerShell is
   told `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches
-  the person's history. `MainWindow.Terminal.cs` is its
+  the person's history. Off Windows the shell is told its folder as its PWD, never the IDE's inherited one, which a shell
+  keeps where it names that folder through a link (Passenger started from a shell there) and dotnet builds by: a build
+  through another spelling of a project's path after one by its real path, the IDE's, has MSBuild's IncrementalClean
+  delete what the first wrote and it did not write again, runtimeconfig.json and deps.json among them, so the program no
+  longer starts (exit code 131, #413). `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's (a Ctrl+letter always, the shell's control character, whatever
   action a keymap gives it).
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
@@ -1208,7 +1212,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   Part puts the folder's edit back on Undo (`MainWindow.WriteToLaunchProfile`, `RunConfigurations.Rebase`); what the file
   has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
   `LaunchPlan.ResolveAsync` works one out once, in one request of the project host, into what Run,
-  Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
+  Debug, Profile, Hot Reload and a debugged test host start (its build, `BuildStep`, by the project's real path, with
+  `--framework` only for a project of several frameworks or a configuration that chose one), and `RunConfigurationsDialog` is Run > Edit
   Configurations. While a run of a configuration is up (Run's program or container run while the Run console or the
   terminal has it, `ran` forgotten as it ends, a session Debug launched for it, Profile's program:
   `BuildRunController.IsRunningConfiguration`; an AppHost's by its own run), the toolbar, its chooser and Edit Configurations' row say
@@ -2165,7 +2170,9 @@ A test waits for a Run, Debug, Profile or test run with `Ui.Launched`, and says 
 the build's errors (`Ui.BuildErrors`: Problems' rows, else the Build window's last lines) when it failed, so a CI-only
 build failure says why. A test's stand-in that holds a file a target writes leaves it as it found it: a file it creates, newer than the
 target's inputs, makes MSBuild skip the target as up to date (an empty `obj/…/Avalonia/resources` was embedded:
-AVLN9999). Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
+AVLN9999). A test's own build of a project the IDE builds too names it by its real path (`PathNames.Canonical`), as the
+IDE does: the run's folder is under macOS's TMPDIR, a link (/var), and a build through it after the IDE's deletes what
+the IDE's wrote (the terminal's paragraph; `StandInAppHost.BuildApi`). Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
 never throws, while what it waits for isn't there yet; `WaitFor`'s limit also covers background work held all along (a
 build, a test run), where `Settle` alone gives up after 90 s (scaled). A chord goes through one `Ui.Press(window, "control M ,
 control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a dispatcher timer that fires during a
