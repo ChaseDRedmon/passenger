@@ -129,7 +129,7 @@
     main();
 })();
 
-// A Copy button on each of the agent section's commands and paths, so a setup line is taken whole and exact.
+// A Copy button on each of the agents page's setup commands and paths, so a setup line is taken whole and exact.
 (() => {
     "use strict";
 
@@ -155,13 +155,13 @@
         return b;
     }
 
-    document.querySelectorAll("#agents pre").forEach(pre => {
+    document.querySelectorAll(".setup pre").forEach(pre => {
         const box = document.createElement("div");
         box.className = "copyable";
         pre.replaceWith(box);
         box.append(pre, button("the command", () => pre.textContent.trim()));
     });
-    document.querySelectorAll("#agents .paths li").forEach(item => {
+    document.querySelectorAll(".setup .paths li").forEach(item => {
         const code = item.querySelector("code");
         if (code) {
             item.append(button(`${item.querySelector("span")?.textContent ?? ""} path`.trim(), () => code.textContent.trim()));

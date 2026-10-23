@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Passenger: a C# and .NET MCP server for coding agents</title>
+    <meta name="description" content="Give Claude Code, Codex or OpenCode a whole C# IDE: Passenger's MCP server builds, debugs, profiles and drives your app. How to set it up.">
+    <link rel="canonical" href="https://passenger-ide.net/agents">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Passenger">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:url" content="https://passenger-ide.net/agents">
+    <meta property="og:title" content="Passenger: a C# and .NET MCP server for coding agents">
+    <meta property="og:description" content="Give Claude Code, Codex or OpenCode a whole C# IDE: Passenger's MCP server builds, debugs, profiles and drives your app. How to set it up.">
+    <meta property="og:image" content="https://passenger-ide.net/images/social-38e32dd9.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@Zaneris">
+    <meta name="twitter:creator" content="@Zaneris">
+    <meta name="twitter:title" content="Passenger: a C# and .NET MCP server for coding agents">
+    <meta name="twitter:description" content="Give Claude Code, Codex or OpenCode a whole C# IDE: Passenger's MCP server builds, debugs, profiles and drives your app. How to set it up.">
+    <meta name="twitter:image" content="https://passenger-ide.net/images/social-38e32dd9.png">
+    <meta name="twitter:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
+    <meta name="theme-color" content="#0F131C" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#2F6BF2">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/site.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+<header class="top">
+    <div class="wrap">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
+        <nav aria-label="Pages">
+            <a class="wide" href="/">Home</a>
+            <a class="wide" href="/containers">Containers</a>
+            <a class="wide" href="#setup">Setup</a>
+            <a href="/#download">Download</a>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main id="main">
+    <div class="hero page-hero">
+        <div class="wrap">
+            <p class="kicker">For coding agents</p>
+            <h1>An MCP server that gives your agent a whole C# IDE</h1>
+            <p class="lede">Connect Claude Code, Codex, OpenCode or any MCP agent to Passenger, and it works through the IDE,
+                not only your files: it asks the language server rather than guessing from the text, and checks what it
+                changed by building, testing, running and debugging it, as you would.</p>
+            <div class="actions">
+                <a class="button primary" href="#setup">Set it up</a>
+                <a class="button" href="/#download">Download Passenger</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="wrap page-body">
+        <figure class="shot">
+            <picture>
+                <source media="(prefers-color-scheme: light)" srcset="/images/agent-light.webp" width="2400" height="1500">
+                <img src="/images/agent-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                     alt="A coding agent in Passenger's terminal driving the Avalonia app it builds over MCP: it starts the app under the debugger, finds its Water button, clicks it and reads the plants' moisture back, while the Live Visual Tree shows the button it clicked">
+            </picture>
+        </figure>
+
+        <section>
+            <h2>What it can do</h2>
+            <div class="feature">
+                <div class="text">
+                    <h3>It tries the app it builds</h3>
+                    <p>When the program is an Avalonia app, or a WPF app on Windows, the agent sees it as a person testing it
+                        would: a picture of each window, the tree of its controls with their text and state, and clicks,
+                        typing, keys and scrolling sent to the window, which never takes your focus or moves your pointer. It
+                        reads the app's binding errors and can break on a property's change.</p>
+                    <h3>It works as you do</h3>
+                    <p>It finds where things are declared and used, reads the warnings, renames, fixes and formats code as the
+                        IDE does, in C#, Razor, XAML, the web languages and project files alike. It builds, runs and tests,
+                        sets breakpoints, steps, reads and changes variables, applies Hot Reload and profiles a run. It
+                        searches and replaces across files, commits, resolves conflicts, adds packages and types into the
+                        terminal.</p>
+                </div>
+            </div>
+
+            <dl class="tools">
+                <div>
+                    <dt>Code</dt>
+                    <dd>Diagnostics, hovers, declarations, usages, hierarchies, rename, code actions, refactorings and
+                        formatting, each file through its own language.</dd>
+                </div>
+                <div>
+                    <dt>Build, run and test</dt>
+                    <dd>Builds and publishes with their errors, what Problems lists, runs and their output, Hot Reload, and
+                        the unit tests listed and run.</dd>
+                </div>
+                <div>
+                    <dt>Debug and profile</dt>
+                    <dd>Breakpoints, launch or attach, several sessions, steps, evaluation, values set, the program's console,
+                        and a profile's hot spots and memory.</dd>
+                </div>
+                <div>
+                    <dt>Services</dt>
+                    <dd>A compose service or an Aspire resource run, debugged, profiled or stopped, its log, its logs and
+                        traces, and the containers' actions.</dd>
+                </div>
+                <div>
+                    <dt>Web apps and data</dt>
+                    <dd>A web app's routes, its live requests and their SQL, and the EF Core migrations' actions and
+                        fixes.</dd>
+                </div>
+                <div>
+                    <dt>The app</dt>
+                    <dd>Its windows, controls and their details, pictures, clicks, typing, keys, scrolling and binding
+                        errors.</dd>
+                </div>
+                <div>
+                    <dt>Files, Git and NuGet</dt>
+                    <dd>Find and Replace in Files, Local History, status, diffs, the log, commits, checkout, stashes,
+                        conflicts, and packages searched, installed and removed.</dd>
+                </div>
+                <div>
+                    <dt>The IDE</dt>
+                    <dd>Passenger's own windows pictured, any action by its name, the settings, and the terminal.</dd>
+                </div>
+            </dl>
+        </section>
+
+        <section>
+            <h2>Your window, or one of its own</h2>
+            <div class="pair">
+                <div>
+                    <h3><code>--mcp-attach</code>: your window</h3>
+                    <p>The agent joins the Passenger window you have open over the folder it works in. Its breakpoints and
+                        stops show in your editor, its runs in your Run window, and the status bar names what it is doing. Set
+                        it up before Passenger is even running: the agent has its tools from the start, and its first call
+                        opens the folder in Passenger, starting it if need be. It never joins a window on another folder.</p>
+                    <p>The window asks before it lets an agent in, through a socket in your own user's folder: Allow, Don't
+                        allow, or Always for this folder (or turn on Settings &rsaquo; MCP Server &rsaquo; Enable MCP
+                        Server). Either way, the first time an agent uses a tool that changes anything, runs code in a paused
+                        program or opens another folder in your window, Passenger asks you. A question nobody answers closes
+                        after two minutes, and the agent is told so.</p>
+                </div>
+                <div>
+                    <h3><code>--mcp FOLDER</code>: one of its own</h3>
+                    <p>The agent starts a Passenger of its own with no window, over a folder or solution, for work it does
+                        alone. It asks nothing, so it suits an agent you leave to work while you're away.</p>
+                    <h3>Long calls</h3>
+                    <p>A call that takes a while (a build, a test run, a debug session waiting for a stop) tells the agent what
+                        it is doing every 10 seconds when the agent asks for progress, so an agent that gives up on a silent
+                        call waits on.</p>
+                    <h3>For the whole team</h3>
+                    <p>A <code>.mcp.json</code> committed to your repository gives everyone who works there with Claude Code
+                        Passenger's tools.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="setup" class="agents setup">
+            <div>
+                <h2>Set it up</h2>
+                <p>The quickest way in: Passenger's Settings &rsaquo; MCP Server shows each agent's setup with your copy's own
+                    path filled in, each with a Copy button. The agent starts Passenger from where it is installed:</p>
+                <ul class="paths">
+                    <li><span>macOS</span><code>/Applications/Passenger.app/Contents/MacOS/Passenger</code></li>
+                    <li><span>Windows</span><code>%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe</code></li>
+                    <li><span>Linux</span><code>~/.local/bin/passenger</code></li>
+                </ul>
+                <p>Installed for everyone on Linux, it is <code>/usr/local/bin/passenger</code>. Any other agent that can add
+                    an MCP server connects the same way: the command, then <code>--mcp-attach</code>.</p>
+            </div>
+            <div>
+                <details class="client" open>
+                    <summary>Claude Code</summary>
+<pre>claude mcp add passenger -- \
+    /Applications/Passenger.app/Contents/MacOS/Passenger \
+    --mcp-attach</pre>
+                    <p>Or for everyone working in a repository, in its <code>.mcp.json</code>:</p>
+<pre>{
+  "mcpServers": {
+    "passenger": {
+      "command": "/Applications/Passenger.app/Contents/MacOS/Passenger",
+      "args": ["--mcp-attach"]
+    }
+  }
+}</pre>
+                </details>
+                <details class="client">
+                    <summary>Claude Desktop</summary>
+                    <p>In Settings &rsaquo; Developer, choose Edit Config, add Passenger, then restart Claude. Claude Desktop
+                        starts it in no folder of yours, so name the one to work in after <code>--mcp-attach</code>:</p>
+<pre>{
+  "mcpServers": {
+    "passenger": {
+      "command": "/Applications/Passenger.app/Contents/MacOS/Passenger",
+      "args": ["--mcp-attach", "/Users/you/src/app"]
+    }
+  }
+}</pre>
+                    <p>On Windows the command is Passenger.exe's full path, each <code>\</code> written <code>\\</code>.</p>
+                </details>
+                <details class="client">
+                    <summary>Codex CLI</summary>
+<pre>codex mcp add passenger -- \
+    /Applications/Passenger.app/Contents/MacOS/Passenger \
+    --mcp-attach</pre>
+                    <p>Or in <code>~/.codex/config.toml</code>:</p>
+<pre>[mcp_servers.passenger]
+command = "/Applications/Passenger.app/Contents/MacOS/Passenger"
+args = ["--mcp-attach"]</pre>
+                </details>
+                <details class="client">
+                    <summary>Codex desktop app</summary>
+                    <p>In Settings &rsaquo; MCP servers, choose Add server, name it <code>passenger</code>, choose STDIO, give
+                        Passenger's path as the command and <code>--mcp-attach</code> as its argument, then save and choose
+                        Restart. The app and the Codex CLI share their settings, so adding it in one adds it to both.</p>
+                </details>
+                <details class="client">
+                    <summary>OpenCode</summary>
+                    <p>In <code>opencode.json</code>, at your project's root or in <code>~/.config/opencode/</code> for every
+                        project, with a timeout of 10 minutes on a call:</p>
+<pre>{
+  "mcp": {
+    "passenger": {
+      "type": "local",
+      "command": ["/Applications/Passenger.app/Contents/MacOS/Passenger", "--mcp-attach"],
+      "enabled": true,
+      "timeout": 600000
+    }
+  }
+}</pre>
+                </details>
+                <details class="client">
+                    <summary>OpenCode 2</summary>
+                    <p>OpenCode 2 lists its servers under <code>mcp.servers</code>. Turn Code Mode off for Passenger, so
+                        OpenCode calls its tools itself, and give a call 30 minutes, since OpenCode 2 counts a call's whole
+                        time whatever progress it hears:</p>
+<pre>{
+  "mcp": {
+    "servers": {
+      "passenger": {
+        "type": "local",
+        "command": ["/Applications/Passenger.app/Contents/MacOS/Passenger", "--mcp-attach"],
+        "codemode": false,
+        "timeout": { "execution": 1800000 }
+      }
+    }
+  }
+}</pre>
+                </details>
+            </div>
+        </section>
+    </div>
+</main>
+
+<footer>
+    <div class="wrap">
+        <p>Passenger is free and open source under the MIT licence.</p>
+        <nav aria-label="More">
+            <a href="/">Home</a>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+            <a href="https://x.com/Zaneris">X (@Zaneris)</a>
+            <a href="/containers">Containers and Aspire</a>
+            <a href="/linux">Linux</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/LICENSE">Licence</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>
