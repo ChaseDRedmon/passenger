@@ -85,6 +85,7 @@ public partial class MainWindow : Window
         AddBreadcrumbs();
         AddBookmarks();
         AddEndpoints();
+        AddMigrations();
         AddContainers();
         AddRunMarks();
         AddPlaces();

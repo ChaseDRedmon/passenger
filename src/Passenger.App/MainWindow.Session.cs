@@ -233,6 +233,7 @@ public partial class MainWindow
         BindVcs(next);
         BindBookmarks(next);
         BindEndpoints(next);
+        BindMigrations(next);
         BindContainers(next);
         // Files open as it binds (a file opened with no folder) are its too.
         foreach (Workspace.OpenDocument document in Editors.Documents)

@@ -1098,6 +1098,37 @@ window or takes the focus; it shows everything but the system's own window chrom
   one-second batches, and depends on it, unless its own files name an endpoint, whose name and headers stay theirs too.
   Once `up` has brought it up the run reads its API's port (`compose port`, `ContainerTelemetry.ReadAsync`), said in the
   run's notes when it cannot (an engine on another machine, whose loopback this one cannot read).
+- `src/Passenger.App/Migrations` (#419): EF Core's migrations, Passenger's own Migrations window over the folder's
+  projects that reference EF Core (`MigrationsController`, the window's over each session it binds; `MigrationsView`,
+  `MainWindow.Migrations.cs`): the project, the startup project (those that reference it, the runnable ones first) and the
+  context chosen across its top, never an error naming a flag; the context's migrations, oldest first, each with whether
+  the database has it; Refresh, Add Migration… (its name asked), Remove Last (asked), Update Database to the latest or the
+  chosen row's (rolling back asks first, naming what goes), Script Migrations… (`MigrationScriptDialog`: from, to,
+  idempotent, into a tab of the state's `cache/migrations/`; SQLite's refusal of idempotent scripts offers a plain one) and
+  Bundle (`bin/Migrations/efbundle` of the startup project), each a registered action (`AppActions.*Migration*`, the
+  Tools/Migrations menu) under a `Working`, one command at a time (one asked for as the window lists by itself waits for
+  the listing). Shown, the window lists by itself once for each choice, saying what is missing first, never asking. Every
+  command is found ready before it runs: the restore read (`EfRestore`, the startup project's `project.assets.json`: the
+  EF Core runtime resolved, its Design package, each provider and the range of EF Core its own dependency gives, the one
+  place "the right version" is read, never EF Core's newest), the project built first when it has none, then each gap
+  (`EfGaps.Before`: no `dotnet ef`, one of another version than the runtime (blocking only across majors), no Design package
+  in the startup project; a provider whose range leaves the runtime out is said, naming both versions) asked about with its fixes (`ChoiceDialog`, a
+  question saying it downloads what the cache lacks), each fix one step of global undo: the local tool pinned to the
+  runtime's version (`EfTools`: the nearest manifest inside the folder, else a `dotnet-tools.json` Passenger makes at its
+  root; `dotnet tool install`/`update --allow-downgrade --tool-manifest`), the global tool's update only when asked, the
+  Design package through the NuGet window's one path (`NuGetView.InstallAsync`: CPM, the package's own PrivateAssets, the
+  lock file), a design-time factory from a template (`EfTemplates`, the provider's own `Use…` and the startup project's first
+  connection string). Then Passenger's own build of the project and the startup project (the Build window and Problems as
+  any build's), then `dotnet ef … --no-build --prefix-output` through `ChildProcesses` (`EfRun`, the tool the manifest names
+  run by `dotnet tool run`, else the person's global one by its program), its lines in the Build window, run in the folder
+  and environment of the run configuration that runs the startup project (`LaunchPlan`: the database the run uses), a
+  multi-targeted startup project given its framework; a manifest's tool never restored whose package the cache holds is
+  restored and the command run again. What it says when it fails is read into one plain line with its fix where one is
+  known (`EfGaps.After`: the Design package, a context the tools cannot make, several contexts, no tool, tools not
+  restored, an applied migration removed), shown in the window under the gaps with its fix as a button; EF's warning that
+  the tool is older than the runtime is read as the gap it is. Without a person to ask (an agent's call or its own IDE)
+  a blocking gap refuses the command, naming its fix, which `app.migrations.fix` (Fix What Migrations Lack, the window's
+  first fix) applies.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
@@ -2289,6 +2320,11 @@ the package cache), which only running an AppHost needs, are downloaded only whe
 property, or an environment variable, the person or CI sets; #400): without them `UseFeed` gives the folder a
 Directory.Build.targets that takes them out of its AppHosts' references after the AppHost SDK adds them, and a test that
 runs an AppHost skips saying so (`AspireApp.Unavailable`);
+`MigrationsTests` work a SQLite console app (`ShopApp`) whose EF Core, Design package and `dotnet-ef` (at `EfCoreVersion`
+and `EfToolOlderVersion`, Directory.Packages.props) come from the package cache through the run's local feed:
+`tests/EfGraphs` (the SQLite provider's and the Design package's graph at net10.0, a restore-only project of the solution)
+puts the packages there and the test project's `PackageDownload` the tool at both versions, which `ShopApp` copies into
+`AvaloniaApp.Feed`; the run's own DOTNET_CLI_HOME keeps the person's global tool out of sight;
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
 stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key, recording the commands the

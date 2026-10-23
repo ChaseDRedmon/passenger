@@ -33,6 +33,9 @@
     <Project Path="tests/AspireGraphs/AppHost/AspireGraphs.AppHost.csproj" />
     <Project Path="tests/AspireGraphs/ServiceDefaults/AspireGraphs.ServiceDefaults.csproj" />
   </Folder>
+  <Folder Name="/tests/EfGraphs/">
+    <Project Path="tests/EfGraphs/Sqlite/EfGraphs.Sqlite.csproj" />
+  </Folder>
   <Folder Name="/tests/Debuggees/">
     <Project Path="tests/Debuggees/AsyncEntryConsoleApp/AsyncEntryConsoleApp.csproj" />
     <Project Path="tests/Debuggees/AsyncTopLevelStatementsConsoleApp/AsyncTopLevelStatementsConsoleApp.csproj" />

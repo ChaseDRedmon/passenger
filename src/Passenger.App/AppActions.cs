@@ -82,6 +82,18 @@ public static class AppActions
     public const string ShowEndpoints = "app.showEndpoints";
     public const string TestEndpoint = "app.endpoints.test";
 
+    // The Migrations window over the folder's EF Core contexts, its commands, and the fix of what keeps dotnet ef from
+    // working that it shows first: no key of Rider's.
+    public const string ShowMigrations = "app.showMigrations";
+    public const string MigrationsRefresh = "app.migrations.refresh";
+    public const string AddMigration = "app.migrations.add";
+    public const string RemoveLastMigration = "app.migrations.removeLast";
+    public const string UpdateDatabase = "app.migrations.update";
+    public const string UpdateDatabaseTo = "app.migrations.updateTo";
+    public const string ScriptMigrations = "app.migrations.script";
+    public const string BundleMigrations = "app.migrations.bundle";
+    public const string MigrationsFix = "app.migrations.fix";
+
     // The Containers window over the person's container engine and its actions on the row chosen there: no keys of Rider's,
     // whose Services window has none in its Visual Studio keymaps.
     public const string ShowContainers = "app.showContainers";
