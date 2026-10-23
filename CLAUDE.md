@@ -590,15 +590,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   ls` where the CLI has Compose v2, else from their containers' states, then containers, images, volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
   `container_action` share (a service's name, a label's, always after `--`, never read as a flag; an agent's start of an
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
-  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, a port's link on the
+  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
+  list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, the health's
+  tag, `ContainerDetailsPane.HealthTag`, addresses as links), a port's link on the
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
-  again), a project's merged one (a toggle a service), each with the editor's `FindBar` over it (Find's keys while
+  again), a project's merged one (a toggle a service), each the merged log every such console is (`ToolWindows/MergedLog`,
+  the Aspire window's too) with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
   streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
   Details (`ContainerDetailsPane`, a service's its container's: `docker inspect` read
-  as it is chosen and as the window reads the engine again, in framed tables with one column of names: state, restarts and
+  as it is chosen and as the window reads the engine again, in the framed tables every Details tab has, one column of
+  names (`ToolWindows/DetailsTables`, the Aspire window's too): state, restarts and
   last exit, the health check's last outputs, ports as links, Compose's `com.docker.compose.depends_on`, environment,
   mounts, networks) and Files (`ls` through `docker exec` as a folder opens, a file copied by `docker cp
   -L …:path -` under the state's `cache/containers/`, which `OpenDocument.IsReadOnly` takes as read-only, as Inspect's JSON
@@ -863,9 +867,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
-  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`) shows the resources as a tree, their consoles merged with
-  Find, their logs and traces; its buttons are registered actions (`MainWindow.AspireActions.cs`), its links open through
-  `Browse`, and a resource's Details leave out every environment value (`ContainerSecrets` masks the rest). An AppHost the
+  window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
+  parts over an AppHost's resources, the same controls: its toolbar the AppHost chosen and icon buttons of registered
+  actions (`MainWindow.AspireActions.cs`, each bound by `ActionButtons.Bind`, its ring while its work runs: Discover,
+  Refresh, a resource's Debug, Attach, Run without Debugger and Profile through the run of services, its commands as a
+  menu, its address, source and container), the resources as `RunRows` (a parent's children under its chevron, the
+  state's dot, the health's tag only for a resource with health reports, its http and https addresses as links through
+  `Browse`; a row's menu its actions and commands), and the chosen one's Details (`AspireDetailsPane`, `DetailsTables`:
+  the resource, its health reports, URLs, relationships, environment, properties and volumes), the resources' consoles
+  merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their start), the
+  dashboard's structured logs and traces, and the AppHost's own console. What a resource says is masked as a container's
+  is, by `ContainerSecrets`' rule (a property the AppHost marks sensitive whatever its name; a health report's exception by
+  `InValue`; an external AppHost's properties, whose sensitivity the CLI does not say, only those known to name no
+  secret), the rest shown. An AppHost the
   window starts is a run of services (`AspireAppRun`, the model above), its services the IDE runs on this machine as DCP
   asks (`AspireController.StartResourceAsync`, each start an `AspireResourceRun` under a `ProcessRunner`, its console its
   own): a service held for the debugger (debugged, or quietly under Run with Hot Reload) starts with its runtime suspended
@@ -2128,7 +2142,9 @@ folder) in the run's template home while a dialog is open; the watch sees it.
   and New Window fit the screen's working area before they're shown (`MainWindow.FitToScreen`). A dialog's content is
   `DialogFooter.Page(page, DialogFooter.Bar(buttons[, left]))`; a rounded Border takes `Border.kindBadge` or
   `Border.tag` (the badge radius) or `Border.box` (the controls' radius), never a literal radius (UiRulesTests); a
-  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A toolbar's icon button is
+  toolbar down a tool window's side is a `ToolColumn`, what has no room going behind More. A list of what runs (the
+  Containers and Aspire windows') draws its rows through `RunRows`, a Details tab is `DetailsTables`, and a console of
+  several sources merged is `MergedLog`. A toolbar's icon button is
   `ToolButtons.Of` (`Toggle` for one that stays pressed): never focusable, its icon the one size, as UiRulesTests holds
   every tool window's; words of less weight beside a row's are `MutedText`; a search field's keys over its list (Up,
   Down, Page Up, Page Down) are `ListKeys.Move`; a path shown to a person is `PathNames.Shown` (from the open folder

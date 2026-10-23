@@ -63,7 +63,8 @@ public sealed class AspireExternalDataTests(AspireApp project) : IClassFixture<A
             }
             Assert.True(Read(), $"The Aspire window never read the external API's environment through the CLI ({window.Aspire.Status})");
             AspireResource api = Assert.Single(window.Aspire.ResourceSnapshots, resource => resource.DisplayName == "apiservice");
-            Assert.Equal(JsonValueKind.Null, api.Data.GetProperty("environment").GetProperty(Variable).ValueKind);
+            // A secret's by its name, masked as Containers' Details mask one.
+            Assert.Equal(Passenger.App.Containers.ContainerSecrets.Masked, api.Data.GetProperty("environment").GetProperty(Variable).GetString());
             Assert.DoesNotContain(Secret, api.Data.GetRawText(), StringComparison.Ordinal);
             Assert.DoesNotContain(window.Aspire.GetVisualDescendants().OfType<TextBlock>(), text => text.Text?.Contains(Secret, StringComparison.Ordinal) == true);
             string projectPath = Assert.IsType<string>(api.Data.GetProperty("properties").GetProperty("project.path").GetString());

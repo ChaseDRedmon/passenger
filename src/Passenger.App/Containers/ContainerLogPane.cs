@@ -1,4 +1,3 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
@@ -9,8 +8,9 @@ namespace Passenger.App.Containers;
 
 /// <summary>A container's log, or a Compose project's or service's with every service's lines merged: <c>docker logs -f</c>
 /// (<c>docker compose logs -f</c>) streamed into a console through a <see cref="ProcessRunner"/>, whose sink takes colour
-/// codes out and whose links (stack frames, compiler messages, addresses) are the consoles' own. Timestamps are shown on
-/// demand, and a project's services each have a toggle; changing either streams the log again.</summary>
+/// codes out and whose links (stack frames, compiler messages, addresses) are the consoles' own, in the merged log every such
+/// console is (<see cref="MergedLog"/>). Timestamps are shown on demand, and a project's services each have a toggle;
+/// changing either streams the log again.</summary>
 public sealed class ContainerLogPane : DockPanel
 {
     /// <summary>How many lines of what came before a stream begins with.</summary>
@@ -18,8 +18,7 @@ public sealed class ContainerLogPane : DockPanel
 
     private readonly Func<ContainerEngine> engine;
     private readonly ToggleButton timestamps;
-    private readonly StackPanel services = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-    private readonly HashSet<string> hidden = new(StringComparer.Ordinal);
+    private readonly MergedLog log;
     private ProcessRunner? runner;
     private ContainerRow? row;
     private string? streaming;
@@ -30,36 +29,25 @@ public sealed class ContainerLogPane : DockPanel
     public ContainerLogPane(Func<ContainerEngine> engine)
     {
         this.engine = engine;
-        Console = new OutputView(toolbar: false);
-        Console.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
         timestamps = new ToggleButton { Classes = { "segment" }, Content = "Timestamps", VerticalAlignment = VerticalAlignment.Center, Name = "containerTimestamps" };
         timestamps.IsCheckedChanged += (_, _) => Restart();
-        // The editor's own Find, over the console's text: case, whole words and regular expressions, every match marked.
-        Find = new Editors.FindBar { [DockProperty] = Dock.Top };
-        Find.Attach(Console.Editor);
-        Button finding = ToolButtons.Of("Icon.Search", "Find in the log", OpenFind);
-        finding.Name = "containerLogFind";
-        finding.VerticalAlignment = VerticalAlignment.Center;
-        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 4, [DockProperty] = Dock.Right, Children = { finding, timestamps } };
-        DockPanel bar = new() { [DockProperty] = Dock.Top, Height = 32, Margin = new Thickness(8, 0) };
-        bar.Children.Add(right);
-        bar.Children.Add(services);
-        Children.Add(bar);
-        Children.Add(Find);
-        Children.Add(Console);
+        log = new MergedLog("containerLogFind", timestamps);
+        log.Console.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
+        log.Toggled += (_, _) => Restart();
+        Children.Add(log);
     }
 
     /// <summary>Find over the log, as the editor's: shown by its button and by Find's keys while the window has them.</summary>
-    public Editors.FindBar Find { get; }
+    public Editors.FindBar Find => log.Find;
 
     /// <summary>Opens Find over the log.</summary>
-    public void OpenFind() => Find.Open(replace: false);
+    public void OpenFind() => log.OpenFind();
 
     /// <summary>A link in the log clicked.</summary>
     public event EventHandler<LinkTarget>? LinkClicked;
 
     /// <summary>The console the log streams into.</summary>
-    public OutputView Console { get; }
+    public OutputView Console => log.Console;
 
     /// <summary>Whether lines carry the engine's timestamps.</summary>
     public bool Timestamps
@@ -69,7 +57,7 @@ public sealed class ContainerLogPane : DockPanel
     }
 
     /// <summary>The services whose lines a project's log shows, each a toggle.</summary>
-    public IReadOnlyList<ToggleButton> ServiceToggles => [.. services.Children.OfType<ToggleButton>()];
+    public IReadOnlyList<ToggleButton> ServiceToggles => log.Toggles;
 
     /// <summary>What streams now, as a command's words; null while nothing does.</summary>
     public string? Streaming => streaming;
@@ -86,31 +74,8 @@ public sealed class ContainerLogPane : DockPanel
         }
         bool otherProject = shown?.Project?.Name != row?.Project?.Name;
         row = shown;
-        if (otherProject)
-        {
-            hidden.Clear();
-        }
-        services.Children.Clear();
-        if (shown is { Project: { } project, Service: null, Kind: ContainerRowKind.Project })
-        {
-            foreach ((string service, _) in project.Services)
-            {
-                ToggleButton toggle = new() { Classes = { "segment" }, Content = service, IsChecked = !hidden.Contains(service), VerticalAlignment = VerticalAlignment.Center };
-                toggle.IsCheckedChanged += (_, _) =>
-                {
-                    if (toggle.IsChecked == true)
-                    {
-                        hidden.Remove(service);
-                    }
-                    else
-                    {
-                        hidden.Add(service);
-                    }
-                    Restart();
-                };
-                services.Children.Add(toggle);
-            }
-        }
+        log.Offer(shown is { Project: { } project, Service: null, Kind: ContainerRowKind.Project }
+            ? [.. project.Services.Select(s => (s.Service, s.Service))] : [], forget: otherProject);
         Restart();
     }
 
@@ -177,7 +142,7 @@ public sealed class ContainerLogPane : DockPanel
         }
         if (shown.Project is { } project)
         {
-            string[] chosen = shown.Service is { } service ? [service] : [.. project.Services.Select(s => s.Service).Where(s => !hidden.Contains(s))];
+            string[] chosen = shown.Service is { } service ? [service] : [.. project.Services.Select(s => s.Service).Where(log.Shows)];
             if (chosen.Length == 0)
             {
                 return null;

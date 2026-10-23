@@ -125,6 +125,10 @@ ICONS = [
     ("Endpoints", "Globe", "20_regular"),
     # The Containers window's stripe button: the engine's containers, images, volumes and networks.
     ("Containers", "Box Multiple", "20_regular"),
+    # The Aspire window's stripe button: an AppHost over the resources it runs.
+    ("Aspire", "Cube Tree", "20_regular"),
+    # Attach to a service as it runs: the debugger plugged in, beside Detach's plug unplugged.
+    ("Attach", "Plug Connected", "20_regular"),
 ]
 
 

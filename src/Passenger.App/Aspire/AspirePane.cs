@@ -24,7 +24,7 @@ public sealed class AspirePane : DockPanel, IDisposable
     public void SetConsole(OutputView? output) => View.SetAppHostConsole(output);
     public void SetContainerStatus(string text) => View.SetContainerStatus(text);
     public void SetDisplayVisible(bool visible) => View.SetDisplayVisible(visible);
-    public void ShowConsole(bool show) => View.ShowPage(show ? "AppHost console" : "Resources");
+    public void ShowConsole(bool show) => View.ShowPage(show ? "AppHost console" : "Details");
 
     public void Dispose() => View.Dispose();
 }
