@@ -179,6 +179,49 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         window.Close();
     }
 
+    /// <summary>Keys typed in one place while the server answers no colours (as while its projects load) keep the colours it
+    /// gave last on their words, below the keys and at the file's end, carried through one change for the run of them: a
+    /// change kept for each key, every line drawn carried through all of them, made each key cost more than the one before
+    /// (7 ms a key in #233's measure while a solution loaded).</summary>
+    [AvaloniaFact]
+    public void Keys_typed_while_the_server_gives_no_colours_carry_its_last_through_one_change_for_the_run()
+    {
+        string source = Project.Long;
+        MainWindow window = project.Open("Long.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        TokenKind? KindAt(int offset) => document.Highlighter?.GetSpans(document.Text.Snapshot, offset, 1)
+            .Where(s => s.Start == offset).Select(s => (TokenKind?)s.Kind).FirstOrDefault();
+        int near = source.IndexOf("value0 * 3", StringComparison.Ordinal);
+        int far = source.LastIndexOf("value98 * 3", StringComparison.Ordinal);
+        Ui.WaitFor(() => KindAt(near) == TokenKind.Local && KindAt(far) == TokenKind.Local, "the server's colours on the locals");
+        Ui.Settle();
+        Passenger.Languages.CSharp.SemanticHighlighter colours = Assert.IsType<Passenger.Languages.CSharp.SemanticHighlighter>(document.Highlighter);
+        Passenger.Lsp.LanguageServer server = window.CSharpService!.Session!.Server;
+        _ = server.RefuseNext("textDocument/semanticTokens/range", 1000);
+        _ = server.RefuseNext("textDocument/semanticTokens/full", 1000);
+        try
+        {
+            editor.Selections = SelectionSet.Single(source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + 0".Length);
+            editor.Focus();
+            const int Keys = 12;
+            for (int i = 0; i < Keys; i++)
+            {
+                window.KeyTextInput((i % 10).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                Ui.Settle();
+                Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
+            }
+            Assert.True(colours.Carrying <= 1, $"The server's last colours were carried through {colours.Carrying} changes, one for each of the {Keys} keys typed in one place");
+            Assert.Equal(TokenKind.Local, KindAt(far + Keys));
+        }
+        finally
+        {
+            _ = server.RefuseNext("textDocument/semanticTokens/range", 0);
+            _ = server.RefuseNext("textDocument/semanticTokens/full", 0);
+        }
+        window.Close();
+    }
+
     /// <summary>A file of 20,000 lines is a million numbers of tokens, which the server takes a second to make and the IDE
     /// megabytes to read: while typing goes on with pauses, only the lines on screen are asked for again (Rider's and VS
     /// Code's way), and what only the server colours on screen is coloured from them; once typing stops, the whole file is

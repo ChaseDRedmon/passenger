@@ -32,6 +32,10 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
     private long parseBytes;
     private int parses;
     private int version;
+
+    /// <summary>The version the parse under way is of, whose change is never joined to a later one: the parse's landing
+    /// lets go of the changes up to it.</summary>
+    private int parsingVersion = -1;
     private bool parsing;
     private bool disposed;
 
@@ -157,7 +161,10 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
     {
         text = text.With(e.After, e.Edits);
         version++;
-        sinceTree.Add((version, e.Edits));
+        if (sinceTree.Count == 0 || sinceTree[^1].Version == parsingVersion || !CarriedSpans.Join(sinceTree, version, e.Edits))
+        {
+            sinceTree.Add((version, e.Edits));
+        }
         Parse();
     }
 
@@ -172,6 +179,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
         SyntaxTree? previous = tree;
         FoldRegions? previousFolds = treeFolds;
         int parsedVersion = version;
+        parsingVersion = parsedVersion;
         (int Start, int Length)[] warm = [.. asked];
         BackgroundWork.Begin();
         Task<(SyntaxTree Tree, FoldRegions Folds)> parse = Task.Run(() =>
@@ -198,6 +206,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
             try
             {
                 parsing = false;
+                parsingVersion = -1;
                 if (done.IsCompletedSuccessfully && !disposed)
                 {
                     tree = done.Result.Tree;
