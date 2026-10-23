@@ -768,16 +768,18 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     }
 
     /// <summary>What a service is held at its start for, its first start in a run: as a person chose it as the configuration
-    /// last ran, else debugged where the configuration or DCP's request says, quietly for Hot Reload under Run with Hot
-    /// Reload, else unheld (and every one unheld under Profile but the one profiled).</summary>
+    /// last ran, else debugged where the configuration marks it Debug, or, with none marked, where DCP's request says (a
+    /// container run's rule: those marked Debug, else every one), quietly for Hot Reload under Run with Hot Reload, else
+    /// unheld (and every one unheld under Profile but the one profiled).</summary>
     private RunStart? FirstHold(AspireAppRun app, AspireResourceRun resource, AspireProjectLaunch request)
     {
         if (app.Mode == RunStart.Profile)
         {
             return null;
         }
+        bool marked = app.Configuration.ServiceActions.Values.Contains(ServiceStart.Debug);
         bool debugging = Chosen?.Invoke(app.Configuration.Name, ((IRunService)resource).Name)
-            ?? (ResourceAction(app.Configuration, resource) is { } action ? action == ServiceStart.Debug : request.Mode == "Debug");
+            ?? (marked ? ResourceAction(app.Configuration, resource) == ServiceStart.Debug : request.Mode == "Debug");
         return debugging ? RunStart.Debug : app.Mode == RunStart.HotReload ? RunStart.HotReload : null;
     }
 
