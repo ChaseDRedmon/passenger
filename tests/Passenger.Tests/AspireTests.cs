@@ -390,7 +390,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Assert.Contains(window.Browsed, browsed => browsed == endpoint);
 
             // A request through both services, in the merged console under each one's prefix and found there.
-            FindAction(window, "Show Aspire Console");
+            FindAction(window, "Show Aspire Log");
             Uri request = new(HttpUrl(web), "/passenger-test");
             Assert.Equal("5", Ui.Await(http.GetStringAsync(request), "the frontend's cross-service HTTP response"));
             Ui.WaitFor(() => window.Aspire.Console.Document.Snapshot.ToString().Contains("[apiservice]", StringComparison.Ordinal)
@@ -655,7 +655,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Assert.Null(window.AspireRuntime.FindService(foreignProcess));
             Assert.Throws<InvalidOperationException>(() => window.AspireRuntime.SetDebugMode(foreignProcess, debugging: true));
             ChooseResource(window, "apiservice");
-            FindAction(window, "Attach to Aspire Resource");
+            FindAction(window, "Attach to Service");
             Ui.WaitFor(() => Service(window, api).DebugTab?.IsLive == true, $"Attach to the chosen API ({window.Status})");
             AspireResourceRun service = Service(window, api);
             Assert.Equal(apiPid, service.ProcessId);
@@ -687,7 +687,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Ui.Await(Complete(window.Debugger.ChooseAsync(apiTab)), "choosing the attached API's tab to go on with it");
 
             ChooseResource(window, "apiservice");
-            Button noDebug = window.GetVisualDescendants().OfType<Button>().Single(button => ActionButtons.GetAction(button) == AppActions.AspireRun);
+            Button noDebug = window.Aspire.Tools[AppActions.ServiceRun];
             Ui.WaitFor(() => noDebug.IsEffectivelyVisible && noDebug.IsEnabled, "the selected resource's Run without debugger action");
             Ui.Click(noDebug);
             RefreshUntil(window, () => window.Aspire.ResourceSnapshots.Any(resource => resource.DisplayName == "apiservice"
@@ -696,7 +696,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             Assert.True(Processes.IsRunning(webPid), "Run without debugger must leave the sibling frontend alive");
             web = Resource(window, "webfrontend");
             ChooseResource(window, "webfrontend");
-            FindAction(window, "Profile Aspire Resource");
+            FindAction(window, "Profile Service");
             Ui.WaitFor(() => window.Profiling?.ProcessId == webPid, $"Profile to record the chosen frontend ({window.Status})");
             using HttpClient http = Client();
             Assert.Equal("5", Ui.Await(http.GetStringAsync(new Uri(HttpUrl(web), "/passenger-test")), "the profiled frontend's cross-service request"));

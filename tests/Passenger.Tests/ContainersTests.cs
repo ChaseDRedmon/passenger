@@ -862,6 +862,20 @@ public sealed class ContainersTests
                     $"{name}'s dot is {(dot.Fill as Avalonia.Media.ISolidColorBrush)?.Color}, where a container {said} shows {colour}");
                 Assert.Equal($"{name}: {said}", ToolTip.GetTip(dot));
             }
+
+            // A container's menu begins with the service actions, as an Aspire resource's does, greyed with why while no run
+            // of the folder's has it as a .NET service.
+            TextBlock crashy = view.GetVisualDescendants().OfType<RunRowView>().Single(r => r.Shown?.Label == "crashy")
+                .GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "crashy");
+            Ui.Click(crashy);
+            Ui.RightClick(crashy);
+            ContextMenu menu = view.GetVisualDescendants().OfType<ListBox>().Single().ContextMenu ?? throw new Xunit.Sdk.XunitException("The row has no menu");
+            Ui.WaitFor(() => menu.IsOpen, "crashy's menu to open");
+            MenuItem[] first = [.. menu.Items.OfType<Control>().TakeWhile(item => item is MenuItem).Cast<MenuItem>()];
+            Assert.Equal(["Debug Service", "Attach to Service", "Run Service without Debugger", "Profile Service"], first.Select(item => (string?)item.Header));
+            Assert.All(first, item => Assert.True(!item.IsEnabled && ToolTip.GetTip(item) is "No container run is under way: Run, Debug or Profile a container configuration first",
+                $"{item.Header} is {(item.IsEnabled ? "enabled" : "greyed")}, saying {ToolTip.GetTip(item)}"));
+            menu.Close();
         }
         finally
         {

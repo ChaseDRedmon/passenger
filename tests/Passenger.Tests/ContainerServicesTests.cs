@@ -104,7 +104,8 @@ public sealed class ContainerServicesTests(ContainerRunDebuggingTests.Tools tool
             // The gutter's icon beside web offers its actions on the run (a service's Profile as the run goes on, recorded in its
             // container, is ContainerRunProfilingTests' Attach Profiler, the same recording).
             Avalonia.Controls.MenuItem[] items = GutterMenu(window, folder, "  web:");
-            Assert.Equal(["Debug 'web'", "Attach to 'web'", "Run 'web' without Debugger", "Profile 'web'"], items.Select(i => (string?)i.Header));
+            // Under the titles Find Action and the Containers and Aspire windows give them.
+            Assert.Equal(["Debug Service", "Attach to Service", "Run Service without Debugger", "Profile Service"], items.Select(i => (string?)i.Header));
             Assert.IsType<MenuFlyout>(window.RunMarkMenu).Hide();
             Ui.Settle();
 

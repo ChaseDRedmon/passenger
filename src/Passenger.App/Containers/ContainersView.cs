@@ -14,8 +14,10 @@ using Passenger.Editor;
 namespace Passenger.App.Containers;
 
 /// <summary>What the Containers window works with: the window's engine, its actions' work, the status bar, the browser a
-/// port's link opens in, and the folder the state's copies of a container's files go under.</summary>
-public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Work, StatusSay Say, Action<Uri> Browse, Func<string> StateFolder, Func<string, string> Title);
+/// port's link opens in, the folder the state's copies of a container's files go under, its actions' titles, and the items
+/// of its rows' menus as the window makes them (greyed with why).</summary>
+public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Work, StatusSay Say, Action<Uri> Browse, Func<string> StateFolder, Func<string, string> Title,
+    Func<string, MenuItem> Item);
 
 /// <summary>The Containers window: the engine's Compose projects with their services and containers (stopped ones still
 /// listed), then every other container (Testcontainers' apart), images, volumes and networks, each row with its state,
@@ -26,11 +28,12 @@ public sealed record ContainersParts(Func<ContainerEngine> Engine, ActionWork Wo
 /// container's log and stats stream only while their tab is shown. Its toolbar's buttons run the window's actions.</summary>
 public sealed class ContainersView : DockPanel
 {
-    private const string LogTab = "Log";
-    private const string StatsTab = "Stats";
-    private const string FilesTab = "Files";
-    private const string DetailsTab = "Details";
-    private const string TelemetryTab = "Telemetry";
+    // The tabs' names are those every list of a run's services has, in its order (RunWindows.Tabs).
+    private const string LogTab = RunWindows.LogTab;
+    private const string StatsTab = RunWindows.StatsTab;
+    private const string FilesTab = RunWindows.FilesTab;
+    private const string DetailsTab = RunWindows.DetailsTab;
+    private const string TelemetryTab = RunWindows.TelemetryTab;
 
     private readonly ContainersParts parts;
     private readonly ListBox list;
@@ -65,8 +68,10 @@ public sealed class ContainersView : DockPanel
         Telemetry.ShownChanged += (_, _) => ShowChosen();
 
         StackPanel tools = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
+        // Its Refresh, then the service actions as every list of a run's services groups them, then a container's own.
         foreach ((string action, string icon) in (ReadOnlySpan<(string, string)>)[
             (AppActions.ContainersRefresh, "Icon.Rerun"),
+            .. RunWindows.ServiceActions,
             (AppActions.ContainerStart, "Icon.Run"),
             (AppActions.ContainerStop, "Icon.Stop"),
             (AppActions.ContainerRestart, "Icon.Update"),
@@ -95,11 +100,16 @@ public sealed class ContainersView : DockPanel
             if (!filling)
             {
                 ShowChosen();
+                RowChosen?.Invoke(this, EventArgs.Empty);
             }
         };
         RunRows.Toggles(list, () => Chosen is { Expands: true }, () => Toggle(Chosen));
+        // In the order every list of a run's services gives a row's menu: the service actions first, for a service's or a
+        // container's row (greyed with why where it is no .NET service of the run under way), then the row's own.
         ListMenus.Attach(list, () => Chosen is not { Kind: not ContainerRowKind.Group } ? [] :
         [
+            .. Chosen is { Kind: ContainerRowKind.Service or ContainerRowKind.Container }
+                ? (Control[])[.. RunWindows.ServiceActions.Select(service => Item(service.Action)), new Separator()] : [],
             Item(AppActions.ContainerStart),
             Item(AppActions.ContainerStop),
             Item(AppActions.ContainerRestart),
@@ -109,14 +119,6 @@ public sealed class ContainersView : DockPanel
             Item(AppActions.ContainerInspect),
             Item(AppActions.ContainerPull),
             Item(AppActions.ContainerScale),
-            // A .NET service of the container run under way, acted on as the run goes on (the window's actions say why not).
-            .. Chosen is { Kind: ContainerRowKind.Service or ContainerRowKind.Container } ? (Control[])[
-                new Separator(),
-                Item(AppActions.ServiceDebug),
-                Item(AppActions.ServiceAttach),
-                Item(AppActions.ServiceRun),
-                Item(AppActions.ServiceProfile),
-            ] : [],
             new Separator(),
             Item(AppActions.ContainerRemove),
         ]);
@@ -124,7 +126,7 @@ public sealed class ContainersView : DockPanel
         nothingChosen = new TextBlock { Classes = { "emptyText" }, Text = "Choose a container or a Compose project to see its log and stats" };
 
         StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
-        foreach (string name in (string[])[LogTab, StatsTab, FilesTab, DetailsTab, TelemetryTab])
+        foreach (string name in RunWindows.Tabs.Where(tab => tab is LogTab or StatsTab or FilesTab or DetailsTab or TelemetryTab))
         {
             ToggleButton tab = ToolTabs.Tab(name, name == shownTab);
             tab.Name = $"containers{name}Tab";
@@ -145,8 +147,11 @@ public sealed class ContainersView : DockPanel
         ShowChosen();
     }
 
-    /// <summary>One of the window's actions asked for by a button or a row's menu.</summary>
+    /// <summary>One of the window's actions asked for by a button.</summary>
     public event EventHandler<string>? ActionRequested;
+
+    /// <summary>A person chose a row (a click, the keys), never the list read again.</summary>
+    public event EventHandler? RowChosen;
 
     /// <summary>A link in a log clicked: a file's place, or an address for the browser.</summary>
     public event EventHandler<LinkTarget>? LinkClicked;
@@ -552,8 +557,9 @@ public sealed class ContainersView : DockPanel
         }
     }
 
-    /// <summary>A row menu's item for one of the window's actions, titled as the action is.</summary>
-    private MenuItem Item(string action) => ListMenus.Item(parts.Title(action), null, () => ActionRequested?.Invoke(this, action));
+    /// <summary>A row menu's item for one of the window's actions, as the window's row menus make them: titled as the action
+    /// is, greyed with why while it cannot run.</summary>
+    private MenuItem Item(string action) => parts.Item(action);
 
     private Button ActionTool(string action, string icon, string tip)
     {

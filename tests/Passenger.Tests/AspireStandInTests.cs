@@ -234,7 +234,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         };
         try
         {
-            FindAction(window, "Show Aspire Console");
+            FindAction(window, "Show Aspire Log");
             Ui.WaitFor(() => backend.Consoles.Length == 1, "the console's subscription");
             AspireInteractionHost.ConsoleSubscription old = Assert.Single(backend.Consoles);
             Assert.Equal("apiservice", old.ResourceName);
@@ -263,7 +263,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Assert.Single(window.Browsed);
 
             // Hidden, the window follows no console, and asks the CLI for nothing in its place.
-            FindAction(window, "Show Aspire Console");
+            FindAction(window, "Show Aspire Log");
             ChildProcesses.Started += observe;
             Ui.Click(window.Aspire.Console.Editor);
             Ui.Run(window, AppActions.HideToolWindow);
@@ -399,11 +399,14 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             commands.Close();
             Ui.Settle();
 
-            // The console: every resource's lines merged, a toggle each; one turned off ends its stream.
-            Ui.Click(Tab(window, "Console"));
-            Ui.WaitFor(() => backend.Consoles.Length == 2, "both resources' console subscriptions");
-            AspireInteractionHost.ConsoleSubscription apiLines = backend.Consoles.Single(console => console.ResourceName == "apiservice");
-            AspireInteractionHost.ConsoleSubscription cacheLines = backend.Consoles.Single(console => console.ResourceName == "cache");
+            // The log: every resource's lines merged, a toggle each; one turned off ends its stream. Shown at first, as the
+            // Containers window's Log is, it streamed as the window showed and again as its tab is chosen again.
+            Ui.Click(Tab(window, "Log"));
+            AspireInteractionHost.ConsoleSubscription[] Open() => [.. backend.Consoles.Where(console => !console.Closed.Task.IsCompleted)];
+            Ui.WaitFor(() => Open().Length == 2, "both resources' console subscriptions");
+            AspireInteractionHost.ConsoleSubscription apiLines = Open().Single(console => console.ResourceName == "apiservice");
+            AspireInteractionHost.ConsoleSubscription cacheLines = Open().Single(console => console.ResourceName == "cache");
+            int apiRead = backend.Consoles.Count(console => console.ResourceName == "apiservice");
             apiLines.Push(new ConsoleLogLine { Text = "api says hello", LineNumber = 1 });
             cacheLines.Push(new ConsoleLogLine { Text = "cache warms", LineNumber = 1 });
             Ui.WaitFor(() => Console(window).Contains("[apiservice] api says hello", StringComparison.Ordinal)
@@ -412,7 +415,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.Click(window.Aspire.Log.Toggles.Single(toggle => Equals(toggle.Content, "cache")));
             Ui.WaitFor(() => cacheLines.Closed.Task.IsCompleted, "the cache's toggle turned off to end its stream");
             // The API's console read again from its start, as a project's merged log is; the stand-in sends what it is given.
-            Ui.WaitFor(() => backend.Consoles.Count(console => console.ResourceName == "apiservice") == 2, "the API's console read again");
+            Ui.WaitFor(() => backend.Consoles.Count(console => console.ResourceName == "apiservice") == apiRead + 1, "the API's console read again");
             Assert.DoesNotContain(backend.Consoles, console => console.ResourceName == "cache" && !console.Closed.Task.IsCompleted);
             backend.Consoles.Last(console => console.ResourceName == "apiservice").Push(new ConsoleLogLine { Text = "api says hello", LineNumber = 1 });
             Ui.WaitFor(() => Console(window).Contains("[apiservice] api says hello", StringComparison.Ordinal), "the API's lines, read again");
@@ -574,7 +577,7 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             FindAction(window, "Show Aspire Resources");
             Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.Name == "apiservice"), "the API's row");
             Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
-            FindAction(window, "Profile Aspire Resource");
+            FindAction(window, "Profile Service");
             Ui.WaitFor(() => window.Profiling?.ProcessId == api, $"Profile to record the API as it runs ({window.Status})");
             Ui.Hold(TimeSpan.FromSeconds(1), "the profiler to sample the API as it runs");
 
@@ -809,12 +812,12 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.WaitFor(() => window.Aspire.Rows.Any(row => row.Resource.Name == "apiservice"), "the API's row");
             Ui.Click(Words(Row(window, "apiservice"), "apiservice"));
 
-            FindAction(window, "Run Aspire Resource Without Debugger");
+            FindAction(window, "Run Service without Debugger");
             string config = StandInAppHost.Configuration;
             Ui.WaitFor(() => window.Status == $"apiservice of {config} already runs without the debugger: nothing restarted", $"Run without Debugger to say so ({window.Status})");
             Assert.True(Processes.IsRunning(first) && Api(window) == first && backend.Commands.Length == 0, "Run without Debugger restarted the API, which nothing held or debugged");
 
-            FindAction(window, "Attach to Aspire Resource");
+            FindAction(window, "Attach to Service");
             Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.Single().DebugTab?.IsLive == true, $"Attach to the API as it runs ({window.Status})");
             backend.OnCommand = command =>
             {
@@ -941,6 +944,85 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
 
         static Avalonia.Media.Color Colour(MainWindow window, string token) =>
             window.TryFindResource(token, window.ActualThemeVariant, out object? found) && found is Avalonia.Media.ISolidColorBrush brush ? brush.Color : default;
+    }
+
+    /// <summary>The Aspire window's service actions are the Containers window's, under the same titles and in the same place:
+    /// its row's menu begins with them, as its toolbar's group after Refresh does, and Find Action lists each once. On a
+    /// container they are greyed in the menu with why, where they failed with a wrong message; and Debug Service of a service
+    /// its run left unstarted (its configuration's Don't start), chosen from its row's menu, has its AppHost start it, the
+    /// debugger attaching as it starts, where the window said to start the AppHost through Passenger.</summary>
+    [AvaloniaFact]
+    public void Service_actions_grey_with_why_on_a_container_and_Debug_starts_a_service_left_unstarted_under_the_debugger()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        System.Net.WebSockets.ClientWebSocket? started = null;
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration), "the stand-in AppHost's Aspire configuration");
+            RunConfiguration marked = project.DontStartApi(window.Configurations.First(configuration => configuration.Name == StandInAppHost.Configuration));
+            window.SetConfigurations([marked], marked.Name);
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1, $"the stand-in AppHost's start ({window.Status})");
+            (System.Net.WebSockets.ClientWebSocket refusedStart, System.Net.HttpStatusCode refused) = project.AskToStartApi("apiservice");
+            refusedStart.Dispose();
+            Assert.False((int)refused is >= 200 and < 300, "The IDE started a service its configuration says not to start");
+            Resource unstarted = project.Refused();
+            unstarted.Commands.Add(new ResourceCommand { Name = "resource-start", DisplayName = "Start", State = ResourceCommandState.Enabled });
+            backend.PushResource(unstarted);
+            backend.PushResource(new Resource { Name = "cache", DisplayName = "cache", Uid = "cache", ResourceType = "Container", State = "Running" });
+            FindAction(window, "Show Aspire Resources");
+            Ui.WaitFor(() => window.Aspire.Rows.Count == 2, "the API's and the cache's rows");
+            string[] services = ["Debug Service", "Attach to Service", "Run Service without Debugger", "Profile Service"];
+            Assert.Equal(services, window.Aspire.Tools.Keys.Skip(2).Take(4).Select(id => window.Actions[id]!.Title));
+
+            // The cache's menu: the service actions first, each greyed saying why.
+            ContextMenu menu = RowMenu(window, "cache");
+            MenuItem[] first = [.. menu.Items.OfType<Control>().TakeWhile(item => item is MenuItem).Cast<MenuItem>()];
+            Assert.Equal(services, first.Select(item => (string?)item.Header));
+            foreach (MenuItem item in first)
+            {
+                Assert.False(item.IsEnabled, $"{item.Header} is not greyed on a container");
+                Assert.Equal($"cache is not a .NET service of {marked.Name}", ToolTip.GetTip(item));
+            }
+            menu.Close();
+            Ui.Settle();
+            Ui.Run(window, AppActions.FindAction);
+            window.KeyTextInput("Service");
+            Ui.Settle();
+            Passenger.App.Navigation.ActionPopup popup = Assert.IsType<Passenger.App.Navigation.ActionPopup>(window.Popup);
+            Assert.All(services, title => Assert.Single(popup.Rows, row => row.Title == title));
+            Ui.Press(window, "ESCAPE");
+
+            // Debug Service of the API its run left unstarted: its AppHost asked to start it, then attached to as it starts.
+            Ui.Choose(RowMenu(window, "apiservice"), "Debug Service");
+            Ui.WaitFor(() => backend.Commands.Any(command => command.CommandName == "resource-start"), $"the AppHost asked to start the API ({window.Status})");
+            Assert.Equal($"Debugging apiservice of {marked.Name} from its start: its AppHost was asked to start it", window.Status);
+            (started, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the API's start once Debug asked it: {answer} ({window.Status})");
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.SingleOrDefault() is { ProcessId: > 0, DebugTab.IsLive: true },
+                $"the API debugged from its start ({window.Status})", TimeSpan.FromMinutes(1));
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            started?.Dispose();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
+    /// <summary>A resource's row's menu, opened by a right click on its name once a click has chosen it.</summary>
+    private static ContextMenu RowMenu(MainWindow window, string name)
+    {
+        Ui.Click(Words(Row(window, name), name));
+        Ui.RightClick(Words(Row(window, name), name));
+        ContextMenu menu = window.Aspire.ResourceList.ContextMenu ?? throw new Xunit.Sdk.XunitException($"{name}'s row has no menu");
+        Ui.WaitFor(() => menu.IsOpen, $"{name}'s row menu to open");
+        return menu;
     }
 
     /// <summary>A resource's row as the Aspire window shows it, scrolled into view.</summary>

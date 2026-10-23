@@ -620,7 +620,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   ls` where the CLI has Compose v2, else from their containers' states, then containers, images, volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
   `container_action` share (a service's name, a label's, always after `--`, never read as a flag; an agent's start of an
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
-  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
+  (`MainWindow.Containers.cs`) has the Aspire window's layout (`ToolWindows/RunWindows`: its toolbar's Refresh, then the
+  service actions' group, then a container's own; a service's or container's row's menu beginning with the service
+  actions, every item greyed with why; its tabs Log, Stats, Files, Details and Telemetry in the shared order, Log at
+  first), asks the engine only while shown, its lists again as events say, its rows drawn as every
   list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, red for a
   failure in both, a container's one restarting after each crash, dead, or exited with an error, a stop's 137 and 143
   aside, `ContainerInfo.IsFailed`; the health's
@@ -834,8 +837,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
   no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
   said, rather than waiting at its start for good. A .NET service of the run under way is acted on alone, the run left up,
-  by the model's actions (above), from the Containers window's service and container rows (`MainWindow.ContainerServices.cs`,
-  `AppActions.Service*`) and the gutter's icon, whose menu joins a run that reads its compose file (`InRunNow`); a
+  by the model's actions (above), one set for every kind of run (`MainWindow.ContainerServices.cs`, `AppActions.Service*`:
+  Debug Service, Attach to Service, Run Service without Debugger, Profile Service; the ids each window had before still
+  name them, a person's shortcuts and an agent's `ide_action` alike, `AppActions.Formerly`), acting on what `AimOf` finds:
+  a gutter menu's service (`ActionContext.Service`, a `ChosenService`), else the Containers window's service or container
+  row or the Aspire window's resource, the window with the keys, else the one of the two shown, else the one chosen in
+  last; greyed with why where they cannot act (no run, a resource that is no .NET project, an AppHost Passenger does not
+  run), an AppHost's project that does not run now started by Debug (held for the debugger, as an agent's `debug_start`
+  starts it, one its configuration left unstarted too) or Run without Debugger. The gutter's icon beside a .NET service of
+  a run that reads its file (the container run's compose file, a running AppHost's `AddProject`, `RunOf`) offers the same
+  four under the same titles (`FlyoutEntry` with that context); a
   container's Run without Debugger lets its session go, not restarted, unheld from its next restart, and its Profile is
   Attach Profiler's path in its container (`ProfilerCommands.AttachServiceAsync`). The window's Restart, Stop and Remove of
   such a service, and an agent's `container_action`, go through the run (`MainWindow.ContainerActAsync`): its session and
@@ -936,15 +947,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked as the engine's are (`ContainerSecrets.InSaid`). The Aspire
   window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
-  parts over an AppHost's resources, the same controls: its toolbar the AppHost chosen and icon buttons of registered
-  actions (`MainWindow.AspireActions.cs`, each bound by `ActionButtons.Bind`, its ring while its work runs: Discover,
-  Refresh, a resource's Debug, Attach, Run without Debugger and Profile through the run of services, its commands as a
-  menu, its address, source and container), the resources as `RunRows` (a parent's children under its chevron, the
-  state's dot, the health's tag only for a resource with health reports, its http and https addresses as links through
-  `Browse`; a row's menu its actions and commands), and the chosen one's Details (`AspireDetailsPane`, `DetailsTables`:
-  the resource, its health reports, URLs, relationships, environment, properties and volumes), the resources' consoles
-  merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their start), the
-  dashboard's structured logs and traces (its Structured logs and Traces pages, the Telemetry view's, below), and the
+  parts over an AppHost's resources, the same controls and one layout (`ToolWindows/RunWindows`, which UiRulesTests holds
+  both to): its toolbar the AppHost chosen and icon buttons of registered actions (`MainWindow.AspireActions.cs`, each
+  bound by `ActionButtons.Bind`, its ring while its work runs: Discover, Refresh, then the service actions' group as the
+  Containers window's toolbar has it after its Refresh, then the resource's commands as a menu, its address, source and
+  container), the resources as `RunRows` (a parent's children under its chevron, the state's dot, the health's tag only
+  for a resource with health reports, its http and https addresses as links through `Browse`; a row's menu the service
+  actions first, as a container's row's menu begins, then its commands, each item greyed with why, `MainWindow.RowMenuItem`),
+  and the tabs both windows name alike in one order (`RunWindows.Tabs`), Log first and shown at first: Log, the resources'
+  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their
+  start), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
+  relationships, environment, properties and volumes), Telemetry, the dashboard's structured logs and traces (the
+  Telemetry view's two pages under it, as the Containers window's Telemetry tab has them, below), and AppHost Log, the
   AppHost's own console. What a resource says is masked as a container's
   is, by `ContainerSecrets`' rule (a property the AppHost marks sensitive whatever its name; a health report's exception by
   `InValue`; an external AppHost's properties, whose sensitivity the CLI does not say, only those known to name no
@@ -1049,8 +1063,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   in the same words by the view and an agent's `telemetry`, as the dashboard's failure, never Passenger's
   (`TelemetrySource.Unread`, `NoDashboard`). `TelemetryView` is the
   one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
-  the other page streams them), streaming only the page its host shows: the Aspire window's Structured logs and Traces
-  pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, the two pages under tabs of their own), shown for
+  the other page streams them), streaming only the page its host shows: the Aspire and Containers windows' Telemetry tab
+  (`TelemetryView.Both`, the two pages under tabs of their own, `ShowPage` choosing one), the Containers window's shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
   records alone (`TelemetrySource.Of`), there because the Containers window is where a run's services are chosen and
   their logs read already, where the Run window shows one console and chooses no service. An agent's `telemetry` (not

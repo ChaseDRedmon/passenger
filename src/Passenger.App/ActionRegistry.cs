@@ -23,7 +23,8 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         sorted = null;
     }
 
-    public IdeAction? this[string id] => byId.GetValueOrDefault(id);
+    /// <summary>The action of an id, or of an id it had before (<see cref="AppActions.Formerly"/>).</summary>
+    public IdeAction? this[string id] => byId.GetValueOrDefault(AppActions.Now(id));
 
     /// <summary>What the window's actions are doing that takes a while.</summary>
     public ActionWork Work => work;
@@ -95,7 +96,7 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
     /// <summary>Null when the action can run in this context, else why not: no action has the id, its work is under way
     /// already, or what it needs is not there.</summary>
     public string? WhyNot(string id, ActionContext context) =>
-        !byId.TryGetValue(id, out IdeAction? action) ? $"No action is called {id}"
+        !byId.TryGetValue(AppActions.Now(id), out IdeAction? action) ? $"No action is called {id}"
         : work.Of(action.WorkId) is { } under ? ActionWork.Busy(under)
         : action.WhyNot(context);
 
@@ -110,8 +111,9 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         {
             return why;
         }
-        Running?.Invoke(this, byId[id]);
-        byId[id].Run(context);
+        IdeAction action = byId[AppActions.Now(id)];
+        Running?.Invoke(this, action);
+        action.Run(context);
         return null;
     }
 }

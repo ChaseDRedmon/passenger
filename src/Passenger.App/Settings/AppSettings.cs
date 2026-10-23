@@ -362,8 +362,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             AgentFolders = [.. (AgentFolders ?? []).Where(f => !string.IsNullOrWhiteSpace(f)).Distinct(Passenger.Core.PathNames.Comparer)],
         };
 
+        // A shortcut kept under an action's former id is the action's now (one kept under its id now winning).
         static Dictionary<string, string[]> Readable(Dictionary<string, string[]>? shortcuts) =>
-            (shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray());
+            (shortcuts ?? []).Where(s => s.Value is not null).OrderBy(s => AppActions.Formerly.ContainsKey(s.Key) ? 0 : 1)
+                .GroupBy(s => AppActions.Now(s.Key), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Last().Value.Where(k => k is not null).ToArray());
     }
 
     /// <summary>Whether a region of a kind folds as its file opens, as Fold by default says.</summary>
