@@ -678,6 +678,11 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         AspireResourceRun resource = new(request.SessionId, request.DcpInstanceId, path, plan);
         resource.ResourceName = request.Environment.FirstOrDefault(variable => variable.Name == "OTEL_SERVICE_NAME")?.Value;
+        string serviceName = ((IRunService)resource).Name;
+        if (app.LeftUnstarted(serviceName, ResourceAction(app.Configuration, resource) == ServiceStart.DontStart))
+        {
+            throw new LaunchException($"{serviceName} is not started: {app.Configuration.Name} says Don't start it; start it from the Aspire window to run it");
+        }
         app.Resources.Add(resource.Id, resource);
         using CancellationTokenSource starting = CancellationTokenSource.CreateLinkedTokenSource(cancellation, app.Lifetime.Token, resource.Stopping.Token);
         cancellation = starting.Token;
@@ -1247,6 +1252,10 @@ public sealed class AspireAppRun : ServiceRun
         }
         return HeldFor(name);
     }
+
+    /// <summary>Whether a service's start is its first in this run and its configuration says Don't start it: refused then,
+    /// and decided from then on, so a start asked later (the Aspire window's) runs it, unheld.</summary>
+    internal bool LeftUnstarted(string name, bool dontStart) => dontStart && decided.Add(name);
 
     /// <summary>A service's start has landed: started, attached to where held, or failed (<paramref name="failure"/>).</summary>
     internal void Landed(AspireResourceRun resource, string? failure)

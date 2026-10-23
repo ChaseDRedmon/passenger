@@ -182,7 +182,7 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
             ComboBox api = ServiceChoice(dialog, "apiservice")!;
             Assert.True(api.IsEnabled);
             Ui.Click(api);
-            Ui.Press(dialog, "END");
+            Ui.Press(dialog, "DOWN");
             Ui.Press(dialog, "ENTER");
             ComboBox web = ServiceChoice(dialog, "webfrontend")!;
             Ui.Click(web);
@@ -215,9 +215,8 @@ public sealed class AspireTests : IClassFixture<AspireApp>, IDisposable
         }
     }
 
-    private static ComboBox? ServiceChoice(RunConfigurationsDialog dialog, string resource) => dialog.GetVisualDescendants()
-        .OfType<Grid>().Where(row => row.Children.OfType<TextBlock>().Any(label => label.Text == resource))
-        .SelectMany(row => row.Children.OfType<ComboBox>()).SingleOrDefault();
+    private static ComboBox? ServiceChoice(RunConfigurationsDialog dialog, string resource) =>
+        dialog.AspireTable.Rows.SingleOrDefault(row => row.Service == resource)?.Action;
 
     private void PrepareEditableServices()
     {

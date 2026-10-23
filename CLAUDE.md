@@ -777,7 +777,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ProjectActionAsync`): Restart ends its sessions, restarts its other services as they are and its .NET ones as the run's
   restart does, Stop and Remove are the run's Stop.
   Edit Configurations' Compose page lists the services from Compose's model
-  (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each), and
+  (`ContainerPlans.ServicesAsync`, `Run/ComposeServicesTable`: each .NET service's project, what Run does with each; its
+  Aspire page is the same table, `RunConfigurationsDialog.AspireTable`), and
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
   Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
   run them against the engine on aspnet:10.0 and busybox; their HTTPS test exports the machine's development certificate
@@ -915,7 +916,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   UserSecretsId's own, `PASSENGER_USER_SECRETS`' in a test run) for a secret, else in its appsettings.json, the file's
   other characters kept (`JsonText`, launchSettings.json's editor too), one command of global undo, worked out again as
   it is chosen, and Edit Configurations and the gutter's
-  `AddProject` icons read the same resources (`AspireRunResources`), an AppHost's icons asked for that AppHost alone as an
+  `AddProject` icons read the same resources (`AspireRunResources`; Edit Configurations' Aspire page the services table a
+  Compose configuration's is, `ComposeServicesTable.SetNamed`: each .NET resource's project as its AppHost names it, not
+  chosen there, and Run, Debug or Don't start, every resource's choice kept, since one kept as Run is not debugged when
+  the AppHost is; a resource marked Don't start is refused its first start in a run, `AspireAppRun.LeftUnstarted`, a start
+  asked later from the Aspire window running it unheld), an AppHost's icons asked for that AppHost alone as an
   open file of it opens or its text pauses, and standing while they were read from the text the file has (its hash). A
   key costs what it changed: a C# file's role (`AspireFiles.RoleOf`: an AppHost's, a service's, of a project an AppHost
   references, or none, kept until the run configurations are made again) decides what Aspire's help asks of it, so only
