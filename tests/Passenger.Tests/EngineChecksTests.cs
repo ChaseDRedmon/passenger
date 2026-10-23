@@ -434,10 +434,13 @@ public sealed class EngineChecksTests
     }
 
     /// <summary>A .NET service whose project reads connection strings (GetConnectionString, a ConnectionStrings: key) that
-    /// its environment never sets is warned of on its name, once the language server has read the project as Aspire's
-    /// warning reads a service, and Show Context Actions there offers Passenger's own fix for each first: set in the
-    /// service's environment, made under it as the file indents, as one undo step, to the connection string of the Postgres
-    /// the file runs under the name read, else to a value the person fills in. Set, its warning goes.</summary>
+    /// neither its environment nor its own settings set is warned of on its name, once the language server has read the
+    /// project as Aspire's warning reads a service; one its appsettings.json or appsettings.Development.json (Development, as
+    /// the service sets none) gives at localhost, which in its container is the container itself, more softly, saying what
+    /// to do; one they give elsewhere not at all. Show Context Actions there offers Passenger's own fix for each first: set
+    /// in the service's environment, made under it as the file indents, as one undo step, to the connection string of the
+    /// Postgres the file runs (at its name, the database the settings name kept), else, for one never set, to a value the
+    /// person fills in; a localhost one of a kind the file does not run has none. Set, its warning goes.</summary>
     [AvaloniaFact]
     public void A_dotnet_services_connection_strings_its_environment_never_sets_are_marked_and_set_by_their_fixes()
     {
@@ -452,13 +455,23 @@ public sealed class EngineChecksTests
             Assert.Equal(("api", MarkerKind.Warning), (Under(document, db), db.Kind));
             Assert.Equal("api runs Api, which reads the connection string db: the service's environment never sets ConnectionStrings__db", db.Message);
             Unset(window, document, "cache");
+            Marker shop = Local(document, "shop");
+            Assert.Equal(("api", MarkerKind.Info), (Under(document, shop), shop.Kind));
+            Assert.Equal("api runs Api, whose appsettings.json gives the connection string shop at localhost, which in its container is the container itself: "
+                + "set ConnectionStrings__shop in the service's environment to db's connection string", shop.Message);
+            Assert.Equal("api runs Api, whose appsettings.Development.json gives the connection string queue at localhost, which in its container is the container itself: "
+                + "set ConnectionStrings__queue in the service's environment to where it runs (a service of this file by its name, host.docker.internal for this machine)",
+                Local(document, "queue").Message);
+            Assert.DoesNotContain(document.Markers, m => m.Message.Contains("logs", StringComparison.Ordinal));
             Assert.Contains(window.BottomPanel.Problems.ContainerProblems, p => p.Message == db.Message);
 
             editor.Selections = SelectionSet.Single(db.Range.Start + 1);
             Ui.Run(window, AppActions.QuickFix);
             Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes of the connection strings api's environment never sets");
-            Assert.Equal(["Set ConnectionStrings__db in api's environment", "Set ConnectionStrings__cache in api's environment"], window.Assist.Offered.Take(2));
-            Assert.Equal(["to db's connection string", "to a value you fill in"], window.Assist.OfferedDetails.Take(2));
+            Assert.Equal(["Set ConnectionStrings__db in api's environment", "Set ConnectionStrings__shop in api's environment", "Set ConnectionStrings__cache in api's environment"],
+                window.Assist.Offered.Take(3));
+            Assert.Equal(["to db's connection string", "to db's connection string", "to a value you fill in"], window.Assist.OfferedDetails.Take(3));
+            Assert.DoesNotContain(window.Assist.Offered, o => o.Contains("ConnectionStrings__queue", StringComparison.Ordinal));
             Ui.Press(window, "ENTER");
             string set = Connections.Replace("      - db\n", "      - db\n    environment:\n"
                 + "      ConnectionStrings__db: \"Host=db;Port=5432;Database=db;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\"\n", StringComparison.Ordinal);
@@ -477,30 +490,35 @@ public sealed class EngineChecksTests
         }
     }
 
-    /// <summary>An agent's code_actions on a service's name list the fix of a connection string its environment never sets
-    /// first, the one its env_file sets not among them, and apply_code_action makes it on the text as it stands, the file
-    /// saved, the value left for the person to fill in after the entry the file has. Skipped without a Node.js too, since
-    /// the agents' code tools serve a compose file through its YAML server.</summary>
+    /// <summary>An agent's code_actions on a service's name list the fixes of the connection strings its environment does
+    /// not set first: the one its settings give at localhost, the ones never given (in Production, which the service sets,
+    /// appsettings.Development.json is not read), not the one its env_file sets; apply_code_action makes one on the text as
+    /// it stands, the file saved, after the entry the file has. Skipped without a Node.js too, since the agents' code tools
+    /// serve a compose file through its YAML server.</summary>
     [AvaloniaFact]
     public void An_agent_sets_a_connection_string_a_services_environment_never_sets_through_its_fix()
     {
         Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
         DockerFilesTests.Shop.SkipWithoutNode(yaml: true);
-        string compose = Connections.Replace("      - db\n", "      - db\n    env_file: api.env\n    environment:\n      - ASPNETCORE_ENVIRONMENT=Development\n", StringComparison.Ordinal);
+        string compose = Connections.Replace("      - db\n", "      - db\n    env_file: api.env\n    environment:\n      - ASPNETCORE_ENVIRONMENT=Production\n", StringComparison.Ordinal);
         string folder = ConnectionsFolder(compose, ("api.env", "ConnectionStrings__db=Host=db;Username=postgres\n"));
         MainWindow window = Open(folder, "compose.yaml");
         try
         {
             OpenDocument document = window.EditorArea.Active!;
             Unset(window, document, "cache");
+            Unset(window, document, "queue");
+            Local(document, "shop");
             Assert.DoesNotContain(document.Markers, m => m.Message.EndsWith("ConnectionStrings__db", StringComparison.Ordinal));
             Passenger.App.Mcp.PassengerTools agent = new(window);
             IReadOnlyList<string> actions = Ui.Await(agent.CodeActions("compose.yaml", 2, 3), "the code actions an agent asks for");
-            Assert.Equal("Set ConnectionStrings__cache in api's environment [quickfix]", actions[0]);
+            Assert.Equal(["Set ConnectionStrings__shop in api's environment [quickfix]", "Set ConnectionStrings__queue in api's environment [quickfix]",
+                "Set ConnectionStrings__cache in api's environment [quickfix]"], actions.Take(3));
             Assert.DoesNotContain(actions, a => a.Contains("ConnectionStrings__db", StringComparison.Ordinal));
-            string applied = Ui.Await(agent.ApplyCodeAction("compose.yaml", 2, 3, "Set ConnectionStrings__cache in api's environment"), "the agent's fix made");
-            Assert.Equal("Applied 'Set ConnectionStrings__cache in api's environment' to compose.yaml", applied);
-            Assert.Equal(compose.Replace("      - ASPNETCORE_ENVIRONMENT=Development\n", "      - ASPNETCORE_ENVIRONMENT=Development\n      - ConnectionStrings__cache=\n", StringComparison.Ordinal),
+            string applied = Ui.Await(agent.ApplyCodeAction("compose.yaml", 2, 3, "Set ConnectionStrings__shop in api's environment"), "the agent's fix made");
+            Assert.Equal("Applied 'Set ConnectionStrings__shop in api's environment' to compose.yaml", applied);
+            Assert.Equal(compose.Replace("      - ASPNETCORE_ENVIRONMENT=Production\n", "      - ASPNETCORE_ENVIRONMENT=Production\n"
+                + "      - ConnectionStrings__shop=Host=db;Port=5432;Database=shop;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\n", StringComparison.Ordinal),
                 File.ReadAllText(PathOf(folder, "compose.yaml")));
         }
         finally
@@ -513,15 +531,21 @@ public sealed class EngineChecksTests
     /// depends on, named db.</summary>
     private const string Connections = "services:\n  api:\n    build: ./Api\n    depends_on:\n      - db\n  db:\n    image: postgres:17\n";
 
-    /// <summary>A folder of the test's own with a web project, Api, whose code reads the connection strings db (by
-    /// GetConnectionString) and cache (by its ConnectionStrings: key), its Dockerfile, and the compose file given, restored.</summary>
+    /// <summary>A folder of the test's own with a web project, Api, whose code reads the connection strings db, shop, queue
+    /// and logs (by GetConnectionString) and cache (by its ConnectionStrings: key), its settings giving shop at localhost and
+    /// logs elsewhere, its Development settings queue at localhost; its Dockerfile, and the compose file given, restored.</summary>
     private static string ConnectionsFolder(string compose, params (string Name, string Text)[] more)
     {
         string folder = Folder([
             ("Shop.slnx", "<Solution>\n  <Project Path=\"Api/Api.csproj\" />\n</Solution>\n"),
             ("Api/Api.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")),
             ("Api/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nstring? db = builder.Configuration.GetConnectionString(\"db\");\n"
+                + "string? shop = builder.Configuration.GetConnectionString(\"shop\");\nstring? queue = builder.Configuration.GetConnectionString(\"queue\");\n"
+                + "string? logs = builder.Configuration.GetConnectionString(\"logs\");\n"
                 + "string? cache = builder.Configuration[\"ConnectionStrings:cache\"];\nvar app = builder.Build();\napp.Run();\n"),
+            ("Api/appsettings.json", "{\n  \"ConnectionStrings\": {\n    \"shop\": \"Host=localhost;Database=shop;Username=postgres;Password=postgres\",\n"
+                + "    \"logs\": \"Host=logs.example.com;Database=logs\"\n  }\n}\n"),
+            ("Api/appsettings.Development.json", "{\n  \"ConnectionStrings\": {\n    \"queue\": \"amqp://guest:guest@localhost:5672\"\n  }\n}\n"),
             ("Api/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /app\nCOPY bin/Release/net10.0/publish .\nENTRYPOINT [\"dotnet\", \"Api.dll\"]\n"),
             ("compose.yaml", compose),
             .. more]);
@@ -537,6 +561,15 @@ public sealed class EngineChecksTests
         Ui.WaitFor(() => document.Markers.Any(m => m.Message.EndsWith($"never sets ConnectionStrings__{name}", StringComparison.Ordinal)),
             $"the warning that ConnectionStrings__{name} is never set, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]", TimeSpan.FromMinutes(1));
         return document.Markers.First(m => m.Message.EndsWith($"never sets ConnectionStrings__{name}", StringComparison.Ordinal));
+    }
+
+    /// <summary>The softer warning that the project's settings give a connection string at localhost, once marked.</summary>
+    private static Marker Local(OpenDocument document, string name)
+    {
+        string said = $"gives the connection string {name} at localhost";
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains(said, StringComparison.Ordinal)),
+            $"the warning that the settings give {name} at localhost, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]", TimeSpan.FromMinutes(1));
+        return document.Markers.First(m => m.Message.Contains(said, StringComparison.Ordinal));
     }
 
     /// <summary>Compose's marker on a name, once its check has run, with the caret put on it.</summary>

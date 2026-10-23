@@ -658,15 +658,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   the status bar, once it no longer fits. A .NET service (its build's Dockerfile building one of the solution's projects,
   `ComposeDeclarations.Built`) whose project reads a connection string its environment never sets, as Compose's model has
   it (environment, env_file, what it interpolated; `ConnectionStrings__name` or with a colon, letter case aside, set to
-  something) is warned of on the service's name (`ComposeConnections`), what the project reads asked of the Roslyn
+  something) and its own settings never give either (appsettings.json, or appsettings.{env}.json for the service's
+  ASPNETCORE_ENVIRONMENT or DOTNET_ENVIRONMENT, Development when unset; its build carries them into the container) is
+  warned of on the service's name (`ComposeConnections`); one they give at localhost, 127.0.0.1 or ::1
+  (`BackingService.LocalHost`, in `Reached`'s shapes), which in the container is the container itself, more softly
+  (`Finding.Weak`, an Info marker), saying what to do; one they give elsewhere, not at all. What the project reads is asked of the Roslyn
   extension (`Handlers.ConnectionReads`: Aspire's one reading, `AspireSource.ConnectionUses`, by each project's version
   once, through `ComposeCode`, the folder's projects and its loaded language server, taken as a check starts; the open
   compose files checked again as the server loads, a project is evaluated or a C# file is written,
-  `EngineChecks.CodeChanged`), its fix Set ConnectionStrings__name in X's environment (`ComposeFixes.SetVariable`, one
+  `EngineChecks.CodeChanged`). The fix is Set ConnectionStrings__name in X's environment (`ComposeFixes.SetVariable`, one
   edit as the environment is written, made under the service when it has none, worked out again as chosen): to the
   connection string of the backing service the file runs that it reaches (`BackingService.OfImage`, the service of the
-  name read, else the one of the kind its appsettings.json value, name or packages point to, `ConnectionString`'s
-  `host`), else a value left for the person to fill in. Each `${VAR}` gets a hint of
+  name read, else the one of the kind its settings' value, name or packages point to, `ConnectionString`'s
+  `host`), else, for one never given, a value left for the person to fill in (a localhost one of a kind the file does
+  not run gets no fix). Each `${VAR}` gets a hint of
   what Compose's own interpolation makes of it (asked as an `x-passenger-values` list in the folder, never worked out
   here), and a base file's scalar its override changes the value Compose ends with, where the base's own model has the
   scalar written (a value it normalizes gets none). A secret's value shows as the same dots whatever its length: one

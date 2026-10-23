@@ -56,11 +56,11 @@ public sealed partial record BackingService(string Service, string Image, string
     /// server one by one (AddDatabase), where the others are reached whole.</summary>
     public bool HasDatabases => Service is "postgres" or "sqlserver" or "mongo";
 
-    /// <summary>The connection strings a project's appsettings.json declares (ConnectionStrings), each name with its value
-    /// (empty for one that is no string), in its order.</summary>
-    public static IReadOnlyList<(string Name, string Value)> ConnectionStrings(string folder)
+    /// <summary>The connection strings a project's appsettings.json declares (ConnectionStrings), or another settings file
+    /// of its folder (appsettings.Development.json), each name with its value (empty for one that is no string), in its order.</summary>
+    public static IReadOnlyList<(string Name, string Value)> ConnectionStrings(string folder, string named = "appsettings.json")
     {
-        string settings = System.IO.Path.Combine(folder, "appsettings.json");
+        string settings = System.IO.Path.Combine(folder, named);
         try
         {
             if (FileText.Load(settings) is not { } file)
@@ -123,6 +123,39 @@ public sealed partial record BackingService(string Service, string Image, string
         }
         bool npgsql = keys.ContainsKey("username");
         return npgsql ? Named("postgres") : Named("sqlserver");
+    }
+
+    /// <summary>The host a connection string reaches when it is this machine's own (localhost, 127.0.0.1, ::1), which in a
+    /// container is the container itself: read in the shapes <see cref="Reached"/> reads (a URL's host, Redis's host:port,
+    /// Host=, Server=, Data Source= or Address= but a file's); null for any other host or shape.</summary>
+    public static string? LocalHost(string value)
+    {
+        string text = value.Trim();
+        string? host = null;
+        if (text.Contains("://", StringComparison.Ordinal))
+        {
+            host = Uri.TryCreate(text.Replace("mongodb+srv://", "mongodb://", StringComparison.OrdinalIgnoreCase), UriKind.Absolute, out Uri? url) ? url.Host : null;
+        }
+        else if (RedisOptions().IsMatch(text))
+        {
+            host = text.Split(',')[0];
+        }
+        else if (Keywords(text) is { } keys
+            && (keys.GetValueOrDefault("host") ?? keys.GetValueOrDefault("server") ?? keys.GetValueOrDefault("data source") ?? keys.GetValueOrDefault("address")
+                ?? keys.GetValueOrDefault("addr")) is { } source && !IsFile(source))
+        {
+            // SQL Server's tcp:host,port and host\instance, Npgsql's list of hosts: the first host alone.
+            host = source.Split(',')[0].Split('\\')[0];
+            host = host.StartsWith("tcp:", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+        }
+        if (host is null)
+        {
+            return null;
+        }
+        host = host.Trim();
+        string bare = host.StartsWith('[') && host.IndexOf(']') is int close and > 0 ? host[1..close]
+            : host.Count(c => c == ':') == 1 ? host.Split(':')[0] : host;
+        return bare.ToLowerInvariant() is "localhost" or "127.0.0.1" or "::1" ? bare : null;
     }
 
     /// <summary>A connection string's keywords, lowercased, with their values; null for a string of another shape.</summary>
