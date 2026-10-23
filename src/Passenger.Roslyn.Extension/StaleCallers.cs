@@ -19,12 +19,14 @@ internal static class StaleCallers
     private const string DeletingMember = "ENC0033";
 
     /// <summary>The members of the changed documents that the update deletes while code it leaves as it was still calls them,
-    /// in the modules the program has loaded, each as a problem at the member as it is now (or where it was, when gone).</summary>
-    public static async Task<List<HotReloadProblem>> FindAsync(Solution before, Solution after, IReadOnlyCollection<Guid> loaded, CancellationToken cancel)
+    /// in the modules the program has loaded, each as a problem at the member as it is now (or where it was, when gone); of
+    /// the program's projects alone (<paramref name="scope"/>, every one when null).</summary>
+    public static async Task<List<HotReloadProblem>> FindAsync(Solution before, Solution after, IReadOnlyCollection<Guid> loaded, IReadOnlySet<ProjectId>? scope,
+        CancellationToken cancel)
     {
         List<HotReloadProblem> found = [];
         Dictionary<ProjectId, bool> running = [];
-        foreach (ProjectChanges project in after.GetChanges(before).GetProjectChanges())
+        foreach (ProjectChanges project in after.GetChanges(before).GetProjectChanges().Where(p => scope?.Contains(p.ProjectId) != false))
         {
             if (before.GetProject(project.ProjectId) is not { } old || after.GetProject(project.ProjectId) is not { } now
                 || await now.GetCompilationAsync(cancel).ConfigureAwait(false) is not { } compiled)

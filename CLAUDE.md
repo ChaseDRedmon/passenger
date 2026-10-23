@@ -1598,7 +1598,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   while its program has yet to reach the profiler and cancels the start.
   Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
   `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit
-  text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; the
+  text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; its
+  projects the program's (`Session.Projects`: those whose modules the debugger says it has loaded, with what they build
+  on, taken in at every emit, so a module it loads after an update, a plugin's, takes its project's edits from then on),
+  every other project given to the service as last committed (`HotReload.FrozenAsync`), so another program's edits are
+  never this one's rude edits and wait, as built, for its module to load; the
   deltas reach the engine as Passenger's `applyChanges` request (`Passenger.Dap`, with `hotReloadState`), and
   `ManagedDebugger_HotReload.cs` applies them (`ICorDebugModule2.ApplyChanges`, which needs `GetMetaDataInterface` asked
   first) and remaps frames (`FunctionRemapOpportunity`/`RemapFunction`, a stepper deactivated before the remap).
@@ -2035,7 +2039,8 @@ control S")` or `Ui.Run`: the window forgets a chord's first key after 2 s (a di
 settle), so a settle between its keys can lose it. Find Usages, Safe Delete and every list of the server's locations
 make each URI a path once (`DocumentUris.ToPath` asks the disk), never once per location on the UI thread. A test that opens a dialog holds it to `DialogButtonsTests.Check`
 (centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
-programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
+programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`; HotReloadTests' `Plugins` loads a
+plugin no project of it references, from the plugin's build, once "load" is typed into its console); `WpfLiveTreeTests` (Alone,
 Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpWpfAppTests` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `PublishTests` publish a console app, an ASP.NET Core app and a self-contained app in a folder whose name has spaces,
