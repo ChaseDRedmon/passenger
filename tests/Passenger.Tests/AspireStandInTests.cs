@@ -618,6 +618,52 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>A restart that fails is said as the restart's refusal, in words, whoever asked for it: Rerun after the API's
+    /// code changed has its AppHost stop it (the stand-in's stop command ends its program), builds it, and finds the resource
+    /// to start again made anew under another identity, which it says rather than a sequence's raw complaint.</summary>
+    [AvaloniaFact]
+    public void A_restart_that_fails_is_said_as_its_refusal_in_words()
+    {
+        project.Reset();
+        project.BuildApi();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            (System.Net.WebSockets.ClientWebSocket notified, System.Net.HttpStatusCode answer) = project.AskToStartApi("apiservice");
+            using System.Net.WebSockets.ClientWebSocket subscribed = notified;
+            Assert.True((int)answer is >= 200 and < 300, $"The IDE refused the run session: {answer}");
+            int api = Api(window);
+            Resource resource = ApiResource();
+            resource.Commands.Add(new ResourceCommand { Name = "resource-stop", DisplayName = "Stop", State = ResourceCommandState.Enabled });
+            resource.Commands.Add(new ResourceCommand { Name = "resource-start", DisplayName = "Start", State = ResourceCommandState.Enabled });
+            backend.PushResource(resource);
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(shown => shown.Name == "apiservice" && shown.Commands.Count == 2), "the API's resource and its commands");
+            backend.OnCommand = command =>
+            {
+                if (command.CommandName == "resource-stop")
+                {
+                    Processes.Kill(api);
+                    resource.Uid = "made-anew";
+                    backend.PushResource(resource);
+                }
+            };
+
+            File.AppendAllText(project.PathOf($"{StandInAppHost.Api}/Program.cs"), "// changed since it started\n");
+            Ui.Run(window, AppActions.Rerun);
+            string config = StandInAppHost.Configuration;
+            Ui.WaitFor(() => window.Status?.Contains("could not be restarted", StringComparison.Ordinal) == true, $"Rerun to say the API's restart failed ({window.Status})", TimeSpan.FromMinutes(3));
+            Assert.Equal($"apiservice of {config} could not be restarted: apiservice is no longer one resource of {config} to start again after its build", window.Status);
+            Assert.Equal(["resource-stop"], backend.Commands.Select(command => command.CommandName));
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>The stand-in API's program, once the IDE has started it as DCP asked.</summary>
     private static int Api(MainWindow window)
     {
@@ -1282,12 +1328,22 @@ public sealed class StandInAppHost : SharedProject
 
     public string ApiProject => PathOf($"{Api}/{Api}.csproj");
 
-    /// <summary>Builds the stand-in's service, which the IDE starts as it is built.</summary>
+    /// <summary>Builds the stand-in's service, which the IDE starts as it is built, from a clean folder: after an IDE's build of
+    /// it in an earlier test (a restart's, with its framework given), an incremental build here wrote no runtimeconfig.json or
+    /// deps.json and its IncrementalClean deleted those the IDE's had written, so the service could not start.</summary>
     internal void BuildApi()
     {
-        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", ApiProject, "-nologo", "-v:q"]),
+        string folder = Path.GetDirectoryName(ApiProject)!;
+        foreach (string built in (string[])["bin", "obj"])
+        {
+            if (Directory.Exists(Path.Combine(folder, built)))
+            {
+                Directory.Delete(Path.Combine(folder, built), recursive: true);
+            }
+        }
+        ChildResult result = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", ApiProject, "-nologo", "-v:q"]),
             limit: TimeSpan.FromMinutes(3).Scaled()), "the stand-in API's build");
-        Assert.True(built.Succeeded, $"The stand-in API did not build: {built.Output}{built.Error}");
+        Assert.True(result.Succeeded, $"The stand-in API did not build: {result.Output}{result.Error}");
     }
 
     /// <summary>Asks the IDE to start the stand-in's service as a resource of that name, as DCP starts a project resource: the

@@ -446,7 +446,7 @@ public partial class MainWindow
             throw new InvalidOperationException("The selected AppHost is no longer running");
         }
         string name = ((IRunService)service).Name;
-        AspireSelection selected = new(app.Configuration.Project, resources.SingleOrDefault(candidate => candidate.Source is { } source && PathNames.Same(source, service.Project)
+        AspireSelection selected = new(app.Configuration.Project, One(resources, candidate => candidate.Source is { } source && PathNames.Same(source, service.Project)
                 && (candidate.DisplayName == name || candidate.Name == name || candidate.Name.StartsWith(name + "-", StringComparison.Ordinal)))
             ?? throw new InvalidOperationException($"{name} is not one resource of {app.Configuration.Name}"));
         AspireResource resource = selected.Resource;
@@ -464,7 +464,15 @@ public partial class MainWindow
         // Its program gone before the build writes over its files, which Windows locks while it runs.
         if (service.Runner is { } runner)
         {
-            await runner.Ended.WaitAsync(Waits.Of(TimeSpan.FromSeconds(30)), cancel);
+            TimeSpan limit = Waits.Of(TimeSpan.FromSeconds(30));
+            try
+            {
+                await runner.Ended.WaitAsync(limit, cancel);
+            }
+            catch (TimeoutException)
+            {
+                throw new InvalidOperationException($"{name} did not stop within {limit.TotalSeconds:0} s of its AppHost's stop command");
+            }
         }
         if (session != current || current.IsEnded)
         {
@@ -475,10 +483,10 @@ public partial class MainWindow
         {
             throw new InvalidOperationException(failed.Message);
         }
-        AspireResource fresh = (await ReadAspireResourcesAsync(app.Configuration.Project, cancel))
-            .Single(candidate => candidate.Name == resource.Name && candidate.Uid == resource.Uid
+        AspireResource fresh = One(await ReadAspireResourcesAsync(app.Configuration.Project, cancel), candidate => candidate.Name == resource.Name && candidate.Uid == resource.Uid
                 && AspireJson.String(candidate.Data, "type") == AspireJson.String(resource.Data, "type")
-                && candidate.Source is { } source && PathNames.Same(source, service.Project));
+                && candidate.Source is { } source && PathNames.Same(source, service.Project))
+            ?? throw new InvalidOperationException($"{name} is no longer one resource of {app.Configuration.Name} to start again after its build");
         AspireResourceCommand start = fresh.Commands.FirstOrDefault(command => command.Name is "start" or "resource-start" && command.Enabled)
             ?? fresh.Commands.FirstOrDefault(command => command.Name is "restart" or "resource-restart" && command.Enabled)
             ?? throw new InvalidOperationException($"{resource.DisplayName} advertises no enabled start command");
@@ -493,9 +501,13 @@ public partial class MainWindow
         {
             throw new InvalidOperationException("The selected AppHost is no longer running");
         }
-        return resources.Select(resource => new AspireSelection(app.Configuration.Project, resource))
-            .Single(selection => current.Aspire.FindService(selection) == service);
+        return One(resources.Select(resource => new AspireSelection(app.Configuration.Project, resource)), selection => current.Aspire.FindService(selection) == service)
+            ?? throw new InvalidOperationException($"{((IRunService)service).Name} is no longer one resource of {app.Configuration.Name}");
     }
+
+    /// <summary>The one item that matches, or null when none does or several do: what the caller then says, worded.</summary>
+    private static T? One<T>(IEnumerable<T> items, Func<T, bool> matches) where T : class =>
+        items.Where(matches).Take(2).ToArray() is [{ } one] ? one : null;
 
     private static bool AspireFailure(Exception error) => error is IOException or InvalidDataException or InvalidOperationException or TimeoutException
         or OperationCanceledException or System.ComponentModel.Win32Exception;

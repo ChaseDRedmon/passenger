@@ -153,7 +153,8 @@ public sealed partial class BuildRunController
     /// recording, so the profiler's trace keeps its rundown), their projects built again between their stop and start where
     /// <paramref name="build"/> asks it of a kind that builds then, and attaches again to those held for the debugger, which
     /// the restart holds again (a kind that attaches its starts itself having done so as they started), and to those
-    /// attached to as they ran. Null once done, else why not.</summary>
+    /// attached to as they ran. Null once done, else why not: a failure its kind says (a command refused, a time limit) is
+    /// said as the restart's refusal, whoever asked (Hot Reload's restart and Rerun no less than a window's action).</summary>
     private async Task<string?> RestartServicesAsync(ServiceRun run, IReadOnlyList<IRunService> services, Working work, string? why = null, bool build = false)
     {
         List<IRunService> held = run.AttachesItsStarts ? [] : [.. run.Held.Where(h => services.Any(s => s.Name == h.Name))];
@@ -189,6 +190,10 @@ public sealed partial class BuildRunController
         catch (OperationCanceledException)
         {
             return $"{run.Name}'s restart was stopped";
+        }
+        catch (Exception failed) when (run.Refused(failed))
+        {
+            return $"{string.Join(", ", services.Select(s => s.Name))} of {run.Name} could not be restarted: {failed.Message}";
         }
     }
 

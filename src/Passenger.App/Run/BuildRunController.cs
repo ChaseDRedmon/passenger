@@ -887,9 +887,10 @@ public sealed partial class BuildRunController
                     {
                         // Through the run of services, as a container run's Rerun restarts what changed: sessions first, held again,
                         // each stopped before its build.
+                        // What failed names the service and why, whichever of its stop, build or start it was.
                         if (await RestartServicesAsync(app, changes, work, "its code changed", build: true) is { } failed)
                         {
-                            return Said($"Could not restart {string.Join(", ", changes.Select(s => ((IRunService)s).Name))} after their code changed: {failed}");
+                            return Said(failed);
                         }
                         restarted.AddRange(changes.Select(s => ((IRunService)s).Name));
                     }

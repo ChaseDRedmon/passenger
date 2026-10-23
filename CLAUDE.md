@@ -564,7 +564,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `AttachServiceAsync`, `RunServiceAsync`, `RestartServiceAsync`, `ProfileServiceAsync`, under `OnServiceAsync`), the
   person's choice kept by configuration for the run's restarts and a run that brings it up again (`chosenDebugged`; an
   AppHost's first start of a service asks it, `AspireController.Chosen`), a restart's attach again and a service held that
-  no debugger reached made anew unheld (`RestartServicesAsync`), and the restart for an edit Hot Reload cannot apply, of
+  no debugger reached made anew unheld (`RestartServicesAsync`, which says a failure its kind says, a command refused or a
+  time limit, as the restart's refusal in words, whoever asked), and the restart for an edit Hot Reload cannot apply, of
   only the services whose project holds it, in the run whose sessions the edit names (`RestartServicesForEditAsync`). The
   window's service rows (the Containers window's and the Aspire window's), the gutter's menus and an agent's `resource` (an
   Aspire resource, or the container run's compose service, on run, debug_start, debug_attach, profile and stop:

@@ -470,9 +470,18 @@ public sealed partial class AspireController(ProjectSession workspace, string st
 
         async Task CleanLateLaunchAsync()
         {
+            AspireProjectSession handle;
             try
             {
-                AspireProjectSession handle = await creating.ConfigureAwait(false);
+                handle = await creating.ConfigureAwait(false);
+            }
+            catch (Exception) when (creating.IsFaulted || creating.IsCanceled)
+            {
+                // The start failed, or was stopped, after its request gave up: it stopped its own service, so none came late.
+                return;
+            }
+            try
+            {
                 if (!app.Lifetime.IsCancellationRequested)
                 {
                     await UiThread.InvokeAsync(async () =>
@@ -1152,9 +1161,17 @@ public sealed class AspireAppRun : ServiceRun
             Console.Append($"Restarting {service.Name}{(why is null ? string.Empty : $": {why}")}\n");
             Task<string?> next = NextStart(service.Name);
             await (Restarting ?? throw new InvalidOperationException("Aspire resource restart is unavailable"))(this, running, build, cancel);
-            if (await next.WaitAsync(Waits.Of(StartLimit), cancel) is { } failed)
+            TimeSpan limit = Waits.Of(StartLimit);
+            try
             {
-                return $"{service.Name} did not start again: {failed}";
+                if (await next.WaitAsync(limit, cancel) is { } failed)
+                {
+                    return $"{service.Name} did not start again: {failed}";
+                }
+            }
+            catch (TimeoutException)
+            {
+                return $"{service.Name} did not start again within {limit.TotalMinutes:0.#} minutes of its restart";
             }
         }
         return null;
