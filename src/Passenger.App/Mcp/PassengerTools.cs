@@ -705,9 +705,14 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
         "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
-        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire or compose service's own.")]
-    public Task<string> RunOutput(int lines = 200, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire or compose service's own. " +
+        "requests lists instead the live requests of the running web apps (Requests window, shown by it), the newest last, each with its SQL commands.")]
+    public Task<string> RunOutput(int lines = 200, string? resource = null, bool requests = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (requests)
+        {
+            return await window.RequestsForAgentAsync(lines, cancel);
+        }
         if (resource is not null)
         {
             if (await ComposeTargetAsync(resource, null, starts: false, cancel) is { } compose)

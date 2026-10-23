@@ -1,7 +1,10 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.Globalization;
 using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing;
+using Passenger.Core;
 
 namespace Passenger.Profiler;
 
@@ -25,6 +28,10 @@ public sealed record CommandRan(string Trace, DateTime At, string Id, string Tex
 /// <summary>A command's reader closed after so many reads (EF Core's ReadCount: each Read asked, the last that found no row too).</summary>
 public sealed record CommandRead(string Trace, DateTime At, string Id, int Reads) : WebEvent(Trace, At);
 
+/// <summary>EF Core logged a command it ran (event 20101, as the app's own logging writes it): its words, the parameters among
+/// them, with their values only where the app logs those (EF's sensitive data logging), else as '?'.</summary>
+public sealed record CommandLogged(string Trace, DateTime At, string Message) : WebEvent(Trace, At);
+
 /// <summary>A running web app's requests and the database commands each issued, heard live with no change to the app: ASP.NET
 /// Core's hosting events and EF Core's command events through the runtime's DiagnosticSource bridge
 /// (<c>Microsoft-Diagnostics-DiagnosticSource</c>) over an EventPipe session at the program's own diagnostic port, each told
@@ -33,6 +40,8 @@ public sealed record CommandRead(string Trace, DateTime At, string Id, int Reads
 public sealed class LiveRequests : IAsyncDisposable
 {
     private const string Bridge = "Microsoft-Diagnostics-DiagnosticSource";
+
+    private const string Logging = "Microsoft-Extensions-Logging";
 
     /// <summary>The events asked for and the values each takes from its payload (<c>*Activity</c> is the activity it ran under).</summary>
     internal static readonly string Specs = string.Join("\n",
@@ -48,13 +57,13 @@ public sealed class LiveRequests : IAsyncDisposable
         "Microsoft.EntityFrameworkCore/Microsoft.EntityFrameworkCore.Database.Command.DataReaderDisposing:-Id=CommandId;Reads=ReadCount;Trace=*Activity.RootId",
     ]);
 
-    private readonly EventPipeSession session;
     private readonly EventPipeEventSource source;
+    private readonly Func<Task> stop;
 
-    private LiveRequests(EventPipeSession session, EventPipeEventSource source, Task ended)
+    private LiveRequests(EventPipeEventSource source, Task ended, Func<Task> stop)
     {
-        this.session = session;
         this.source = source;
+        this.stop = stop;
         Ended = ended;
     }
 
@@ -68,6 +77,8 @@ public sealed class LiveRequests : IAsyncDisposable
         // The runtime's counters once a second, passed over: the stream's reader hands on what it holds as more comes, so a
         // request's last events are heard within a second of it, not only once the app serves another.
         new EventPipeProvider("System.Runtime", EventLevel.Informational, 0, new Dictionary<string, string> { ["EventCounterIntervalSec"] = "1" }),
+        // EF Core's log of each command, through the app's own logging: its parameters, which the bridge's events cannot name.
+        new EventPipeProvider(Logging, EventLevel.Informational, 0x4, new Dictionary<string, string> { ["FilterSpecs"] = "Microsoft.EntityFrameworkCore.Database.Command:Information" }),
     ];
 
     /// <summary>Starts hearing a running program at its diagnostic port, each event told to <paramref name="heard"/> on the
@@ -83,15 +94,94 @@ public sealed class LiveRequests : IAsyncDisposable
         {
             throw new ProfilingException($"Its requests could not be followed: {error.Message}", error);
         }
-        EventPipeEventSource source = new(session.EventStream);
+        return Hear(session.EventStream, heard, async () =>
+        {
+            try
+            {
+                await session.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception error) when (error is DiagnosticsClientException or IOException or ObjectDisposedException or TimeoutException or ServerNotAvailableException)
+            {
+                // A program gone has nothing left to stop.
+            }
+            session.Dispose();
+        });
+    }
+
+    /// <summary>Starts hearing a program in a container (<paramref name="place"/>) through Passenger's tools there
+    /// (<c>trace --requests</c>, the same session at the program's own diagnostic port, its stream on their output), as the
+    /// profiler records one. Tools that cannot start or reach it are a <see cref="ProfilingException"/> with their last word.</summary>
+    public static async Task<LiveRequests> AttachAsync(int processId, ProfilePlace place, Action<WebEvent> heard, CancellationToken cancel = default)
+    {
+        Process tools;
+        try
+        {
+            ProcessStartInfo start = place.Tools(["trace", "--pid", processId.ToString(CultureInfo.InvariantCulture), "--requests"]);
+            start.RedirectStandardInput = true;
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            tools = ChildProcesses.Start(start);
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException)
+        {
+            throw new ProfilingException($"Could not start Passenger's tools in {place.Where} to follow its requests: {error.Message}", error);
+        }
+        TaskCompletionSource recording = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? said = null;
+        Task reading = Task.Run(() => ErrorLines.ReadAsync(tools.StandardError, line =>
+        {
+            if (line.Trim() == InContainer.Recording)
+            {
+                recording.TrySetResult();
+            }
+            else if (line.Trim() is { Length: > 0 } words)
+            {
+                Volatile.Write(ref said, words);
+            }
+        }), CancellationToken.None);
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        limit.CancelAfter(TimeSpan.FromSeconds(30));
+        if (await Task.WhenAny(recording.Task, tools.WaitForExitAsync(CancellationToken.None), Task.Delay(Timeout.Infinite, limit.Token)) != recording.Task)
+        {
+            bool ended = tools.HasExited;
+            ChildProcesses.Kill(tools);
+            tools.Dispose();
+            cancel.ThrowIfCancellationRequested();
+            throw new ProfilingException(ended
+                ? Volatile.Read(ref said) ?? $"Passenger's tools in {place.Where} could not follow its requests"
+                : $"Passenger's tools in {place.Where} did not begin following its requests in 30 s");
+        }
+        return Hear(tools.StandardOutput.BaseStream, heard, async () =>
+        {
+            // Their input's end stops the session there; tools that do not end are ended.
+            try
+            {
+                tools.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+            }
+            await Task.WhenAny(tools.WaitForExitAsync(CancellationToken.None), Task.Delay(TimeSpan.FromSeconds(5)));
+            if (!tools.HasExited)
+            {
+                ChildProcesses.Kill(tools);
+            }
+            await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(2)));
+            tools.Dispose();
+        });
+    }
+
+    /// <summary>A stream's events read on a thread of their own, the bridge's told as they come, until it ends.</summary>
+    private static LiveRequests Hear(Stream stream, Action<WebEvent> heard, Func<Task> stop)
+    {
+        EventPipeEventSource source = new(stream);
         source.Dynamic.All += data =>
         {
-            if (data.ProviderName == Bridge && Read(data) is { } told)
+            if (data.ProviderName is Bridge or Logging && Read(data) is { } told)
             {
                 heard(told);
             }
         };
-        // A thread of its own: the stream is read until the program ends or the session is stopped.
         Task ended = Task.Factory.StartNew(() =>
         {
             try
@@ -102,12 +192,19 @@ public sealed class LiveRequests : IAsyncDisposable
             {
             }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        return new LiveRequests(session, source, ended);
+        return new LiveRequests(source, ended, stop);
     }
 
-    /// <summary>One of the bridge's events as what it tells; null for another.</summary>
+    /// <summary>One of the bridge's events, or EF Core's command log, as what it tells; null for another.</summary>
     internal static WebEvent? Read(TraceEvent data)
     {
+        if (data.ProviderName == Logging)
+        {
+            // EF Core's CommandExecuted (20101), tied to its request by the activity the app's logging names.
+            return data.EventName == "FormattedMessage" && data.PayloadByName("EventId") is int and 20101 && data.PayloadByName("FormattedMessage") is string message
+                ? new CommandLogged(data.PayloadByName("ActivityTraceId") as string ?? string.Empty, data.TimeStamp.ToUniversalTime(), message)
+                : null;
+        }
         if (data.PayloadByName("EventName") is not string name || data.PayloadByName("Arguments") is not IEnumerable<object> arguments)
         {
             return null;
@@ -145,16 +242,8 @@ public sealed class LiveRequests : IAsyncDisposable
     /// <summary>Stops the session and lets go of the program, which runs on as it was.</summary>
     public async ValueTask DisposeAsync()
     {
-        try
-        {
-            await session.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
-        }
-        catch (Exception error) when (error is DiagnosticsClientException or IOException or ObjectDisposedException or TimeoutException or ServerNotAvailableException)
-        {
-            // A program gone has nothing left to stop.
-        }
+        await stop();
         source.StopProcessing();
-        session.Dispose();
         await Ended.WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { }, TaskScheduler.Default);
         source.Dispose();
     }

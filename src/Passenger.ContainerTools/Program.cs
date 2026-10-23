@@ -6,7 +6,7 @@ using Passenger.Profiler;
 // know is fatal (exit code 2), so a typo never runs something other than what was asked.
 //   passenger-tools dap --interpreter=vscode [--symbolCache=FOLDER] [--remote] [--engineLogging=FILE]
 //   passenger-tools processes
-//   passenger-tools trace --pid PID [--resume]
+//   passenger-tools trace --pid PID [--resume] [--requests]
 //   passenger-tools heap --pid PID
 //   passenger-tools sources
 //   passenger-tools version
@@ -14,8 +14,9 @@ const string Usage = """
     passenger-tools MODE [FLAGS]
       dap        Passenger's debug adapter on standard input and output (dap --help lists its flags)
       processes  this container's .NET programs as a JSON array, those the debugger cannot attach to saying why
-      trace      --pid PID [--resume]: the profiler's EventPipe session of a program, its .nettrace on standard output until
-                 standard input ends; --resume lets a program held at its start go once recording
+      trace      --pid PID [--resume] [--requests]: the profiler's EventPipe session of a program, its .nettrace on standard
+                 output until standard input ends; --resume lets a program held at its start go once recording; --requests
+                 records a web app's requests and their database commands instead (the Requests window's)
       heap       --pid PID: a memory snapshot of a program for each line 'snapshot' on standard input, its heap graph on
                  standard output, until standard input ends
       sources    the source file and line of each method given a line (TOKEN, a tab, MODULE) from its module's PDB
@@ -43,13 +44,13 @@ switch (args[0])
         return 0;
     case "trace":
     {
-        if (Target("trace", rest, ["--resume"]) is not (int process, IReadOnlySet<string> switches))
+        if (Target("trace", rest, ["--resume", "--requests"]) is not (int process, IReadOnlySet<string> switches))
         {
             return 2;
         }
         await using Stream input = Console.OpenStandardInput();
         await using Stream output = Console.OpenStandardOutput();
-        return await InContainer.TraceAsync(process, switches.Contains("--resume"), input, output, Console.Error);
+        return await InContainer.TraceAsync(process, switches.Contains("--resume"), input, output, Console.Error, switches.Contains("--requests"));
     }
     case "heap":
     {

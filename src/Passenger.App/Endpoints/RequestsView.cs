@@ -153,7 +153,7 @@ public sealed class RequestsView : DockPanel
         }
         TextBlock path = new() { Text = request.Path + request.Query, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         row.Children.Add(path);
-        ToolTip.SetTip(row, request.Route is { } route ? $"{RouteRequests.Title(route)}: {route.Handler}" : $"{request.Method} {request.Path}{request.Query}");
+        ToolTip.SetTip(row, (request.Route is { } route ? $"{RouteRequests.Title(route)}: {route.Handler}" : $"{request.Method} {request.Path}{request.Query}") + $" ({request.From})");
         return row;
     }
 
@@ -187,7 +187,7 @@ public sealed class RequestsView : DockPanel
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         line.Children.Add(text);
-        ToolTip.SetTip(line, command.Text);
+        ToolTip.SetTip(line, command.Parameters is { Length: > 0 } parameters ? command.Text + "\n" + parameters : command.Text);
         return line;
     }
 

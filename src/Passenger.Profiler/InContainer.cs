@@ -23,14 +23,18 @@ public static class InContainer
     /// <paramref name="input"/> ends (the IDE's Get Snapshot, or the IDE gone), when the session is stopped and its rundown
     /// flushed, or the program ends. With <paramref name="resume"/> a runtime held at its start
     /// (DOTNET_DefaultDiagnosticPortSuspend=1) is let go once the session has begun, as dotnet-trace's --resume-runtime does,
-    /// and nothing it starts is held so. Problems go to <paramref name="said"/>; the exit code is 0 once recorded.</summary>
-    public static async Task<int> TraceAsync(int processId, bool resume, Stream input, Stream output, TextWriter said)
+    /// and nothing it starts is held so; with <paramref name="requests"/> the session is <see cref="LiveRequests"/>', a web
+    /// app's requests and their commands. Problems go to <paramref name="said"/>; the exit code is 0 once recorded.</summary>
+    public static async Task<int> TraceAsync(int processId, bool resume, Stream input, Stream output, TextWriter said, bool requests = false)
     {
         DiagnosticsClient client = new(processId);
         EventPipeSession session;
         try
         {
-            session = await client.StartEventPipeSessionAsync(ProfilingSession.Providers, requestRundown: true, circularBufferMB: 512).ConfigureAwait(false);
+            // A web app's requests (the Requests window's) need no rundown: nothing in them is named by address.
+            session = requests
+                ? await client.StartEventPipeSessionAsync(LiveRequests.Providers, requestRundown: false, circularBufferMB: 64).ConfigureAwait(false)
+                : await client.StartEventPipeSessionAsync(ProfilingSession.Providers, requestRundown: true, circularBufferMB: 512).ConfigureAwait(false);
         }
         catch (Exception error) when (error is DiagnosticsClientException or ServerNotAvailableException or IOException or UnauthorizedAccessException
             or SocketException or TimeoutException or PlatformNotSupportedException)
