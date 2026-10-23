@@ -10,6 +10,14 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-23
 
+- `CodeAssistTests`' right-click rename (`A_right_click_on_a_call…renames_it…`) straight after its line typed while a
+  rename is out (#430), every time in that order (found in #414's first part; it passed alone): "Sub-string not found:
+  Helper.Double(", the status saying "Rename was not applied: Helper.cs changed on disk as the language server worked this
+  out". The test before renamed Helper.cs, a file not open, on disk, and it was written back (by that test, else by the
+  fixture's reset) about 1.5 s before this test's rename, which the IDE refuses for a file not open written within 2 s of
+  its request (`WorkspaceEdits.Catching`), though the reset had seen the warm server hold it as written. Neither race:
+  **the fixture**, whose reset now puts a file back with the time it was written at, as the project was written.
+
 - `McpProcessesTests`' Passenger killed while it loads, runs, profiles, debugs and builds (#443), every run on 0.2.0 since
   cd9ac656: "Assert.Subset() Failure", the program the agent's `run` started no longer among Passenger's processes when
   the test listed them. `run`'s answer had not changed: its program was running after it and after the profiler's attach,
