@@ -57,8 +57,11 @@ public sealed class ErrorStripeTests
         Assert.True(editor.StripeMarksBuilt == built + 1,
             $"The stripe's marks were worked out {editor.StripeMarksBuilt - built} times for one set of warnings: every frame and pointer move pays for thousands of them");
 
-        // A change to the text works them out once more.
+        // A key that leaves every line where it was leaves every mark where it was; a line put in works them out once more.
         rig.Type("x");
+        Assert.True(editor.StripeMarksBuilt == built + 1,
+            $"The stripe's marks were worked out {editor.StripeMarksBuilt - built - 1} times after a key that moved no line, which left each where it was");
+        rig.Press("ENTER");
         for (int i = 0; i < 10; i++)
         {
             rig.Window.MouseMove(middle + new Vector(0, i));
@@ -66,7 +69,63 @@ public sealed class ErrorStripeTests
         }
         Assert.Equal(Lines, editor.StripeMarks.Count(m => m.Kind == StripeMarkKind.Warning));
         Assert.True(editor.StripeMarksBuilt == built + 2,
-            $"The stripe's marks were worked out {editor.StripeMarksBuilt - built - 1} times after one change to the text, not once");
+            $"The stripe's marks were worked out {editor.StripeMarksBuilt - built - 1} times after a line was put in, not once");
+    }
+
+    /// <summary>Keys typed above 4,000 warnings, the warnings set again moved through each as the language server's are, keep
+    /// every mark and allocate on the UI thread under twice what they do above 40, and a click on a mark goes to its warning
+    /// as the text stands: the markers were sorted again and the stripe's marks worked out from every one of them at every
+    /// key.</summary>
+    [AvaloniaFact]
+    public void Keys_above_four_thousand_warnings_carried_through_them_cost_what_they_do_above_forty()
+    {
+        long few = BytesPerKey(40);
+        long many = BytesPerKey(4000);
+        TestContext.Current.TestOutputHelper?.WriteLine($"A key allocated {few:N0} bytes above 40 warnings, {many:N0} above 4,000.");
+        Assert.True(many < few * 2,
+            $"A key above 4,000 warnings allocated {many / 1024:N0} KB on the UI thread, above 40 {few / 1024:N0} KB: the stripe's marks and the markers' order were made again from all of them");
+    }
+
+    /// <summary>What a key typed at the top of a file of a warning a line allocates on the UI thread, its warnings set again
+    /// moved through it as a host carries them (their moving left out, which is the host's), the stripe drawn.</summary>
+    private static long BytesPerKey(int lines)
+    {
+        EditorRig rig = new(string.Concat(Enumerable.Range(0, lines).Select(i => $"        int value{i} = {i};\n")));
+        CodeEditor editor = rig.Editor;
+        TextSnapshot text = rig.Document.Snapshot;
+        editor.SetMarkers([.. Enumerable.Range(0, lines).Select(i => new Marker(new TextRange(text.GetLineStart(i) + 12, 5), MarkerKind.Warning, Unused))]);
+        long carrying = 0;
+        rig.Document.Changed += (_, e) =>
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Marker[] moved = [.. editor.Markers.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+            carrying += GC.GetAllocatedBytesForCurrentThread() - before;
+            editor.SetMarkers(moved);
+        };
+        editor.Focus();
+        Ui.Settle();
+        int built = editor.StripeMarksBuilt;
+        const int Keys = 5;
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < Keys; i++)
+        {
+            rig.Type("x");
+        }
+        allocated = GC.GetAllocatedBytesForCurrentThread() - allocated - carrying;
+        Assert.True(editor.StripeMarksBuilt == built, $"The stripe's marks were worked out {editor.StripeMarksBuilt - built} times for keys that moved no line");
+        List<CodeEditor.StripeMark> warnings = [.. editor.StripeMarks.Where(m => m.Kind == StripeMarkKind.Warning)];
+        Assert.Equal(lines, warnings.Count);
+
+        if (lines <= 40)
+        {
+            // Where the marks stand apart, a line's mark kept through the keys goes to its warning where they moved it.
+            Point at = editor.TranslatePoint(editor.StripePoint(warnings[^1]), rig.Window)!.Value;
+            rig.Window.MouseDown(at, MouseButton.Left);
+            rig.Window.MouseUp(at, MouseButton.Left);
+            Ui.Settle();
+            Assert.Equal(text.GetLineStart(lines - 1) + 12 + Keys, editor.Selections.Primary.Caret);
+        }
+        return allocated / Keys;
     }
 
     [AvaloniaFact]
