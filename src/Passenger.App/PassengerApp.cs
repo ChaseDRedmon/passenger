@@ -82,7 +82,8 @@ public static class PassengerApp
         UiThread.Check();
         string full = PathNames.Canonical(path);
         string folder = File.Exists(full) && WorkspaceModel.Opens(full) ? Path.GetDirectoryName(full)! : full;
-        if (Open.FirstOrDefault(w => w != from && w.Folder is { } other && PathNames.Same(other, folder)) is { } already)
+        // A window's folder may still be opening (its documents read off the window's thread): it holds that one already.
+        if (Open.FirstOrDefault(w => w != from && w.FolderHeld is { } other && PathNames.Same(other, folder)) is { } already)
         {
             if (already.WorkspaceModel?.OpenedAs is not { } opened || !PathNames.Same(opened, full))
             {
@@ -95,7 +96,7 @@ public static class PassengerApp
             BringForward(already);
             return already;
         }
-        MainWindow into = target == OpenTarget.NewWindow && from.Folder is { } open && !PathNames.Same(open, folder) ? NewWindow(from) : from;
+        MainWindow into = target == OpenTarget.NewWindow && from.FolderHeld is { } open && !PathNames.Same(open, folder) ? NewWindow(from) : from;
         into.OpenFolder(full, opened: then is null ? null : () => then(into));
         if (into != from)
         {

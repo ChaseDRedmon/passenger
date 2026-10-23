@@ -437,6 +437,10 @@ public partial class MainWindow : Window
     /// <summary>The open folder, canonical, or null before one is opened.</summary>
     public string? Folder => session.Folder;
 
+    /// <summary>The folder open, else the one opening while what the last left ends and its documents are read: what
+    /// the window holds as the process opens another (<see cref="PassengerApp.OpenProject"/>).</summary>
+    internal string? FolderHeld => session.Folder ?? (opens == openingAt ? opening : null);
+
     /// <summary>The program the Run window shows, while it runs or since it last did.</summary>
     public ProcessRunner Runner => session.Runner;
 

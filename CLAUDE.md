@@ -501,8 +501,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed; a list its `Sets` names merges as what each side added and
   took away), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
-  (`StateFile.TakeUnsaid`). New state is a document there, never a file of
-  its own.
+  (`StateFile.TakeUnsaid`). A folder's open reads the documents its restore takes in off the UI thread first
+  (`ProjectState.ReadAsync`, through `ValueAsync`), as the folder left ends, and begins its session once they land
+  (`OpenFolder`, at once for documents read already), so a person's window opens a folder in that order with no read on
+  its thread; a test that acts on a keeping window's folder right after `OpenFolder` settles first. New state is a
+  document there, read ahead with the rest when the open restores it, never a file of its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
   `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol

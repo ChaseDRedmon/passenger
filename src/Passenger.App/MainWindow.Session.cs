@@ -18,6 +18,10 @@ public partial class MainWindow
     /// <summary>Bumped by each folder opened, so an open still waiting for the last session's end gives way to a later one.</summary>
     private int opens;
 
+    /// <summary>The folder an open waiting to begin will open, as of the open <see cref="openingAt"/> counts.</summary>
+    private string? opening;
+    private int openingAt;
+
     /// <summary>The folder open in the window and what it has and runs; one with no folder before any opens.</summary>
     public ProjectSession Session => session;
 
@@ -103,14 +107,17 @@ public partial class MainWindow
         // open in it stay, the new session's.
         Task none = session.LeaveAsync();
         ending = ending.IsCompleted ? none : Task.WhenAll(ending, none);
+        // The folder's documents read off the window's thread meanwhile, so its restore takes them in with no read.
+        Task reading = keepsWorkspace ? Store().Project(opening).ReadAsync() : Task.CompletedTask;
         int open = ++opens;
-        if (ending.IsCompleted)
+        if (ending.IsCompleted && reading.IsCompleted)
         {
             Begin(opening, fileNamed ? named : null);
             opened?.Invoke();
             return Task.CompletedTask;
         }
-        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null, opened);
+        (this.opening, openingAt) = (opening, open);
+        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null, reading, opened);
     }
 
     /// <summary>The folder open now, opened again: with the solution it has, read again; with another (a solution or project
@@ -131,12 +138,13 @@ public partial class MainWindow
         Remember();
     }
 
-    private async Task BeginOnceEndedAsync(int open, string folder, string? named, Action? opened)
+    private async Task BeginOnceEndedAsync(int open, string folder, string? named, Task reading, Action? opened)
     {
         // Held while it waits, so a screenshot or a test finds the folder open rather than the moment between.
         using IDisposable held = BackgroundWork.Scope();
         status.Text = $"Opening {Path.GetFileName(folder)}…";
         await ending;
+        await reading;
         if (open == opens && Ended is null)
         {
             Begin(folder, named);
