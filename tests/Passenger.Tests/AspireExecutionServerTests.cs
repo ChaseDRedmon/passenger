@@ -91,6 +91,98 @@ public sealed class AspireExecutionServerTests
         notifications.Abort();
     }
 
+    /// <summary>An AppHost's services start at once (#436): DCP's creates of three services are each under way while the
+    /// others begin (a start that waits for the other two to begin, which one at a time would never see), and a delete of a
+    /// started service is answered while their starts still wait. One service's own creates keep the order DCP sent them,
+    /// the second beginning only once the first has ended.</summary>
+    [Fact]
+    public async Task Several_services_start_at_once_and_a_delete_waits_only_for_its_own_create()
+    {
+        const int together = 3;
+        int begun = 0;
+        TaskCompletionSource allBegun = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource firstEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource firstGoes = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        ConcurrentQueue<string> order = new();
+        ConcurrentQueue<string> stopped = new();
+        await using AspireExecutionServer server = await AspireExecutionServer.StartAsync(async (launch, token) =>
+        {
+            string service = launch.Environment.Single(variable => variable.Name == "OTEL_SERVICE_NAME").Value;
+            if (service.StartsWith("slow", StringComparison.Ordinal))
+            {
+                if (Interlocked.Increment(ref begun) == together)
+                {
+                    allBegun.TrySetResult();
+                }
+                await allBegun.Task.WaitAsync(Limit, token);
+                await release.Task.WaitAsync(Limit, token);
+            }
+            else if (service == "ordered")
+            {
+                order.Enqueue($"begins {launch.SessionId}");
+                if (firstEntered.TrySetResult())
+                {
+                    await firstGoes.Task.WaitAsync(Limit, token);
+                }
+                order.Enqueue($"ends {launch.SessionId}");
+            }
+            return new(launch.SessionId, 7);
+        }, (session, _) => { stopped.Enqueue(session.Id); return Task.CompletedTask; }, Cancel);
+        using ClientWebSocket notifications = await Subscribe(server);
+        string quick = await Create(server, body: Of("quick"));
+        List<Wire> slow = [];
+        try
+        {
+            for (int i = 0; i < together; i++)
+            {
+                Wire wire = await Wire.Connect(server.Port);
+                slow.Add(wire);
+                await wire.Write(Request(server, Of($"slow{i}")));
+            }
+            await allBegun.Task.WaitAsync(Limit, Cancel);
+            using (Wire deleting = await Wire.Connect(server.Port))
+            {
+                await deleting.Write(Head(server, "DELETE", $"/run_session/{quick}?api-version={Version(server)}", ""));
+                Assert.Equal(200, await deleting.Status());
+            }
+            Assert.Equal(quick, Assert.Single(stopped));
+            release.TrySetResult();
+            foreach (Wire wire in slow)
+            {
+                Assert.Equal(201, await wire.Status());
+            }
+
+            using Wire first = await Wire.Connect(server.Port);
+            await first.Write(Request(server, Of("ordered")));
+            await firstEntered.Task.WaitAsync(Limit, Cancel);
+            using Wire second = await Wire.Connect(server.Port);
+            await second.Write(Request(server, Of("ordered")));
+            firstGoes.TrySetResult();
+            Assert.Equal(201, await first.Status());
+            Assert.Equal(201, await second.Status());
+            string[] said = [.. order];
+            Assert.True(said.Length == 4 && said[0].StartsWith("begins", StringComparison.Ordinal) && said[1].StartsWith("ends", StringComparison.Ordinal)
+                && said[0][7..] == said[1][5..], $"One service's second create began before its first ended: {string.Join(", ", said)}");
+        }
+        finally
+        {
+            release.TrySetResult();
+            firstGoes.TrySetResult();
+            foreach (Wire wire in slow)
+            {
+                wire.Dispose();
+            }
+        }
+        notifications.Abort();
+
+        static string Of(string service) => JsonSerializer.Serialize(new
+        {
+            launch_configurations = new[] { new { type = "project", project_path = Path.GetFullPath("Wire.csproj"), mode = "NoDebug" } },
+            env = new[] { new { name = "OTEL_SERVICE_NAME", value = service } },
+        });
+    }
+
     [Fact]
     public async Task Committed_201_survives_normal_HTTP_close_and_remains_instance_owned()
     {
@@ -350,10 +442,10 @@ public sealed class AspireExecutionServerTests
         catch { socket.Dispose(); throw; }
     }
 
-    private static async Task<string> Create(AspireExecutionServer server, string instance = Instance)
+    private static async Task<string> Create(AspireExecutionServer server, string instance = Instance, string? body = null)
     {
         using Wire wire = await Wire.Connect(server.Port);
-        await wire.Write(Request(server, Body, instance));
+        await wire.Write(Request(server, body ?? Body, instance));
         string head = await wire.ReadHead();
         Assert.StartsWith("HTTP/1.1 201 ", head, StringComparison.Ordinal);
         string location = Assert.Single(head.Split("\r\n"), line => line.StartsWith("Location:", StringComparison.OrdinalIgnoreCase));

@@ -1103,7 +1103,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
   bearer token, kept hashed and compared in constant time and checked before anything is admitted, one ordinary request a
   connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
-  WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
+  WebSockets, and a create given up by its connection cancelled on its own; different resources' creates run at once, a
+  held start's attach included, one resource's (by the OTEL_SERVICE_NAME DCP tells it) creates and deletes in the order DCP
+  sent them, and a session's delete waits for its own create alone (#436), its instance's end for every one under way. An AppHost is a project whose evaluation sets
   `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
   single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
   files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#

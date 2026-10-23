@@ -63,6 +63,8 @@ public sealed class AspireExecutionServer : IAsyncDisposable
     /// <summary>
     /// Callbacks marshal to the UI if needed and must observe cancellation. A failed creation must clean up its own runner.
     /// The creation callback may publish events using the request's instance and session IDs before returning its handle.
+    /// Different resources' creations run at once, one resource's creates and deletes in the order DCP sent them, and a
+    /// session's delete waits for its own creation alone.
     /// </summary>
     public static async Task<AspireExecutionServer> StartAsync(
         Func<AspireProjectLaunch, CancellationToken, Task<AspireProjectSession>> createSession,
@@ -368,26 +370,32 @@ public sealed class AspireExecutionServer : IAsyncDisposable
         }
         context.MonitorPendingCreate();
         using CancellationTokenSource lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, instance.Token);
-        await instance.Gate.WaitAsync(lifetime.Token).ConfigureAwait(false);
+        string resource = ResourceOf(launch);
+        Task before = Task.CompletedTask;
+        Operation operation = null!;
+        lock (sync)
+        {
+            lifetime.Token.ThrowIfCancellationRequested();
+            if (instance.Sessions.Count >= MaximumSessions)
+            {
+                sessionId = "";
+            }
+            else
+            {
+                // Its resource's earlier create or delete (a restart's stop) ends before it begins; other resources' go at once.
+                before = instance.Line(resource);
+                operation = instance.Begin(resource);
+                instance.Sessions.Add(sessionId, new Session { Resource = resource, Creating = operation.Done });
+            }
+        }
+        if (sessionId.Length == 0)
+        {
+            await ErrorAsync(context, 429, "SessionLimit", "Too many sessions are active for this DCP instance.").ConfigureAwait(false);
+            return;
+        }
         try
         {
-            lock (sync)
-            {
-                lifetime.Token.ThrowIfCancellationRequested();
-                if (instance.Sessions.Count < MaximumSessions)
-                {
-                    instance.Sessions.Add(sessionId, new Session());
-                }
-                else
-                {
-                    sessionId = "";
-                }
-            }
-            if (sessionId.Length == 0)
-            {
-                await ErrorAsync(context, 429, "SessionLimit", "Too many sessions are active for this DCP instance.").ConfigureAwait(false);
-                return;
-            }
+            await before.WaitAsync(lifetime.Token).ConfigureAwait(false);
             AspireProjectSession handle = await createSession(launch, lifetime.Token).ConfigureAwait(false);
             bool terminated;
             lock (sync)
@@ -422,7 +430,21 @@ public sealed class AspireExecutionServer : IAsyncDisposable
         }
         finally
         {
-            instance.Gate.Release();
+            End(instance, operation);
+        }
+    }
+
+    /// <summary>Which of the AppHost's resources a start is, whose creates and deletes keep the order DCP sends them in (a
+    /// restart's stop before its start, a resource's replicas one after another): its name, as DCP tells a service it, else
+    /// its project.</summary>
+    private static string ResourceOf(AspireProjectLaunch launch) =>
+        launch.Environment.FirstOrDefault(variable => variable.Name == "OTEL_SERVICE_NAME")?.Value is { Length: > 0 } name ? name : launch.ProjectPath;
+
+    private void End(Instance instance, Operation operation)
+    {
+        lock (sync)
+        {
+            instance.End(operation);
         }
     }
 
@@ -480,10 +502,23 @@ public sealed class AspireExecutionServer : IAsyncDisposable
             return;
         }
         using CancellationTokenSource lifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, instance.Token);
-        await instance.Gate.WaitAsync(lifetime.Token).ConfigureAwait(false);
+        Session? session;
+        Operation operation;
+        lock (sync)
+        {
+            lifetime.Token.ThrowIfCancellationRequested();
+            if (!instance.Sessions.TryGetValue(sessionId, out session))
+            {
+                context.StatusCode = 204;
+                return;
+            }
+            // It waits for its own session's create alone; its resource's next create waits for it, as a restart's start
+            // follows its stop.
+            operation = instance.Begin(session.Resource);
+        }
         try
         {
-            Session? session;
+            await session.Creating.WaitAsync(lifetime.Token).ConfigureAwait(false);
             lock (sync)
             {
                 instance.Sessions.TryGetValue(sessionId, out session);
@@ -499,7 +534,7 @@ public sealed class AspireExecutionServer : IAsyncDisposable
         }
         finally
         {
-            instance.Gate.Release();
+            End(instance, operation);
         }
     }
 
@@ -642,7 +677,13 @@ public sealed class AspireExecutionServer : IAsyncDisposable
     private async Task CleanupInstanceAsync(string instanceId, Instance instance)
     {
         await instance.Lifetime.CancelAsync().ConfigureAwait(false);
-        await instance.Gate.WaitAsync().ConfigureAwait(false);
+        // Its creates and deletes under way end first, each told the instance ended; none begins once it has.
+        Task[] running;
+        lock (sync)
+        {
+            running = instance.Running();
+        }
+        await Task.WhenAll(running).ConfigureAwait(false);
         try
         {
             AspireProjectSession[] handles;
@@ -665,7 +706,6 @@ public sealed class AspireExecutionServer : IAsyncDisposable
                 instance.Lifetime.Dispose();
             }
             instance.Notifications.Writer.TryComplete();
-            instance.Gate.Release();
             instance.Ended.TrySetResult();
         }
     }
@@ -747,15 +787,61 @@ public sealed class AspireExecutionServer : IAsyncDisposable
 
         public CancellationTokenSource Lifetime { get; }
         public CancellationToken Token { get; }
-        public SemaphoreSlim Gate { get; } = new(1, 1);
         public Dictionary<string, Session> Sessions { get; } = new(StringComparer.Ordinal);
         public TaskCompletionSource Ended { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Channel<AspireNotification> Notifications { get; } = Channel.CreateBounded<AspireNotification>(
             new BoundedChannelOptions(256) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
+
+        /// <summary>The creates and deletes under way, which its end waits out.</summary>
+        private readonly HashSet<Operation> operations = [];
+
+        /// <summary>Each resource's operations so far, which its next create waits for: DCP's order within one resource.</summary>
+        private readonly Dictionary<string, Task> lines = new(StringComparer.Ordinal);
+
+        /// <summary>What a resource's next create waits for. Under the server's lock.</summary>
+        public Task Line(string resource) => lines.GetValueOrDefault(resource) ?? Task.CompletedTask;
+
+        /// <summary>A create or delete of a resource begins, refused once the instance has ended. Under the server's lock.</summary>
+        public Operation Begin(string resource)
+        {
+            Token.ThrowIfCancellationRequested();
+            Operation operation = new(resource);
+            operations.Add(operation);
+            Task line = Line(resource);
+            lines[resource] = line.IsCompleted ? operation.Done : Task.WhenAll(line, operation.Done);
+            return operation;
+        }
+
+        /// <summary>An operation has ended, whatever came of it. Under the server's lock.</summary>
+        public void End(Operation operation)
+        {
+            operations.Remove(operation);
+            operation.Finished.TrySetResult();
+            if (lines.TryGetValue(operation.Resource, out Task? line) && (line == operation.Done || line.IsCompleted))
+            {
+                lines.Remove(operation.Resource);
+            }
+        }
+
+        /// <summary>The operations under way. Under the server's lock.</summary>
+        public Task[] Running() => [.. operations.Select(operation => operation.Done)];
+    }
+
+    /// <summary>One create or delete of a resource's session.</summary>
+    private sealed class Operation(string resource)
+    {
+        public string Resource { get; } = resource;
+        public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task Done => Finished.Task;
     }
 
     private sealed class Session
     {
+        /// <summary>The resource it starts (<c>ResourceOf</c>).</summary>
+        public required string Resource { get; init; }
+
+        /// <summary>Its create, which a delete of it waits for, ending it once made.</summary>
+        public required Task Creating { get; init; }
         public AspireProjectSession? Handle { get; set; }
         public bool Terminated { get; set; }
         public bool Started { get; set; }
