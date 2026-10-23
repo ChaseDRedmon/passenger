@@ -102,8 +102,53 @@ public sealed record AspireParameter(string Name, bool Secret, Place Start, Plac
 /// <summary>The parameters an AppHost's file declares that take their value from its configuration alone.</summary>
 public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parameters);
 
-/// <summary>The projects whose code's connection-string reads are asked for, by their project files' paths.</summary>
-public sealed record ConnectionReadsRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
+/// <summary>The projects whose code's connection-string reads are asked for, by their project files' paths, and with
+/// <paramref name="Keys"/> every configuration key their code reads or binds too (<see cref="ConfigurationKey"/>).</summary>
+public sealed record ConnectionReadsRequest(
+    [property: JsonPropertyName("projects")] IReadOnlyList<string> Projects,
+    [property: JsonPropertyName("keys")] bool Keys = false);
+
+/// <summary>A configuration key a project's code reads or binds, as .NET's configuration names it (sections joined by ':',
+/// <c>*</c> for any item of a collection or key of a dictionary): what reads it (<see cref="ConfigurationKinds"/>), the type
+/// it is read as (<see cref="ConfigurationTypes"/>, with that type's name in C# and an enum's names), whether the read has
+/// a default or its result is checked for null (or, for an options property, whether it has a value of its own), and where
+/// it is written: the string naming it in a read or a binding, the property's name in an options class (none for one of a
+/// library's), the stretch the name's characters in a plainly written string.</summary>
+public sealed record ConfigurationKey(
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("typeName")] string TypeName,
+    [property: JsonPropertyName("guarded")] bool Guarded,
+    [property: JsonPropertyName("path")] string? Path,
+    [property: JsonPropertyName("at")] Place? At,
+    [property: JsonPropertyName("end")] Place? End,
+    [property: JsonPropertyName("values")] IReadOnlyList<string>? Values = null,
+    [property: JsonPropertyName("owner")] string? Owner = null);
+
+/// <summary>What reads a configuration key: a value read by its key (an indexer, GetValue, GetConnectionString, a section's
+/// Value), a section (GetSection, and GetRequiredSection, which throws without one), an options class bound to a section
+/// (Configure, Bind, BindConfiguration, Get), or one of that class's properties.</summary>
+public static class ConfigurationKinds
+{
+    public const string Read = "read";
+    public const string Section = "section";
+    public const string Binding = "binding";
+    public const string Option = "option";
+}
+
+/// <summary>What a configuration key's value is read as.</summary>
+public static class ConfigurationTypes
+{
+    public const string String = "string";
+    public const string Boolean = "boolean";
+    public const string Number = "number";
+    public const string Enum = "enum";
+    public const string Object = "object";
+    public const string Array = "array";
+    public const string Dictionary = "dictionary";
+}
 
 /// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and the stretch
 /// where the name is written (the string or constant naming it).</summary>
@@ -114,8 +159,11 @@ public sealed record ConnectionRead(
     [property: JsonPropertyName("at")] Place At,
     [property: JsonPropertyName("end")] Place End);
 
-/// <summary>The connection strings the projects asked for read, each where it is read; none of a project the server has not loaded.</summary>
-public sealed record ConnectionReadsFound([property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads);
+/// <summary>The connection strings the projects asked for read, each where it is read, and when asked the configuration
+/// keys they read or bind; none of a project the server has not loaded.</summary>
+public sealed record ConnectionReadsFound(
+    [property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads,
+    [property: JsonPropertyName("keys")] IReadOnlyList<ConfigurationKey>? Keys = null);
 
 /// <summary>The projects whose web routes are asked for, by their project files' paths; none asks for every project's.</summary>
 public sealed record RoutesRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
