@@ -16,12 +16,21 @@ public sealed class AspireDetailsPane(Action<Uri> browse, Action<string> open) :
     /// <summary>The resource shown, or null.</summary>
     public AspireResource? Resource { get; private set; }
 
+    /// <summary>Whether the resource shown was said left unstarted.</summary>
+    private bool shownUnstarted;
+
     /// <summary>Shows a resource's details, or says to choose one; one its run left unstarted (<paramref name="leftUnstarted"/>,
-    /// as its configuration says Don't start) is Not started, never a failure.</summary>
+    /// as its configuration says Don't start) is Not started, never a failure. The resource shown already, which an AppHost's
+    /// update that did not change it gives again, is left as it is, its tables never made again to find nothing changed.</summary>
     public void Show(AspireResource? resource, bool leftUnstarted = false)
     {
         UiThread.Check();
+        if (resource is not null && ReferenceEquals(resource, Resource) && leftUnstarted == shownUnstarted)
+        {
+            return;
+        }
         Resource = resource;
+        shownUnstarted = leftUnstarted;
         if (resource is null)
         {
             Say("Choose a resource to see its state, health, addresses and environment");

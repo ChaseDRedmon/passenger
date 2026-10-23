@@ -751,7 +751,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   failure in both, a container's one restarting after each crash, dead, or exited with an error, a stop's 137 and 143
   aside, `ContainerInfo.IsFailed`; the health's
   tag, `ContainerDetailsPane.HealthTag`, addresses as links; kept by their keys as a list is read again, `RunRows.Put`, each
-  row's control shown anew in place, `RunRowView`, never the list made anew, whose controls a click's press and release
+  row's control shown anew in place only when what it stands for differs (`RunItem.Take`: an AppHost's update keeps every
+  resource it did not change, as the Aspire window's Details does), `RunRowView`, never the list made anew, whose controls a click's press and release
   would straddle while the engine's events or an AppHost's updates stream, the click then lost), a port's link on the
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
@@ -1127,7 +1128,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   the container ownership manifest (`AspireContainerOwnership`, read by `Peek`, written at once, its leftovers' removal
   through `StateDocument.ChangeNow`) are read and written off the UI thread. An AppHost's containers (#397): a run follows
   its resource stream from its connection until it stops, whatever the Aspire window shows (`AspireController.Follow`,
-  `AspireAppRun.Following`), so each container DCP makes is known as it is made (`AspireAppRun.KnownContainerIds`) and a
+  `AspireAppRun.Following`), so each container DCP makes is known as it is made (`AspireAppRun.KnownContainerIds`, the
+  Containers window regrouped only as they change, `ContainersChanged`, never at each health check's update) and a
   session one recorded at once in the state's `aspire-containers/ownership.json` (`AspireContainerOwnership`, the
   controller's) with `ContainerLabels`' state, machine and process, since DCP's containers carry none of Passenger's
   labels; the run's Stop takes them down once its AppHost has gone and waits for it (a killed AppHost leaves DCP running
@@ -2043,7 +2045,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   last entry of level Untold, so every failure is listed or counted. Run gives an
   Avalonia app the inspector too (`ProjectSession.InspectedRun`, `RunApp`; none under Hot Reload, whose dotnet watch
   would load it); the Live Visual Tree follows only the chosen Debug tab's `LiveApp`. Problems' Bindings lists Run's app's
-  failures and every Debug tab's, each kept while its tab is (`ProjectSession.InspectedApps`). Agents' app tools take
+  failures and every Debug tab's, each kept while its tab is (`ProjectSession.InspectedApps`), and an AppHost's services',
+  listed once for all their apps told at once (`AspireController.BindingsChanged`, never the AppHost's whole state at each
+  failure). Agents' app tools take
   `app`: run, debug (the chosen tab's app while it is debugged, else the only one), a Debug tab's name, or ide
   (`PassengerTools.DebugApp`, `NamedApp`). `App/LiveTree/BindingErrors` is how a
   failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),

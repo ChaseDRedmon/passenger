@@ -170,6 +170,13 @@ public sealed partial class BuildRunController
                 RunningChanged?.Invoke(this, EventArgs.Empty);
             }
         };
+        session.Aspire.BindingsChanged += (_, _) =>
+        {
+            if (!session.IsEnded)
+            {
+                ShowBindings();
+            }
+        };
         session.Runner.Exited += (_, code) =>
         {
             // A container run's log that ended by itself, its run not stopped, is followed again while its containers run.

@@ -68,8 +68,14 @@ public sealed class RunItem<T>(string key, T data)
     /// <summary>What it stands for changed: its control shows it anew in place.</summary>
     public event EventHandler? Changed;
 
+    /// <summary>What it stands for read again: its control drawn anew only when that differs from what it drew (an AppHost's
+    /// update keeps each resource it did not change, whose row then costs nothing).</summary>
     internal void Take(T data)
     {
+        if (EqualityComparer<T>.Default.Equals(Data, data))
+        {
+            return;
+        }
         Data = data;
         Changed?.Invoke(this, EventArgs.Empty);
     }

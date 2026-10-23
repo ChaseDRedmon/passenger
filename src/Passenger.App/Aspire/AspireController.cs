@@ -60,6 +60,29 @@ public sealed partial class AspireController(ProjectSession workspace, string st
     public bool IsRunning => apps.Any(app => !app.Stopping && (app.Runner.IsRunning || app.IsTest));
     public event EventHandler? Changed;
 
+    /// <summary>A service's app told of failed bindings: raised once for all told at once (thousands, as a window opens), on
+    /// the UI thread, for Problems' Bindings alone, never the AppHost's whole state.</summary>
+    public event EventHandler? BindingsChanged;
+
+    private bool bindingsDue;
+
+    private void BindingsFailed()
+    {
+        if (bindingsDue)
+        {
+            return;
+        }
+        bindingsDue = true;
+        UiThread.Post(() =>
+        {
+            bindingsDue = false;
+            if (!disposed)
+            {
+                BindingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        });
+    }
+
     /// <summary>Restarts a service through its AppHost (the window's resource commands): stopped, its project built again
     /// when asked, and started, or restarted; done once asked.</summary>
     public Func<AspireAppRun, AspireResourceRun, bool, CancellationToken, Task>? RestartCommand { get; set; }
@@ -454,11 +477,17 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             {
                 return;
             }
-            app.KnownContainerIds = [.. snapshot.SelectMany(resource => AspireJson.Properties(resource.Data, "properties"))
+            string[] ids = [.. snapshot.SelectMany(resource => AspireJson.Properties(resource.Data, "properties"))
                 .Where(property => property.Name == "container.id" && property.Value.ValueKind == JsonValueKind.String)
                 .Select(property => property.Value.GetString()).OfType<string>().Where(value => value.Length > 0).Distinct(StringComparer.Ordinal)];
+            // Each health check's run is an update: the Containers window is regrouped only when the containers named change.
+            bool moved = !ids.ToHashSet(StringComparer.Ordinal).SetEquals(app.KnownContainerIds);
+            app.KnownContainerIds = ids;
             BackgroundWork.Track(Reported(Containers.Observe(app.Configuration.Project, snapshot)));
-            ContainersChanged?.Invoke(this, app);
+            if (moved)
+            {
+                ContainersChanged?.Invoke(this, app);
+            }
         };
         app.Following = connection.Follow();
     }
@@ -868,7 +897,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             resource.Inspection = held != RunStart.HotReload ? LiveApp.For(plan, workspace.Overlays) : null;
             if (resource.Inspection is { } inspection)
             {
-                inspection.BindingFailed += (_, _) => Changed?.Invoke(this, EventArgs.Empty);
+                inspection.BindingFailed += (_, _) => BindingsFailed();
             }
             LaunchPlan inspected = resource.Inspection?.Plan ?? plan;
             if (held is not null)
