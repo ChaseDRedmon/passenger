@@ -134,7 +134,8 @@ public sealed class NavigationHistory
     }
 
     /// <summary>Carries a file's places through an edit to it. Text typed at a place goes before it, so a place stays on
-    /// the text it was at, as a bookmark stays on its line.</summary>
+    /// the text it was at, as a bookmark stays on its line. Only a place that moved is made anew: every key comes here, and
+    /// most places are in other files or before the key.</summary>
     public void Follow(string path, DocumentChangedEventArgs change)
     {
         Carry(behind);
@@ -154,7 +155,12 @@ public sealed class NavigationHistory
         {
             for (int i = 0; i < places.Count; i++)
             {
-                places[i] = places[i] with { Place = Carried(places[i].Place) };
+                HistoryPlace place = places[i].Place;
+                HistoryPlace moved = Carried(place);
+                if (!ReferenceEquals(moved, place))
+                {
+                    places[i] = places[i] with { Place = moved };
+                }
             }
         }
 
@@ -166,7 +172,8 @@ public sealed class NavigationHistory
             }
             int mapped = TextEditing.MapOffset(Math.Min(place.Offset, change.Before.Length), change.Edits, afterInsertions: true);
             int offset = Math.Min(mapped, change.After.Length);
-            return place with { Offset = offset, Line = change.After.GetLineFromOffset(offset) };
+            int line = change.After.GetLineFromOffset(offset);
+            return offset == place.Offset && line == place.Line ? place : place with { Offset = offset, Line = line };
         }
     }
 

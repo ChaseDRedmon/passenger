@@ -97,12 +97,30 @@ public static class AppActions
     public const string ContainerInspect = "app.containers.inspect";
     public const string ContainerShell = "app.containers.shell";
 
-    // A .NET service of the container run under way, chosen in the Containers window or by its gutter icon, the run left up:
-    // debugged from its start, attached to as it runs, let go by the debugger, or profiled. No keys of Rider's.
-    public const string ServiceDebug = "app.containers.service.debug";
-    public const string ServiceAttach = "app.containers.service.attach";
-    public const string ServiceRun = "app.containers.service.run";
-    public const string ServiceProfile = "app.containers.service.profile";
+    // A .NET service of a run of services under way (a container run's, an AppHost's), chosen in the Containers or Aspire
+    // window or by its gutter icon, the run left up: debugged from its start, attached to as it runs, let go by the debugger,
+    // or profiled. No keys of Rider's. The ids each window had for them before they were one set still name them (Formerly).
+    public const string ServiceDebug = "app.service.debug";
+    public const string ServiceAttach = "app.service.attach";
+    public const string ServiceRun = "app.service.runWithoutDebugger";
+    public const string ServiceProfile = "app.service.profile";
+
+    /// <summary>The ids actions had before, by the id each has now: a person's shortcuts kept under one (settings.json's
+    /// <c>shortcuts</c>, read as the new id's) and an agent's <c>ide_action</c> naming one reach the action it is now.</summary>
+    public static IReadOnlyDictionary<string, string> Formerly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["app.containers.service.debug"] = ServiceDebug,
+        ["app.containers.service.attach"] = ServiceAttach,
+        ["app.containers.service.run"] = ServiceRun,
+        ["app.containers.service.profile"] = ServiceProfile,
+        ["app.aspire.debug"] = ServiceDebug,
+        ["app.aspire.attach"] = ServiceAttach,
+        ["app.aspire.runWithoutDebugger"] = ServiceRun,
+        ["app.aspire.profile"] = ServiceProfile,
+    };
+
+    /// <summary>An action's id now, for one it had before (<see cref="Formerly"/>), else the id itself.</summary>
+    public static string Now(string id) => Formerly.GetValueOrDefault(id, id);
 
     // Avalonia's renderer debug overlays in an app Run, Debug or Profile launched (Avalonia's own names): no key of Rider's.
     public const string OverlayFps = "app.avalonia.overlay.Fps";
@@ -160,10 +178,6 @@ public static class AppActions
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
     public const string ShowAspire = "app.showAspire";
-    public const string AspireDebug = "app.aspire.debug";
-    public const string AspireAttach = "app.aspire.attach";
-    public const string AspireRun = "app.aspire.runWithoutDebugger";
-    public const string AspireProfile = "app.aspire.profile";
     public const string AspireRefresh = "app.aspire.refresh";
     public const string AspireDiscover = "app.aspire.discover";
     public const string AspireCommand = "app.aspire.command";
@@ -172,6 +186,7 @@ public static class AppActions
     public const string AspireShowRelatedLogs = "app.aspire.showRelatedLogs";
     public const string AspireResources = "app.aspire.resources";
     public const string AspireConsole = "app.aspire.console";
+    public const string AspireTelemetry = "app.aspire.telemetry";
     public const string AspireLogs = "app.aspire.logs";
     public const string AspireTraces = "app.aspire.traces";
     public const string AspireAppHostConsole = "app.aspire.appHostConsole";
@@ -417,7 +432,7 @@ public static class AppActions
                 {
                 }
             }
-            keymap.Set(action, parsed);
+            keymap.Set(Now(action), parsed);
         }
         return keymap;
     }

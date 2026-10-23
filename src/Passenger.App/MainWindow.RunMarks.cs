@@ -291,8 +291,9 @@ public partial class MainWindow
     }
 
     /// <summary>The run icon's menu: Run of each configuration that runs the line (one service of a Compose
-    /// configuration, or a Dockerfile's), Debug and Profile of it; for a .NET service of the container run under way, its
-    /// actions on that run instead (Debug, Attach, Run without Debugger, Profile), which leave the run up.</summary>
+    /// configuration, or a Dockerfile's, or one project an AppHost declares), Debug and Profile of it; for a .NET service of a
+    /// run under way that reads the line (the container run's, an AppHost's that runs), the service actions on that run
+    /// instead, as the Containers and Aspire windows' rows give them (greyed with why), which leave the run up.</summary>
     private void ShowRunMarkMenu(CodeEditor editor, OpenDocument document, int line)
     {
         RunTarget[] here = [.. RunTargets(document).Where(t => t.Line == line)];
@@ -305,17 +306,15 @@ public partial class MainWindow
         foreach (RunTarget target in here)
         {
             string what = target.Service ?? target.Configuration.Name;
-            if (!target.Configuration.Aspire && target.Service is { } service && InRunNow(document.Path, service))
+            if (target.Service is { } service && RunOf(document.Path, target) is { } running)
             {
-                if (joined.Add(service))
+                if (joined.Add($"{running.Name}\n{service}"))
                 {
-                    foreach ((string id, string header) in (ReadOnlySpan<(string, string)>)[(AppActions.ServiceDebug, $"Debug '{service}'"),
-                        (AppActions.ServiceAttach, $"Attach to '{service}'"), (AppActions.ServiceRun, $"Run '{service}' without Debugger"),
-                        (AppActions.ServiceProfile, $"Profile '{service}'")])
+                    ActionContext context = new(Editors.Active, Editors.CodeEditor, FocusManager?.GetFocusedElement(), null,
+                        session.Debug.IsDebugging ? session.Debug.Session?.State : null) { Service = new ChosenService(running, service) };
+                    foreach ((string id, _) in ToolWindows.RunWindows.ServiceActions)
                     {
-                        MenuItem item = new() { Header = header };
-                        item.Click += (_, _) => _ = ServiceActionAsync(id, service);
-                        menu.Items.Add(item);
+                        menu.Items.Add(FlyoutEntry(new MenuEntry(id), context));
                     }
                 }
                 continue;
@@ -375,25 +374,11 @@ public partial class MainWindow
         {
             return "The AppHost source changed; open its gutter action again";
         }
-        if (current.Aspire.FindApp(target.Configuration.Project) is { } app)
+        if (current.Aspire.FindApp(target.Configuration.Project) is { IsTest: false, IsStopped: false } app)
         {
-            IReadOnlyList<AspireResource> resources = await ReadAspireResourcesAsync(app.Configuration.Project);
-            if (session != current || current.IsEnded)
-            {
-                return "The solution was closed";
-            }
-            AspireResource[] matches = [.. resources.Where(resource => resource.Name == name || resource.DisplayName == name)];
-            if (matches.Length != 1)
-            {
-                return "The selected Aspire resource is unavailable or ambiguous";
-            }
-            AspireResource resource = matches[0];
-            return how switch
-            {
-                RunStart.Debug => await DebugAspireResourceAsync(app.Configuration.Project, resource.Name),
-                RunStart.Profile => await ProfileAspireResourceAsync(app.Configuration.Project, resource.Name),
-                _ => await RestartAspireServiceAsync(current, new(app.Configuration.Project, resource), debugging: false),
-            };
+            // Up since the menu opened: the service actions on its run, as the menu offers them now.
+            string id = how switch { RunStart.Debug => AppActions.ServiceDebug, RunStart.Profile => AppActions.ServiceProfile, _ => AppActions.ServiceRun };
+            return await ServiceActionAsync(id, new ServiceAim(app, name, app.ServiceNamed(name) is not null, null, null));
         }
         if (session != current || current.IsEnded || declared.Count(resource => resource.Name == name) != 1)
         {
@@ -406,9 +391,18 @@ public partial class MainWindow
             : await buildRun.RunAspireAsync(configuration, null, how == RunStart.Debug ? RunStart.Debug : RunStart.Run);
     }
 
-    /// <summary>Whether a compose file's service is a .NET service of the container run under way, which reads that file.</summary>
-    private bool InRunNow(string path, string service) =>
-        buildRun.Containers is { } run && run.Plan.Compose.Any(word => Core.PathNames.Same(word, path)) && buildRun.ServiceOfRun(service).Service is not null;
+    /// <summary>The run under way whose .NET service a run icon stands beside, which the service actions act on: the container
+    /// run that reads the compose file, for a .NET service of it; an AppHost's run of the configuration, for a project it
+    /// declares, whether that runs now or not (Debug Service starts it); else null.</summary>
+    private ServiceRun? RunOf(string path, RunTarget target)
+    {
+        if (target.Configuration.Aspire)
+        {
+            return session.Aspire.FindApp(target.Configuration.Project) is { IsTest: false, IsStopped: false } app ? app : null;
+        }
+        return buildRun.Containers is { } run && target.Service is { } service && run.Plan.Compose.Any(word => Core.PathNames.Same(word, path))
+            && buildRun.ServiceOfRun(service).Service is not null ? run : null;
+    }
 
     [GeneratedRegex(@"^(?<key>[A-Za-z0-9_.-]+)\s*:")]
     private static partial Regex TopKey();

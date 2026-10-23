@@ -629,7 +629,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`BuildRunController.RerunAsync`): its AppHost's when it runs (what changed restarted), else its container run in fast mode
   (the services whose build changed restarted), else what the Run console has stopped and the chosen run again, another
   configuration's AppHost running on; what changed is read by one stamp of a build's output (`BuiltInputs.Stamp`, a file
-  gone as it is read left out) and `BuiltInputs.ChangedSince`, and a refusal is said.
+  gone as it is read left out) and `BuiltInputs.ChangedSince`, and a refusal is said; what came of it
+  (`BuildRunController.Reran`) and a start or restart Stop ended (`StoppedStarting`, `StoppedRestarting`) are worded once
+  for every kind.
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -644,15 +646,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   ls` where the CLI has Compose v2, else from their containers' states, then containers, images, volumes, networks); `ContainerCommands` is each action's words on a row, which the window's actions and MCP's
   `container_action` share (a service's name, a label's, always after `--`, never read as a flag; an agent's start of an
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
-  (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
-  list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, the health's
+  (`MainWindow.Containers.cs`) has the Aspire window's layout (`ToolWindows/RunWindows`: its toolbar's Refresh, then the
+  service actions' group, then a container's own; a service's or container's row's menu beginning with the service
+  actions, every item greyed with why; its tabs Log, Stats, Files, Details and Telemetry in the shared order, Log at
+  first), asks the engine only while shown, its lists again as events say, its rows drawn as every
+  list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, red for a
+  failure in both, a container's one restarting after each crash, dead, or exited with an error, a stop's 137 and 143
+  aside, `ContainerInfo.IsFailed`; the health's
   tag, `ContainerDetailsPane.HealthTag`, addresses as links; kept by their keys as a list is read again, `RunRows.Put`, each
   row's control shown anew in place, `RunRowView`, never the list made anew, whose controls a click's press and release
   would straddle while the engine's events or an AppHost's updates stream, the click then lost), a port's link on the
   engine's own machine (the host of a `tcp://` or `ssh://` endpoint, else localhost, `ContainerPort.LinkOn`); a
   container's Log (`docker logs -f` through `ProcessRunner` into an `OutputView`, its links the
   consoles'; a stopped container's kept as it was read, its scroll and Find with it, until one of its containers runs
-  again), a project's merged one (a toggle a service), each the merged log every such console is (`ToolWindows/MergedLog`,
+  again), a project's merged one (a toggle a service), an AppHost row's its containers' (a toggle a container, a `docker logs -f` each under its name, `ContainerLogPane.Merge`, with their Stats), each the merged log every such console is (`ToolWindows/MergedLog`,
   the Aspire window's too) with the editor's `FindBar` over it (Find's keys while
   the window has them; an earlier run's lines are not folded yet: the console has no folds), Stats (`docker stats`,
   streamed only while its tab shows, its errors read as they come and the last said in its place once it ends),
@@ -869,8 +876,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   were made held: a restart makes one anew (`up --no-deps --force-recreate`) whose hold changed since, so none is held with
   no debugger to let it go; one restarted held that the debugger then cannot reach is made anew unheld, its hold let go and
   said, rather than waiting at its start for good. A .NET service of the run under way is acted on alone, the run left up,
-  by the model's actions (above), from the Containers window's service and container rows (`MainWindow.ContainerServices.cs`,
-  `AppActions.Service*`) and the gutter's icon, whose menu joins a run that reads its compose file (`InRunNow`); a
+  by the model's actions (above), one set for every kind of run (`MainWindow.ContainerServices.cs`, `AppActions.Service*`:
+  Debug Service, Attach to Service, Run Service without Debugger, Profile Service; the ids each window had before still
+  name them, a person's shortcuts and an agent's `ide_action` alike, `AppActions.Formerly`), acting on what `AimOf` finds:
+  a gutter menu's service (`ActionContext.Service`, a `ChosenService`), else the Containers window's service or container
+  row or the Aspire window's resource, the window with the keys, else the one of the two shown, else the one chosen in
+  last; greyed with why where they cannot act (no run, a resource that is no .NET project, an AppHost Passenger does not
+  run), an AppHost's project that does not run now started by Debug (held for the debugger, as an agent's `debug_start`
+  starts it, one its configuration left unstarted too) or Run without Debugger. The gutter's icon beside a .NET service of
+  a run that reads its file (the container run's compose file, a running AppHost's `AddProject`, `RunOf`) offers the same
+  four under the same titles (`FlyoutEntry` with that context); a
   container's Run without Debugger lets its session go, not restarted, unheld from its next restart, and its Profile is
   Attach Profiler's path in its container (`ProfilerCommands.AttachServiceAsync`). The window's Restart, Stop and Remove of
   such a service, and an agent's `container_action`, go through the run (`MainWindow.ContainerActAsync`): its session and
@@ -971,15 +986,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
   JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked as the engine's are (`ContainerSecrets.InSaid`). The Aspire
   window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
-  parts over an AppHost's resources, the same controls: its toolbar the AppHost chosen and icon buttons of registered
-  actions (`MainWindow.AspireActions.cs`, each bound by `ActionButtons.Bind`, its ring while its work runs: Discover,
-  Refresh, a resource's Debug, Attach, Run without Debugger and Profile through the run of services, its commands as a
-  menu, its address, source and container), the resources as `RunRows` (a parent's children under its chevron, the
-  state's dot, the health's tag only for a resource with health reports, its http and https addresses as links through
-  `Browse`; a row's menu its actions and commands), and the chosen one's Details (`AspireDetailsPane`, `DetailsTables`:
-  the resource, its health reports, URLs, relationships, environment, properties and volumes), the resources' consoles
-  merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their start), the
-  dashboard's structured logs and traces (its Structured logs and Traces pages, the Telemetry view's, below), and the
+  parts over an AppHost's resources, the same controls and one layout (`ToolWindows/RunWindows`, which UiRulesTests holds
+  both to): its toolbar the AppHost chosen and icon buttons of registered actions (`MainWindow.AspireActions.cs`, each
+  bound by `ActionButtons.Bind`, its ring while its work runs: Discover, Refresh, then the service actions' group as the
+  Containers window's toolbar has it after its Refresh, then the resource's commands as a menu, its address, source and
+  container), the resources as `RunRows` (a parent's children under its chevron, the state's dot, the health's tag only
+  for a resource with health reports, its http and https addresses as links through `Browse`; a row's menu the service
+  actions first, as a container's row's menu begins, then its commands, each item greyed with why, `MainWindow.RowMenuItem`),
+  and the tabs both windows name alike in one order (`RunWindows.Tabs`), Log first and shown at first: Log, the resources'
+  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their
+  start), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
+  relationships, environment, properties and volumes), Telemetry, the dashboard's structured logs and traces (the
+  Telemetry view's two pages under it, as the Containers window's Telemetry tab has them, below), and AppHost Log, the
   AppHost's own console. What a resource says is masked as a container's
   is, by `ContainerSecrets`' rule (a property the AppHost marks sensitive whatever its name; a health report's exception by
   `InValue`; an external AppHost's properties, whose sensitivity the CLI does not say, only those known to name no
@@ -1030,7 +1048,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   each connection string's name, its database kept, Redis and RabbitMQ by the connection string's name, else the server
   itself), each `WithReference`d and `WaitFor`ed by the services that read it and its hosting integration referenced at
   the AppHost's own Aspire version (its SDK's, under central package management in Directory.Packages.props), prepared
-  under the state's `aspire-staging/` before any file is written, as one command of global undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
+  under the state's `aspire-staging/` before any file is written, as one command of global undo, its refusals and outcomes
+  in the status bar's words (`Refusals.NoSolution`, no closing periods), a staging folder it cannot remove logged. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
   reading, never resource names guessed): a service that reads a connection string (`AspireSource.ConnectionUses`, the one
   reading of them, a compose file's check's too: GetConnectionString's or a client integration's connectionName constant,
   a `ConnectionStrings:` key) or service its AppHost never gives
@@ -1080,10 +1099,12 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Telemetry` (#405): a run's structured logs and traces, one implementation for every kind of run.
   `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
-  services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either. `TelemetryView` is the
+  services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either, a read that fails said
+  in the same words by the view and an agent's `telemetry`, as the dashboard's failure, never Passenger's
+  (`TelemetrySource.Unread`, `NoDashboard`). `TelemetryView` is the
   one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
-  the other page streams them), streaming only the page its host shows: the Aspire window's Structured logs and Traces
-  pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, the two pages under tabs of their own), shown for
+  the other page streams them), streaming only the page its host shows: the Aspire and Containers windows' Telemetry tab
+  (`TelemetryView.Both`, the two pages under tabs of their own, `ShowPage` choosing one), the Containers window's shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
   records alone (`TelemetrySource.Of`), there because the Containers window is where a run's services are chosen and
   their logs read already, where the Run window shows one console and chooses no service. An agent's `telemetry` (not
@@ -1312,7 +1333,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `display-name` properties; `ToolWindows/TestFramesStrip` shows every picture attachment over the details, and
   `FrameViewer` shows one at its size with zoom.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups (Go to File scores every file on every key on the
-  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order),
+  UI thread, so `FuzzyMatch` allocates nothing and first rejects a name without the query's letters in order, and
+  `FileIndex.Search` keeps only the best as it goes, never sorting every match; completion's `Shown` does the same),
   `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
   `RecentLocationsPopup`; `Navigator` records the places visited and edited. Base and Derived Symbols use the

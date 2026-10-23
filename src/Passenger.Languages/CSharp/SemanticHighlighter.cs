@@ -126,9 +126,18 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
 
     private void OnSyntaxChanged(object? sender, EventArgs e) => Changed?.Invoke(this, EventArgs.Empty);
 
+    /// <summary>How many changes the colours shown are carried through to the text as it stands, each range drawn going
+    /// through each: a run of typing in one place is one, however long the server takes to answer.</summary>
+    public int Carrying => history.Count;
+
     private void OnTextChanged(object? sender, DocumentChangedEventArgs e)
     {
-        history.Add((e.Version, e.Edits));
+        // The change before is joined only when no tokens shown, nor the request out, are of the text it made.
+        if (history.Count == 0 || whole?.Version == history[^1].Version || screen?.Version == history[^1].Version || askedFor == history[^1].Version
+            || !CarriedSpans.Join(history, e.Version, e.Edits))
+        {
+            history.Add((e.Version, e.Edits));
+        }
         Request(Settle);
         Forget();
     }

@@ -170,6 +170,12 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             app.Choose(((IRunService)service).Name, debugging);
             return;
         }
+        // One its run left unstarted, as its configuration says Don't start: its next start is held as now chosen.
+        if (app.UnstartedName(selection.Resource) is { } unstarted)
+        {
+            app.Choose(unstarted, debugging);
+            return;
+        }
         if (selection.Resource.State is not ("NotStarted" or "Exited" or "Finished" or "FailedToStart")
             || selection.Resource.Uid is not { Length: > 0 } uid
             || !app.OwnedResourceIdentities.TryGetValue(uid, out var remembered) || remembered is not { } identity
@@ -303,7 +309,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             {
                 await StopAppAsync(app);
             }
-            return error is OperationCanceledException ? "Starting the Aspire application was stopped" : error.Message;
+            return error is OperationCanceledException ? BuildRunController.StoppedStarting(configuration.Name) : error.Message;
         }
         finally
         {
@@ -758,7 +764,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         catch (Exception error) when (profiling)
         {
-            app.ProfileStarted.TrySetResult(error is OperationCanceledException ? "Its start was stopped" : error.Message);
+            app.ProfileStarted.TrySetResult(error is OperationCanceledException ? BuildRunController.StoppedStarting(app.Name) : error.Message);
             throw;
         }
     }
@@ -1400,8 +1406,11 @@ public sealed class AspireAppRun : ServiceRun
     /// <summary>Whether a resource is a service the run left unstarted, as its configuration says Don't start: DCP's
     /// FailedToStart for the start the run refused, by the service's name (its display name, or the resource's name with
     /// DCP's suffix).</summary>
-    public bool IsLeftUnstarted(AspireResource resource) => resource.State == "FailedToStart" && unstarted.Any(name =>
-        resource.Name == name || resource.DisplayName == name || resource.Name.StartsWith(name + "-", StringComparison.Ordinal));
+    public bool IsLeftUnstarted(AspireResource resource) => UnstartedName(resource) is not null;
+
+    /// <summary>The name of the service a resource is that the run left unstarted (<see cref="IsLeftUnstarted"/>), or null.</summary>
+    public string? UnstartedName(AspireResource resource) => resource.State == "FailedToStart" ? unstarted.FirstOrDefault(name =>
+        resource.Name == name || resource.DisplayName == name || resource.Name.StartsWith(name + "-", StringComparison.Ordinal)) : null;
 
     /// <summary>A resource's state as Passenger says it, the window's rows and Details and an agent's answers alike:
     /// <see cref="NotStarted"/> for one the run left unstarted, else DCP's own.</summary>

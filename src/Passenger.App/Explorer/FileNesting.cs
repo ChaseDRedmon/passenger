@@ -183,24 +183,34 @@ public static partial class FileNesting
     }
 
     /// <summary>The files shown under one, where it is on disk now, by name.</summary>
-    public static IReadOnlyList<string> DependentsOf(string path, ProjectModel? project, bool byName)
+    public static IReadOnlyList<string> DependentsOf(string path, ProjectModel? project, bool byName) =>
+        DependentsOf([(path, project)], byName).GetValueOrDefault(path) ?? [];
+
+    /// <summary>The files shown under each of several (each with its project), by the path given: each folder they are in
+    /// listed and nested once, so files chosen together in a folder of thousands cost the folder once, not once each.</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> DependentsOf(IReadOnlyCollection<(string Path, ProjectModel? Project)> files, bool byName)
     {
-        string? folder = Path.GetDirectoryName(path);
-        if (folder is null || !File.Exists(path))
+        Dictionary<string, IReadOnlyList<string>> found = new(StringComparer.Ordinal);
+        foreach (IGrouping<(string Folder, ProjectModel? Project), (string Path, ProjectModel? Project)> together in files
+            .Where(f => Path.GetDirectoryName(f.Path) is not null && File.Exists(f.Path))
+            .GroupBy(f => (Path.GetDirectoryName(f.Path)!, f.Project)))
         {
-            return [];
+            List<string> listed;
+            try
+            {
+                listed = [.. Directory.EnumerateFiles(together.Key.Folder).Select(PathNames.Canonical)];
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            ILookup<string, string> under = Parents(listed, together.Key.Project, byName).ToLookup(p => p.Value, p => p.Key, StringComparer.Ordinal);
+            foreach ((string path, _) in together)
+            {
+                found[path] = [.. under[PathNames.Canonical(path)].Order(StringComparer.OrdinalIgnoreCase)];
+            }
         }
-        List<string> files;
-        try
-        {
-            files = [.. Directory.EnumerateFiles(folder).Select(PathNames.Canonical)];
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return [];
-        }
-        string parent = PathNames.Canonical(path);
-        return [.. Parents(files, project, byName).Where(p => p.Value == parent).Select(p => p.Key).Order(StringComparer.OrdinalIgnoreCase)];
+        return found;
     }
 
     /// <summary>A dependent's name once its parent is renamed: the part named after the parent (its name without its

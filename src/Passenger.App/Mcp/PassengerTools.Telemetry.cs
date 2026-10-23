@@ -24,12 +24,20 @@ public sealed partial class PassengerTools
         (ServiceRun run, TelemetrySource? source, string? filter) = await TelemetryOfAsync(current, appHost, resource, cancel);
         if (source is null)
         {
-            throw new InvalidOperationException($"{run.Name}'s dashboard is unavailable");
+            throw new InvalidOperationException(TelemetrySource.NoDashboard(run.Name));
         }
-        IReadOnlyList<AspireStructuredLog> logs = kind == "logs"
-            ? await AspireTelemetry.ReadLogsAsync(source.Endpoint, source.ApiKey, filter, traceId, limit, cancel) : [];
-        IReadOnlyList<AspireTrace> traces = kind == "traces"
-            ? await AspireTelemetry.ReadTracesAsync(source.Endpoint, source.ApiKey, filter, traceId, limit, cancel) : [];
+        IReadOnlyList<AspireStructuredLog> logs;
+        IReadOnlyList<AspireTrace> traces;
+        try
+        {
+            logs = kind == "logs" ? await AspireTelemetry.ReadLogsAsync(source.Endpoint, source.ApiKey, filter, traceId, limit, cancel) : [];
+            traces = kind == "traces" ? await AspireTelemetry.ReadTracesAsync(source.Endpoint, source.ApiKey, filter, traceId, limit, cancel) : [];
+        }
+        catch (Exception unread) when (TelemetrySource.Said(unread) && !cancel.IsCancellationRequested)
+        {
+            // What the dashboard answered or failed to, said as the Telemetry view says it, never reported as Passenger's fault.
+            throw new InvalidOperationException($"{run.Name}: {source.Unread(unread)}", unread);
+        }
         if (Session != current || current.IsEnded || run.IsStopped)
         {
             throw new InvalidOperationException("The workspace or its run changed");
@@ -73,9 +81,13 @@ public sealed partial class PassengerTools
             : throw new InvalidOperationException(containers is not null && path is null
                 ? $"Name the run: appHost, or resource (a service of {containers.Name} or an AppHost's); workspace lists them"
                 : "Name one owned AppHost by appHost or a unique resource; workspace lists targets");
-        if (Session != current || current.IsEnded || app.Telemetry is null)
+        if (Session != current || current.IsEnded)
         {
-            throw new InvalidOperationException("The owned AppHost's Dashboard is unavailable");
+            throw new InvalidOperationException("The workspace or its run changed");
+        }
+        if (app.Telemetry is null)
+        {
+            throw new InvalidOperationException(TelemetrySource.NoDashboard(app.Name));
         }
         return (app, app.Telemetry, selected?.Resource.Name);
     }

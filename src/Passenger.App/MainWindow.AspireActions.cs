@@ -1,4 +1,5 @@
 using Passenger.App.Aspire;
+using Passenger.App.ToolWindows;
 using A = Passenger.App.AppActions;
 
 namespace Passenger.App;
@@ -18,10 +19,8 @@ public partial class MainWindow
             _ = WorkingAsync(A.AspireRefresh, "Refreshing resources", () => Aspire.RequestRefreshAsync());
         },
             _ => Aspire.SelectedApp is null ? "No Aspire AppHost is selected" : null);
-        AddService(A.AspireDebug, "Debug Aspire Resource", selected => DebugAspireResourceAsync(selected.AppHostPath, selected.Resource.Name));
-        AddService(A.AspireAttach, "Attach to Aspire Resource", selected => DebugAspireResourceAsync(selected.AppHostPath, selected.Resource.Name, attach: true));
-        AddService(A.AspireRun, "Run Aspire Resource Without Debugger", selected => RestartAspireServiceAsync(session, selected, debugging: false));
-        AddService(A.AspireProfile, "Profile Aspire Resource", selected => ProfileAspireResourceAsync(selected.AppHostPath, selected.Resource.Name));
+        // A resource's Debug, Attach, Run without Debugger and Profile are the service actions every run of services has
+        // (AddServiceActions), which act on the Aspire window's resource chosen too.
         Add(A.AspireCommand, "Run Aspire Resource Command…", "Aspire", context =>
         {
             if (Aspire.TakePendingCommand() is { } command)
@@ -33,7 +32,7 @@ public partial class MainWindow
                 Aspire.ShowCommandChoices();
             }
         }, NeedsAspireResource);
-        Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage("Console"); Aspire.OpenFind(); });
+        Add(A.AspireLogFind, "Find in Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowPage(RunWindows.LogTab); Aspire.OpenFind(); });
         Add(A.AspireShowTrace, "Show Aspire Log Trace", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowSelectedTrace(); },
             _ => Aspire.Telemetry.SelectedLog is { TraceId.Length: > 0 } ? null : "No log with a trace is selected");
         Add(A.AspireShowRelatedLogs, "Show Related Aspire Logs", "Aspire", _ => { ShowToolWindow(ToolWindowIds.Aspire); Aspire.ShowRelatedLogs(); },
@@ -41,12 +40,29 @@ public partial class MainWindow
         foreach (string page in AspireView.Pages)
         {
             // Details is the chosen resource's, beside every resource listed: shown as the window's resources are asked for.
+            // Each is found by the name its tab had before the windows shared one vocabulary too.
             string id = AspireView.PageAction(page);
             Add(id, id == A.AspireResources ? "Show Aspire Resources" : $"Show Aspire {page}", "Aspire", _ =>
             {
                 ShowToolWindow(ToolWindowIds.Aspire);
                 Aspire.ShowPage(page);
-            }, words: id == A.AspireResources ? ["Show Aspire Details"] : null);
+            }, words: id switch
+            {
+                A.AspireResources => ["Show Aspire Details"],
+                A.AspireConsole => ["Show Aspire Console"],
+                A.AspireAppHostConsole => ["Show Aspire AppHost console"],
+                _ => null,
+            });
+        }
+        // The Telemetry tab's two pages, as a log's trace and a span's logs choose them.
+        foreach ((string id, string title, Passenger.App.Telemetry.TelemetryPage page) in (ReadOnlySpan<(string, string, Passenger.App.Telemetry.TelemetryPage)>)[
+            (A.AspireLogs, "Show Aspire Structured logs", Passenger.App.Telemetry.TelemetryPage.Logs), (A.AspireTraces, "Show Aspire Traces", Passenger.App.Telemetry.TelemetryPage.Traces)])
+        {
+            Add(id, title, "Aspire", _ =>
+            {
+                ShowToolWindow(ToolWindowIds.Aspire);
+                Aspire.ShowTelemetry(page);
+            });
         }
         Add(A.AspireOpenLink, "Open Aspire Resource Endpoint", "Aspire", _ =>
         {
@@ -69,21 +85,6 @@ public partial class MainWindow
             }
         }, _ => Aspire.SelectedContainerId is null ? "No container resource is selected"
             : Aspire.SelectContainer is null ? "Container selection is unavailable" : null);
-
-        void AddService(string id, string title, Func<AspireSelection, Task<string?>> run) =>
-            Add(id, title, "Aspire", context =>
-            {
-                if (Aspire.Selection is { } selected)
-                {
-                    _ = WorkingAsync(id, title, async () =>
-                    {
-                        if (await run(selected) is { } why)
-                        {
-                            status.Text = why;
-                        }
-                    });
-                }
-            }, NeedsAspireResource);
     }
 
     private string? NeedsAspireResource(ActionContext _) => Aspire.Selection is null ? "No Aspire resource is selected" : null;

@@ -60,8 +60,10 @@ public partial class MainWindow
         });
         actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(Chosen()!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
 
-        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title));
+        AddServiceActions();
+        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title, RowMenuItem));
         containersView = view;
+        view.RowChosen += (_, _) => lastServiceWindow = ToolWindowIds.Containers;
         // An AppHost's containers under it, as its run's resources name them (the folder's AppHosts that run now).
         view.AppHostOf = container => session is { IsEnded: false } current
             && current.Aspire.Apps.FirstOrDefault(app => app.KnownContainerIds.Any(id => ContainerRow.SameId(id, container.Id))) is { } run
@@ -82,7 +84,6 @@ public partial class MainWindow
             Chosen = () => view.Chosen,
         });
         ActionButtons.ShowMarked(view, actions);
-        AddServiceActions(view);
     }
 
     /// <summary>The window's folder opened: when it holds a Compose file or a Dockerfile, the engine is asked once, off the

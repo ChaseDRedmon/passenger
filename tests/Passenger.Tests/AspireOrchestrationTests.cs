@@ -29,7 +29,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         MainWindow window = Open();
         Dictionary<string, byte[]> before = Snapshot();
         string beforeProgram = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
-        Assert.Equal("Added Aspire orchestration.", Add(window, "Api", existing: false));
+        Assert.Equal("Added Aspire orchestration", Add(window, "Api", existing: false));
         string hostProject = project.PathOf("Shop.AppHost/Shop.AppHost.csproj");
         string defaultsProject = project.PathOf("Shop.ServiceDefaults/Shop.ServiceDefaults.csproj");
         Assert.True(File.Exists(hostProject), "Add Aspire Orchestration did not create an AppHost project");
@@ -79,7 +79,7 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
         window.Confirm = (_, _, _) => Task.FromResult(true);
         Ui.WaitFor(() => window.WorkspaceModel!.Projects.Any(p => p.Name == "Plain" && p.Packages.Any(q => q.Name == "Npgsql")), "Plain's packages to be evaluated");
         Dictionary<string, byte[]> before = Snapshot();
-        Assert.Equal("Added Aspire orchestration.", Add(window, "Plain", existing: true));
+        Assert.Equal("Added Aspire orchestration", Add(window, "Plain", existing: true));
         string host = File.ReadAllText(project.PathOf("Host/Program.cs"));
         foreach (string line in new[]
         {
@@ -108,14 +108,14 @@ public sealed class AspireOrchestrationTests : IClassFixture<AspireOrchestration
     public void Reordered_named_AddProject_arguments_do_not_add_the_same_resource_twice()
     {
         MainWindow window = Open();
-        Assert.Equal("Added Aspire orchestration.", Add(window, "Api", existing: true));
+        Assert.Equal("Added Aspire orchestration", Add(window, "Api", existing: true));
         string host = File.ReadAllText(project.PathOf("Host/Program.cs"));
         Assert.Contains("AddProject(projectPath: \"../Api/Api.csproj\", name: \"api\")", host, StringComparison.Ordinal);
         Assert.Equal(1, host.Split("AddProject", StringSplitOptions.None).Length - 1);
         Assert.Contains("Defaults", File.ReadAllText(project.PathOf("Api/Api.csproj")), StringComparison.Ordinal);
         Assert.Contains("MapDefaultEndpoints()", File.ReadAllText(project.PathOf("Api/Program.cs")), StringComparison.Ordinal);
         Dictionary<string, byte[]> configured = Snapshot();
-        Assert.Equal("Aspire orchestration is already configured.", Add(window, "Api", existing: true));
+        Assert.Equal("Aspire orchestration is already configured", Add(window, "Api", existing: true));
         AssertSnapshot(configured);
         window.Close();
     }

@@ -16,7 +16,7 @@ public partial class MainWindow
     {
         if (Solution is not { } solution)
         {
-            status.Text = "Open a solution before adding Aspire orchestration.";
+            status.Text = Refusals.NoSolution;
             return null;
         }
         AspireOrchestrationDialog dialog = new(solution.Name, session.Workspace?.Projects ?? []);
@@ -26,7 +26,7 @@ public partial class MainWindow
             if (Solution == solution)
             {
                 ShowNewProject(null);
-                status.Text = "Select Aspire in New Project and install Aspire.ProjectTemplates, then return to Add Aspire Orchestration.";
+                status.Text = "Choose Aspire in New Project and install Aspire.ProjectTemplates, then Add Aspire Orchestration again";
             }
         };
         AspireOrchestrationResult = ApplyAsync();
@@ -60,11 +60,11 @@ public partial class MainWindow
                 cancel.Token.ThrowIfCancellationRequested();
                 if (Solution != solution)
                 {
-                    return status.Text = "The solution changed. Aspire orchestration was not added.";
+                    return status.Text = "The solution changed: Aspire orchestration was not added";
                 }
                 if (existing.Any(path => Editors.Documents.Any(d => PathNames.Same(d.Path, path) && d.IsModified)))
                 {
-                    throw new InvalidOperationException("A file was edited while orchestration was being prepared. Save it and try again.");
+                    throw new InvalidOperationException("A file was edited while orchestration was being prepared: save it and try again");
                 }
                 AspireOrchestration.CheckUnchanged(writes);
                 using (CommandHistory.Recording recording = Editors.Commands.Record("Add Aspire Orchestration"))
@@ -87,17 +87,17 @@ public partial class MainWindow
                     }
                 }
                 ReloadSolution();
-                return status.Text = writes.Count == 0 ? "Aspire orchestration is already configured." : "Added Aspire orchestration.";
+                return status.Text = writes.Count == 0 ? "Aspire orchestration is already configured" : "Added Aspire orchestration";
             }
             catch (OperationCanceledException)
             {
-                return status.Text = "Adding Aspire orchestration was cancelled.";
+                return status.Text = "Adding Aspire orchestration was canceled";
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or System.Xml.XmlException)
             {
                 FollowWritten(writes.Select(w => w.Path));
                 ReloadSolution();
-                return status.Text = $"Could not add Aspire orchestration: {error.Message} Any written changes are recorded under Undo Add Aspire Orchestration.";
+                return status.Text = $"Could not add Aspire orchestration: {error.Message}; Undo Add Aspire Orchestration takes back any change written";
             }
             finally
             {
@@ -128,7 +128,7 @@ public partial class MainWindow
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // Staging lives under the window's state, never under the person's solution.
-            System.Diagnostics.Trace.WriteLine($"Aspire staging cleanup failed: {error.Message}");
+            IdeLog.Write(IdeLog.Ide, $"Add Aspire Orchestration could not remove its staging folder {staging}: {error.Message}");
         }
     }
 }

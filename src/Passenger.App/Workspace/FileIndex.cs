@@ -71,19 +71,55 @@ public sealed class FileIndex
         IsWalking = false;
     }
 
-    /// <summary>The best matches for a query, best first, as relative paths.</summary>
+    /// <summary>The best matches for a query, best first (the highest score, then the shortest path, then by name), as
+    /// relative paths. Only the best <paramref name="limit"/> are kept as the files are scored, the worst of them first in
+    /// line to go: a first letter matches most of a large folder, whose tens of thousands of matches were all sorted.</summary>
     public IReadOnlyList<string> Search(string query, int limit = 60)
     {
         string trimmed = query.Trim();
-        return files
-            .Select(path => (path, score: FuzzyMatch.Score(trimmed, path)))
-            .Where(x => x.score is not null)
-            .OrderByDescending(x => x.score)
-            .ThenBy(x => x.path.Length)
-            .ThenBy(x => x.path, StringComparer.OrdinalIgnoreCase)
-            .Take(limit)
-            .Select(x => x.path)
-            .ToList();
+        if (limit <= 0)
+        {
+            return [];
+        }
+        PriorityQueue<string, (int Score, string Path)> best = new(limit + 1, WorstFirst.Instance);
+        foreach (string path in files)
+        {
+            if (FuzzyMatch.Score(trimmed, path) is not { } score)
+            {
+                continue;
+            }
+            if (best.Count < limit)
+            {
+                best.Enqueue(path, (score, path));
+            }
+            else if (best.TryPeek(out _, out (int Score, string Path) worst) && WorstFirst.Instance.Compare((score, path), worst) > 0)
+            {
+                best.DequeueEnqueue(path, (score, path));
+            }
+        }
+        string[] found = new string[best.Count];
+        for (int i = found.Length - 1; i >= 0; i--)
+        {
+            found[i] = best.Dequeue();
+        }
+        return found;
+    }
+
+    /// <summary>Matches in the order they go from a list of the best: a lower score, then a longer path, then later by name.</summary>
+    private sealed class WorstFirst : IComparer<(int Score, string Path)>
+    {
+        public static readonly WorstFirst Instance = new();
+
+        public int Compare((int Score, string Path) x, (int Score, string Path) y)
+        {
+            int byScore = x.Score.CompareTo(y.Score);
+            if (byScore != 0)
+            {
+                return byScore;
+            }
+            int byLength = y.Path.Length.CompareTo(x.Path.Length);
+            return byLength != 0 ? byLength : StringComparer.OrdinalIgnoreCase.Compare(y.Path, x.Path);
+        }
     }
 
     /// <summary>The files under a folder, by their paths from it, left out and limited as the index's are: what Find in

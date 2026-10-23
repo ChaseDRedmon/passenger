@@ -158,6 +158,47 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         Assert.True(seen >= 5, $"Only {seen} tool window tabs were found in Problems, Git, Debug, the Terminal and Aspire");
     }
 
+    /// <summary>The two windows that list a run's services, Containers and Aspire, have one layout (#409): their tabs are of one
+    /// vocabulary in one order, Log first and shown at first, and their toolbars' service actions are one group in one order
+    /// right after their Refresh, as their rows' menus begin with them, where the Aspire window's tabs said Console, Structured
+    /// logs and Traces, it opened on Details, and the Containers window's toolbar had no service actions.</summary>
+    [AvaloniaFact]
+    public void The_Containers_and_Aspire_windows_share_their_tabs_order_and_their_toolbars_service_group()
+    {
+        MainWindow window = Open(1200, 800);
+        try
+        {
+            string[] services = [.. Passenger.App.ToolWindows.RunWindows.ServiceActions.Select(service => service.Action)];
+            foreach ((string action, Control view, string refresh) in (ReadOnlySpan<(string, Control, string)>)[
+                (AppActions.ShowContainers, window.ContainersWindow, AppActions.ContainersRefresh), (AppActions.ShowAspire, window.Aspire, AppActions.AspireRefresh)])
+            {
+                Assert.True(window.Perform(action), $"{action} did not run");
+                Ui.Settle();
+                // Every tab the window has, those its chosen row does not show too.
+                ToggleButton[] tabs = [.. view.GetVisualDescendants().OfType<ToggleButton>().Where(tab => tab.Classes.Contains("panelTab")
+                    && Passenger.App.ToolWindows.RunWindows.Tabs.Contains(TabName(tab)))];
+                string[] names = [.. tabs.Select(TabName)];
+                Assert.True(names.Length >= 3, $"{action}'s window has only the tabs [{string.Join(", ", names)}]");
+                Assert.Equal([.. Passenger.App.ToolWindows.RunWindows.Tabs.Where(names.Contains)], names);
+                Assert.True(names[0] == "Log" && tabs[0].IsChecked == true, $"{action}'s window opens on {names.FirstOrDefault(n => tabs[Array.IndexOf(names, n)].IsChecked == true)}, where both open on Log");
+                string[] toolbar = [.. view.GetVisualDescendants().OfType<Button>().Where(button => button.Classes.Contains("tool") && ActionButtons.GetAction(button) is not null)
+                    .Select(button => ActionButtons.GetAction(button)!)];
+                int at = Array.IndexOf(toolbar, refresh) + 1;
+                Assert.True(at > 0 && toolbar.Skip(at).Take(services.Length).SequenceEqual(services),
+                    $"{action}'s toolbar is [{string.Join(", ", toolbar)}], where both have the service actions [{string.Join(", ", services)}] right after their Refresh");
+                foreach (string service in services)
+                {
+                    Button button = view.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("tool") && ActionButtons.GetAction(b) == service);
+                    Assert.Equal(window.Actions[service]!.Title, ActionTips.Of(button) ?? ToolTip.GetTip(button) as string);
+                }
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void Every_popup_takes_a_width_of_the_scale_one_title_size_and_rows_of_one_height()
     {
@@ -1414,6 +1455,9 @@ public sealed class UiRulesTests : IClassFixture<UiRulesTests.Project>
         window.DockHost.GetVisualDescendants().Where(v => v.IsEffectivelyVisible && !window.EditorArea.IsVisualAncestorOf(v) && v != window.EditorArea);
 
     private static string Words(ToggleButton tab) => string.Join(" ", tab.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text));
+
+    /// <summary>A tab's name, read from what it shows whether it is shown now or not (a hidden one has no template applied).</summary>
+    private static string TabName(ToggleButton tab) => tab.Content is TextBlock { Text: { } text } ? text : tab.Content as string ?? string.Empty;
 
     private static Color Brush(MainWindow window, string key) =>
         window.TryFindResource(key, window.ActualThemeVariant, out object? found) && found is ISolidColorBrush brush ? brush.Color : default;

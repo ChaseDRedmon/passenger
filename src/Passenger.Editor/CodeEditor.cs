@@ -134,10 +134,15 @@ public sealed partial class CodeEditor : Control
     /// <summary>The furthest any marker up to each reaches, so a line finds its first marker by halving.</summary>
     private int[] markerReach = [];
 
+    /// <summary>Sets the markers, taken as given when they are in order already, as a host carrying them through a key gives
+    /// them: thousands sorted again at every key cost it.</summary>
     public void SetMarkers(IReadOnlyList<Marker> markers)
     {
-        Markers = [.. markers.OrderBy(m => m.Range.Start)];
-        markerReach = new int[Markers.Count];
+        Markers = MarkersInOrder(markers) ? markers : [.. markers.OrderBy(m => m.Range.Start)];
+        if (markerReach.Length != Markers.Count)
+        {
+            markerReach = new int[Markers.Count];
+        }
         for (int i = 0; i < Markers.Count; i++)
         {
             markerReach[i] = Math.Max(i > 0 ? markerReach[i - 1] : 0, Markers[i].Range.End);
@@ -146,6 +151,18 @@ public sealed partial class CodeEditor : Control
         counts.InvalidateMeasure();
         InvalidateArrange();
         InvalidateVisual();
+    }
+
+    private static bool MarkersInOrder(IReadOnlyList<Marker> markers)
+    {
+        for (int i = 1; i < markers.Count; i++)
+        {
+            if (markers[i].Range.Start < markers[i - 1].Range.Start)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>The marks in the gutter (breakpoints, the execution point), from the host.</summary>
@@ -410,6 +427,7 @@ public sealed partial class CodeEditor : Control
             document = value;
             document.ChangedFirst += FollowWraps;
             document.Changed += OnDocumentChanged;
+            lineShape++;
             // A template's places, a composition, a GoTo waiting for layout and the folds are offsets in the text left behind.
             snippet = null;
             CancelChoices();
@@ -762,6 +780,7 @@ public sealed partial class CodeEditor : Control
 
     private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
+        FollowLineShape(e);
         FollowSnippet(e.Edits);
         // What was offered to choose among is the text left behind.
         CancelChoices();
