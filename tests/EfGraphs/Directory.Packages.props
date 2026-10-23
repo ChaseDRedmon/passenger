@@ -1,0 +1,4 @@
+<Project>
+  <!-- The repo's own versions, whose tests' section pins EF Core's. -->
+  <Import Project="../../Directory.Packages.props" />
+</Project>

@@ -129,6 +129,8 @@ ICONS = [
     ("Aspire", "Cube Tree", "20_regular"),
     # Attach to a service as it runs: the debugger plugged in, beside Detach's plug unplugged.
     ("Attach", "Plug Connected", "20_regular"),
+    # The Migrations window's stripe button: a database, whose migrations it lists and applies.
+    ("Database", "Database", "20_regular"),
 ]
 
 

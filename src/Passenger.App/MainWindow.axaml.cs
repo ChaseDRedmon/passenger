@@ -87,6 +87,7 @@ public partial class MainWindow : Window
         AddEndpoints();
         AddRoutes();
         AddRequests();
+        AddMigrations();
         AddContainers();
         AddRunMarks();
         AddPlaces();

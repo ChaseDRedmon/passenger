@@ -70,6 +70,16 @@
     <ProjectReference Include="../AspireGraphs/ApiService/AspireGraphs.ApiService.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <!-- The package graph of the EF Core projects the Migrations window's tests write (tests/EfGraphs), and the dotnet-ef
+       tool at EF Core's version and the one before, in the package cache before they run, copied into the run's local
+       feed from there (MigrationsTests). -->
+  <ItemGroup>
+    <ProjectReference Include="../EfGraphs/Sqlite/EfGraphs.Sqlite.csproj" ReferenceOutputAssembly="false" />
+    <PackageDownload Include="dotnet-ef" Version="[$(EfCoreVersion)];[$(EfToolOlderVersion)]" />
+    <AssemblyMetadata Include="EfCoreVersion" Value="$(EfCoreVersion)" />
+    <AssemblyMetadata Include="EfToolOlderVersion" Value="$(EfToolOlderVersion)" />
+  </ItemGroup>
+
   <!-- VSTest's SDK and xunit's adapter at the versions this project restores, for the VSTest project TestFramesTests make
        (HeadlessTestsFolder): the run's feed holds neither, so its restore finds them only in the package cache. -->
   <ItemGroup>
