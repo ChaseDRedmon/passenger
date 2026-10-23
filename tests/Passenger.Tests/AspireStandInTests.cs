@@ -488,6 +488,69 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
     }
 
+    /// <summary>Profile of an AppHost the window runs asks which of its running .NET services to profile, in a dialog held to
+    /// the dialogs' rules: the stand-in AppHost's service started by the IDE as DCP asks it to (the execution protocol, with
+    /// the endpoint and token the IDE gave the AppHost), listed by its resource; Cancel starts no profile.</summary>
+    [AvaloniaFact]
+    public void Profile_of_a_running_AppHost_asks_which_service_in_a_dialog_held_to_the_dialogs_rules()
+    {
+        project.Reset();
+        ChildResult built = Ui.Await(ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["build", project.ApiProject, "-nologo", "-v:q"]),
+            limit: TimeSpan.FromMinutes(3).Scaled()), "the stand-in API's build");
+        Assert.True(built.Succeeded, $"The stand-in API did not build: {built.Output}{built.Error}");
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            // As DCP starts a project resource: a run session asked of the IDE's execution endpoint.
+            string[] session = File.ReadAllText(project.SessionFile).Split('\n', 3);
+            using JsonDocument info = JsonDocument.Parse(session[2]);
+            string version = info.RootElement.GetProperty("protocols_supported")[0].GetString()!;
+            const string Instance = "standin-tests-abcdefghijkl";
+            // DCP subscribes to the sessions' notifications before it asks for one.
+            using System.Net.WebSockets.ClientWebSocket notified = new();
+            notified.Options.SetRequestHeader("Authorization", "Bearer " + session[1]);
+            notified.Options.SetRequestHeader("Microsoft-Developer-DCP-Instance-ID", Instance);
+            Ui.Await(Complete(notified.ConnectAsync(new Uri($"ws://{session[0]}/run_session/notify?api-version={version}"), CancellationToken.None)),
+                "the subscription to the sessions' notifications");
+            using HttpClient http = new();
+            using HttpRequestMessage start = new(HttpMethod.Put, $"http://{session[0]}/run_session?api-version={version}")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    launch_configurations = new[] { new { type = "project", project_path = project.ApiProject, mode = "NoDebug" } },
+                    env = new[] { new { name = "OTEL_SERVICE_NAME", value = "apiservice" } },
+                    args = Array.Empty<string>(),
+                }), System.Text.Encoding.UTF8, "application/json"),
+            };
+            start.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", session[1]);
+            start.Headers.Add("Microsoft-Developer-DCP-Instance-ID", Instance);
+            using HttpResponseMessage started = Ui.Await(http.SendAsync(start), "the IDE's answer to the run session");
+            Assert.True(started.IsSuccessStatusCode, $"The IDE refused the run session: {started.StatusCode}");
+            Ui.WaitFor(() => window.AspireRuntime.Apps.Single().Services.Any(service => service.ProcessId is > 0), "the API started as DCP asked");
+            backend.PushResource(new Resource
+            {
+                Name = "apiservice", DisplayName = "apiservice", Uid = "api", ResourceType = "Project", State = "Running",
+                Properties = { new ResourceProperty { Name = "project.path", Value = Google.Protobuf.WellKnownTypes.Value.ForString(PathNames.Canonical(project.ApiProject)) } },
+            });
+            Ui.WaitFor(() => window.Aspire.ResourceSnapshots.Any(resource => resource.Name == "apiservice"), "the API's resource");
+
+            Assert.True(window.Perform(AppActions.Profile), "Profile did not run");
+            Ui.PumpUntil(() => window.OwnedWindows.OfType<AspireServiceDialog>().Any(dialog => dialog.IsVisible), "the question which service to profile");
+            AspireServiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<AspireServiceDialog>().Single());
+            Assert.Equal(["apiservice"], asked.Services.Items.OfType<AspireSelection>().Select(selection => selection.Resource.Name));
+            Ui.ClickButton(asked, "Cancel");
+            Ui.WaitFor(() => !asked.IsVisible, "Cancel to close the question");
+            Assert.Contains("Profiling was canceled", window.Status, StringComparison.Ordinal);
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>A resource's row as the Aspire window shows it, scrolled into view.</summary>
     internal static Control Row(MainWindow window, string name) => Ui.Row(window.Aspire.ResourceList, window.Aspire.ItemOf(name)
         ?? throw new Xunit.Sdk.XunitException($"The Aspire window lists no {name}, only {string.Join(", ", window.Aspire.Rows.Select(row => row.Resource.Name))}"));
@@ -1067,6 +1130,7 @@ public sealed class StandInAppHost : SharedProject
             string keyFile = Environment.GetEnvironmentVariable("PASSENGER_STAND_IN_KEY")!;
             File.WriteAllText(keyFile + ".urls", $"{Environment.GetEnvironmentVariable("ASPNETCORE_URLS")}\n{Environment.GetEnvironmentVariable("ASPIRE_ALLOW_UNSECURED_TRANSPORT")}");
             File.WriteAllText(keyFile + ".dashboard", Environment.GetEnvironmentVariable("AppHost__DashboardApiKey"));
+            File.WriteAllText(keyFile + ".session", $"{Environment.GetEnvironmentVariable("DEBUG_SESSION_PORT")}\n{Environment.GetEnvironmentVariable("DEBUG_SESSION_TOKEN")}\n{Environment.GetEnvironmentVariable("DEBUG_SESSION_INFO")}");
             File.WriteAllText(keyFile + ".part", Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_RESOURCESERVICE_APIKEY"));
             File.Move(keyFile + ".part", keyFile, overwrite: true);
             Console.WriteLine("The stand-in AppHost is up");
@@ -1074,11 +1138,24 @@ public sealed class StandInAppHost : SharedProject
 
             """);
         TestFolders.Write(Folder, $"{Name}/Properties/launchSettings.json", Profile(null));
-        TestFolders.Write(Folder, "StandIn.slnx", $"<Solution>\n  <Project Path=\"{Name}/{Name}.csproj\" />\n</Solution>\n");
+        TestFolders.Write(Folder, $"{Api}/{Api}.csproj", TestProjects.Console());
+        TestFolders.Write(Folder, $"{Api}/Program.cs",
+            "System.Console.WriteLine(\"The stand-in API is up\");\nSystem.Threading.Thread.Sleep(System.Threading.Timeout.Infinite);\n");
+        TestFolders.Write(Folder, "StandIn.slnx", $"<Solution>\n  <Project Path=\"{Name}/{Name}.csproj\" />\n  <Project Path=\"{Api}/{Api}.csproj\" />\n</Solution>\n");
         Prepare();
     }
 
     public string ProjectFile => PathOf($"{Name}/{Name}.csproj");
+
+    /// <summary>A service the stand-in AppHost's orchestrator would start, which a test asks the IDE to start by the execution
+    /// protocol, as DCP does: a console app that says it is up and waits.</summary>
+    public const string Api = "StandIn.Api";
+
+    public string ApiProject => PathOf($"{Api}/{Api}.csproj");
+
+    /// <summary>Where the stand-in AppHost writes, before its key, the IDE's execution endpoint (DEBUG_SESSION_PORT), its token
+    /// and its session's info, a line each, as DCP reads them.</summary>
+    public string SessionFile => KeyFile + ".session";
 
     public string Program => PathOf($"{Name}/Program.cs");
 

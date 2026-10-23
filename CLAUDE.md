@@ -2099,7 +2099,9 @@ runs an AppHost skips saying so (`AspireApp.Unavailable`);
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
 stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key), so its console, resources and
 prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
-(BannedSymbols);
+(BannedSymbols); the stand-in AppHost also writes the IDE's execution endpoint and token (`StandInAppHost.SessionFile`),
+with which a test asks the IDE to start its built service (`StandIn.Api`) as DCP does, by the execution protocol, so its
+Profile asks which service in `AspireServiceDialog`;
 `McpAspireTests` (Alone) has an agent find the Aspire tools and give up on an AppHost's start, which ends its process and
 its execution listener; `AspireExecutionServerTests` speak to the execution server on loopback; `McpAspireStandInTests`
 have an agent run the stand-in AppHost, its telemetry from a stand-in dashboard (`AspireDashboardHost`, the launch profile's
