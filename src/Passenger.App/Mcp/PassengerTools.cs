@@ -674,11 +674,15 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "run_output", Title = "What Run's program wrote", ReadOnly = true), Description(
         "The last lines the program Run runs (or last ran) has written: the Run window's console (under Hot Reload, dotnet " +
-        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire service's own.")]
+        "watch's words too), or a terminal configuration's tab as it shows now. With resource, an Aspire or compose service's own.")]
     public Task<string> RunOutput(int lines = 200, string? resource = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         if (resource is not null)
         {
+            if (await ComposeTargetAsync(resource, null, starts: false, cancel) is { } compose)
+            {
+                return await ComposeLogAsync(Builds.Containers!, compose.Service, lines, cancel);
+            }
             Aspire.AspireSelection target = (await window.ResolveOwnedAspireResourceAsync(resource, null, cancel))!;
             Aspire.AspireResourceRun service = Session.Aspire.FindService(target)
                 ?? throw new InvalidOperationException($"{resource} is no .NET service Passenger runs for its AppHost; telemetry reads its logs");

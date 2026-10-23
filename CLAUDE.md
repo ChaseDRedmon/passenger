@@ -992,7 +992,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
   `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
   (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
-  own console, `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
+  own console (a compose service's log), `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
   `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation) beside the container run, each
   resource in one shape with what reaches its .NET service from here (its container's id too), and `telemetry` reads
@@ -1008,7 +1008,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   records alone (`TelemetrySource.Of`), there because the Containers window is where a run's services are chosen and
   their logs read already, where the Run window shows one console and chooses no service. An agent's `telemetry` (not
   named for Aspire: `PassengerTools.Telemetry.cs`) reads the same: a Compose service of the container run that collects
-  telemetry by its name, an AppHost's resource or AppHost, or the one run there is.
+  telemetry by its name, an AppHost's resource or AppHost, or the one run there is; a container run that collects none,
+  named by a service of it or the only run, is refused saying to turn its configuration's Collect logs and traces on.
   A container run collects telemetry when its configuration's Collect logs and traces is on (Edit Configurations'
   Compose, Dockerfile and SDK container pages, `RunConfiguration.Telemetry`, off by default since its image is pulled
   the first time; the image is never pulled otherwise): `ContainerTelemetry` puts Aspire's standalone dashboard
@@ -1413,7 +1414,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   the live Debug tab debugging it and its state, a quiet Hot Reload session, the profiler's recording). A compose
   `resource` no run has is started with the configuration that has it, the one named, else the chosen one, else the one
   Compose configuration whose model has it (`ComposeTargetAsync`, refused naming them when several do, and for attach and
-  stop refused saying no run has it).
+  stop refused saying no run has it). `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
+  `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
   `McpTests`' actions
   test holds `ide_actions` to every `AppActions` id. `settings`/`settings_set` (`PassengerTools.Ide.cs`) read and change
   the settings by their settings.json names through the window's `ApplySettings`, as the dialog's OK does, a number's
@@ -2157,8 +2159,8 @@ service of that solution's run from the Containers window's rows and the gutter,
 the loopback address alone, kept there and on its port through its restarts), Stop and Remove a debugged one there and
 Restart and Stop the run's project, and Debug one whose tools cannot be found (`ContainerToolsFrom` an empty folder and the
 dead release feed), which then runs on unheld (`McpContainerDebuggingTests`' agent restarts and stops one with `container_action`,
-reads the run in `workspace`, and, a second compose file in Web/ making web two configurations', is refused a start of it
-until one is chosen, then starts web and api alone as resources);
+reads the run in `workspace`, runs a service as a resource and reads its log, and, a second compose file in Web/ making
+web two configurations', is refused a start of it until one is chosen, then starts web and api alone as resources);
 `ContainerRunStopsTests` (Alone) press Stop during its first build and during `up` as held services attach, press Debug as
 Run brings it up and open another folder as Debug does (its cache answering its health check only after 25 s, so `up` waits),
 and `McpContainerDebuggingTests`' agent is refused a run that would replace the person's own cache, stops a run as it

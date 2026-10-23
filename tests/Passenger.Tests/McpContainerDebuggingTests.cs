@@ -95,6 +95,14 @@ public sealed class McpContainerDebuggingTests : McpRig
             JsonElement reattached = await Call(client, "debug_attach", new() { ["resource"] = "web", ["waitSeconds"] = 2 });
             Assert.True(reattached.GetProperty("state").GetString() is "running" or "paused", $"debug_attach of the compose service web answered: {reattached}");
 
+            // run_output reads a compose service's own log; telemetry says what to turn on for a run that collects none.
+            string log = string.Empty;
+            Assert.True(await Waiting.UntilAsync(async () => (log = Text(await Call(client, "run_output", new() { ["resource"] = "web" })))
+                .Contains("Application started", StringComparison.Ordinal), TimeSpan.FromMinutes(1), test), $"run_output of web never had its log: {log}");
+            ModelContextProtocol.Protocol.CallToolResult uncollected = await Result(client, "telemetry");
+            Assert.True(uncollected.IsError == true && Text(uncollected).Contains("Collect logs and traces with Aspire's dashboard", StringComparison.Ordinal),
+                $"telemetry of a run that collects none answered: {Text(uncollected)}");
+
             // Stop through the run: api's session ends before its container goes, which an adapter losing it would make an error.
             Assert.Equal($"{project}/api: stop done", Text(await Call(client, "container_action", new() { ["container"] = $"{project}/api", ["action"] = "stop" })));
             Assert.Equal("exited", ContainerRunsTests.States(project)["api"]);

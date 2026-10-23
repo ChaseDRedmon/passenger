@@ -45,6 +45,13 @@ public sealed partial class PassengerTools
         CancellationToken cancel)
     {
         Containers.ContainerRun? containers = current.ContainerRun is { IsStopped: false, Plan.Telemetry: not null } collecting ? collecting : null;
+        // A container run that collects nothing, named or the only run there is: what to turn on, not Aspire's refusal.
+        if (appHost is null && current.ContainerRun is { IsStopped: false, Plan.Telemetry: null } uncollected
+            && (resource is null && !current.Aspire.Apps.Any(app => !app.IsTest && !app.Stopping) || resource is not null && OfRun(uncollected, resource) is not null))
+        {
+            throw new InvalidOperationException($"{uncollected.Name} collects no logs or traces: turn on its configuration's Collect logs and traces with "
+                + "Aspire's dashboard (Edit Configurations), then run it again");
+        }
         if (appHost is null && containers is not null
             && (resource is null && !current.Aspire.Apps.Any(app => !app.IsTest && !app.Stopping)
                 || resource is not null && !resource.Contains("::", StringComparison.Ordinal)
