@@ -2161,8 +2161,9 @@ Directory.Build.targets that takes them out of its AppHosts' references after th
 runs an AppHost skips saying so (`AspireApp.Unavailable`);
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
-stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key), so its console, resources and
-prompts are the window's as a person's AppHost's are, and nothing swaps the window's own connection or providers
+stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key, recording the commands the
+window runs), so its console, resources, commands and prompts are the window's as a person's AppHost's are (a row's
+address and a command each pressed as an update streams in), and nothing swaps the window's own connection or providers
 (BannedSymbols); the stand-in AppHost also writes the IDE's execution endpoint and token (`StandInAppHost.SessionFile`),
 with which a test asks the IDE to start its built service (`StandIn.Api`) as DCP does, by the execution protocol, so its
 Profile asks which service in `AspireServiceDialog`;

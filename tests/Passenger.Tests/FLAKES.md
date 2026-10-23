@@ -10,6 +10,19 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-22
 
+- `AspireTests`' real AppHost command (`A_real_AppHost_command_observes_confirmation_cancel_and_server_validated_input_from_the_window`),
+  the Ubuntu VM's run of the Aspire classes in #400's rounds three and four (47148ed7 … 20ea86de; it passed alone and in
+  its class): "Waited 90 s for the AppHost's Restart API? prompt" after the test clicked the command's button. The Aspire
+  window drew a resource's commands as buttons in a bar it emptied and filled again (`ShowResource`) at every update the
+  AppHost streamed, which a real AppHost's health checks and logs bring several times a second; the headless platform runs
+  the window's posted work between a press and its release, as a busy machine's does, so an update landing between them
+  took the pressed button out and put it back, its press lost, and the click never fired: no command went to the AppHost,
+  which so asked nothing. **Race in the IDE**, fixed in 2d298100 (the commands are a menu of the toolbar's one button,
+  made as it opens and left alone by updates) with 74bd9ca0 (rows and links kept through updates, the same lost press on
+  an address). At 20ea86de a press on a stand-in AppHost's command button with an update landing before its release ran
+  nothing, where a plain click ran it; the real AppHost's test passed six times of six there and six of six since under
+  four busy loops on the VM, so the straddle is rare. AspireStandInTests now press the commands button and its menu's item
+  each as an update comes, the stand-in resource service recording the command.
 - `AspireCodeHelpTests`, every test, five of some twenty class starts on the Mac while fixing the three below, loaded or
   alone: "Class fixture type … threw in its constructor … The file '…/Worker/obj/Worker.csproj.nuget.g.props' already
   exists". Its AppHosts' references name Api and Worker by their real paths (/private/var/folders), the solution, restored
