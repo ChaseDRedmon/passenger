@@ -333,7 +333,11 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             Assert.True(Processes.IsRunning(program), "The program Profile started ended with its snapshot");
             Assert.True(view.CanKill, "Kill went with the snapshot, though the program Profile started goes on");
             Assert.Null(window.Actions.WhyNot(AppActions.Stop, window.Actions.Context()));
-            Assert.Equal(before, Ports());
+            // Windows lists a named pipe until its last handle goes, the program's end of the connection the profiler let
+            // go among them, which the program closes once its runtime sees the profiler's end closed: soon, not at once.
+            Ui.WaitFor(() => Ports().SequenceEqual(before),
+                () => $"the profiler's port to go with the snapshot, the program going on, where {string.Join(", ", Ports())} is still listed",
+                TimeSpan.FromSeconds(10));
             Assert.Equal($"{window.Configuration!.Name} goes on after its snapshot: Kill it first, or Attach Profiler to profile it again",
                 window.Actions.WhyNot(AppActions.Profile, window.Actions.Context()));
             Ui.TypeToRun(window, "after the snapshot");

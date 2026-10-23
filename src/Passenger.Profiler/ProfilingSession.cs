@@ -640,8 +640,28 @@ public sealed class ProfilingSession : IAsyncDisposable
         if (connector is not null)
         {
             await connector.DisposeAsync();
+            CloseLeftListener(connector);
         }
         RemovePort(port);
+    }
+
+    /// <summary>Closes the pipe the diagnostics library's Windows listener can leave listening once it is let go of. It
+    /// makes its next pipe instance as each connection comes in, after its own end too when the two cross, and never closes
+    /// that one; a runtime connects again as each request is answered (the session's stop among them), so letting go of
+    /// the port then left it listed and listening, the program connected to it, for as long as the program ran.</summary>
+    private static void CloseLeftListener(DiagnosticsClientConnector connector)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        const System.Reflection.BindingFlags Own = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        object? server = typeof(DiagnosticsClientConnector).GetField("_server", Own)?.GetValue(connector);
+        object? transport = server?.GetType().GetField("_transport", Own)?.GetValue(server);
+        if (transport?.GetType().GetField("_stream", Own)?.GetValue(transport) is System.IO.Pipes.PipeStream left)
+        {
+            left.Dispose();
+        }
     }
 
     /// <summary>Lets go of the run and of the program's process, whose end is never heard after (<see cref="ExitedAsync"/>):
