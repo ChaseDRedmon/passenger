@@ -1144,14 +1144,27 @@ public sealed class VcsTests : IDisposable
         Assert.Equal(2, buttons.Length);
         Assert.All(buttons, b => Assert.True(b.IsEnabled));
 
-        // Pressed twice, as a double-click does: the buttons are off from the first press until it is done.
+        // Pressed twice, as a double-click does: the buttons are off from the first press until it is done. The commit waits
+        // in its pre-commit hook until the second press is made, so it is still under way however soon git would be done:
+        // a click's own frames gave Linux's git the time to commit, read the status and leave nothing to commit.
+        string go = Path.Combine(folder, ".git", "go");
+        HoldCommits(go);
         Avalonia.Controls.Button press = buttons.First(b => b.Content is "Commit");
-        Ui.Click(press, settle: false);
-        Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed again while one runs"));
-        // Raised, not clicked: a pointer never reaches a button that is off, and this checks its handler refuses too.
+        try
+        {
+            Ui.Click(press, settle: false);
+            Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed again while one runs"));
+            // Raised, not clicked: a pointer never reaches a button that is off, and this checks its handler refuses too.
 #pragma warning disable RS0030
-        press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+            press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
 #pragma warning restore RS0030
+            Assert.True(window.Status?.StartsWith("Already under way: Committing 1 file", StringComparison.Ordinal) == true,
+                $"A second press while the commit runs should be told it is under way, but the status bar says: {window.Status}");
+        }
+        finally
+        {
+            File.WriteAllText(go, string.Empty);
+        }
         Ui.Landed(() => window.Vcs.Changes.Count == 0 && window.Status?.StartsWith("1 file committed", StringComparison.Ordinal) == true, $"the commit ({window.Status})");
         Assert.Equal("2", Git("rev-list", "--count", "HEAD").Trim());
         // Git reads what the commit did (slower on Windows) before it takes another change; one asked for meanwhile is refused.
@@ -1346,6 +1359,21 @@ public sealed class VcsTests : IDisposable
         string listed = string.Join(", ", window.Vcs.Changes.Select(c => $"{c.Name} ({c.Kind})"));
         Assert.True(window.Vcs.Changes.Count == 0, $"Once its work had landed Git still listed {listed} and was {(window.Vcs.IsBusy ? "still busy" : "idle")}, "
             + $"the status bar said \"{window.Status}\" and git status says \"{Git("status", "--porcelain").Trim()}\"");
+    }
+
+    /// <summary>Gives the repository a pre-commit hook that holds each commit until <paramref name="go"/> is there, a minute
+    /// at most, so a commit is surely under way while a test acts.</summary>
+    private void HoldCommits(string go)
+    {
+        string hook = Path.Combine(folder, ".git", "hooks", "pre-commit");
+        Directory.CreateDirectory(Path.GetDirectoryName(hook)!);
+        // Git runs a hook in the working tree's top folder, so the path from there is the hook's on every system.
+        string wait = Path.GetRelativePath(folder, go).Replace('\\', '/');
+        File.WriteAllText(hook, $"#!/bin/sh\ni=0\nwhile [ ! -f '{wait}' ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
     }
 
     /// <summary>Presses the Commit window's Rollback, as the person would, the Commit window shown first.</summary>
