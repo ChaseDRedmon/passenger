@@ -281,7 +281,7 @@ public sealed class ContainerFilesPane : DockPanel
             }
         }
 
-        static string Said(string errors) => errors.Trim() is { Length: > 0 } said ? said : "docker cp failed";
+        static string Said(string errors) => errors.Trim() is { Length: > 0 } said ? ContainerSecrets.InSaid(said) : "docker cp failed";
     }
 
     private const string NotAFile = "not a file";

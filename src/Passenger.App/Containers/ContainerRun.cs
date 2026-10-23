@@ -1053,7 +1053,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             string last = up.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(l => !ContainerEngine.ProviderFailed(l)).ToArray()
                 is { Length: > 0 } lines
                 ? lines.LastOrDefault(l => l.Contains("rror", StringComparison.Ordinal)) ?? lines[^1] : $"exit code {up.ExitCode}";
-            return $"{Plan.Name} did not come up: {last}";
+            return $"{Plan.Name} did not come up: {ContainerSecrets.InSaid(last, Plan.Folder)}";
         }
         if (Plan.Watched.Count > 0)
         {
@@ -1328,9 +1328,11 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         console.Write($"{ChildProcesses.Display(start)}\n");
         Queue<string> said = new();
         using Process process = ChildProcesses.Start(start);
-        Task output = console.PumpAsync(process.StandardOutput, ConsoleStream.Output, lines: Line);
+        // What Compose says of a failure echoes what it interpolated: shown as every error of the engine is, its secrets masked.
+        Func<string, string> shown = ContainerSecrets.Masking(Plan.Folder);
+        Task output = console.PumpAsync(process.StandardOutput, ConsoleStream.Output, lines: Line, shown: shown);
         // Compose writes its progress to standard error: the console's ordinary text, not an error's.
-        Task errors = console.PumpAsync(process.StandardError, ConsoleStream.Output, lines: Line);
+        Task errors = console.PumpAsync(process.StandardError, ConsoleStream.Output, lines: Line, shown: shown);
         try
         {
             await process.WaitForExitAsync(cancel);

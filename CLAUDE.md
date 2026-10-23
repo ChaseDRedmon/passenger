@@ -614,7 +614,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ContainerSecrets.Secret` names one, a URL's password, a connection string's part so named) show masked in Details and
   in Inspect's JSON, whose copy is written masked; a copy an earlier Passenger wrote unmasked (one its masking would
   change) is deleted off the UI thread once a process for each state folder, as the window starts and at its Containers
-  window's first use, a tab showing it closed and the status bar saying why (`ContainerSecrets.ForgetUnmasked`). Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
+  window's first use, a tab showing it closed and the status bar saying why (`ContainerSecrets.ForgetUnmasked`). What a
+  CLI says of a failure is shown and logged through one helper, `ContainerSecrets.InSaid` (`Masking` for a stream), the
+  docker CLI's and Compose's (`ContainerEngine.Said`, ComposeCheck's error, a run's line of what failed and Compose's own
+  output in the Run console, `ConsoleSink.PumpAsync`'s `shown`, a whole line at a time) as the aspire CLI's
+  (`AspireClient.SanitizeDiagnostic`): each value it knows to be a secret's (given, this process's environment's
+  secret-named variables', the .env's in the folder Compose ran in, which it interpolates and echoes: `parsing
+  "••••••"`; four characters at least) as the dots wherever it stands, then on each line a `NAME=value` or `"NAME": value`
+  whose name is a secret's, an Authorization header, a URL's credentials and a connection string's part by the rule. Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
   Remove ask first; a project's Remove is `down`, its volumes kept, and `container_action` reaches no volume or image.
   The status bar and Problems' Containers tab say the engine's problem, the link starting Docker Desktop where it is
   installed; a test run of a project referencing a `Testcontainers*` package asks the engine first
@@ -867,7 +874,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   their consoles and commands and the AppHost's prompts (`AspireInteractionDialog`, closed with their window or the IDE's quit, still answered, so none holds the window and the AppHost open), the display's streams followed only
   while the Aspire window shows them (`SetWatching`), the prompts' kept while it is hidden; `AspireTelemetry` reads the
   dashboard's bounded recent logs and spans and puts traces together by their ids; `AspireClient` is the `aspire` CLI's
-  JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked. The Aspire
+  JSON (13.x from 13.6.0), for an AppHost Passenger did not start, its errors said with their secrets masked as the engine's are (`ContainerSecrets.InSaid`). The Aspire
   window (`AspirePane`, `AspireView`, `ToolWindowIds.Aspire`, its stripe icon `Icon.Aspire`) is the Containers window's
   parts over an AppHost's resources, the same controls: its toolbar the AppHost chosen and icon buttons of registered
   actions (`MainWindow.AspireActions.cs`, each bound by `ActionButtons.Bind`, its ring while its work runs: Discover,

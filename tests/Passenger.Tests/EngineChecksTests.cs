@@ -268,6 +268,46 @@ public sealed class EngineChecksTests
         }
     }
 
+    /// <summary>Compose's error that echoes what it interpolated from a secret's variable in the .env says it masked, by
+    /// Passenger's one rule for secrets, wherever it is said: the compose file's marker and Problems' Containers tab as the
+    /// engine checks the file, and the run of its configuration, which says why it cannot run in the status bar, in Problems
+    /// and to an agent.</summary>
+    [AvaloniaFact]
+    public void Composes_error_echoing_a_secrets_value_says_it_masked_in_the_marker_problems_the_status_bar_and_to_an_agent()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        const string Secret = "s3cr3t-hunter2";
+        string folder = Folder(("compose.yaml", "services:\n  web:\n    image: busybox:1.37\n    cpus: ${DB_PASSWORD}\n"), (".env", $"DB_PASSWORD={Secret}\n"));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("parsing", StringComparison.Ordinal)),
+                $"Compose's error of the value it could not read marked, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]");
+            string marked = document.Markers.First(m => m.Message.Contains("parsing", StringComparison.Ordinal)).Message;
+            Assert.True(marked.Contains($"\"{ContainerSecrets.Masked}\"", StringComparison.Ordinal) && !marked.Contains(Secret, StringComparison.Ordinal),
+                $"The marker said the secret's value: {marked}");
+            Problem listed = Assert.Single(window.BottomPanel.Problems.ContainerProblems);
+            Assert.Equal(marked, listed.Message);
+
+            Assert.True(window.SelectConfiguration("Compose: compose.yaml"), "The compose file's configuration was not made");
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.RunProgram) is null && window.Status?.Contains("parsing", StringComparison.Ordinal) == true,
+                $"Run to say why the configuration cannot run ({window.Status})");
+            Assert.True(window.Status!.Contains(ContainerSecrets.Masked, StringComparison.Ordinal) && !window.Status.Contains(Secret, StringComparison.Ordinal),
+                $"The status bar said the secret's value: {window.Status}");
+            Assert.DoesNotContain(window.BottomPanel.Problems.ContainerProblems, p => p.Message.Contains(Secret, StringComparison.Ordinal));
+
+            Exception refused = Assert.ThrowsAny<Exception>(() => Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Run("Compose: compose.yaml"), "an agent's run"));
+            Assert.True(refused.Message.Contains(ContainerSecrets.Masked, StringComparison.Ordinal) && !refused.Message.Contains(Secret, StringComparison.Ordinal),
+                $"An agent's run said the secret's value: {refused.Message}");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A name Compose finds a service uses that the file does not declare is marked where it is written, and Show
     /// Context Actions there offers Passenger's own fixes first: a service depended on that is not there, removed from
     /// depends_on or changed to the service of a near name; a volume or secret declared at the top level, under its key or

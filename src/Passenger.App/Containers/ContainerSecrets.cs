@@ -76,6 +76,81 @@ public static partial class ContainerSecrets
             ? $"{part.Groups["head"].Value}{Masked}" : part.Value);
     }
 
+    /// <summary>The shortest value a secret's name holds that <see cref="InSaid"/> masks wherever it stands: a shorter one
+    /// would mask words and numbers that are no secret (a line's number, "true").</summary>
+    private const int ShortestKnown = 4;
+
+    /// <summary>What a program said of its failure (the docker CLI's and Compose's errors, the aspire CLI's, a resource
+    /// service's status), as Passenger shows or logs it anywhere (the status bar, Problems, a console's line of what failed,
+    /// an agent's answer, the log): each value it knows to be a secret's (<paramref name="known"/>, this process's
+    /// environment's variables whose names are a secret's, and those of the .env in <paramref name="folder"/>, which Compose
+    /// interpolates) as the dots wherever it stands; then on each line a <c>NAME=value</c> or <c>"NAME": "value"</c> whose
+    /// name is a secret's, an Authorization header, a URL's credentials and a connection string's secret part.</summary>
+    public static string InSaid(string said, string? folder = null, IEnumerable<string>? known = null) => Masking(folder, known)(said);
+
+    /// <summary><see cref="InSaid"/> for much that is said a piece at a time (a CLI's output streamed into a console), the
+    /// secrets it knows read once.</summary>
+    public static Func<string, string> Masking(string? folder = null, IEnumerable<string>? known = null)
+    {
+        string[] secrets = [.. Known(folder, known).Where(s => s.Length >= ShortestKnown).Distinct(StringComparer.Ordinal).OrderByDescending(s => s.Length)];
+        return said =>
+        {
+            foreach (string secret in secrets)
+            {
+                said = said.Replace(secret, Masked, StringComparison.Ordinal);
+            }
+            return string.Join('\n', said.Split('\n').Select(line =>
+            {
+                string bare = Assignment().Replace(line, pair => Secret(pair.Groups["name"].Value) ? $"{pair.Groups["head"].Value}{Quoted(pair.Groups["value"].Value)}" : pair.Value);
+                bare = Member().Replace(bare, pair => Secret(pair.Groups["name"].Value) ? $"{pair.Groups["head"].Value}{Quoted(pair.Groups["value"].Value)}" : pair.Value);
+                bare = AuthorizationHeader().Replace(bare, $"${{head}}{Masked}");
+                bare = UrlUser().Replace(bare, $"${{scheme}}{Masked}@");
+                return InValue(bare);
+            }));
+        };
+
+        static string Quoted(string value) => value.Length > 1 && value[0] is '"' or '\'' && value[^1] == value[0] ? $"{value[0]}{Masked}{value[0]}" : Masked;
+    }
+
+    /// <summary>The values a failure may echo that are known to be secrets: those given, this process's environment's whose
+    /// names are a secret's, and those a folder's .env gives such names (<c>KEY=value</c>, quoted or not, after an
+    /// <c>export</c> or not; a line it cannot read passed over).</summary>
+    private static IEnumerable<string> Known(string? folder, IEnumerable<string>? known)
+    {
+        foreach (string given in known ?? [])
+        {
+            yield return given;
+        }
+        foreach (System.Collections.DictionaryEntry variable in Environment.GetEnvironmentVariables())
+        {
+            if (variable.Key is string name && Secret(name) && variable.Value is string value)
+            {
+                yield return value;
+            }
+        }
+        string[] lines = [];
+        try
+        {
+            if (folder is not null && File.Exists(Path.Combine(folder, ".env")))
+            {
+                lines = File.ReadAllLines(Path.Combine(folder, ".env"));
+            }
+        }
+        catch (Exception unread) when (unread is IOException or UnauthorizedAccessException)
+        {
+            // One that cannot be read now gave Compose nothing either.
+        }
+        foreach (string line in lines)
+        {
+            if (EnvLine().Match(line) is { Success: true } entry && Secret(entry.Groups["name"].Value))
+            {
+                string value = entry.Groups["value"].Value.Trim();
+                yield return value.Length > 1 && value[0] is '"' or '\'' && value[^1] == value[0] ? value[1..^1]
+                    : value.IndexOf(" #", StringComparison.Ordinal) is int comment and >= 0 ? value[..comment].TrimEnd() : value;
+            }
+        }
+    }
+
     /// <summary>A public navigable HTTP URL, without user information, secret query values, or fragments.</summary>
     public static string? PublicHttpUrl(string value)
     {
@@ -226,6 +301,26 @@ public static partial class ContainerSecrets
 
     [GeneratedRegex(@"[A-Za-z][A-Za-z0-9+.\-]*://[^\s/@]*:[^\s/@]*$")]
     private static partial Regex UserBefore();
+
+    /// <summary>A <c>NAME=value</c> in what a program said (an option's <c>--password=</c>, a query's <c>token=</c>, a
+    /// connection string's part), its value quoted or up to a space, comma, semicolon, ampersand or closing bracket.</summary>
+    [GeneratedRegex("""(?<head>(?<![\w.])(?<name>[A-Za-z_][\w.\-]*)\s*=\s*)(?<value>"[^"]*"|'[^']*'|[^\s"',;&}\]]+)""")]
+    private static partial Regex Assignment();
+
+    /// <summary>A JSON or YAML member whose name is quoted (<c>"apiKey": "…"</c>), its value quoted or up to a comma or bracket.</summary>
+    [GeneratedRegex("""(?<head>(?<q>["'])(?<name>[A-Za-z_][\w.\-]*)\k<q>\s*:\s*)(?<value>"[^"]*"|'[^']*'|[^\s,}\]]+)""")]
+    private static partial Regex Member();
+
+    [GeneratedRegex(@"(?<head>\bAuthorization\s*:\s*)\S.*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex AuthorizationHeader();
+
+    /// <summary>A URL's user information with no password (<c>https://token@host</c>), which can be a token.</summary>
+    [GeneratedRegex(@"(?<scheme>\b[A-Za-z][A-Za-z0-9+.\-]*://)[^\s/@:]+@")]
+    private static partial Regex UrlUser();
+
+    /// <summary>A .env file's line: <c>KEY=value</c>, after an <c>export</c> or not.</summary>
+    [GeneratedRegex(@"^\s*(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_.\-]*)\s*=(?<value>.*)$")]
+    private static partial Regex EnvLine();
 
     [GeneratedRegex(@"^[^\s/@]*@")]
     private static partial Regex HostAfter();
