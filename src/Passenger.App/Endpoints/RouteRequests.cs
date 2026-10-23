@@ -202,7 +202,7 @@ public static partial class RouteRequests
         {
             written.Append('@').Append(host).Append(" = ").Append(address ?? "http://localhost:5000").Append('\n');
         }
-        foreach (RouteParameter parameter in route.Parameters.Where(p => p.Source == "route"))
+        foreach (RouteParameter parameter in route.Parameters.Where(p => p.Source is "route" or "query"))
         {
             if (set.Add(parameter.Name))
             {
@@ -210,7 +210,10 @@ public static partial class RouteRequests
             }
         }
         string path = Parameter().Replace(route.Template, match => "{{" + NameIn(match.Value) + "}}");
-        string query = route.Kind == RouteKinds.SignalR ? "?negotiateVersion=1" : route.Query is { } named ? "?" + named : string.Empty;
+        // The query a route takes: a page's handler as it is, each query parameter as the variable just set.
+        List<string> asked = [.. route.Query is { } named ? [named] : Array.Empty<string>(),
+            .. route.Parameters.Where(p => p.Source == "query").Select(p => $"{Uri.EscapeDataString(p.Name)}={{{{{p.Name}}}}}")];
+        string query = route.Kind == RouteKinds.SignalR ? "?negotiateVersion=1" : asked.Count > 0 ? "?" + string.Join("&", asked) : string.Empty;
         if (route.Kind == RouteKinds.SignalR)
         {
             path = path.TrimEnd('/') + "/negotiate";

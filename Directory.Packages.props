@@ -17,11 +17,11 @@
          make restores off Windows without reaching nuget.org (tests/Passenger.Tests/WpfApp.cs). Another SDK's version
          fails WpfXamlTests saying which to pin here, rather than the app's restore reaching nuget.org. -->
     <WindowsDesktopRefVersion>11.0.0-rc.2.26504.105</WindowsDesktopRefVersion>
-    <!-- EF Core for the Migrations window's tests (tests/EfGraphs), and the dotnet-ef tool at its version and at the one
-         before, a tool that does not match: downloaded for the tests' local feed, from which a test folder restores and
-         installs them without reaching nuget.org (MigrationsTests). -->
+    <!-- EF Core for the Migrations window's tests (tests/EfGraphs), and the dotnet-ef tool, at its version and at the one
+         before: a tool that does not match, and the EF Core a stand-in provider that trails it supports. Downloaded for the
+         tests' local feed, from which a test folder restores and installs them without reaching nuget.org (MigrationsTests). -->
     <EfCoreVersion>10.0.12</EfCoreVersion>
-    <EfToolOlderVersion>10.0.11</EfToolOlderVersion>
+    <EfCoreOlderVersion>10.0.11</EfCoreOlderVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.4" />

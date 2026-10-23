@@ -136,7 +136,9 @@ public sealed class MigrationsView : DockPanel
             showing = false;
         }
         gaps.Children.Clear();
-        foreach (EfGap gap in controller.Failure is { } failed ? [.. controller.Gaps, failed] : controller.Gaps)
+        IEnumerable<EfGap> pending = controller.Pending.Select(p => new EfGap($"{p.Context}'s model has changes no migration covers",
+            [new EfFix(EfFixKind.AddMigration, "Add Migration…")], Blocks: false));
+        foreach (EfGap gap in controller.Gaps.Concat(pending).Concat(controller.Failure is { } failed ? [failed] : []))
         {
             gaps.Children.Add(GapRow(gap));
         }

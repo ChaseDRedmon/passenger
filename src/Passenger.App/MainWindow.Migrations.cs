@@ -21,12 +21,16 @@ public partial class MainWindow
     private void AddMigrations()
     {
         MigrationsController controller = migrations = new MigrationsController(new MigrationsParts(Editors, Bottom, Dock, work, Say, () => session, () => buildRun,
-            ChooseAsync, (project, id, version) => NuGet.InstallAsync(project, id, version), FollowWritten, OpenFile, () => StateFolder)
+            ChooseAsync, (project, id, version) => NuGet.InstallAsync(project, id, version), (project, packages) => NuGet.InstallSetAsync(project, packages),
+            () => NuGet.FeedAsync(null), FollowWritten, OpenFile, () => StateFolder, ShowPendingModelChanges)
         {
             AsksNoOne = () => AgentsOwn,
         });
+        // The NuGet window's update of one of EF Core's packages is weighed against the project's provider first.
+        NuGet.BeforeInstall = controller.WeighUpdateAsync;
         MigrationsView view = migrationsView = new MigrationsView(controller);
         view.ActionRequested += (_, action) => Request(action);
+        controller.AddAsked += (_, _) => Request(A.AddMigration);
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Migrations, "Migrations", "Icon.Database", view, Docking.ToolAnchor.BottomLeft)
         {
             Action = A.ShowMigrations,
@@ -109,7 +113,45 @@ public partial class MainWindow
         migrations?.Bind(next);
         next.WorkspaceChanged += (_, _) => FollowMigrations(next);
         next.ProjectsEvaluated += (_, _) => FollowMigrations(next);
-        buildRun.BuildFinished += (_, _) => FollowMigrations(next);
+        buildRun.BuildFinished += (_, built) =>
+        {
+            FollowMigrations(next);
+            if (session == next)
+            {
+                migrations?.AfterBuild(built);
+            }
+        };
+    }
+
+    /// <summary>The contexts whose model has changes no migration covers, in Problems' Build tab beside the build's own, each
+    /// at its class, where Show Context Actions offers Add Migration… (<see cref="MigrationFixes"/>).</summary>
+    private void ShowPendingModelChanges(IReadOnlyList<Run.Problem> pending)
+    {
+        session.Problems.RemoveAll(p => p.Code == MigrationsController.PendingCode);
+        session.Problems.AddRange(pending);
+        buildRun.ShowProblems();
+    }
+
+    /// <summary>Add Migration… on the line of a context whose model has changes no migration covers: that context chosen in the
+    /// Migrations window and the migration's name asked.</summary>
+    private IReadOnlyList<CSharp.EditorFix> MigrationFixes(Workspace.OpenDocument file, int offset)
+    {
+        if (migrations is not { Pending.Count: > 0 } controller)
+        {
+            return [];
+        }
+        int line = file.Text.Snapshot.GetPosition(offset).Line;
+        return [.. controller.Pending.Where(p => p.File is { } at && Core.PathNames.Same(at, file.Path) && p.Position.Line == line)
+            .Select(p => new CSharp.EditorFix("Add Migration…", $"for {p.Context}'s model changes", new Text.TextRange(offset, 0), string.Empty)
+            {
+                Elsewhere = (_, _) =>
+                {
+                    controller.ChooseContext(p.Context);
+                    // Not awaited: its name is asked of the person, which no fix's own work waits on.
+                    _ = AddMigrationAsync();
+                    return Task.FromResult(new CSharp.RefactorOutcome($"Add Migration: a name for {p.Context}'s migration", null, [], []));
+                },
+            })];
     }
 
     private void FollowMigrations(ProjectSession next)

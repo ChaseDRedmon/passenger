@@ -25,7 +25,56 @@ public interface IPackageFeed
 
     /// <summary>A package's versions that can be installed, newest first: none its owner unlisted.</summary>
     Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel);
+
+    /// <summary>What a version of a package depends on, as its own metadata says, by target framework; null when the feed
+    /// has no such version, or cannot say.</summary>
+    Task<PackageDependencies?> DependenciesAsync(string id, string version, CancellationToken cancel) => Task.FromResult<PackageDependencies?>(null);
 }
+
+/// <summary>A package version's dependencies as its nuspec groups them: by target framework (null for the group that
+/// names none), each a package id and the range of its versions.</summary>
+public sealed record PackageDependencies(IReadOnlyList<DependencyGroup> Groups)
+{
+    /// <summary>The range a framework's group gives a package, the first group naming it when none is the framework's
+    /// (a package's groups are near-alike across frameworks); null when no group depends on it.</summary>
+    public string? RangeOf(string id, string? framework = null)
+    {
+        DependencyGroup? own = framework is null ? null : Groups.FirstOrDefault(g => string.Equals(g.Framework, framework, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Short(g.Framework), framework, StringComparison.OrdinalIgnoreCase));
+        return (own is null ? Groups : [own, .. Groups]).SelectMany(g => g.Packages)
+            .FirstOrDefault(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).Range;
+    }
+
+    /// <summary>A nuspec's dependencies element read: its groups, or its flat list as one group of no framework.</summary>
+    public static PackageDependencies FromNuspec(XElement? dependencies)
+    {
+        if (dependencies is null)
+        {
+            return new PackageDependencies([]);
+        }
+        static (string Id, string Range) Dependency(XElement element) => ((string?)element.Attribute("id") ?? string.Empty, (string?)element.Attribute("version") ?? string.Empty);
+        List<XElement> groups = [.. dependencies.Elements().Where(e => e.Name.LocalName == "group")];
+        return groups.Count == 0
+            ? new PackageDependencies([new DependencyGroup(null, [.. dependencies.Elements().Where(e => e.Name.LocalName == "dependency").Select(Dependency)])])
+            : new PackageDependencies([.. groups.Select(g => new DependencyGroup((string?)g.Attribute("targetFramework"),
+                [.. g.Elements().Where(e => e.Name.LocalName == "dependency").Select(Dependency)]))]);
+    }
+
+    /// <summary>A framework as a project names it: net10.0 for .NETCoreApp10.0, .NETCoreApp,Version=v10.0 or net10.0.</summary>
+    private static string? Short(string? framework)
+    {
+        const string Core = ".NETCoreApp";
+        if (framework is null || !framework.StartsWith(Core, StringComparison.OrdinalIgnoreCase))
+        {
+            return framework;
+        }
+        string version = framework[Core.Length..].Replace(",Version=v", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+        return $"net{version}";
+    }
+}
+
+/// <summary>A target framework's dependencies in a package's metadata.</summary>
+public sealed record DependencyGroup(string? Framework, IReadOnlyList<(string Id, string Range)> Packages);
 
 /// <summary>What a search of several feeds found: the packages, each once with the feeds that have it; the feeds that
 /// did not answer, and why; and how many packages the package source mapping left out.</summary>
@@ -118,6 +167,26 @@ public sealed class FeedSet(string name, IReadOnlyList<IPackageFeed> feeds, Func
             throw answers[0].Failed!;
         }
         return [.. answers.SelectMany(a => a.Found ?? []).Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(v => v, VersionOrder.Instance)];
+    }
+
+    /// <summary>A version's dependencies from the first feed the package source mapping allows that has it.</summary>
+    public async Task<PackageDependencies?> DependenciesAsync(string id, string version, CancellationToken cancel)
+    {
+        foreach (IPackageFeed feed in feeds.Where(f => allows(f.Name, id)))
+        {
+            try
+            {
+                if (await feed.DependenciesAsync(id, version, cancel) is { } found)
+                {
+                    return found;
+                }
+            }
+            catch (Exception failed) when (!cancel.IsCancellationRequested && IsFeedFailure(failed))
+            {
+                // A feed that does not answer: the next is asked.
+            }
+        }
+        return null;
     }
 
     /// <summary>What a feed throws when it cannot answer: it is down, refuses, says what is no feed, or is no folder.</summary>
@@ -291,6 +360,53 @@ public sealed class V3Feed(FeedClient client) : IPackageFeed
         return [.. versions.Where(v => prerelease || !VersionOrder.IsPrerelease(v)).OrderByDescending(v => v, VersionOrder.Instance)];
     }
 
+    /// <summary>A version's dependencies from its nuspec in the flat container, else from its registration's catalog entry.</summary>
+    public async Task<PackageDependencies?> DependenciesAsync(string id, string version, CancellationToken cancel)
+    {
+        (_, Uri? registrations, Uri? flat, _) = await ServicesAsync(cancel);
+        string lower = id.ToLowerInvariant();
+        string at = version.ToLowerInvariant();
+        if (flat is not null && await client.GetXmlAsync(new Uri(flat, $"{lower}/{at}/{lower}.nuspec"), cancel) is { Root: { } nuspec })
+        {
+            return PackageDependencies.FromNuspec(nuspec.Descendants().FirstOrDefault(e => e.Name.LocalName == "dependencies"));
+        }
+        if (registrations is null || await client.GetJsonAsync<JsonDocument>(new Uri(registrations, $"{lower}/{at}.json"), Json, cancel) is not { } leaf)
+        {
+            return null;
+        }
+        using (leaf)
+        {
+            if (!leaf.RootElement.TryGetProperty("catalogEntry", out JsonElement entry))
+            {
+                return null;
+            }
+            // The leaf names its catalog entry by its URL; a feed may give it whole.
+            if (entry.ValueKind == JsonValueKind.String)
+            {
+                using JsonDocument? fetched = await client.GetJsonAsync<JsonDocument>(new Uri(entry.GetString()!), Json, cancel);
+                return fetched is null ? null : Groups(fetched.RootElement);
+            }
+            return entry.ValueKind == JsonValueKind.Object ? Groups(entry) : null;
+        }
+
+        static PackageDependencies Groups(JsonElement entry)
+        {
+            List<DependencyGroup> groups = [];
+            foreach (JsonElement group in entry.TryGetProperty("dependencyGroups", out JsonElement all) && all.ValueKind == JsonValueKind.Array ? all.EnumerateArray() : [])
+            {
+                string? framework = group.TryGetProperty("targetFramework", out JsonElement named) ? named.GetString() : null;
+                List<(string, string)> packages = [];
+                foreach (JsonElement dependency in group.TryGetProperty("dependencies", out JsonElement listed) && listed.ValueKind == JsonValueKind.Array ? listed.EnumerateArray() : [])
+                {
+                    packages.Add((dependency.TryGetProperty("id", out JsonElement depId) ? depId.GetString() ?? string.Empty : string.Empty,
+                        dependency.TryGetProperty("range", out JsonElement range) ? range.GetString() ?? string.Empty : string.Empty));
+                }
+                groups.Add(new DependencyGroup(framework, packages));
+            }
+            return new PackageDependencies(groups);
+        }
+    }
+
     /// <summary>The advisories the feed's VulnerabilityInfo resource gives, by package, as restore's audit reads them: an
     /// index of pages (a base and the updates since), each a map of lower-case ids to advisories. None from a feed
     /// without the resource.</summary>
@@ -396,6 +512,23 @@ public sealed class V2Feed(FeedClient client) : IPackageFeed
         return [.. versions.Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(v => v, VersionOrder.Instance)];
     }
 
+    /// <summary>A version's dependencies from its entry's Dependencies field: "id:range:framework|…".</summary>
+    public async Task<PackageDependencies?> DependenciesAsync(string id, string version, CancellationToken cancel)
+    {
+        Uri url = new($"{Root}/Packages(Id={Uri.EscapeDataString(Literal(id))},Version={Uri.EscapeDataString(Literal(version))})");
+        XDocument? found = await client.GetXmlAsync(url, cancel);
+        XElement? entry = found?.Root?.Name == Atom + "entry" ? found.Root : found?.Root?.Elements(Atom + "entry").FirstOrDefault();
+        if (entry?.Element(Meta + "properties") is not { } properties)
+        {
+            return null;
+        }
+        string listed = properties.Element(Data + "Dependencies")?.Value ?? string.Empty;
+        return new PackageDependencies([.. listed.Split('|', StringSplitOptions.RemoveEmptyEntries)
+            .Select(d => d.Split(':'))
+            .GroupBy(d => d.Length > 2 && d[2].Length > 0 ? d[2] : null)
+            .Select(g => new DependencyGroup(g.Key, [.. g.Where(d => d[0].Length > 0).Select(d => (d[0], d.Length > 1 ? d[1] : string.Empty))]))]);
+    }
+
     /// <summary>An OData string literal: in quotes, a quote in it doubled.</summary>
     private static string Literal(string value) => $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
 
@@ -435,34 +568,59 @@ public sealed class FolderFeed(string folder, string? name = null) : IPackageFee
         (IReadOnlyList<string>)[.. Read(prerelease).Where(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).Select(p => p.Version)
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(v => v, VersionOrder.Instance)], cancel);
 
-    private IEnumerable<PackageSummary> Read(bool prerelease)
+    public Task<PackageDependencies?> DependenciesAsync(string id, string version, CancellationToken cancel) => BackgroundWork.Run(() =>
+    {
+        foreach (XElement metadata in Nuspecs())
+        {
+            string Field(string field) => metadata.Elements().FirstOrDefault(e => e.Name.LocalName == field)?.Value ?? string.Empty;
+            if (Field("id").Equals(id, StringComparison.OrdinalIgnoreCase) && VersionOrder.Instance.Compare(Field("version"), version) == 0)
+            {
+                return PackageDependencies.FromNuspec(metadata.Elements().FirstOrDefault(e => e.Name.LocalName == "dependencies"));
+            }
+        }
+        return (PackageDependencies?)null;
+    }, cancel);
+
+    /// <summary>Each package's nuspec metadata, the flat layout's then NuGet's own (id/version/id.version.nupkg); a file
+    /// that is no package passed over.</summary>
+    private IEnumerable<XElement> Nuspecs()
     {
         if (!Directory.Exists(folder))
         {
             throw new DirectoryNotFoundException($"{Name} is no folder: {folder} is not there");
         }
-        // The flat layout's packages, then those of NuGet's own layout, id/version/id.version.nupkg.
         IEnumerable<string> files = Directory.EnumerateFiles(folder, "*.nupkg")
             .Concat(Directory.EnumerateDirectories(folder).SelectMany(Directory.EnumerateDirectories).SelectMany(v => Directory.EnumerateFiles(v, "*.nupkg")));
         foreach (string file in files)
         {
-            PackageSummary? package = null;
+            XElement? metadata = null;
             try
             {
                 using ZipArchive zip = ZipFile.OpenRead(file);
                 if (zip.Entries.FirstOrDefault(e => e.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/', StringComparison.Ordinal)) is { } spec)
                 {
                     using Stream stream = spec.Open();
-                    XElement metadata = XDocument.Load(stream).Root!.Elements().First(e => e.Name.LocalName == "metadata");
-                    string Field(string field) => metadata.Elements().FirstOrDefault(e => e.Name.LocalName == field)?.Value ?? string.Empty;
-                    package = new PackageSummary(Field("id"), Field("version"), Field("description"), Field("authors"), 0);
+                    metadata = XDocument.Load(stream).Root!.Elements().First(e => e.Name.LocalName == "metadata");
                 }
             }
             catch (Exception error) when (error is InvalidDataException or IOException or System.Xml.XmlException or InvalidOperationException)
             {
                 // A file that is not a package is passed over.
             }
-            if (package is not null && (prerelease || !VersionOrder.IsPrerelease(package.Version)))
+            if (metadata is not null)
+            {
+                yield return metadata;
+            }
+        }
+    }
+
+    private IEnumerable<PackageSummary> Read(bool prerelease)
+    {
+        foreach (XElement metadata in Nuspecs())
+        {
+            string Field(string field) => metadata.Elements().FirstOrDefault(e => e.Name.LocalName == field)?.Value ?? string.Empty;
+            PackageSummary package = new(Field("id"), Field("version"), Field("description"), Field("authors"), 0);
+            if (prerelease || !VersionOrder.IsPrerelease(package.Version))
             {
                 yield return package;
             }

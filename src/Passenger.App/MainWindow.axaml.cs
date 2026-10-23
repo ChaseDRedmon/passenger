@@ -86,6 +86,7 @@ public partial class MainWindow : Window
         AddBookmarks();
         AddEndpoints();
         AddRoutes();
+        AddRequests();
         AddMigrations();
         AddContainers();
         AddRunMarks();
@@ -247,7 +248,7 @@ public partial class MainWindow : Window
         // the value set in its configuration; a service's read of a connection string its compose file's environment lacks,
         // the variable set there; a read of a configuration key nothing gives, the key set in appsettings.json or user secrets.
         assist.EditorFixes = (file, offset) => [.. Passenger.App.LiveTree.BindingErrors.Fixes(file, offset, session.FailedBindings.Select(b => b.Failure)),
-            .. session.Web?.Checks.Fixes(file, offset) ?? [], .. assist.AspireFixes(file, offset), .. assist.ComposeReadFixes(file, offset),
+            .. session.Web?.Checks.Fixes(file, offset) ?? [], .. assist.AspireFixes(file, offset), .. assist.ComposeReadFixes(file, offset), .. MigrationFixes(file, offset),
             .. assist.ConfigurationFixes(file, offset)];
         assist.AskValue = AskValueAsync;
         // What a project's configuration is read from, the session's as each call finds it.

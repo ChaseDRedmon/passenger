@@ -458,7 +458,14 @@ public sealed class NuGetView : DockPanel
 
     /// <summary>Adds the chosen package to a project at the chosen version, or moves it there.</summary>
     public async Task<bool> InstallAsync(ProjectModel project) =>
-        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version && (await InstallAsync(project, row.Id, version)).Done;
+        Selected is { } row && (ChosenVersion ?? row.Version) is { Length: > 0 } version
+        && (BeforeInstall is null || await BeforeInstall(project, row.Id, version))
+        && (await InstallAsync(project, row.Id, version)).Done;
+
+    /// <summary>Asked before the window's own Install or Update of a package in a project, with its id and version: whether
+    /// it goes on as asked (false when the person cancelled, or had it made another way, as EF Core's packages moved with
+    /// their provider).</summary>
+    public Func<ProjectModel, string, string, Task<bool>>? BeforeInstall { get; set; }
 
     public async Task<bool> RemoveAsync(ProjectModel project) => Selected is { } row && (await RemoveAsync(project, row.Id)).Done;
 
@@ -466,6 +473,11 @@ public sealed class NuGetView : DockPanel
     /// and an agent's nuget_install: the one way a package goes in (<see cref="ChangeAsync"/>).</summary>
     public Task<PackageOutcome> InstallAsync(ProjectModel project, string id, string version) =>
         ChangeAsync($"Installing {id} {version} in {project.Name}…", project, () => manager.InstallAsync(project.Path, id, version));
+
+    /// <summary>Moves several packages of a project to their versions together, as one change of the window's one way
+    /// (<see cref="ChangeAsync"/>): EF Core's packages with the provider that supports them.</summary>
+    public Task<PackageOutcome> InstallSetAsync(ProjectModel project, IReadOnlyList<(string Id, string Version)> packages) =>
+        ChangeAsync($"Moving {string.Join(", ", packages.Select(p => $"{p.Id} to {p.Version}"))} in {project.Name}…", project, () => manager.InstallSetAsync(project.Path, packages));
 
     /// <summary>Takes a package out of a project, as the window's Remove does and an agent's nuget_remove.</summary>
     public Task<PackageOutcome> RemoveAsync(ProjectModel project, string id) =>

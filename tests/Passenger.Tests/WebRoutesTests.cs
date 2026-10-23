@@ -25,6 +25,8 @@ public sealed class WebRoutesTests
         ("GET /api/Products/{id}", RouteKinds.Controller),
         ("POST /api/Products", RouteKinds.Controller),
         ("GET /Admin/Reports/Daily", RouteKinds.Controller),
+        ("ANY /Home/About/{id?}", RouteKinds.Controller),
+        ("POST /Home/Save/{id?}", RouteKinds.Controller),
         ("GET /", RouteKinds.RazorPage),
         ("GET /Orders/Edit/{id:int}", RouteKinds.RazorPage),
         ("POST /Orders/Edit/{id:int}?handler=Cancel", RouteKinds.RazorPage),
@@ -132,7 +134,22 @@ public sealed class WebRoutesTests
                 "the second answer", TimeSpan.FromMinutes(1));
             Assert.Equal(written, File.ReadAllText(http));
 
+            // A controller's action, its icon on its [HttpGet]: its query parameter goes into the URL as a variable of its own.
+            window.OpenFile(Path.Combine(folder, "Controllers", "ProductsController.cs"));
+            Ui.Settle();
+            Passenger.App.Workspace.OpenDocument products = window.EditorArea.Active!;
+            int action = Line(products, "[HttpGet(\"{id}\")]");
+            Ui.WaitFor(() => products.RouteMarks.Any(m => m.Line == action), "the send icon beside the controller's action");
+            GutterMenu(window, action);
+            Ui.Choose(window.RouteMarkMenu!, "Send GET /api/Products/{id}");
+            Ui.WaitFor(() => window.Endpoints.Response.Response is not null && window.Endpoints.Response.Shown.Contains("Tea", StringComparison.Ordinal),
+                "the controller's answer", TimeSpan.FromMinutes(1));
+            written = File.ReadAllText(http);
+            Assert.Contains("# Controller: ProductsController.Get\n@details = true\nGET {{Shop_HostAddress}}/api/Products/{{id}}?details={{details}}\n", written, StringComparison.Ordinal);
+
             // From the request to its route, and from the route to its request.
+            window.OpenFile(Path.Combine(folder, "Program.cs"));
+            Ui.Settle();
             window.OpenFile(http);
             Ui.Settle();
             Ui.PlaceAfter(window.EditorArea.CodeEditor, "GET {{Shop_Host");
@@ -149,6 +166,87 @@ public sealed class WebRoutesTests
         {
             window.Perform(AppActions.Stop);
             Ui.WaitFor(() => !window.Runner.IsRunning, "the shop to stop");
+            window.Close();
+        }
+    }
+
+    /// <summary>gRPC's packages at the versions tests/AspireGraphs' AppHost restores into the package cache (Aspire's
+    /// dashboard client brings them), so the service restores from there, never from nuget.org.</summary>
+    private static readonly (string Id, string Version)[] GrpcPackages = [("Grpc.AspNetCore", "2.83.0"), ("Google.Protobuf", "3.36.1")];
+
+    [AvaloniaFact]
+    public void A_grpc_services_methods_are_listed_by_their_paths_from_its_proto()
+    {
+        string cache = AvaloniaApp.Metadata("NuGetPackageRoot");
+        foreach ((string id, string version) in GrpcPackages)
+        {
+            Assert.True(Directory.Exists(Path.Combine(cache, id.ToLowerInvariant(), version)),
+                $"{id} {version} is not in the package cache at {cache}: restore the tests first (tests/AspireGraphs' AppHost brings it)");
+        }
+        string folder = TestFolders.Create("routes-grpc-");
+        TestFolders.Write(folder, "Greeter.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>").With(
+            "  <ItemGroup>\n" + string.Concat(GrpcPackages.Select(p => $"    <PackageReference Include=\"{p.Id}\" Version=\"{p.Version}\" />\n"))
+            + "    <Protobuf Include=\"Protos/greet.proto\" GrpcServices=\"Server\" />\n  </ItemGroup>\n"));
+        TestFolders.Write(folder, "Protos/greet.proto", """
+            syntax = "proto3";
+
+            option csharp_namespace = "Greetings";
+
+            package greet;
+
+            service Greeter {
+              rpc SayHello (HelloRequest) returns (HelloReply);
+              rpc SayGoodbye (HelloRequest) returns (HelloReply);
+            }
+
+            message HelloRequest {
+              string name = 1;
+            }
+
+            message HelloReply {
+              string message = 1;
+            }
+            """);
+        TestFolders.Write(folder, "GreeterService.cs", """
+            using Grpc.Core;
+
+            namespace Greetings;
+
+            public class GreeterService : Greeter.GreeterBase
+            {
+                public override Task<HelloReply> SayHello(HelloRequest request, ServerCallContext context) =>
+                    Task.FromResult(new HelloReply { Message = "Hello " + request.Name });
+
+                public override Task<HelloReply> SayGoodbye(HelloRequest request, ServerCallContext context) =>
+                    Task.FromResult(new HelloReply { Message = "Goodbye " + request.Name });
+            }
+            """);
+        TestFolders.Write(folder, "Program.cs", """
+            using Greetings;
+
+            WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+            builder.Services.AddGrpc();
+            WebApplication app = builder.Build();
+            app.MapGrpcService<GreeterService>();
+            app.Run();
+            """);
+        AvaloniaApp.UseFeed(folder);
+        Restore.Run(folder);
+        MainWindow window = Ui.OpenFolder(folder);
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Endpoints);
+            window.OpenFile(Path.Combine(folder, "GreeterService.cs"));
+            Ui.WaitFor(() => Titles(window).Contains("POST /greet.Greeter/SayGoodbye"), "the gRPC service's methods, listed", TimeSpan.FromMinutes(3));
+            Assert.Equal(["POST /greet.Greeter/SayGoodbye", "POST /greet.Greeter/SayHello"], Titles(window).Order(StringComparer.Ordinal));
+            WebRoute hello = Route(window, "POST /greet.Greeter/SayHello");
+            Assert.Equal((RouteKinds.Grpc, "GreeterService.SayHello", "HelloRequest"), (hello.Kind, hello.Handler, hello.BodyType));
+            // A gRPC method takes a gRPC client, not the Endpoints window's HTTP request: no icon sends it.
+            Ui.Settle();
+            Assert.Empty(window.EditorArea.Active!.RouteMarks);
+        }
+        finally
+        {
             window.Close();
         }
     }
@@ -210,6 +308,7 @@ public sealed class WebRoutesTests
             app.MapGroup("/admin").WithTags("admin").MapDelete("/cache", () => Results.NoContent());
             app.MapOrders();
             app.MapControllers();
+            app.MapControllerRoute("default", "{controller=Home}/{action=Index}/{id?}");
             app.MapRazorPages();
             app.MapHub<ChatHub>("/chat");
             app.Run();
@@ -272,6 +371,15 @@ public sealed class WebRoutesTests
             {
                 [HttpGet]
                 public string Daily() => "ok";
+            }
+
+            // No route of its own: the conventional route's.
+            public class HomeController : ControllerBase
+            {
+                public string About(int? id) => "about";
+
+                [HttpPost]
+                public string Save() => "saved";
             }
 
             public record Product(int Id, string Name);
