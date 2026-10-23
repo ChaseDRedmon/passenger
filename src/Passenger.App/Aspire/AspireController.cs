@@ -1306,12 +1306,6 @@ public sealed class AspireResourceRun(string id, string instanceId, string proje
 
     bool IRunService.Starts => true;
 
-    internal static string ReadBuiltStamp(LaunchPlan launch)
-    {
-        string? output = Path.GetDirectoryName(launch.Built ?? launch.Program);
-        return output is null || !Directory.Exists(output) ? string.Empty : string.Join('|', Directory.EnumerateFiles(output)
-            .Where(file => Path.GetExtension(file).ToLowerInvariant() is ".dll" or ".pdb" or ".json")
-            .Order(StringComparer.Ordinal).Select(file => new FileInfo(file))
-            .Select(file => $"{file.Name}:{file.Length}:{file.LastWriteTimeUtc.Ticks}"));
-    }
+    /// <summary>Its build's output as it stands, the run of services' one stamp (<see cref="BuiltInputs.Stamp"/>).</summary>
+    internal static string ReadBuiltStamp(LaunchPlan launch) => BuiltInputs.Stamp(Path.GetDirectoryName(launch.Built ?? launch.Program));
 }
