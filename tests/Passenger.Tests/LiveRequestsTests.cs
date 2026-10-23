@@ -65,13 +65,7 @@ public sealed class LiveRequestsTests
     {
         using HeldPort port = new();
         string folder = TestFolders.Create("requests-");
-        AvaloniaApp.UseFeed(folder);
-        TestFolders.Write(folder, "Shop.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")
-            .With($"  <ItemGroup>\n    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\" />\n  </ItemGroup>\n"));
-        TestFolders.Write(folder, "Properties/launchSettings.json",
-            $"{{\n  \"profiles\": {{\n    \"http\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port.Port}\" }}\n  }}\n}}\n");
-        TestFolders.Write(folder, "Program.cs", Program);
-        Restore.Run(folder);
+        WriteShop(folder, port.Port);
         MainWindow window = Ui.OpenFolder(folder);
         try
         {
@@ -158,7 +152,20 @@ public sealed class LiveRequestsTests
         }
     }
 
-    private static string Get(HttpClient client, string url) => Task.Run(() => client.GetStringAsync(url)).GetAwaiter().GetResult();
+    /// <summary>The shop written into a folder and restored from the run's local feed, its launch profile serving at the port
+    /// given: this class's and an agent's test of the requests (McpRequestsTests).</summary>
+    internal static void WriteShop(string folder, int port)
+    {
+        AvaloniaApp.UseFeed(folder);
+        TestFolders.Write(folder, "Shop.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")
+            .With($"  <ItemGroup>\n    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\" />\n  </ItemGroup>\n"));
+        TestFolders.Write(folder, "Properties/launchSettings.json",
+            $"{{\n  \"profiles\": {{\n    \"http\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }}\n  }}\n}}\n");
+        TestFolders.Write(folder, "Program.cs", Program);
+        Restore.Run(folder);
+    }
+
+    internal static string Get(HttpClient client, string url) => Task.Run(() => client.GetStringAsync(url)).GetAwaiter().GetResult();
 
     private static int LineOf(string text) => Array.FindIndex(Program.Split('\n'), l => l.Contains(text, StringComparison.Ordinal));
 }

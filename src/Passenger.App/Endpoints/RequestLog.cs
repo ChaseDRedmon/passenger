@@ -52,10 +52,14 @@ public sealed class LiveRequest(string trace, string method, string path, string
 
     /// <summary>EF Core's logs of commands not yet told of, their values masked.</summary>
     internal List<string> Logged { get; } = [];
+
     public WebRoute? Route { get; internal set; }
 
     /// <summary>The program that served it, as the window names it.</summary>
     public string From { get; internal set; } = string.Empty;
+
+    /// <summary>The project of the program that served it, when known.</summary>
+    public string? Project { get; internal set; }
 
     /// <summary>Whether a command of it ran again and again (an N+1).</summary>
     public bool HasRepeats => Commands.Any(c => c.Repeated);
@@ -108,6 +112,22 @@ public sealed class RequestLog
         }
     }
 
+    /// <summary>The routes were read again: each request that reached none known yet is looked for again.</summary>
+    public void Reroute()
+    {
+        UiThread.Check();
+        bool found = false;
+        foreach (LiveRequest request in requests.Where(r => r.Route is null))
+        {
+            request.Route = routeOf(request.Method, request.Path, request.Project);
+            found |= request.Route is not null;
+        }
+        if (found)
+        {
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     /// <summary>Forgets every request, as a new run begins or the person clears the list.</summary>
     public void Clear()
     {
@@ -137,7 +157,7 @@ public sealed class RequestLog
         switch (told)
         {
             case RequestBegan began:
-                LiveRequest request = new(began.Trace, began.Method, began.Path, began.Query, began.At) { From = from, Route = routeOf(began.Method, began.Path, project) };
+                LiveRequest request = new(began.Trace, began.Method, began.Path, began.Query, began.At) { From = from, Project = project, Route = routeOf(began.Method, began.Path, project) };
                 requests.Add(request);
                 if (began.Trace.Length > 0)
                 {

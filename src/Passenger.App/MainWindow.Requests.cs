@@ -26,6 +26,13 @@ public partial class MainWindow
     private bool followingRequests;
     private bool followRequestsAgain;
 
+    /// <summary>Whether an agent has asked for the requests: from then on they are followed as while the window shows, which a
+    /// windowless IDE's never does.</summary>
+    private bool requestsAsked;
+
+    /// <summary>Whether someone looks at the requests: the window shows, or an agent asked for them.</summary>
+    private bool RequestsLooked => requestsView is { IsShown: true } || requestsAsked;
+
     /// <summary>A program whose requests are followed: what it is known by, what the window calls it, its project when known,
     /// its process id where it runs, and where that is when not on this machine (a container's tools).</summary>
     private sealed record RequestTarget(string Key, string Name, string? Project, int Process, ProfilePlace? Place);
@@ -64,6 +71,8 @@ public partial class MainWindow
     /// <summary>A session's runs, debugging and profiling began or ended: the programs followed follow them.</summary>
     private void BindRequests(ProjectSession next)
     {
+        // Another folder: an agent asks again for its requests.
+        requestsAsked = false;
         buildRun.RunningChanged += (_, _) =>
         {
             if (session == next)
@@ -143,7 +152,7 @@ public partial class MainWindow
             do
             {
                 followRequestsAgain = false;
-                IReadOnlyList<RequestTarget> due = requestsView is { IsShown: true } ? await RequestTargetsAsync() : [];
+                IReadOnlyList<RequestTarget> due = RequestsLooked ? await RequestTargetsAsync() : [];
                 foreach ((string key, (RequestTarget target, LiveRequests live)) in followedRequests.ToArray())
                 {
                     if (!due.Contains(target))
@@ -207,7 +216,15 @@ public partial class MainWindow
     public async Task<string> RequestsForAgentAsync(int most, CancellationToken cancel)
     {
         UiThread.Check();
+        requestsAsked = true;
         ShowToolWindow(ToolWindowIds.Requests);
+        // The routes the requests reached, read now where the language server is ready, later as it is.
+        WantRoutes();
+        if (session.CSharp is { IsReady: true })
+        {
+            await RoutesAsync(cancel);
+            RequestLog.Reroute();
+        }
         // The programs due are followed before the answer, so a request sent after it is heard.
         while (followingRequests)
         {
@@ -261,7 +278,7 @@ public partial class MainWindow
         }
         else if (none is null)
         {
-            Requests.Following = requestsView is { IsShown: true } ? "Nothing runs: Run, Debug or Profile a web app, or start its containers or AppHost, to see its requests" : string.Empty;
+            Requests.Following = RequestsLooked ? "Nothing runs: Run, Debug or Profile a web app, or start its containers or AppHost, to see its requests" : string.Empty;
         }
     }
 

@@ -68,7 +68,7 @@ public partial class MainWindow
     /// file open that could declare one (<paramref name="opening"/> one now, which the open files may not list yet).</summary>
     private void WantRoutes(bool opening = false)
     {
-        if (session.Routes.Wants && (opening || Dock.IsShown(ToolWindowIds.Endpoints) || Dock.IsShown(ToolWindowIds.Requests)
+        if (session.Routes.Wants && (opening || Dock.IsShown(ToolWindowIds.Endpoints) || Dock.IsShown(ToolWindowIds.Requests) || requestsAsked
             || Editors.Documents.Any(d => IsRouteSource(d.Path))))
         {
             routesLater?.Restart();
@@ -169,6 +169,7 @@ public partial class MainWindow
             return;
         }
         current.Routes.Took(found, asked);
+        requestLog?.Reroute();
         Endpoints.ShowRoutes(current.Routes.All);
         foreach (OpenDocument document in Editors.Documents.Where(d => IsRouteSource(d.Path)))
         {
