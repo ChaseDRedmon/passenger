@@ -352,8 +352,8 @@ public partial class MainWindow
         }
         try
         {
-            TerminalRun run = await terminal!.RunAsync($"{container.Name} (shell)", engine.Command(["exec", "-it", container.Id, "sh"]));
-            terminal.FocusView();
+            TerminalRun run = await TerminalPanel.RunAsync($"{container.Name} (shell)", engine.Command(["exec", "-it", container.Id, "sh"]));
+            TerminalPanel.FocusView();
             return run;
         }
         catch (LaunchException failed)

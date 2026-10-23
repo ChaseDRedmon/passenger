@@ -9,20 +9,26 @@ public partial class MainWindow
 {
     private ToolWindows.TerminalPanel? terminal;
 
-    /// <summary>The Terminal tool window.</summary>
-    public ToolWindows.TerminalPanel TerminalPanel => terminal!;
+    /// <summary>The Terminal tool window, built as it is first shown or asked for (a program run in it, Open In Terminal,
+    /// an agent's command).</summary>
+    public ToolWindows.TerminalPanel TerminalPanel => terminal ?? (ToolWindows.TerminalPanel)Dock[ToolWindowIds.Terminal]!.Content;
 
     private void AddTerminal()
     {
-        terminal = new ToolWindows.TerminalPanel(() => Folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Terminal, "Terminal", "Icon.Terminal", terminal, Docking.ToolAnchor.BottomLeft)
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Terminal, "Terminal", "Icon.Terminal", MakeTerminal, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowTerminal,
-            HeaderTools = terminal.HeaderTools,
+            Tools = () => terminal?.HeaderTools,
             Menus = [new MenuPlace("Tools", 0, 2)],
             Activate = ToggleTerminal,
         });
-        terminal.Emptied += (_, _) =>
+    }
+
+    /// <summary>The Terminal window's view, as it is first shown or asked for, with the settings in force then.</summary>
+    private ToolWindows.TerminalPanel MakeTerminal()
+    {
+        ToolWindows.TerminalPanel panel = terminal = new ToolWindows.TerminalPanel(() => Folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        panel.Emptied += (_, _) =>
         {
             Dock.Hide(ToolWindowIds.Terminal);
             if (Editors.Active is not null)
@@ -30,13 +36,32 @@ public partial class MainWindow
                 Editors.CodeEditor.Focus();
             }
         };
+        // Going to the terminal is leaving the code, as going to another program is: what is not saved is (Autosave).
+        panel.View.GotFocus += (_, _) => SaveOnLeaving();
+        AddTerminalLinks(panel);
+        FollowTerminalSettings(panel, settings, null);
+        return panel;
+    }
+
+    /// <summary>The terminal's font and shell as Settings give them; a shell no longer set given back to the system's.</summary>
+    private static void FollowTerminalSettings(ToolWindows.TerminalPanel panel, Passenger.App.Settings.AppSettings next, Passenger.App.Settings.AppSettings? before)
+    {
+        panel.View.FontSize = next.TerminalFontSize;
+        if (next.TerminalShell is { } shell && Run.CommandLine.Split(shell) is { Count: > 0 } parts)
+        {
+            panel.Shell = (parts[0], [.. parts.Skip(1)]);
+        }
+        else if (before?.TerminalShell is not null)
+        {
+            panel.Shell = null;
+        }
     }
 
     /// <summary>Rider's Open In, Terminal from the Explorer: a new tab of the Terminal window, its shell started in a folder.</summary>
     public Task<Terminal.TerminalSession> OpenTerminalAt(string at)
     {
         // The tab is made before the window shows, so showing it starts no shell of its own in the open folder.
-        Task<Terminal.TerminalSession> starting = terminal!.NewSessionAsync(at);
+        Task<Terminal.TerminalSession> starting = TerminalPanel.NewSessionAsync(at);
         ShowToolWindow(ToolWindowIds.Terminal);
         return starting;
     }
@@ -44,7 +69,7 @@ public partial class MainWindow
     /// <summary>The terminal's shortcut: to the terminal from anywhere, and back to the editor from the terminal.</summary>
     private void ToggleTerminal()
     {
-        if (terminal!.View.IsFocused)
+        if (terminal?.View.IsFocused == true)
         {
             Dock.Hide(ToolWindowIds.Terminal);
             if (Editors.Active is not null)
@@ -54,7 +79,7 @@ public partial class MainWindow
             return;
         }
         ShowToolWindow(ToolWindowIds.Terminal);
-        terminal.FocusView();
+        TerminalPanel.FocusView();
     }
 
     /// <summary>The actions whose keys a program a run configuration runs in the terminal leaves the IDE: Run, Debug, Rerun,
@@ -89,6 +114,6 @@ public partial class MainWindow
         {
             return true;
         }
-        return actions![action] is not { FromTerminal: true } && !(terminal!.ActiveTab?.Run is not null && ProgramLeaves.Contains(action));
+        return actions![action] is not { FromTerminal: true } && !(terminal?.ActiveTab?.Run is not null && ProgramLeaves.Contains(action));
     }
 }

@@ -36,17 +36,16 @@ public partial class MainWindow
         Bottom.Debug.Console.Links.Folders = () => LinkFolders(buildRun.DebugProject);
         Bottom.Build.Links.Folders = () => LinkFolders(null);
         Bottom.Tests.Links.Folders = () => LinkFolders(null);
-        AddTerminalLinks();
     }
 
     /// <summary>The terminal's links, Rider's terminal's: web addresses and stack frames as the consoles find them, and any
     /// path to a file, a relative one under the folder the shell said it is in, then the open folder's.</summary>
-    private void AddTerminalLinks()
+    private void AddTerminalLinks(ToolWindows.TerminalPanel terminal)
     {
         ConsoleLinks links = new() { FilePaths = true };
         string? shellFolder = null;
         links.Folders = () => LinkFolders(shellFolder);
-        terminal!.View.Links = text =>
+        terminal.View.Links = text =>
         {
             string? at = terminal.Active?.Screen.WorkingDirectory;
             if (at != shellFolder)
