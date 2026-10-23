@@ -589,9 +589,11 @@ public sealed class ContainersView : DockPanel
         };
     }
 
-    /// <summary>The state dot's: running (unhealthy while its health check fails), paused between states, the rest stopped.</summary>
+    /// <summary>The state dot's, as the Aspire window's says a resource's: failed (one restarting after each crash, or ended
+    /// with an error) first, then running (unhealthy while its health check fails), paused between states, the rest stopped.</summary>
     private static RunState StateOf(IReadOnlyList<ContainerInfo> containers) =>
-        containers.Any(c => c.IsRunning && c.Health == "unhealthy") ? RunState.Unhealthy
+        containers.Any(c => c.IsFailed) ? RunState.Failed
+        : containers.Any(c => c.IsRunning && c.Health == "unhealthy") ? RunState.Unhealthy
         : containers.Any(c => c.IsRunning) ? RunState.Running
         : containers.Any(c => c.IsPaused) ? RunState.Between
         : RunState.Stopped;

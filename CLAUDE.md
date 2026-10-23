@@ -619,7 +619,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `container_action` share (a service's name, a label's, always after `--`, never read as a flag; an agent's start of an
   id names a container only when one container's id begins so, `ContainerRow.Named`). `ContainersView`
   (`MainWindow.Containers.cs`) asks the engine only while shown, its lists again as events say, its rows drawn as every
-  list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, the health's
+  list of what runs draws them (`ToolWindows/RunRows`, the Aspire window's too: a chevron, the state's dot, red for a
+  failure in both, a container's one restarting after each crash, dead, or exited with an error, a stop's 137 and 143
+  aside, `ContainerInfo.IsFailed`; the health's
   tag, `ContainerDetailsPane.HealthTag`, addresses as links; kept by their keys as a list is read again, `RunRows.Put`, each
   row's control shown anew in place, `RunRowView`, never the list made anew, whose controls a click's press and release
   would straddle while the engine's events or an AppHost's updates stream, the click then lost), a port's link on the
