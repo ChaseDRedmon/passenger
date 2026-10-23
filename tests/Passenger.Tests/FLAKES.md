@@ -10,6 +10,39 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-23
 
+- `ProfilerTests`' `A_profiled_program_goes_on_after_its_snapshot_until_stop_ends_it`, CI Windows 39992190279 (e25b06d0),
+  the test's first Windows run, and the Windows VM each time: the profiler's pipe still listed after Get Snapshot, 90 s on
+  in the VM. The diagnostics library's Windows listener makes its next pipe instance as each connection comes in, after
+  its own end too when the two cross, and never closes that one; the runtime connects again as each request is answered,
+  the session's stop among them, just as the run lets go of its port, so the program sat connected to a pipe Passenger
+  held. **A race in the IDE** (its library's): the run closes the pipe left (bcb20d4b), gone within 6 ms in the VM where
+  it stayed 20 s without, and the test waits for the program's end of it to go, which Windows lists until it does.
+- `AspireExecutionServerTests`' request line past the limit, the same run on Windows: "An existing connection was
+  forcibly closed by the remote host" for the 414. The server closed each connection straight after answering, with the
+  rest of the request unread, which resets it, and Windows throws away the answer the client has not read yet. **A race in
+  the IDE**: it shuts its side once it has answered and drops what is left until the client closes (613114c1).
+- `NavigationTests`' Go to File over 20,000 files, the same run on Linux: "The first letter … allocated 3550 KB on the UI
+  thread, against 2937 KB over 2,000". The search allocates nothing for a file or a match (the Ubuntu VM's tries: 2,434 to
+  2,481 KB over either), so the 613 KB were the window's thread doing something else while that one look was taken.
+  Neither race: **the test**, which took one look; it takes the least of three (3207713e), and every match kept, as
+  before #414, still fails it.
+- `WorkingActionsDebuggingTests`' double click on Debug, the same run on Linux: "Building Hello.csproj…" where it looked
+  for "Already under way: Working out how to debug Hello". A headless click runs the window's jobs and draws up to ten
+  frames after it while the ring turns, time enough for the launch plan to land and the build to begin between the clicks.
+  **The test waited wrong**, reading the status bar after the stage had moved on; it reads what was said through the
+  clicks (43407c54), Run's two checks too.
+- `VcsTests`' `Commit_and_stash_are_off_while_one_runs…`, the same run on Linux: "the window still lacked the commit (No
+  files are chosen to commit)". The click's own frames gave Linux's git time to add, commit and read the status, so the
+  second press came after the commit and was told there was nothing to commit, over "1 file committed". **The test waited
+  wrong**: a pre-commit hook holds the commit until the second press is refused (7da8036d).
+- `EditingBehaviourTests`' `A_key_draws_the_editor_once…`, the same run on macOS: "Key 3, a digit in a number, drew the
+  editor 2 times". Each key's settle waits out the path's 400 ms outline pause, 400 to 425 ms on the Mac against the
+  caret's 530 ms blink, which a slower runner's settle outlasted. **The test**, which held each settle under the blink:
+  the editor counts its blinks and the test sets them aside (37fcafd7).
+- `DiscordResponsivenessTests`' Discord that never answers, the same run on macOS: "Ten file switches took 5.1 s". Each
+  switch's settle waits out the same 400 ms pause, ten taking 4.05 s on the Mac against an unscaled 5 s. **The test**,
+  which held the IDE's own pauses to a time: it holds how long a key waits for the window's thread (0bbb464f), 11 ms on
+  the Mac, a window held 1 s failing it.
 - `DebugSessionsTests`' Hot Reload tests (`An_attach_to_a_program_started_held_for_it…` and `A_program_resumed_with_an_edit…`),
   the lead's whole-class runs at bff67d61 and 8dfc252a, whichever ran after the class's rude edit, since a4ba62e3 (each
   passed alone): "The edit was not applied as the program resumed: No managed code changes to apply", Roslyn's warning
