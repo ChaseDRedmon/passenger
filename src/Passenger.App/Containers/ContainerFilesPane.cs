@@ -243,7 +243,7 @@ public sealed class ContainerFilesPane : DockPanel
             ProcessStartInfo start = docker.Command(docker.Known is { PodmanCli: true } ? ["cp", $"{id}:{path}", "-"] : ["cp", "-L", $"{id}:{path}", "-"]);
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception failed) when (failed is FileNotFoundException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {

@@ -1491,7 +1491,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
         start.RedirectStandardError = true;
         console.Write($"{ChildProcesses.Display(start)}\n");
         Queue<string> said = new();
-        using Process process = ChildProcesses.Start(start);
+        using Process process = await ChildProcesses.StartAsync(start);
         // What Compose says of a failure echoes what it interpolated: shown as every error of the engine is, its secrets masked.
         Func<string, string> shown = ContainerSecrets.Masking(Plan.Folder);
         Task output = console.PumpAsync(process.StandardOutput, ConsoleStream.Output, lines: Line, shown: shown);

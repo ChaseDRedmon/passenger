@@ -115,7 +115,7 @@ public sealed class PackageManager
         Process process;
         try
         {
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or InvalidOperationException)
         {

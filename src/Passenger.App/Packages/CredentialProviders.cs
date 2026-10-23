@@ -89,7 +89,7 @@ public sealed class CredentialProviders
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        using Process process = ChildProcesses.Start(start);
+        using Process process = await ChildProcesses.StartAsync(start);
         await using PluginConnection connection = new(process, Path.GetFileName(plugin));
         await connection.AskAsync("Handshake", new { ProtocolVersion = "2.0.0", MinimumProtocolVersion = "1.0.0" }, Step, cancel);
         await connection.AskAsync("Initialize", new { ClientVersion = "7.0.0", Culture = "en-US", RequestTimeout = "00:01:00" }, Step, cancel);

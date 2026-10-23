@@ -449,7 +449,7 @@ public sealed class TestingPlatformRunner : ITestRunner
                 start.RedirectStandardError = true;
                 try
                 {
-                    process = ChildProcesses.Start(start);
+                    process = await ChildProcesses.StartAsync(start);
                 }
                 catch (System.ComponentModel.Win32Exception failed)
                 {

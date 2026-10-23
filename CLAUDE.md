@@ -121,8 +121,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
   group per child, which a watchdog shell kills once Passenger's pipe to it closes). A fork costs a large process tens of
   milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
-  thread's), on the caller's thread otherwise: every git command (`Git`) starts so; `Start` stays on the caller's
-  thread for what needs the child at once (a console's `ProcessRunner`, `Builder.ProcessId`). A child the IDE ends (`Kill`, or
+  thread's), on the caller's thread otherwise: every git command (`Git`) starts so, and every start an async caller
+  makes (the project host, a test host, NuGet's changes and credential providers, dotnet ef, the container engine's
+  commands); `Start` stays on the caller's thread for what needs the child at once (a console's `ProcessRunner.Start`),
+  while `ProcessRunner.StartAsync` (an AppHost and its services) and a run started after a wait (`StartDotnet`'s `after`:
+  every build) fork off it, held as background work, a Stop meanwhile ending the child as it comes. A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
   only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the

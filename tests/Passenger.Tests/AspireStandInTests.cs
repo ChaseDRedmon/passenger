@@ -166,7 +166,9 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
     }
 
     /// <summary>Rerun with nothing changed builds and restarts nothing; with the AppHost's own code changed it stops the AppHost
-    /// first, then builds it and runs it again, never building over its running files, which Windows locks while it runs.</summary>
+    /// first, then builds it and runs it again, never building over its running files, which Windows locks while it runs.
+    /// Neither the builds nor the AppHost start on the window's thread (#441: a fork costs a large process tens of
+    /// milliseconds, which the window would wait out).</summary>
     [AvaloniaFact]
     public void Rerun_runs_an_AppHost_whose_own_code_changed_again_once_stopped_and_leaves_one_unchanged_running()
     {
@@ -175,6 +177,24 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         File.Delete(project.KeyFile);
         AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
         project.Serve(backend);
+        string folder = PathNames.Canonical(project.Folder);
+        List<string> onWindow = [];
+        int started = 0;
+        void Heard(object? sender, ChildStart start)
+        {
+            if (start.Folder.Length > 0 && PathNames.Within(PathNames.Canonical(start.Folder), folder))
+            {
+                Interlocked.Increment(ref started);
+                if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+                {
+                    lock (onWindow)
+                    {
+                        onWindow.Add(start.Command);
+                    }
+                }
+            }
+        }
+        ChildProcesses.Started += Heard;
         MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StartsLanguageServer = false };
         window.Show();
         window.OpenFolder(project.Folder);
@@ -195,9 +215,15 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             Ui.WaitFor(() => window.AspireRuntime.Apps is [{ ProcessId: int again } app] && again != first && Said(app).Contains("The stand-in AppHost is up again", StringComparison.Ordinal),
                 "Rerun to run the changed AppHost again", TimeSpan.FromMinutes(3));
             Assert.False(Processes.IsRunning(first), "The AppHost that ran before Rerun still runs");
+            Assert.True(started >= 3, $"Only {started} programs were heard starting in the AppHost's folder: its two builds and runs were not");
+            lock (onWindow)
+            {
+                Assert.True(onWindow.Count == 0, $"{onWindow.Count} of the {started} programs started in the AppHost's folder started on the window's thread: {string.Join("; ", onWindow.Distinct())}");
+            }
         }
         finally
         {
+            ChildProcesses.Started -= Heard;
             window.Close();
             Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
         }

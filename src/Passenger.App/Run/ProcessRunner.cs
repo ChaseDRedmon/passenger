@@ -25,6 +25,10 @@ public sealed class ProcessRunner : IDisposable
 
     /// <summary>The wait of a run whose process has yet to start, which Stop ends.</summary>
     private CancellationTokenSource? waiting;
+
+    /// <summary>A start forking off the window's thread (<see cref="StartAsync(ProcessStartInfo, IReadOnlyDictionary{string, string}?)"/>):
+    /// a Stop meanwhile ends the process as it comes.</summary>
+    private bool forking;
     private TaskCompletionSource<int> ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ProcessRunner(OutputView console, bool takesInput = false)
@@ -105,6 +109,41 @@ public sealed class ProcessRunner : IDisposable
 
     public string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment = null, Func<CancellationToken, Task>? after = null)
     {
+        Prepare(start, environment);
+        if (after is null)
+        {
+            return Launch(start, null);
+        }
+        running = true;
+        _ = LaunchAfterAsync(start, after, ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
+        return null;
+    }
+
+    /// <summary>Starts a program as <see cref="Start(string, IReadOnlyList{string}, string, IReadOnlyDictionary{string, string}?)"/>
+    /// does, its fork off the window's thread, which costs a large process tens of milliseconds (#233): it runs from now as
+    /// its callers see it (<see cref="IsRunning"/>, <see cref="Stop"/>, <see cref="Ended"/>), its id known once the task is
+    /// done; why it could not start, or null.</summary>
+    public Task<string?> StartAsync(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
+        StartAsync(ChildProcesses.Command(file, arguments, folder), environment);
+
+    /// <inheritdoc cref="StartAsync(string, IReadOnlyList{string}, string, IReadOnlyDictionary{string, string}?)"/>
+    public async Task<string?> StartAsync(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        Prepare(start, environment);
+        running = true;
+        TaskCompletionSource<int> ending = ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if ((Unstarted = await LaunchAsync(start, ending)) is { } refused)
+        {
+            running = false;
+            ending.TrySetResult(-1);
+        }
+        return Unstarted;
+    }
+
+    /// <summary>A start's program made ready to run in this console: its output read, its input the console's when it takes
+    /// one, the environment given put in.</summary>
+    private void Prepare(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment)
+    {
         UiThread.Check();
         ObjectDisposedException.ThrowIf(deferredStop is not null, this);
         if (IsRunning)
@@ -121,13 +160,6 @@ public sealed class ProcessRunner : IDisposable
         {
             start.Environment[key] = value;
         }
-        if (after is null)
-        {
-            return Launch(start, null);
-        }
-        running = true;
-        _ = LaunchAfterAsync(start, after, ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
-        return null;
     }
 
     /// <summary>The process started once its wait is over, unless it was stopped meanwhile.</summary>
@@ -153,7 +185,7 @@ public sealed class ProcessRunner : IDisposable
                 waiting = null;
             }
         }
-        if (WasStopped || (Unstarted = Launch(start, ending)) is not null)
+        if (WasStopped || (Unstarted = await LaunchAsync(start, ending)) is not null)
         {
             running = false;
             ending.TrySetResult(-1);
@@ -171,11 +203,53 @@ public sealed class ProcessRunner : IDisposable
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
-            string file = Path.GetFileName(start.FileName);
-            string problem = Directory.Exists(start.WorkingDirectory) ? $"Could not start {file}: {error.Message}" : $"Could not start {file}: the folder {start.WorkingDirectory} is gone";
-            console.Append($"{problem}\n", error: true);
-            return problem;
+            return Refused(start, error);
         }
+        Run(started, waited);
+        return null;
+    }
+
+    /// <summary><see cref="Launch"/> with the fork off the window's thread, held as background work, so what waits for the
+    /// window to be quiet finds the program started; one stopped meanwhile is ended as it comes.</summary>
+    private async Task<string?> LaunchAsync(ProcessStartInfo start, TaskCompletionSource<int> waited)
+    {
+        console.Append($"{ChildProcesses.Display(start)}\n");
+        Process started;
+        forking = true;
+        BackgroundWork.Begin();
+        try
+        {
+            started = await ChildProcesses.StartAsync(start);
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return Refused(start, error);
+        }
+        finally
+        {
+            forking = false;
+            BackgroundWork.End();
+        }
+        Run(started, waited);
+        if (WasStopped)
+        {
+            ChildProcesses.Kill(started);
+        }
+        return null;
+    }
+
+    /// <summary>Why a program could not start, said in the console.</summary>
+    private string Refused(ProcessStartInfo start, Exception error)
+    {
+        string file = Path.GetFileName(start.FileName);
+        string problem = Directory.Exists(start.WorkingDirectory) ? $"Could not start {file}: {error.Message}" : $"Could not start {file}: the folder {start.WorkingDirectory} is gone";
+        console.Append($"{problem}\n", error: true);
+        return problem;
+    }
+
+    /// <summary>A program started in this console: its output read into it, its input the console's, its end landed.</summary>
+    private void Run(Process started, TaskCompletionSource<int>? waited)
+    {
         process = started;
         running = true;
         TaskCompletionSource<int> ending = waited ?? (ended = new(TaskCreationOptions.RunContinuationsAsynchronously));
@@ -194,7 +268,6 @@ public sealed class ProcessRunner : IDisposable
         CancellationTokenSource letGo = new();
         Task outputs = reading = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output, letGo.Token), Pump(started.StandardError, sink, ConsoleStream.Error, letGo.Token));
         draining = LandAsync(started, outputs, letGo, input, ending, landing);
-        return null;
     }
 
     /// <summary>Says in the console that the program ended, once it has exited and the console has what it wrote. A job it
@@ -293,6 +366,10 @@ public sealed class ProcessRunner : IDisposable
             WasStopped = true;
             wait.Cancel();
         }
+        else if (running && forking)
+        {
+            WasStopped = true;
+        }
         else if (running && process is { } started)
         {
             WasStopped = true;
@@ -309,7 +386,7 @@ public sealed class ProcessRunner : IDisposable
         {
             return deferredStop;
         }
-        if (waiting is not null)
+        if (waiting is not null || forking)
         {
             Stop();
             return deferredStop = Task.CompletedTask;

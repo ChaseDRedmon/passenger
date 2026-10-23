@@ -81,7 +81,7 @@ public sealed class ProjectHost : IAsyncDisposable
         Process process;
         try
         {
-            process = ChildProcesses.Start(start);
+            process = await ChildProcesses.StartAsync(start);
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException)
         {
