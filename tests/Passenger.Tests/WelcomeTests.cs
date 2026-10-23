@@ -47,9 +47,12 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         File.WriteAllText(Path.Combine(beta, "Two.cs"), "class Two { }\n");
         MainWindow first = Started(LaunchOptions.Empty);
         Assert.True(first.Folder is null && Shown(first), "A first start with nothing to reopen did not show the Welcome screen");
+        // Each open reads the folder's documents off the window's thread before it begins: settled, it has.
         first.OpenFolder(alpha);
+        Ui.Settle();
         first.OpenFile("One.cs");
         first.OpenFolder(beta);
+        Ui.Settle();
         first.OpenFile("Two.cs");
         Ui.Settle();
         first.Close();
@@ -72,7 +75,9 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         using IDisposable theme = TestsTheme();
         MainWindow first = Started(LaunchOptions.Empty);
         first.OpenFolder(alpha);
+        Ui.Settle();
         first.OpenFolder(beta);
+        Ui.Settle();
         first.ApplySettings(first.Settings with { ReopenProjectsOnStartup = false });
         first.Close();
 
@@ -102,7 +107,9 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         string gamma = TestFolders.Create("gamma-");
         MainWindow first = Started(LaunchOptions.Empty);
         first.OpenFolder(alpha);
+        Ui.Settle();
         first.OpenFolder(beta);
+        Ui.Settle();
         first.ApplySettings(first.Settings with { ReopenProjectsOnStartup = false });
         first.Close();
 
@@ -115,6 +122,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         Assert.Equal([Name(beta)], window.Welcome.Rows.Select(r => r.Name));
         window.Close();
         other.OpenFolder(gamma);
+        Ui.Settle();
         other.Close();
 
         MainWindow next = Started(LaunchOptions.Empty);
@@ -144,6 +152,7 @@ public sealed class WelcomeTests : IClassFixture<WelcomeTests.Workspaces>, IDisp
         File.WriteAllText(Path.Combine(alpha, "Three.cs"), "class Three { }\n");
         MainWindow window = Started(LaunchOptions.Empty);
         window.OpenFolder(alpha);
+        Ui.Settle();
         window.OpenFile("One.cs");
         window.OpenFile("Three.cs");
         window.OpenFolder(beta);

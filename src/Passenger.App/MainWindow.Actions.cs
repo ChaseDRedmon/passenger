@@ -43,7 +43,14 @@ public partial class MainWindow
     {
         foreach (Docking.ToolWindow tool in Dock.Windows)
         {
-            ActionButtons.ShowMarked(tool.Content, actions!);
+            if (tool.IsBuilt)
+            {
+                ActionButtons.ShowMarked(tool.Content, actions!);
+            }
+            else
+            {
+                tool.Built += (_, _) => ActionButtons.ShowMarked(tool.Content, actions!);
+            }
         }
     }
 
@@ -70,7 +77,7 @@ public partial class MainWindow
         TopLevel front = windowKeys.Pressing ?? Editors.InFront?.Window ?? OwnedWindows.LastOrDefault(w => w.IsActive) ?? this;
         object? focused = front.FocusManager?.GetFocusedElement();
         Docking.ToolWindow? tool = focused is Visual visual
-            ? Dock.Windows.FirstOrDefault(w => w.Content == visual || w.Content.IsVisualAncestorOf(visual))
+            ? Dock.Windows.FirstOrDefault(w => w.IsBuilt && (w.Content == visual || w.Content.IsVisualAncestorOf(visual)))
             : null;
         return new ActionContext(Editors.Active, Editors.CodeEditor, focused, tool, session.Debug.IsDebugging ? session.Debug.Session?.State : null);
     }

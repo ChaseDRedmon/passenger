@@ -15,10 +15,14 @@ public partial class MainWindow
 
     private void AddBookmarks()
     {
-        bookmarksView = new(session.Bookmarks, (path, line) =>
-            Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount ? open.Text.Snapshot.GetLineText(line) : string.Empty);
-        bookmarksView.GoToRequested += (_, bookmark) => NavigateTo(bookmark.Path, new TextPosition(bookmark.Line, 0));
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Bookmarks, "Bookmarks", "Icon.Bookmark", bookmarksView, Docking.ToolAnchor.LeftBottom)
+        // Built as it is first shown, over the session's bookmarks then.
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Bookmarks, "Bookmarks", "Icon.Bookmark", () =>
+        {
+            bookmarksView = new(session.Bookmarks, (path, line) =>
+                Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount ? open.Text.Snapshot.GetLineText(line) : string.Empty);
+            bookmarksView.GoToRequested += (_, bookmark) => NavigateTo(bookmark.Path, new TextPosition(bookmark.Line, 0));
+            return bookmarksView;
+        }, Docking.ToolAnchor.LeftBottom)
         {
             Action = AppActions.ShowBookmarks,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, 3)],

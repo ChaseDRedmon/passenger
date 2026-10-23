@@ -205,6 +205,14 @@ public sealed class ProjectState
     /// <summary>The folder's projects' design-time builds, which Roslyn's server loads them from.</summary>
     public StateDocument<ProjectBuildCache> ProjectBuilds { get; }
 
+    /// <summary>Reads, off the UI thread and at once, the documents a folder's open restores (its layout, editors,
+    /// breakpoints, bookmarks, configurations, the Unit Tests window's view, branches, scopes, grants and publish
+    /// profiles), so the restore takes them in with no read of its own (#233: unitTests.json alone held an open 75 ms).
+    /// Done at once for those read already.</summary>
+    public Task ReadAsync() => Task.WhenAll(Workspace.ValueAsync(), Layout.ValueAsync(), Breakpoints.ValueAsync(), Bookmarks.ValueAsync(),
+        RunConfigurations.ValueAsync(), Find.ValueAsync(), UnitTests.ValueAsync(), GitBranches.ValueAsync(), Endpoints.ValueAsync(),
+        Publish.ValueAsync());
+
     public void Flush()
     {
         ProjectModels.Flush();

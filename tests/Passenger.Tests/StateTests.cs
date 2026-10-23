@@ -218,13 +218,53 @@ public sealed class StateTests : IDisposable
 
         // Another folder has its own: none of these, and they come back with this one.
         string other = TestFolders.Create("other-");
+        // A folder's documents are read off the window's thread as it opens, its restore once they land.
         second.OpenFolder(other);
+        Ui.Settle();
         Assert.Empty(second.Debugger.Breakpoints.All);
         Assert.Empty(second.Bookmarks.All);
         second.OpenFolder(folder);
+        Ui.Settle();
         Assert.Single(second.Debugger.Breakpoints.All);
         Assert.Equal(2, second.Bookmarks.All.Count);
         second.Close();
+    }
+
+    /// <summary>A folder's kept documents are read off the window's thread as it opens, so their size never holds the
+    /// window (#233: an open stalled it up to 681 ms, unitTests.json's first read 75 ms of it): the open's own work on the
+    /// window's thread allocates no more with 4,000 breakpoints kept than with 40, and every one comes back once read.</summary>
+    [AvaloniaFact]
+    public void A_folders_kept_documents_are_read_off_the_windows_thread_as_it_opens_and_all_come_back()
+    {
+        long Opening(int count)
+        {
+            string open = PathNames.Canonical(TestFolders.Create("kept-"));
+            string kept = Passenger.App.State.ProjectState.FolderOf(settings, open);
+            Directory.CreateDirectory(kept);
+            JsonArray breakpoints = [.. Enumerable.Range(0, count).Select(i => (JsonNode)new JsonObject
+            {
+                ["path"] = Path.Combine(open, $"File{i % 100}.cs"),
+                ["line"] = i / 100,
+                ["condition"] = $"count == {i}",
+            })];
+            File.WriteAllText(Path.Combine(kept, "breakpoints.json"), new JsonObject { ["breakpoints"] = breakpoints }.ToJsonString());
+            MainWindow window = Keeping();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.OpenFolder(open);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Ui.Settle();
+            int restored = window.Debugger.Breakpoints.All.Count();
+            Assert.True(restored == count, $"{restored} of the {count} breakpoints kept came back as the folder opened");
+            window.Close();
+            return allocated;
+        }
+
+        // The first open in the process pays for what it loads once, which neither measure should carry.
+        Opening(1);
+        long few = Opening(40);
+        long many = Opening(4000);
+        Assert.True(many < few + (256 * 1024),
+            $"Opening a folder with 4,000 breakpoints kept allocated {many / 1024} KB on the window's thread, {few / 1024} KB with 40: its documents are read there");
     }
 
     [AvaloniaFact]
@@ -235,9 +275,11 @@ public sealed class StateTests : IDisposable
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
         first.DockHost.Show(ToolWindowIds.Tests);
         first.OpenFolder(other);
+        Ui.Settle();
         Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.LeftBottom);
         first.OpenFolder(folder);
+        Ui.Settle();
         Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
         first.Close();
 
@@ -245,6 +287,7 @@ public sealed class StateTests : IDisposable
         MainWindow second = Keeping();
         Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
         second.OpenFolder(other);
+        Ui.Settle();
         Assert.Equal(ToolAnchor.LeftBottom, second.DockHost["tests"]!.Anchor);
         Assert.True(second.DockHost.IsShown(ToolWindowIds.Tests));
         second.Close();

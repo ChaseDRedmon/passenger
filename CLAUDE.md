@@ -119,7 +119,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
   input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
-  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A child the IDE ends (`Kill`, or
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A fork costs a large process tens of
+  milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
+  thread's), on the caller's thread otherwise: every git command (`Git`) starts so; `Start` stays on the caller's
+  thread for what needs the child at once (a console's `ProcessRunner`, `Builder.ProcessId`). A child the IDE ends (`Kill`, or
   `Ending` before asking it to go: a language server's shutdown, the host's input closed) and an exit code the caller
   names as an answer (`RunAsync(answers:)`, git's 128 for something not there) are no failures: their end is logged
   only with Log every program. `RunAsync`'s limit covers a child's run to its exit; once it has exited, whatever the
@@ -420,7 +423,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
   loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled
   against the server's publicized assemblies (`src/Publicize.targets`, which the debugger imports too); a server
-  without the host builds its projects itself. A file in several projects (a multi-targeted project's) has the
+  without the host builds its projects itself. The server loads a batch's projects at once (`RunParallelAsync`), each
+  given build read as its load takes it (`TryLoadProjectInMSBuildHostAsync`), but puts each into its workspace under one
+  gate (`_gate`), so a warm reopen's projects still land one after another there. A file in several projects (a multi-targeted project's) has the
   editor's target framework switcher (`CodeEditor.ContextLabel`, `MainWindow.TargetFramework.cs`), its requests naming
   the chosen context (`LspDocument.Context`, Roslyn's `_vs_projectContext`).
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
@@ -480,7 +485,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `ToolWindowIds` (what a kept layout records it by, so a value there never changes, and what every show, hide and
   `ToolWindow.Id ==` names): the shell's own (Explorer, Structure, Run, Debug, Unit Tests, Build, Problems) in
   `MainWindow.AddToolWindows`, a feature's in its `Add…` beside the view's wiring (Git and Commit in `AddVcs`, the
-  profiler in `ProfilerCommands`).
+  profiler in `ProfilerCommands`). A window's start builds no view it hides (#233): a `ToolWindow` given how to build
+  its view (`Func<Control>`, its header's `Tools` too) builds and wires it as it is first shown, by its layout kept too
+  (`IsBuilt`, `Built`), and what reads or acts on it asks through a property that builds it (`StructureView`, `Find`,
+  `Hierarchy`, `LocalHistoryWindow`), while what only follows the IDE (a caret moved, a session bound) passes over one
+  not built (`structure?.`); what only looks among the views made (which window holds the keys) asks `IsBuilt` first. A
+  view written to while hidden (the Build, Run, Debug and Problems consoles and lists) is made up front, its costly part
+  made as it is first shown: an `OutputView`'s editor (`HasEditor`, over the text and colours it kept), the Unit Tests
+  window's details, a `MergedLog`'s Find.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window, shared by every window of the process that keeps state there
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
@@ -495,8 +507,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed; a list its `Sets` names merges as what each side added and
   took away), and a file that does not read is set aside as `.bad`, logged and said once in a window's status bar
-  (`StateFile.TakeUnsaid`). New state is a document there, never a file of
-  its own.
+  (`StateFile.TakeUnsaid`). A folder's open reads the documents its restore takes in off the UI thread first
+  (`ProjectState.ReadAsync`, through `ValueAsync`), as the folder left ends, and begins its session once they land
+  (`OpenFolder`, at once for documents read already), so a person's window opens a folder in that order with no read on
+  its thread; a test that acts on a keeping window's folder right after `OpenFolder` settles first. New state is a
+  document there, read ahead with the rest when the open restores it, never a file of its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
   `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol

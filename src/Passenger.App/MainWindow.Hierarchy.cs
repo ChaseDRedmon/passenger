@@ -12,14 +12,18 @@ public partial class MainWindow
 {
     private HierarchyView? hierarchy;
 
-    public HierarchyView Hierarchy => hierarchy!;
+    /// <summary>The Hierarchy tool window, built as it is first shown or asked for.</summary>
+    public HierarchyView Hierarchy => hierarchy ?? (HierarchyView)Dock[ToolWindowIds.Hierarchy]!.Content;
 
     private void AddHierarchy()
     {
-        hierarchy = new HierarchyView();
-        hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
-        hierarchy.Failed += (_, why) => status.Text = why;
-        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Hierarchy, "Hierarchy", "Icon.Hierarchy", hierarchy, Docking.ToolAnchor.RightTop));
+        Dock.Add(new Docking.ToolWindow(ToolWindowIds.Hierarchy, "Hierarchy", "Icon.Hierarchy", () =>
+        {
+            hierarchy = new HierarchyView();
+            hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
+            hierarchy.Failed += (_, why) => status.Text = why;
+            return hierarchy;
+        }, Docking.ToolAnchor.RightTop));
         // What the server finds at the caret, or why it found nothing, the status bar says as it answers.
         actions!.Add(new IdeAction(AppActions.CallHierarchy, "Call Hierarchy", "IDE", context => _ = ShowCallHierarchyAsync())
         {

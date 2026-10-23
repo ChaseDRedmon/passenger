@@ -32,6 +32,58 @@ public sealed class VcsTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
+    /// <summary>Git's commands start off the window's thread (#233: a fork cost a large process ~40 ms, which every git
+    /// command the window asked for paid there): the working tree's status and branch as it opens, an edit's bars, a commit
+    /// and the log start none of theirs on it.</summary>
+    [AvaloniaFact]
+    public void The_git_commands_the_window_asks_for_start_off_its_thread()
+    {
+        string tree = PathNames.Canonical(folder);
+        List<string> onWindow = [];
+        int started = 0;
+        void Heard(object? sender, ChildStart start)
+        {
+            if (start.Folder.Length > 0 && PathNames.Canonical(start.Folder) == tree
+                && Path.GetFileNameWithoutExtension(start.Command.Split(' ')[0].Trim('"')) == "git")
+            {
+                Interlocked.Increment(ref started);
+                if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+                {
+                    lock (onWindow)
+                    {
+                        onWindow.Add(start.Command);
+                    }
+                }
+            }
+        }
+        ChildProcesses.Started += Heard;
+        try
+        {
+            MainWindow window = Open();
+            Ui.Landed(() => window.Vcs.Branch == "main", "the branch read as the working tree opened");
+            window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
+            window.KeyTextInput("long ");
+            Ui.Landed(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
+            window.Perform(AppActions.Commit);
+            Ui.Landed(() => window.FocusManager?.GetFocusedElement() is TextBox, "the commit message to have the keys");
+            window.KeyTextInput("Count with a long");
+            Ui.Press(window, OperatingSystem.IsMacOS() ? "meta Enter" : "control Enter");
+            Ui.Landed(() => Git("log", "-1", "--format=%s").Trim() == "Count with a long", "the commit");
+            window.Perform(AppActions.ShowGit);
+            Ui.Landed(() => window.GitLog.Rows.Count >= 2, "the log's two commits");
+            window.Close();
+        }
+        finally
+        {
+            ChildProcesses.Started -= Heard;
+        }
+        Assert.True(started > 0, "No git command was heard starting in the working tree");
+        lock (onWindow)
+        {
+            Assert.True(onWindow.Count == 0, $"{onWindow.Count} of the {started} git commands started on the window's thread: {string.Join("; ", onWindow.Distinct())}");
+        }
+    }
+
     /// <summary>An edit's change bar, and a commit from the Commit window, made by the message's own key (Cmd+Enter, Ctrl+Enter
     /// elsewhere) rather than a new line in it, which clears the bar.</summary>
     [AvaloniaFact]

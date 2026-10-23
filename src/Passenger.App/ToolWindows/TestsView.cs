@@ -37,7 +37,11 @@ public sealed class TestsView : DockPanel
     ];
 
     private readonly ListBox tree;
-    private readonly CodeEditor details;
+    private readonly TextDocument detailsText = new();
+    private readonly DockPanel result;
+
+    /// <summary>The details' editor, made as the window is first shown or they are asked for (<see cref="Details"/>).</summary>
+    private CodeEditor? details;
     private readonly TextBlock status;
     private readonly TextBlock placeholder;
     private readonly TextBox search;
@@ -86,19 +90,6 @@ public sealed class TestsView : DockPanel
             new Separator(),
             ListMenus.Item("Go to Source", "F4", () => GoToRequested?.Invoke(this, chosen), chosen.Path is not null),
         ]);
-        details = new CodeEditor
-        {
-            Document = new TextDocument(),
-            IsReadOnly = true,
-            LineCommentPrefix = null,
-            ShowLineNumbers = false,
-            ShowErrorStripe = false,
-            FontSize = 12,
-            Highlighter = Links,
-            Links = Links.On,
-            Margin = new Thickness(6, 4, 0, 0),
-        };
-        details.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
         // Results come by the thousand: the chosen row's details and the filters' counts are written again once they
         // have, not once each.
         model.ResultApplied += (_, _) =>
@@ -121,7 +112,7 @@ public sealed class TestsView : DockPanel
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
         HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         DockPanel.SetDock(Frames, Dock.Top);
-        DockPanel result = new() { [Grid.ColumnProperty] = 2, Children = { Frames, details } };
+        result = new() { [Grid.ColumnProperty] = 2, Children = { Frames } };
         result.SizeChanged += (_, e) => Frames.Fit(e.NewSize.Height);
         split.Children.Add(new Panel { Children = { tree, placeholder } });
         split.Children.Add(divider);
@@ -204,7 +195,36 @@ public sealed class TestsView : DockPanel
     public TestTree Model { get; }
 
     /// <summary>The chosen row's results: its message, stack trace and output.</summary>
-    public CodeEditor Details => details;
+    public CodeEditor Details => details ?? MakeDetails();
+
+    /// <summary>Whether the details' editor has been made, as the window was shown or they were asked for.</summary>
+    public bool HasDetails => details is not null;
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _ = Details;
+    }
+
+    /// <summary>The details' editor over their text so far, from its top.</summary>
+    private CodeEditor MakeDetails()
+    {
+        details = new CodeEditor
+        {
+            Document = detailsText,
+            IsReadOnly = true,
+            LineCommentPrefix = null,
+            ShowLineNumbers = false,
+            ShowErrorStripe = false,
+            FontSize = 12,
+            Highlighter = Links,
+            Links = Links.On,
+            Margin = new Thickness(6, 4, 0, 0),
+        };
+        details.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
+        result.Children.Add(details);
+        return details;
+    }
 
     /// <summary>The pictures the chosen row's results carry, above its details: a failing headless test's windows.</summary>
     public TestFramesStrip Frames { get; } = new();
@@ -287,14 +307,17 @@ public sealed class TestsView : DockPanel
     /// <summary>The details' text, written only when it changed, from its top.</summary>
     private void Show(string text)
     {
-        TextDocument document = details.Document;
+        TextDocument document = detailsText;
         if (document.Snapshot.Length == text.Length && document.Snapshot.ToString() == text)
         {
             return;
         }
         document.Rewrite(0, document.Snapshot.Length, text);
-        details.Selections = SelectionSet.Single(0);
-        details.ScrollTo(default);
+        if (details is not null)
+        {
+            details.Selections = SelectionSet.Single(0);
+            details.ScrollTo(default);
+        }
     }
 
     private void QueueDetails()

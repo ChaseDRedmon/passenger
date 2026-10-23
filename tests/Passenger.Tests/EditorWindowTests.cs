@@ -149,6 +149,7 @@ public sealed class EditorWindowTests : IDisposable
         first.Show();
         first.KeepLayout();
         first.OpenFolder(folder);
+        Ui.Settle();
         first.OpenFile(Path.Combine(folder, "One.cs"));
         first.OpenFile(Path.Combine(folder, "Two.cs"));
         Ui.Settle();

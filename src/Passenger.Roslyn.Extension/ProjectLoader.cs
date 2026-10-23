@@ -24,7 +24,9 @@ namespace Passenger.Roslyn.Extension;
 /// without them or one the server finds changed, asks it for (<see cref="ProjectMethods.Info"/>).</summary>
 internal sealed class PassengerProjectLoader : LanguageServerProjectLoader, ILspService
 {
-    private readonly ConcurrentDictionary<string, (ProjectFileInfo[] Infos, IReadOnlyList<ProjectDiagnostic>? Logged)> given = new(StringComparer.Ordinal);
+    /// <summary>Each project's design-time builds as given, read as its load takes them: the server loads a batch's projects
+    /// at once (its RunParallelAsync), so their reading is spread over them, never one after another in the notification.</summary>
+    private readonly ConcurrentDictionary<string, (string Infos, IReadOnlyList<ProjectDiagnostic>? Logged)> given = new(StringComparer.Ordinal);
     private readonly IClientLanguageServerManager client;
 
     public PassengerProjectLoader(LspServices services, IGlobalOptionService options, ILoggerFactory loggers, IAsynchronousOperationListenerProvider listeners,
@@ -44,7 +46,7 @@ internal sealed class PassengerProjectLoader : LanguageServerProjectLoader, ILsp
         {
             if (project.Infos is { } infos)
             {
-                given[project.Path] = (Read(infos), project.Diagnostics);
+                given[project.Path] = (infos, project.Diagnostics);
             }
             await BeginLoadingProjectAsync(project.Path, null, tracker).ConfigureAwait(false);
             // One loaded already loads again with what it was given; one just begun is the same work, done once.
@@ -82,9 +84,9 @@ internal sealed class PassengerProjectLoader : LanguageServerProjectLoader, ILsp
     // Public as the publicized base declares it; the runtime takes a public override of a protected method.
     public override async Task<RemoteProjectLoadResult?> TryLoadProjectInMSBuildHostAsync(BuildHostProcessManager buildHostProcessManager, string projectPath, CancellationToken cancellationToken)
     {
-        if (given.TryRemove(projectPath, out (ProjectFileInfo[] Infos, IReadOnlyList<ProjectDiagnostic>? Logged) held))
+        if (given.TryRemove(projectPath, out (string Infos, IReadOnlyList<ProjectDiagnostic>? Logged) held))
         {
-            return Result(projectPath, held.Infos, Logged(held.Logged));
+            return Result(projectPath, Read(held.Infos), Logged(held.Logged));
         }
         ProjectInfoResult answer = await client.SendRequestAsync<ProjectInfoParams, ProjectInfoResult>(ProjectMethods.Info, new ProjectInfoParams(projectPath), cancellationToken).ConfigureAwait(false);
         if (answer.Infos is null)
