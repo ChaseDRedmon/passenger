@@ -167,29 +167,9 @@ public partial class MainWindow
     /// <summary>Run, from its key, the toolbar or the Run window: what stopped it, if anything, is in the status bar.</summary>
     private void RunSelected() => _ = RunAsync();
 
-    /// <summary>Rerun of what Run started: the program still running stopped, its end waited for, and run again; what else
-    /// runs (a debugged program, tests, a build) runs on.</summary>
-    private async Task RerunAsync()
-    {
-        if (session.Aspire.Apps.Any(app => !app.IsTest && app.Runner.IsRunning))
-        {
-            await buildRun.RerunAspireAsync();
-            return;
-        }
-        // A container run builds again and restarts only the services whose build changed, its log followed on.
-        if (buildRun.Containers is { Plan.Mode: ContainerMode.Fast } && buildRun.IsRunning)
-        {
-            await buildRun.RerunContainersAsync();
-            return;
-        }
-        if (buildRun.IsRunning)
-        {
-            Task<int> ended = buildRun.RunEnd;
-            buildRun.StopRun();
-            await ended;
-        }
-        await RunAsync();
-    }
+    /// <summary>Rerun, of the configuration chosen (<see cref="BuildRunController.RerunAsync"/>): what stopped it, if anything,
+    /// is in the status bar.</summary>
+    private Task RerunAsync() => buildRun.RerunAsync();
 
     /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>
     public void DebugSelected()

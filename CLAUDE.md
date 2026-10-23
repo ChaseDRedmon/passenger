@@ -581,7 +581,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   started (`RunStart`: Run, Debug, Run with Hot Reload, Profile), its certificate (`BuildRunController.Certificate.cs`) and
   one start at a time of what it starts (`TakeStartAsync`, a `StartUnderWay` in `ProjectSession.Starting`, which the
   folder's end ends): a start of a container configuration, or of an AppHost a start under way also starts, ends that one
-  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has.
+  first, as Stop does (Debug pressed as Run brings it up), and goes on once it has. Rerun follows the configuration chosen
+  (`BuildRunController.RerunAsync`): its AppHost's when it runs (what changed restarted), else its container run in fast mode
+  (the services whose build changed restarted), else what the Run console has stopped and the chosen run again, another
+  configuration's AppHost running on; what changed is read by one stamp of a build's output (`BuiltInputs.Stamp`, a file
+  gone as it is read left out) and `BuiltInputs.ChangedSince`, and a refusal is said.
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -1157,8 +1161,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   has no place for (the framework, console, building first, a variable its application URL gives) stays the folder's.
   `LaunchPlan.ResolveAsync` works one out once, in one request of the project host, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
-  Configurations. While a run of a configuration is up (Run's program or container run, a session Debug launched for it,
-  Profile's program: `BuildRunController.IsRunningConfiguration`), the toolbar, its chooser and Edit Configurations' row say
+  Configurations. While a run of a configuration is up (Run's program or container run while the Run console or the
+  terminal has it, `ran` forgotten as it ends, a session Debug launched for it, Profile's program:
+  `BuildRunController.IsRunningConfiguration`; an AppHost's by its own run), the toolbar, its chooser and Edit Configurations' row say
   "(running)" after its name (`MainWindow.Shown`), the toolbar following as Stop does (`ShowStop`). A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
   brings the Build window forward as Showing build results says (errors only by default). Every build holds the host's

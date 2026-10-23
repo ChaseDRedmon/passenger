@@ -569,6 +569,55 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             node.Module.Contains(StandInAppHost.Api, StringComparison.Ordinal) || node.Children.Any(Named);
     }
 
+    /// <summary>"(running)" says only what runs, and Rerun follows the configuration chosen: a plain run that ended is not
+    /// "(running)" once an AppHost runs; with the API's configuration chosen while the AppHost runs, Rerun runs the API beside
+    /// it, then stops it and runs it again, the AppHost running on as another configuration's run.</summary>
+    [AvaloniaFact]
+    public void Running_and_Rerun_follow_the_configuration_chosen_while_an_AppHost_runs()
+    {
+        project.Reset();
+        File.Delete(project.KeyFile);
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        project.Serve(backend);
+        MainWindow window = project.Open(project.Program, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(configuration => configuration.Name == StandInAppHost.Configuration)
+                && window.Configurations.Any(configuration => !configuration.Aspire && PathNames.Same(configuration.Project, PathNames.Canonical(project.ApiProject))),
+                "the AppHost's and the API's configurations");
+            RunConfiguration api = window.Configurations.First(configuration => !configuration.Aspire && PathNames.Same(configuration.Project, PathNames.Canonical(project.ApiProject)));
+            Assert.True(window.SelectConfiguration(api.Name));
+            Ui.Launched(window, window.RunAsync(), "the API to run", TimeSpan.FromMinutes(3));
+            Assert.Equal($"{api.Name} (running)", window.Shown(api));
+            Assert.True(window.Perform(AppActions.Stop), "Stop could not run");
+            Ui.WaitFor(() => !window.IsRunning, "Stop to end the API");
+
+            Assert.True(window.SelectConfiguration(StandInAppHost.Configuration));
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => backend.Connected.Task.IsCompleted && window.AspireRuntime.Apps.Count == 1, $"the stand-in AppHost's start ({window.Status})");
+            int host = Assert.Single(window.AspireRuntime.Apps).ProcessId!.Value;
+            Assert.Equal(api.Name, window.Shown(api));
+
+            Assert.True(window.SelectConfiguration(api.Name));
+            Ui.Run(window, AppActions.Rerun);
+            Ui.WaitFor(() => window.Shown(api) == $"{api.Name} (running)" && window.Session.Runner.ProcessId is not null,
+                $"Rerun to run the API chosen while the AppHost runs ({window.Status})", TimeSpan.FromMinutes(3));
+            int first = window.Session.Runner.ProcessId!.Value;
+            Ui.Run(window, AppActions.Rerun);
+            Ui.WaitFor(() => window.Session.Runner.ProcessId is int again && again != first && window.Session.Runner.IsRunning,
+                $"Rerun to run the API again ({window.Status})", TimeSpan.FromMinutes(3));
+            Assert.False(Processes.IsRunning(first), "The API that ran before Rerun still runs");
+            Assert.True(Processes.IsRunning(host) && window.AspireRuntime.Apps.Count == 1, "Rerun of the API stopped the AppHost, another configuration's run");
+            Assert.Equal($"{api.Name} (running)", window.Shown(api));
+            Assert.Equal(StandInAppHost.Configuration + " (running)", window.Shown(window.Configurations.First(c => c.Name == StandInAppHost.Configuration)));
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+    }
+
     /// <summary>The stand-in API's program, once the IDE has started it as DCP asked.</summary>
     private static int Api(MainWindow window)
     {

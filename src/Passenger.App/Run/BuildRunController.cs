@@ -102,7 +102,8 @@ public sealed partial class BuildRunController
     /// <summary>The build under way as the window's actions show it, from its start to <see cref="FinishBuild"/>.</summary>
     private Working? buildWork;
 
-    /// <summary>The run configuration the Run window last ran.</summary>
+    /// <summary>The run configuration whose program (or container run) the Run console, or a tab of the terminal, has now;
+    /// forgotten once it has ended.</summary>
     private string ran = string.Empty;
 
     /// <summary>Where each failed binding of an app goes in Problems, found once, when it first fails.</summary>
@@ -175,8 +176,11 @@ public sealed partial class BuildRunController
     private void RunLogEnded(int code)
     {
         parts.Views.Run.SetRunning(false);
+        string said = session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code);
+        // What ran has ended: no configuration of it runs, whatever else does (an AppHost).
+        ran = string.Empty;
         RunningChanged?.Invoke(this, EventArgs.Empty);
-        parts.Say(session.ContainerRun is { } containers ? ContainersEnded(containers) : RunEnded(ran, code), StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
+        parts.Say(said, StatusPlace.Window(parts.Dock, ToolWindowIds.Run));
     }
 
     /// <summary>A program started or ended, or a launch was refused: the toolbar's Stop follows.</summary>
@@ -191,8 +195,12 @@ public sealed partial class BuildRunController
     /// <summary>Whether a build, rebuild or clean is under way, from its start until its callers have heard how it ended.</summary>
     public bool IsBuilding => building is not null;
 
-    /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
-    public bool IsRunning => session.Aspire.IsRunning || session.Runner.IsRunning || followingAgain is not null || session.InTerminal is { IsRunning: true };
+    /// <summary>Whether a program Run started runs, in the Run window or the terminal, or an AppHost it started.</summary>
+    public bool IsRunning => session.Aspire.IsRunning || RunsInConsole;
+
+    /// <summary>Whether the Run console has a program Run started (a plain run's, or a container run's log), or a tab of the
+    /// terminal has: one at a time, which Run and Rerun of a configuration that runs there stop first. An AppHost's is its own.</summary>
+    private bool RunsInConsole => session.Runner.IsRunning || followingAgain is not null || session.InTerminal is { IsRunning: true };
 
     /// <summary>Whether the program Run started runs under dotnet watch (Settings' Hot Reload when running), which applies
     /// the edits of each file saved.</summary>
@@ -536,7 +544,8 @@ public sealed partial class BuildRunController
             RunStart mode = (hotReload ?? parts.Settings().HotReload) ? RunStart.HotReload : RunStart.Run;
             return await RunAspireAsync(chosen, arguments, mode, cancellation);
         }
-        if (IsRunning)
+        // The Run console's program is one at a time; an AppHost of another configuration runs beside it.
+        if (RunsInConsole)
         {
             return Said("Already running");
         }
@@ -687,6 +696,10 @@ public sealed partial class BuildRunController
         async Task Ended()
         {
             int code = await run.Ended;
+            if (session.InTerminal == run)
+            {
+                ran = string.Empty;
+            }
             RunningChanged?.Invoke(this, EventArgs.Empty);
             if (session.InTerminal == run)
             {
@@ -802,11 +815,44 @@ public sealed partial class BuildRunController
     public Task<string?> ProfileAspireAsync(RunConfiguration configuration, string? arguments = null, CancellationToken cancellation = default) =>
         RunAspireAsync(configuration, arguments, RunStart.Profile, cancellation);
 
+    /// <summary>Rerun, which follows the configuration chosen: an AppHost's that runs, what changed in it restarted
+    /// (<see cref="RerunAspireAsync"/>); else the container run of it under way in fast mode, the services whose build changed
+    /// restarted (<see cref="RerunContainersAsync"/>); else what the Run console (or a terminal's tab) has stopped, its end
+    /// waited for, and the chosen run, as Run runs it. What else runs (another configuration's AppHost, a debugged program,
+    /// tests, a build) runs on. Null once done, else why not, said.</summary>
+    public async Task<string?> RerunAsync()
+    {
+        UiThread.Check();
+        if (session.Configurations.Chosen is not { } chosen)
+        {
+            return Said("Nothing to run: no executable project");
+        }
+        if (session.Aspire.IsAspire(chosen) && session.Aspire.FindApp(chosen.Project) is { IsTest: false, Stopping: false } app && app.Runner.IsRunning)
+        {
+            return await RerunAspireAsync();
+        }
+        if (Containers is { Plan.Mode: ContainerMode.Fast } containers && containers.Plan.Name == chosen.Name && session.Runner.IsRunning)
+        {
+            return await RerunContainersAsync();
+        }
+        if (RunsInConsole || session.ContainerRun is { IsStopped: false })
+        {
+            Task<int> ended = session.InTerminal is { IsRunning: true } terminal ? terminal.Ended : session.Runner.Ended;
+            StopRun();
+            await ended;
+            if (session.IsEnded)
+            {
+                return Left;
+            }
+        }
+        return await RunAsync();
+    }
+
     public async Task<string?> RerunAspireAsync(CancellationToken cancellation = default)
     {
         if (session.Configurations.Chosen is not { } chosen || session.Aspire.FindApp(chosen.Project) is not { } main)
         {
-            return "The chosen Aspire configuration is not running";
+            return Said("The chosen Aspire configuration is not running");
         }
         if (parts.Work.Begin(AppActions.RunProgram, $"Looking at what changed in {chosen.Name}…") is not { } work)
         {
@@ -1089,21 +1135,22 @@ public sealed partial class BuildRunController
         return Task.WhenAll(containers, aspire);
     }
 
-    /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal), never
-    /// the debugger's session, a test run or a build, which Rerun does not run again.</summary>
+    /// <summary>Rerun's stop: Run's own start under way and the program it started (in the Run window or the terminal, or its
+    /// container run), never another configuration's AppHost, the debugger's session, a test run or a build, which Rerun
+    /// does not run again.</summary>
     public void StopRun()
     {
         parts.Work.Of(AppActions.RunProgram)?.Cancel();
         _ = session.StopContainersAsync();
-        BackgroundWork.Track(session.Aspire.StopAllAsync());
         session.Runner.Stop();
         session.InTerminal?.Stop();
     }
 
     /// <summary>Whether a run of a configuration is up: Run's program (in the Run window or the terminal) or container run,
-    /// a session Debug launched for it, or the program Profile started.</summary>
+    /// while the Run console (or the terminal's tab) has it, a session Debug launched for it, or the program Profile started.
+    /// An AppHost's run is said by its own (<see cref="MainWindow.Shown"/>).</summary>
     public bool IsRunningConfiguration(string name) =>
-        IsRunning && (Containers?.Plan.Name ?? ran) == name
+        RunsInConsole && (Containers?.Plan.Name ?? ran) == name
         || session.Debug.Tabs.Any(t => t.IsLive && t.Name == name && debugged.ContainsKey(name))
         || session.Profiled is { Run.HasExited: false } profiled && profiled.Name == name;
 
