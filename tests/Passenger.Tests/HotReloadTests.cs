@@ -16,14 +16,17 @@ namespace Passenger.Tests;
 /// (<see cref="Greetings"/>): restored once, its warm language server and the build the last test left, each test's window
 /// never saving what it typed. Debugged, so run alone.</summary>
 [Collection(Alone.Name)]
-public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
+public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>, IClassFixture<HotReloadTests.Plugins>
 {
     private readonly Greetings project;
+    private readonly Plugins plugins;
 
-    public HotReloadTests(Greetings project)
+    public HotReloadTests(Greetings project, Plugins plugins)
     {
         this.project = project;
+        this.plugins = plugins;
         project.Reset();
+        plugins.Reset();
     }
 
     /// <summary>Greets once every 100 ms, numbered, until stopped.</summary>
@@ -211,6 +214,42 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
         }
     }
 
+    /// <summary>A module the program loads after an update has been applied (a plugin's, which nothing it was built with
+    /// references) takes the edits made to its project from then on: Hot Reload applies them and the program prints what the
+    /// edited plugin prints.</summary>
+    [AvaloniaFact]
+    public void A_module_loaded_after_an_update_takes_the_edits_to_its_project_from_then_on()
+    {
+        MainWindow window = plugins.Open(null);
+        try
+        {
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), $"the program to greet ({Output(window)})");
+            window.OpenFile(plugins.PathOf(Path.Combine("App", "Greeter.cs")));
+            Replace(window, "Hello", "Howdy");
+            Ui.Run(window, AppActions.ApplyHotReloadChanges);
+            HotReloadOutcome first = Applied(window);
+            Assert.True(first.Result == HotReloadResult.Applied, $"The program's own edit should apply: {first.Said}");
+            Ui.WaitFor(() => Output(window).Contains("Howdy", StringComparison.Ordinal), $"the program to greet as edited ({Output(window)})");
+
+            Ui.TypeToDebugged(window, "load");
+            Ui.WaitFor(() => Output(window).Contains("Plugin ", StringComparison.Ordinal), $"the program to load its plugin ({Output(window)})");
+            string speaker = Path.Combine(PathNames.Canonical(plugins.Folder), "Plugin", "Speaker.cs");
+            window.OpenFile(speaker);
+            Replace(window, "Plugin {i}", "Plugged {i}");
+            Ui.Run(window, AppActions.ApplyHotReloadChanges);
+            Ui.WaitFor(() => window.Debugger.LastApplied != first, "Hot Reload to say what it applied of the plugin's edit");
+            HotReloadOutcome later = window.Debugger.LastApplied!;
+            Assert.True(later.Result == HotReloadResult.Applied, $"The edit to the plugin loaded after the first update should apply: {later.Said}");
+            Assert.Contains(speaker, later.Files);
+            Ui.WaitFor(() => Output(window).Contains("Plugged", StringComparison.Ordinal), $"the program to print what the edited plugin prints ({Output(window)})");
+        }
+        finally
+        {
+            End(window);
+        }
+    }
+
     private static ChoiceDialog Asked(MainWindow window)
     {
         Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), "Hot Reload to ask whether to restart");
@@ -264,6 +303,56 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>
             File.WriteAllText(PathOf("Greeter.cs"), Greeter);
             // The first build makes bin, which a reset would take for a file the test added: made now, the folder stays as reset.
             Directory.CreateDirectory(PathOf("bin"));
+            Prepare();
+        }
+    }
+
+    /// <summary>A program that greets for ever and, once "load" is typed into its console, loads a plugin from its build,
+    /// which nothing it is built with references (built first all the same), and has it speak at every greeting.</summary>
+    public sealed class Plugins : SharedProject
+    {
+        public Plugins()
+            : base("hotreload-plugins-")
+        {
+            File.WriteAllText(PathOf("Plugins.slnx"), "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Plugin/Plugin.csproj\" />\n</Solution>\n");
+            Directory.CreateDirectory(PathOf("App"));
+            Directory.CreateDirectory(PathOf("Plugin"));
+            File.WriteAllText(PathOf(Path.Combine("App", "App.csproj")), TestProjects.Console("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")
+                .With("  <ItemGroup>\n    <ProjectReference Include=\"../Plugin/Plugin.csproj\" ReferenceOutputAssembly=\"false\" />\n  </ItemGroup>\n"));
+            File.WriteAllText(PathOf(Path.Combine("App", "Program.cs")), """
+                using System.Reflection;
+
+                ManualResetEventSlim asked = new();
+                new Thread(() =>
+                {
+                    while (Console.ReadLine() is { } line)
+                    {
+                        if (line == "load")
+                        {
+                            asked.Set();
+                        }
+                    }
+                }) { IsBackground = true }.Start();
+                MethodInfo? speak = null;
+                for (int i = 1; ; i++)
+                {
+                    Greeter.Greet(i);
+                    if (speak is null && asked.IsSet)
+                    {
+                        string plugin = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Plugin", "bin", "Debug", "net10.0", "Plugin.dll"));
+                        speak = Assembly.LoadFrom(plugin).GetType("Speaker")!.GetMethod("Speak")!;
+                    }
+                    speak?.Invoke(null, [i]);
+                    Thread.Sleep(100);
+                }
+
+                """);
+            File.WriteAllText(PathOf(Path.Combine("App", "Greeter.cs")), Greeter);
+            File.WriteAllText(PathOf(Path.Combine("Plugin", "Plugin.csproj")), TestProjects.Library("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>"));
+            File.WriteAllText(PathOf(Path.Combine("Plugin", "Speaker.cs")),
+                "public static class Speaker\n{\n    public static void Speak(int i)\n    {\n        Console.WriteLine($\"Plugin {i}\");\n    }\n}\n");
+            Directory.CreateDirectory(PathOf(Path.Combine("App", "bin")));
+            Directory.CreateDirectory(PathOf(Path.Combine("Plugin", "bin")));
             Prepare();
         }
     }

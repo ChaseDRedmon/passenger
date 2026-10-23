@@ -26,12 +26,13 @@ public static class Handlers
     public const string AspireRunResources = "Passenger.Roslyn.Extension.AspireRunResources";
     public const string AspireRename = "Passenger.Roslyn.Extension.AspireRename";
     public const string AspireParameters = "Passenger.Roslyn.Extension.AspireParameters";
+    public const string ConnectionReads = "Passenger.Roslyn.Extension.ConnectionReads";
 
     public static readonly IReadOnlyList<string> All =
     [
         DescribeSignature, ChangeSignature, DescribeInterface, ExtractInterface, DescribeType, MoveTypeToFile, MoveTypeToNamespace,
         DescribeHierarchy, PullMembersUp, PushMembersDown, DocumentTexts, AspireProjectDeclaration, AspireCodeHelp, AspireReferenceFix, AspireRunResources,
-        AspireRename, AspireParameters,
+        AspireRename, AspireParameters, ConnectionReads,
     ];
 }
 
@@ -92,6 +93,20 @@ public sealed record AspireParameter(string Name, bool Secret, Place Start, Plac
 
 /// <summary>The parameters an AppHost's file declares that take their value from its configuration alone.</summary>
 public sealed record AspireParametersFound(IReadOnlyList<AspireParameter> Parameters);
+
+/// <summary>The projects whose code's connection-string reads are asked for, by their project files' paths.</summary>
+public sealed record ConnectionReadsRequest([property: JsonPropertyName("projects")] IReadOnlyList<string> Projects);
+
+/// <summary>A connection string a project's code reads: the project's file, the name it reads, and the file and place
+/// where the name is written.</summary>
+public sealed record ConnectionRead(
+    [property: JsonPropertyName("project")] string Project,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("at")] Place At);
+
+/// <summary>The connection strings the projects asked for read, each where it is read; none of a project the server has not loaded.</summary>
+public sealed record ConnectionReadsFound([property: JsonPropertyName("reads")] IReadOnlyList<ConnectionRead> Reads);
 
 /// <summary>The AppHost whose proven project resources and source locations are read.</summary>
 public sealed record AspireResourcesRequest(string AppHost);

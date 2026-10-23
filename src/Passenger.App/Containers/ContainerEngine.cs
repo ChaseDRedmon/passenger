@@ -265,10 +265,12 @@ public sealed class ContainerEngine
     public static bool ProviderFailed(string line) =>
         line.StartsWith("Error: executing ", StringComparison.Ordinal) && line.Contains(": exit status ", StringComparison.Ordinal);
 
-    /// <summary>What a failed command said: its errors, else its output, else its exit code.</summary>
-    public static string Said(ChildResult result) =>
+    /// <summary>What a failed command said: its errors, else its output, else its exit code, its secrets masked
+    /// (<see cref="ContainerSecrets.InSaid"/>: Compose's errors echo what it interpolated, from the .env in the
+    /// <paramref name="folder"/> it ran in among the rest), as every error of the engine is shown or logged.</summary>
+    public static string Said(ChildResult result, string? folder = null) => ContainerSecrets.InSaid(
         (result.Error.Trim() is { Length: > 0 } error ? error : result.Output.Trim() is { Length: > 0 } output ? output : $"exit code {result.ExitCode}")
-            .Replace("\r", string.Empty, StringComparison.Ordinal);
+            .Replace("\r", string.Empty, StringComparison.Ordinal), folder);
 
     /// <summary>The engine's state, asked again once the last answer is <see cref="Fresh"/> no more (or at once when
     /// <paramref name="again"/>); one question at a time, whoever asks.</summary>

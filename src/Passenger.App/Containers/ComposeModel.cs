@@ -36,7 +36,7 @@ public sealed record ComposeModel(string Name, IReadOnlyList<ComposeService> Ser
         Core.ChildResult result = await engine.RunAsync([.. compose, "config", "--format", "json"], ContainerEngine.AskLimit, cancel, folder);
         if (!result.Succeeded)
         {
-            throw new ContainerCommandException(ContainerEngine.Said(result));
+            throw new ContainerCommandException(ContainerEngine.Said(result, folder));
         }
         using JsonDocument document = JsonDocument.Parse(result.Output);
         return Read(document.RootElement);

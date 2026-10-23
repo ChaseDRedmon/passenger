@@ -48,6 +48,14 @@ public sealed class AspireRunResources : IExtensionWorkspaceMessageHandler<Aspir
         AspireSource.RunResourcesAsync(context.Solution, message.AppHost, cancellationToken);
 }
 
+/// <summary>The connection strings projects' code reads, by Aspire's one reading of them (<see cref="AspireSource.ConnectionUses"/>):
+/// what a compose file's check asks of a .NET service's project, whose environment should set them.</summary>
+public sealed class ConnectionReads : IExtensionWorkspaceMessageHandler<ConnectionReadsRequest, ConnectionReadsFound>
+{
+    public Task<ConnectionReadsFound> ExecuteAsync(ConnectionReadsRequest message, ExtensionMessageContext context, CancellationToken cancellationToken) =>
+        AspireSource.ConnectionReadsAsync(context.Solution, message.Projects, cancellationToken);
+}
+
 internal static class AspireSource
 {
     private const string Builder = "Aspire.Hosting.ApplicationModel.IResourceBuilder<T>";
@@ -450,19 +458,13 @@ internal static class AspireSource
         return new Refactored(null, [new FileChange(graph.Document.FilePath!, false, [new Edit(insertion, insertion, change)])]);
     }
 
+    /// <summary>Each read of a resource a service's document makes: the connection strings it reads (<see cref="ConnectionUses"/>)
+    /// and the services an HttpClient's base address discovers.</summary>
     private static IEnumerable<Use> Uses(SyntaxNode root, SemanticModel model, List<string>? evidence, CancellationToken cancel)
     {
-        foreach (InvocationExpressionSyntax call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        foreach (Use use in ConnectionUses(root, model, cancel))
         {
-            if (model.GetSymbolInfo(call, cancel).Symbol is not IMethodSymbol method)
-            {
-                continue;
-            }
-            ArgumentSyntax? argument = call.ArgumentList.Arguments.FirstOrDefault(a => NamesConnection(method, call, a));
-            if (argument is not null && model.GetConstantValue(argument.Expression, cancel) is { HasValue: true, Value: string name })
-            {
-                yield return new Use(argument.Expression, name, true);
-            }
+            yield return use;
         }
         foreach (AssignmentExpressionSyntax assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
@@ -498,6 +500,91 @@ internal static class AspireSource
                 yield return new Use(uriExpression, authority, false);
             }
         }
+    }
+
+    /// <summary>The connection strings a document's code reads, each where its name is written: the constant argument of
+    /// GetConnectionString or of a client integration's connectionName, and a <c>ConnectionStrings:</c> key in a string. The
+    /// one reading of them: Aspire's warning of a reference the AppHost lacks, and a compose file's of a variable a service's
+    /// environment lacks (<see cref="ConnectionReadsAsync"/>).</summary>
+    private static IEnumerable<Use> ConnectionUses(SyntaxNode root, SemanticModel model, CancellationToken cancel)
+    {
+        HashSet<ExpressionSyntax> named = [];
+        foreach (InvocationExpressionSyntax call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (model.GetSymbolInfo(call, cancel).Symbol is not IMethodSymbol method)
+            {
+                continue;
+            }
+            ArgumentSyntax? argument = call.ArgumentList.Arguments.FirstOrDefault(a => NamesConnection(method, call, a));
+            if (argument is not null && model.GetConstantValue(argument.Expression, cancel) is { HasValue: true, Value: string name })
+            {
+                named.Add(argument.Expression);
+                yield return new Use(argument.Expression, name, true);
+            }
+        }
+        foreach (LiteralExpressionSyntax literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
+        {
+            if (!named.Contains(literal) && literal.IsKind(SyntaxKind.StringLiteralExpression)
+                && literal.Token.ValueText.StartsWith("ConnectionStrings:", StringComparison.OrdinalIgnoreCase)
+                && ReadOf(literal, model, cancel) is { Connection: true } read)
+            {
+                yield return new Use(literal, read.Value, true);
+            }
+        }
+    }
+
+    /// <summary>Whether a document can read a connection string, by its syntax alone: a call of GetConnectionString or of an
+    /// Add method (a client integration's), or a string that names a <c>ConnectionStrings:</c> key; only such a document's
+    /// semantics are read.</summary>
+    private static bool MayReadConnections(SyntaxNode root) =>
+        root.DescendantNodes().Any(node => node switch
+        {
+            InvocationExpressionSyntax call => (call.Expression switch
+            {
+                MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+                SimpleNameSyntax simple => simple.Identifier.ValueText,
+                _ => string.Empty,
+            }) is "GetConnectionString" or ['A', 'd', 'd', ..],
+            LiteralExpressionSyntax literal => literal.IsKind(SyntaxKind.StringLiteralExpression)
+                && literal.Token.ValueText.StartsWith("ConnectionStrings:", StringComparison.OrdinalIgnoreCase),
+            _ => false,
+        });
+
+    /// <summary>What each project's code read, by its version: a project's documents are read again only once one of them,
+    /// or a project it references, has changed.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<ProjectId, (VersionStamp Version, IReadOnlyList<ConnectionRead> Reads)> ConnectionsRead = new();
+
+    /// <summary>The connection strings the projects' code reads (<see cref="ConnectionUses"/>), each where its name is
+    /// written: every target framework's build of a project, each read once.</summary>
+    public static async Task<ConnectionReadsFound> ConnectionReadsAsync(Solution solution, IReadOnlyList<string> projects, CancellationToken cancel)
+    {
+        List<ConnectionRead> reads = [];
+        foreach (string path in projects)
+        {
+            HashSet<(string Name, string File, int Line, int Character)> seen = [];
+            foreach (Project project in solution.Projects.Where(p => SamePath(p.FilePath, path)))
+            {
+                VersionStamp version = await project.GetDependentVersionAsync(cancel).ConfigureAwait(false);
+                if (!ConnectionsRead.TryGetValue(project.Id, out var known) || known.Version != version)
+                {
+                    List<ConnectionRead> found = [];
+                    foreach (Document document in project.Documents.Where(d => d.FilePath is not null))
+                    {
+                        if (await document.GetSyntaxRootAsync(cancel).ConfigureAwait(false) is not { } root || !MayReadConnections(root)
+                            || await document.GetSemanticModelAsync(cancel).ConfigureAwait(false) is not { } model)
+                        {
+                            continue;
+                        }
+                        SourceText text = await document.GetTextAsync(cancel).ConfigureAwait(false);
+                        found.AddRange(ConnectionUses(root, model, cancel).Select(use => new ConnectionRead(path, use.Name, document.FilePath!, PlaceAt(text, use.Expression.SpanStart))));
+                    }
+                    known = (version, found);
+                    ConnectionsRead[project.Id] = known;
+                }
+                reads.AddRange(known.Reads.Where(r => seen.Add((r.Name, r.Path, r.At.Line, r.At.Character))).Select(r => r with { Project = path }));
+            }
+        }
+        return new ConnectionReadsFound(reads);
     }
 
     /// <summary>Whether an argument is the name of a connection string a service reads: GetConnectionString's, or an Aspire

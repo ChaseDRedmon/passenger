@@ -268,6 +268,46 @@ public sealed class EngineChecksTests
         }
     }
 
+    /// <summary>Compose's error that echoes what it interpolated from a secret's variable in the .env says it masked, by
+    /// Passenger's one rule for secrets, wherever it is said: the compose file's marker and Problems' Containers tab as the
+    /// engine checks the file, and the run of its configuration, which says why it cannot run in the status bar, in Problems
+    /// and to an agent.</summary>
+    [AvaloniaFact]
+    public void Composes_error_echoing_a_secrets_value_says_it_masked_in_the_marker_problems_the_status_bar_and_to_an_agent()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        const string Secret = "s3cr3t-hunter2";
+        string folder = Folder(("compose.yaml", "services:\n  web:\n    image: busybox:1.37\n    cpus: ${DB_PASSWORD}\n"), (".env", $"DB_PASSWORD={Secret}\n"));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("parsing", StringComparison.Ordinal)),
+                $"Compose's error of the value it could not read marked, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]");
+            string marked = document.Markers.First(m => m.Message.Contains("parsing", StringComparison.Ordinal)).Message;
+            Assert.True(marked.Contains($"\"{ContainerSecrets.Masked}\"", StringComparison.Ordinal) && !marked.Contains(Secret, StringComparison.Ordinal),
+                $"The marker said the secret's value: {marked}");
+            Problem listed = Assert.Single(window.BottomPanel.Problems.ContainerProblems);
+            Assert.Equal(marked, listed.Message);
+
+            Assert.True(window.SelectConfiguration("Compose: compose.yaml"), "The compose file's configuration was not made");
+            Ui.Run(window, AppActions.RunProgram);
+            Ui.WaitFor(() => window.Actions.Work.Of(AppActions.RunProgram) is null && window.Status?.Contains("parsing", StringComparison.Ordinal) == true,
+                $"Run to say why the configuration cannot run ({window.Status})");
+            Assert.True(window.Status!.Contains(ContainerSecrets.Masked, StringComparison.Ordinal) && !window.Status.Contains(Secret, StringComparison.Ordinal),
+                $"The status bar said the secret's value: {window.Status}");
+            Assert.DoesNotContain(window.BottomPanel.Problems.ContainerProblems, p => p.Message.Contains(Secret, StringComparison.Ordinal));
+
+            Exception refused = Assert.ThrowsAny<Exception>(() => Ui.Await(new Passenger.App.Mcp.PassengerTools(window).Run("Compose: compose.yaml"), "an agent's run"));
+            Assert.True(refused.Message.Contains(ContainerSecrets.Masked, StringComparison.Ordinal) && !refused.Message.Contains(Secret, StringComparison.Ordinal),
+                $"An agent's run said the secret's value: {refused.Message}");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     /// <summary>A name Compose finds a service uses that the file does not declare is marked where it is written, and Show
     /// Context Actions there offers Passenger's own fixes first: a service depended on that is not there, removed from
     /// depends_on or changed to the service of a near name; a volume or secret declared at the top level, under its key or
@@ -391,6 +431,112 @@ public sealed class EngineChecksTests
         {
             window.Close();
         }
+    }
+
+    /// <summary>A .NET service whose project reads connection strings (GetConnectionString, a ConnectionStrings: key) that
+    /// its environment never sets is warned of on its name, once the language server has read the project as Aspire's
+    /// warning reads a service, and Show Context Actions there offers Passenger's own fix for each first: set in the
+    /// service's environment, made under it as the file indents, as one undo step, to the connection string of the Postgres
+    /// the file runs under the name read, else to a value the person fills in. Set, its warning goes.</summary>
+    [AvaloniaFact]
+    public void A_dotnet_services_connection_strings_its_environment_never_sets_are_marked_and_set_by_their_fixes()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        string folder = ConnectionsFolder(Connections);
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            Marker db = Unset(window, document, "db");
+            Assert.Equal(("api", MarkerKind.Warning), (Under(document, db), db.Kind));
+            Assert.Equal("api runs Api, which reads the connection string db: the service's environment never sets ConnectionStrings__db", db.Message);
+            Unset(window, document, "cache");
+            Assert.Contains(window.BottomPanel.Problems.ContainerProblems, p => p.Message == db.Message);
+
+            editor.Selections = SelectionSet.Single(db.Range.Start + 1);
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fixes of the connection strings api's environment never sets");
+            Assert.Equal(["Set ConnectionStrings__db in api's environment", "Set ConnectionStrings__cache in api's environment"], window.Assist.Offered.Take(2));
+            Assert.Equal(["to db's connection string", "to a value you fill in"], window.Assist.OfferedDetails.Take(2));
+            Ui.Press(window, "ENTER");
+            string set = Connections.Replace("      - db\n", "      - db\n    environment:\n"
+                + "      ConnectionStrings__db: \"Host=db;Port=5432;Database=db;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}\"\n", StringComparison.Ordinal);
+            Assert.Equal(set, editor.Document.Snapshot.ToString());
+            Ui.Run(window, EditorActions.Undo);
+            Assert.Equal(Connections, editor.Document.Snapshot.ToString());
+            Ui.Run(window, EditorActions.Redo);
+            Assert.Equal(set, editor.Document.Snapshot.ToString());
+            Ui.WaitFor(() => !document.Markers.Any(m => m.Message.EndsWith("ConnectionStrings__db", StringComparison.Ordinal))
+                && document.Markers.Any(m => m.Message.EndsWith("ConnectionStrings__cache", StringComparison.Ordinal)),
+                $"db's warning gone once its environment sets it, cache's kept ({string.Join(", ", document.Markers.Select(m => m.Message))})");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>An agent's code_actions on a service's name list the fix of a connection string its environment never sets
+    /// first, the one its env_file sets not among them, and apply_code_action makes it on the text as it stands, the file
+    /// saved, the value left for the person to fill in after the entry the file has. Skipped without a Node.js too, since
+    /// the agents' code tools serve a compose file through its YAML server.</summary>
+    [AvaloniaFact]
+    public void An_agent_sets_a_connection_string_a_services_environment_never_sets_through_its_fix()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        DockerFilesTests.Shop.SkipWithoutNode(yaml: true);
+        string compose = Connections.Replace("      - db\n", "      - db\n    env_file: api.env\n    environment:\n      - ASPNETCORE_ENVIRONMENT=Development\n", StringComparison.Ordinal);
+        string folder = ConnectionsFolder(compose, ("api.env", "ConnectionStrings__db=Host=db;Username=postgres\n"));
+        MainWindow window = Open(folder, "compose.yaml");
+        try
+        {
+            OpenDocument document = window.EditorArea.Active!;
+            Unset(window, document, "cache");
+            Assert.DoesNotContain(document.Markers, m => m.Message.EndsWith("ConnectionStrings__db", StringComparison.Ordinal));
+            Passenger.App.Mcp.PassengerTools agent = new(window);
+            IReadOnlyList<string> actions = Ui.Await(agent.CodeActions("compose.yaml", 2, 3), "the code actions an agent asks for");
+            Assert.Equal("Set ConnectionStrings__cache in api's environment [quickfix]", actions[0]);
+            Assert.DoesNotContain(actions, a => a.Contains("ConnectionStrings__db", StringComparison.Ordinal));
+            string applied = Ui.Await(agent.ApplyCodeAction("compose.yaml", 2, 3, "Set ConnectionStrings__cache in api's environment"), "the agent's fix made");
+            Assert.Equal("Applied 'Set ConnectionStrings__cache in api's environment' to compose.yaml", applied);
+            Assert.Equal(compose.Replace("      - ASPNETCORE_ENVIRONMENT=Development\n", "      - ASPNETCORE_ENVIRONMENT=Development\n      - ConnectionStrings__cache=\n", StringComparison.Ordinal),
+                File.ReadAllText(PathOf(folder, "compose.yaml")));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>A compose file whose api service is built from a Dockerfile that runs the Api project, beside the Postgres it
+    /// depends on, named db.</summary>
+    private const string Connections = "services:\n  api:\n    build: ./Api\n    depends_on:\n      - db\n  db:\n    image: postgres:17\n";
+
+    /// <summary>A folder of the test's own with a web project, Api, whose code reads the connection strings db (by
+    /// GetConnectionString) and cache (by its ConnectionStrings: key), its Dockerfile, and the compose file given, restored.</summary>
+    private static string ConnectionsFolder(string compose, params (string Name, string Text)[] more)
+    {
+        string folder = Folder([
+            ("Shop.slnx", "<Solution>\n  <Project Path=\"Api/Api.csproj\" />\n</Solution>\n"),
+            ("Api/Api.csproj", TestProjects.Web("<ImplicitUsings>enable</ImplicitUsings>", "<Nullable>enable</Nullable>")),
+            ("Api/Program.cs", "var builder = WebApplication.CreateBuilder(args);\nstring? db = builder.Configuration.GetConnectionString(\"db\");\n"
+                + "string? cache = builder.Configuration[\"ConnectionStrings:cache\"];\nvar app = builder.Build();\napp.Run();\n"),
+            ("Api/Dockerfile", "FROM mcr.microsoft.com/dotnet/aspnet:10.0\nWORKDIR /app\nCOPY bin/Release/net10.0/publish .\nENTRYPOINT [\"dotnet\", \"Api.dll\"]\n"),
+            ("compose.yaml", compose),
+            .. more]);
+        Restore.Run(PathOf(folder, "Shop.slnx"));
+        return folder;
+    }
+
+    /// <summary>The warning that the service's environment never sets a connection string, once the language server has
+    /// loaded the project and the compose file is checked again.</summary>
+    private static Marker Unset(MainWindow window, OpenDocument document, string name)
+    {
+        Ui.WaitFor(() => window.CSharpService is { IsReady: true }, $"the language server to load the project ({window.CSharpService?.State})", TimeSpan.FromMinutes(3));
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.EndsWith($"never sets ConnectionStrings__{name}", StringComparison.Ordinal)),
+            $"the warning that ConnectionStrings__{name} is never set, not [{string.Join(", ", document.Markers.Select(m => m.Message))}]", TimeSpan.FromMinutes(1));
+        return document.Markers.First(m => m.Message.EndsWith($"never sets ConnectionStrings__{name}", StringComparison.Ordinal));
     }
 
     /// <summary>Compose's marker on a name, once its check has run, with the caret put on it.</summary>
