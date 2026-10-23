@@ -2096,8 +2096,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   an update `_peMetadataReader` is mscordbi's saved copy of the module's metadata, `_imageMetadataReader` the image's.
   A Debug launch sets `DOTNET_MODIFIABLE_ASSEMBLIES=debug`. `Debugging/HotReload.cs` and `MainWindow.HotReload.cs` are
   Apply Hot Reload Changes (Alt+F10, toolbar and Debug/Run windows' flame, edits made while paused applied on the next
-  resume or step), Problems' Hot Reload tab for rude edits, and the restart (Settings' Hot Reload page: always restart
-  for a change it can't apply, on by default, else dotnet watch's question); an attach gets it only when its caller
+  resume or step), Problems' Hot Reload tab for rude edits and Roslyn's warnings (an apply that changes nothing says
+  Roslyn's reason in its words after "No managed code changes to apply", `HotReload.NothingApplied`: a file of a stale
+  build, ENC1008, in the status bar, the Debug console and an agent's `hot_reload`), and the restart (Settings' Hot
+  Reload page: always restart for a change it can't apply, on by default, else dotnet watch's question); an attach gets
+  it only when its caller
   started the program held for the debugger with DOTNET_MODIFIABLE_ASSEMBLIES=debug (`AttachAsync`'s `hotReload`,
   Passenger's `AttachArguments.HotReload`), and the restart only as a container run's service (Containers above; a
   container run's restart is never asked, Settings' always restart deciding). Roslyn

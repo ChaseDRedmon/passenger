@@ -210,7 +210,7 @@ public sealed class HotReload
         {
             case "none":
                 Changed = false;
-                return new HotReloadOutcome(HotReloadResult.NothingToApply, "No managed code changes to apply.")
+                return new HotReloadOutcome(HotReloadResult.NothingToApply, NothingApplied(problems))
                 {
                     Problems = problems,
                     Files = emitted.ChangedDocuments,
@@ -286,6 +286,15 @@ public sealed class HotReload
         {
             IdeLog.Write(IdeLog.Debugger, $"Hot Reload {handler}: {failed.Reason}");
         }
+    }
+
+    /// <summary>An apply that changed nothing, with what Roslyn said of it when it said anything (a file of a stale project,
+    /// ENC1008, whose edits wait for a build), in its words: why an edit made did not reach the program.</summary>
+    internal static string NothingApplied(IEnumerable<Problem> problems)
+    {
+        List<string> said = [.. problems.Select(p => p.Message.TrimEnd('.')).Distinct(StringComparer.Ordinal)];
+        return said.Count == 0 ? "No managed code changes to apply."
+            : $"No managed code changes to apply: {string.Join("; ", said.Take(2))}{(said.Count > 2 ? $"; and {said.Count - 2} more" : string.Empty)}.";
     }
 
     /// <summary>The first edits named, each with its file and line, as the status bar says them.</summary>

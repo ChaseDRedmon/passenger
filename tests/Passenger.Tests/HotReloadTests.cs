@@ -3,6 +3,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Debugging;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
@@ -210,6 +211,49 @@ public sealed class HotReloadTests : IClassFixture<HotReloadTests.Greetings>, IC
         finally
         {
             window.ApplySettings(window.Settings with { RestartOnRudeEdit = true });
+            End(window);
+        }
+    }
+
+    /// <summary>A file saved since the build the program runs, its time left before that build's so the build before Debug
+    /// takes the build as up to date: an edit to it reaches nothing, and Hot Reload says why in Roslyn's words after "No
+    /// managed code changes to apply", in the status bar, a link to Problems' Hot Reload tab, and in the Debug console.</summary>
+    [AvaloniaFact]
+    public void An_edit_to_a_file_saved_since_the_build_the_program_runs_applies_nothing_and_says_why_in_Roslyns_words()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.Build(Passenger.App.Run.BuildKind.Build);
+            Ui.WaitFor(() => !window.IsBuilding, "the build");
+            DateTime was = File.GetLastWriteTimeUtc(GreeterPath);
+            File.WriteAllText(GreeterPath, Greeter.Replace("Hello", "Hi", StringComparison.Ordinal));
+            File.SetLastWriteTimeUtc(GreeterPath, was);
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), $"the program built before the save to greet as built ({Output(window)})");
+
+            window.OpenFile(GreeterPath);
+            Replace(window, "Hi", "Howdy");
+            Ui.Run(window, AppActions.ApplyHotReloadChanges);
+            HotReloadOutcome outcome = Applied(window);
+            Assert.True(outcome.Result == HotReloadResult.NothingToApply, $"An edit to a file of a stale build should apply nothing: {outcome.Said}");
+            Passenger.App.Run.Problem stale = outcome.Problems.FirstOrDefault(p => p.Code == "ENC1008")
+                ?? throw new Xunit.Sdk.XunitException($"Roslyn did not say the project is stale: [{string.Join("; ", outcome.Problems.Select(p => $"{p.Code} {p.Message}"))}]");
+            Assert.Equal(GreeterPath, stale.Path);
+            Assert.True(outcome.Said == $"No managed code changes to apply: {stale.Message.TrimEnd('.')}.", $"Hot Reload did not say Roslyn's reason for applying nothing: {outcome.Said}");
+
+            // The status bar says it, and its words go to Problems' Hot Reload tab, which lists it.
+            Ui.WaitFor(() => window.Status == outcome.Said, $"the status bar to say why nothing was applied, not \"{window.Status}\"");
+            window.DockHost.Hide(ToolWindowIds.Problems);
+            Ui.Click(window.GetVisualDescendants().OfType<Avalonia.Controls.Button>().Single(b => b.Name == "StatusMessage"));
+            Assert.True(window.DockHost.IsShown(ToolWindowIds.Problems) && window.BottomPanel.Problems.Shown == ProblemsTab.HotReload,
+                "A click on the status bar's words did not show Problems' Hot Reload tab");
+            Assert.Contains(stale, window.BottomPanel.Problems.HotReloadProblems!);
+            Assert.Contains($"Hot Reload: {outcome.Said}", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("Howdy", Output(window), StringComparison.Ordinal);
+        }
+        finally
+        {
             End(window);
         }
     }

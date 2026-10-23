@@ -869,8 +869,9 @@ public sealed class DebugController : IDisposable
             HotReloadResult.Applied => 3,
             _ => 4,
         }).First();
-        List<string> said = [.. each.Where(e => e.Outcome.Result != HotReloadResult.NothingToApply).Select(e => $"{e.Name}: {e.Outcome.Said}")];
-        return new HotReloadOutcome(result, said.Count == 0 ? "No managed code changes to apply." : string.Join("; ", said))
+        // Nothing applied says more when Roslyn said why (a stale project's file).
+        List<string> said = [.. each.Where(e => e.Outcome.Result != HotReloadResult.NothingToApply || e.Outcome.Problems.Count > 0).Select(e => $"{e.Name}: {e.Outcome.Said}")];
+        return new HotReloadOutcome(result, said.Count == 0 ? HotReload.NothingApplied([]) : string.Join("; ", said))
         {
             Problems = [.. each.SelectMany(e => e.Outcome.Problems).Distinct()],
             Files = [.. each.SelectMany(e => e.Outcome.Files).Distinct(StringComparer.Ordinal)],
