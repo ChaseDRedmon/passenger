@@ -7,7 +7,7 @@ Guidance for Claude Code working in this repository.
 **Passenger** is an IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity), written in C# on
 .NET 11 with an Avalonia 12 UI, for Windows and macOS first. The MVP shipped as v0.1.0; the work to do is the issues
 of the release in progress, a milestone and a branch of its name (0.2.0 now:
-https://github.com/Zaneris/passenger/milestone/3), with the features waiting beyond it in Post-MVP 1
+https://github.com/Zaneris/passenger/milestone/3), with the features waiting beyond it in the Backlog
 (https://github.com/Zaneris/passenger/milestone/2), each issue saying what Passenger does now, what it should do and
 when it is done (**Now:**, **The aim:**, **Done when:**). Read the issue before starting anything larger than a fix, and
 close or tick it when it lands. A new feature is the best Passenger can make it from what
