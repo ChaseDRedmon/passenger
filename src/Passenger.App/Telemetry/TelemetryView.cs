@@ -286,14 +286,12 @@ public sealed class TelemetryView : IDisposable
         catch (Exception error) when (error is IOException or InvalidDataException or InvalidOperationException or TimeoutException or ArgumentException
             or NotSupportedException or System.Net.Http.HttpRequestException)
         {
-            string reason = ContainerSecrets.InValue(error.Message.Replace(source.ApiKey, ContainerSecrets.Masked, StringComparison.Ordinal));
-            reason = reason.Replace('\r', ' ').Replace('\n', ' ');
-            reason = reason.Length > 512 ? reason[..512] : reason;
+            string reason = source.Unread(error);
             UiThread.Post(() =>
             {
                 if (!disposed && !cancel.IsCancellationRequested)
                 {
-                    label.Text = $"Dashboard telemetry unavailable: {reason} Refresh to reconnect.";
+                    label.Text = $"{reason}. Refresh to reconnect.";
                 }
             });
         }

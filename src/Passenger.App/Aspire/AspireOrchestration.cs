@@ -31,23 +31,23 @@ public static class AspireOrchestration
             string folder = Path.GetDirectoryName(project)!;
             if (Directory.Exists(folder) || File.Exists(folder))
             {
-                throw new InvalidOperationException($"{folder} already exists. Choose an existing project or move the conflicting folder first.");
+                throw new InvalidOperationException($"{folder} already exists: choose an existing project or move the folder in its way first");
             }
             newFolders.Add(folder);
         }
         if (choice.Services.Count == 0)
         {
-            throw new InvalidOperationException("Choose at least one service project.");
+            throw new InvalidOperationException("Choose at least one service project");
         }
         if (choice.Services.Any(p => p.TargetFrameworks.Count == 0))
         {
-            throw new InvalidOperationException("Wait until the selected service projects have loaded their target frameworks.");
+            throw new InvalidOperationException("Wait until the selected service projects have loaded their target frameworks");
         }
         string Staged(string path)
         {
             if (!PathNames.Within(path, root))
             {
-                throw new InvalidOperationException($"{path} is outside the solution folder. Add orchestration for this project manually.");
+                throw new InvalidOperationException($"{path} is outside the solution folder: add orchestration for this project by hand");
             }
             return Path.Combine(staging, Path.GetRelativePath(root, path));
         }
@@ -58,7 +58,7 @@ public static class AspireOrchestration
                 return;
             }
             byte[] before = File.ReadAllBytes(path);
-            FileText text = FileText.FromBytes(before) ?? throw new InvalidOperationException($"{path} is not a text file.");
+            FileText text = FileText.FromBytes(before) ?? throw new InvalidOperationException($"{path} is not a text file");
             string to = Staged(path);
             Directory.CreateDirectory(Path.GetDirectoryName(to)!);
             FileText.Save(to, text.Text, text.Encoding, text.HasBom, text.CrBreaks);
@@ -76,7 +76,7 @@ public static class AspireOrchestration
             Copy(HostSourcePath(host));
             if (choice.Services.Any(service => !CanReference(choice.AppHost.TargetFrameworks, service.TargetFrameworks)))
             {
-                throw new InvalidOperationException("The selected AppHost framework cannot reference every selected service. Choose a newer AppHost.");
+                throw new InvalidOperationException("The selected AppHost framework cannot reference every selected service: choose a newer AppHost");
             }
         }
         if (choice.ServiceDefaults is not null)
@@ -101,7 +101,7 @@ public static class AspireOrchestration
             async Task Generate(string project, string shortName, bool hostFramework)
             {
                 ProjectTemplate template = catalog.Templates.FirstOrDefault(t => t.Pack is null && t.ShortNames.Contains(shortName))
-                    ?? throw new InvalidOperationException("Install Aspire.ProjectTemplates through Add > New Project > Aspire > Install, then try again.");
+                    ?? throw new InvalidOperationException("Install Aspire.ProjectTemplates through Add > New Project > Aspire > Install, then try again");
                 List<(TemplateVariant Variant, string Framework, Version Version)> available = [.. template.Variants
                     .Where(v => v.Language is null or "C#")
                     .SelectMany(v => v.Frameworks.Select(f => (v, f, Framework(f).Version)))];
@@ -113,7 +113,7 @@ public static class AspireOrchestration
                     (hostFramework ? compatible.OrderBy(a => a.Version) : compatible.OrderByDescending(a => a.Version)).FirstOrDefault();
                 if (picked.Variant is null || picked.Variant.SkipRestoreOption is null)
                 {
-                    throw new InvalidOperationException($"The installed {shortName} template has no compatible framework with skip-restore support for the selected services.");
+                    throw new InvalidOperationException($"The installed {shortName} template has no compatible framework with skip-restore support for the selected services");
                 }
                 List<string> arguments = [template.ShortName, "--name", Path.GetFileNameWithoutExtension(project),
                     "--output", Path.GetDirectoryName(Staged(project))!, "--no-update-check", $"--{picked.Variant.SkipRestoreOption}", "true"];
@@ -140,14 +140,14 @@ public static class AspireOrchestration
                     string destination = Path.Combine(Path.GetDirectoryName(project)!, Path.GetRelativePath(generated, file));
                     if (File.Exists(destination) || Directory.Exists(destination))
                     {
-                        throw new InvalidOperationException($"{destination} already exists.");
+                        throw new InvalidOperationException($"{destination} already exists");
                     }
                     _ = FileText.Load(file) ?? throw new InvalidOperationException($"The template produced a binary file: {file}");
                     files.Add(destination, (file, null));
                 }
                 if (!files.ContainsKey(project))
                 {
-                    throw new InvalidOperationException($"The template did not produce {Path.GetFileName(project)}.");
+                    throw new InvalidOperationException($"The template did not produce {Path.GetFileName(project)}");
                 }
             }
         }
@@ -187,7 +187,7 @@ public static class AspireOrchestration
             if (write.Before is null ? File.Exists(write.Path) || Directory.Exists(write.Path)
                 : !File.Exists(write.Path) || !File.ReadAllBytes(write.Path).AsSpan().SequenceEqual(write.Before))
             {
-                throw new InvalidOperationException($"{write.Path} changed while orchestration was being prepared. Try again.");
+                throw new InvalidOperationException($"{write.Path} changed while orchestration was being prepared: try again");
             }
         }
     }
@@ -196,7 +196,7 @@ public static class AspireOrchestration
     {
         if (services.Any(service => !CanReference(service.TargetFrameworks, defaults.TargetFrameworks)))
         {
-            throw new InvalidOperationException("The selected ServiceDefaults target framework is not compatible with every service.");
+            throw new InvalidOperationException("The selected ServiceDefaults target framework is not compatible with every service");
         }
         // Its C# files as the folder's one walk finds what a project builds: never its output, a link twice or a hidden folder.
         List<MethodDeclarationSyntax> methods = [.. FolderWalk.Files(defaults.Folder, built: true)
@@ -204,14 +204,14 @@ public static class AspireOrchestration
             .SelectMany(p => CSharpSyntaxTree.ParseText(Read(p).Text).GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())];
         if (!methods.Any(m => m.Identifier.ValueText == "AddServiceDefaults" && m.ParameterList.Parameters.FirstOrDefault()?.Modifiers.Any(SyntaxKind.ThisKeyword) == true))
         {
-            throw new InvalidOperationException("The selected ServiceDefaults project does not expose AddServiceDefaults. Choose an Aspire ServiceDefaults project.");
+            throw new InvalidOperationException("The selected ServiceDefaults project does not expose AddServiceDefaults: choose an Aspire ServiceDefaults project");
         }
         bool web = services.Any(p => CSharpSyntaxTree.ParseText(Read(Path.Combine(p.Folder, "Program.cs")).Text).GetRoot()
             .DescendantNodes().OfType<InvocationExpressionSyntax>().Any(i => i.Expression is MemberAccessExpressionSyntax
             { Expression: IdentifierNameSyntax { Identifier.ValueText: "WebApplication" }, Name.Identifier.ValueText: "CreateBuilder" }));
         if (web && !methods.Any(m => m.Identifier.ValueText == "MapDefaultEndpoints" && m.ParameterList.Parameters.FirstOrDefault()?.Modifiers.Any(SyntaxKind.ThisKeyword) == true))
         {
-            throw new InvalidOperationException("The selected ServiceDefaults project does not expose MapDefaultEndpoints for web services.");
+            throw new InvalidOperationException("The selected ServiceDefaults project does not expose MapDefaultEndpoints for web services");
         }
     }
 
@@ -224,7 +224,7 @@ public static class AspireOrchestration
             .DescendantNodes().OfType<InvocationExpressionSyntax>().Any(i => i.Expression is MemberAccessExpressionSyntax
                 { Expression: IdentifierNameSyntax { Identifier.ValueText: "DistributedApplication" }, Name.Identifier.ValueText: "CreateBuilder" }))];
         return sources.Count == 1 ? sources[0]
-            : throw new InvalidOperationException($"{project}: expected one AppHost source file with DistributedApplication.CreateBuilder. No files were changed.");
+            : throw new InvalidOperationException($"{project}: expected one AppHost source file with DistributedApplication.CreateBuilder; no file was changed");
     }
 
     private static bool CanReference(IReadOnlyList<string> consumers, IReadOnlyList<string> providers)
@@ -245,7 +245,7 @@ public static class AspireOrchestration
         return parsed;
     }
 
-    private static FileText Read(string path) => FileText.Load(path) ?? throw new InvalidOperationException($"{path} is not text.");
+    private static FileText Read(string path) => FileText.Load(path) ?? throw new InvalidOperationException($"{path} is not text");
 
     private static void Save(string path, string text)
     {
@@ -276,7 +276,7 @@ public static class AspireOrchestration
         if (create.Expression is MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.ValueText: "WebApplication" } })
         {
             VariableDeclaratorSyntax app = build.Ancestors().OfType<VariableDeclaratorSyntax>().FirstOrDefault()
-                ?? throw new InvalidOperationException($"{path}: assign the built WebApplication to a local variable before adding orchestration.");
+                ?? throw new InvalidOperationException($"{path}: assign the built WebApplication to a local variable before adding orchestration");
             if (!Calls(root, app.Identifier.Text, "MapDefaultEndpoints").Any())
             {
                 StatementSyntax statement = app.Ancestors().OfType<StatementSyntax>().First();
@@ -303,7 +303,7 @@ public static class AspireOrchestration
             string name = Path.GetFileNameWithoutExtension(service.Path).ToLowerInvariant().Replace('.', '-').Replace('_', '-');
             if (name.Length == 0 || name.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-') || !char.IsAsciiLetter(name[0]) || !names.Add(name))
             {
-                throw new InvalidOperationException($"{service.Name} does not have a unique Aspire resource name. Rename the project or add its resource manually.");
+                throw new InvalidOperationException($"{service.Name} does not have a unique Aspire resource name: rename the project or add its resource by hand");
             }
             string relative = Path.GetRelativePath(Path.GetDirectoryName(host)!, service.Path).Replace('\\', '/');
             string generatedType = Path.GetFileNameWithoutExtension(service.Path).Replace('.', '_').Replace('-', '_');
@@ -330,7 +330,7 @@ public static class AspireOrchestration
                 && !(member.Name.Identifier.ValueText == "AddProject" && projects.Any(p => p.Call == call && SameProject(p))));
             if (occupied)
             {
-                throw new InvalidOperationException($"The AppHost already uses resource name {name} for another resource. Add {service.Name} manually with a unique name.");
+                throw new InvalidOperationException($"The AppHost already uses resource name {name} for another resource: add {service.Name} by hand with a unique name");
             }
             // Each backing service it reads, by the name its connection string uses, referenced and waited for.
             IReadOnlyList<string> uses = backing.Used(needs.GetValueOrDefault(service.Path) ?? new BackingNeeds([], []));
@@ -466,7 +466,7 @@ public static class AspireOrchestration
         string? version = AspireVersion(text) ?? (managing is null ? null : AspireVersion(Read(managing).Text));
         if (version is null)
         {
-            throw new InvalidOperationException($"The AppHost's Aspire version could not be read from its project, for {package} to be added at it. No files were changed.");
+            throw new InvalidOperationException($"The AppHost's Aspire version could not be read from its project, for {package} to be added at it; no file was changed");
         }
         Check(ProjectEdits.AddPackage(stagedHost, package, managing is null ? version : null));
         if (managing is not null)
@@ -525,7 +525,7 @@ public static class AspireOrchestration
             generic is null ? ((LiteralExpressionSyntax)arguments[1]).Token.ValueText : null,
             generic?.TypeArgumentList.Arguments[0].ToString());
 
-        InvalidOperationException Unresolved() => new($"Cannot resolve AppHost AddProject arguments: {call}. Use literal name/projectPath arguments and a supported Aspire overload before adding orchestration.");
+        InvalidOperationException Unresolved() => new($"Cannot resolve AppHost AddProject arguments: {call}; use literal name and projectPath arguments and a supported Aspire overload before adding orchestration");
     }
 
     private static CompilationUnitSyntax Parse(string text, string path)
@@ -533,7 +533,7 @@ public static class AspireOrchestration
         CompilationUnitSyntax root = CSharpSyntaxTree.ParseText(text).GetCompilationUnitRoot();
         if (root.ContainsDiagnostics || root.ContainsDirectives)
         {
-            throw new InvalidOperationException($"{path}: source contains syntax errors or directives. Add orchestration manually for this layout.");
+            throw new InvalidOperationException($"{path}: source contains syntax errors or directives: add orchestration by hand for this layout");
         }
         return root;
     }
@@ -547,7 +547,7 @@ public static class AspireOrchestration
         if (builders.Count != 1 || builders[0].Builder.Ancestors().OfType<StatementSyntax>().FirstOrDefault()
             is not LocalDeclarationStatementSyntax { Declaration.Variables.Count: 1 })
         {
-            throw new InvalidOperationException($"{path}: expected one local builder created with {string.Join(" or ", types)}.CreateBuilder. No files were changed.");
+            throw new InvalidOperationException($"{path}: expected one local builder created with {string.Join(" or ", types)}.CreateBuilder; no file was changed");
         }
         return builders[0];
     }
@@ -559,7 +559,7 @@ public static class AspireOrchestration
         if (builds.Count != 1 || builds[0].SpanStart <= builder.Span.End
             || Scope(builds[0].Ancestors().OfType<StatementSyntax>().First()) != Scope(declaration))
         {
-            throw new InvalidOperationException($"{path}: expected one builder.Build() in the builder's scope. No files were changed.");
+            throw new InvalidOperationException($"{path}: expected one builder.Build() in the builder's scope; no file was changed");
         }
         return builds[0];
     }

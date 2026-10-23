@@ -75,7 +75,7 @@ public sealed class AspireOrchestrationDialog : Window
         }, DialogFooter.Bar(DialogFooter.Of(Add, cancel)));
         if (choices.Count == 0)
         {
-            Problem.Text = "No executable C# service projects are available. Test projects and AppHosts are not services.";
+            Problem.Text = "No C# project runs as a service: test projects and AppHosts are not services";
         }
     }
 

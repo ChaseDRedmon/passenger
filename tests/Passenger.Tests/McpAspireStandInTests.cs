@@ -89,6 +89,13 @@ public sealed class McpAspireStandInTests(StandInAppHost project) : McpRig, ICla
             string path = traceId is null ? kind : $"traces/{traceId}";
             Assert.Equal($"/api/telemetry/{path}?limit=1" + (resource ? "&resource=api-owned-instance" : string.Empty), request.PathAndQuery);
         }
+
+        // An answer the dashboard gives that cannot be read is the dashboard's to say, in the Telemetry view's words, where it
+        // was reported as Passenger's own failure.
+        dashboard.Answer = _ => (200, "text/plain", "not telemetry");
+        CallToolResult unread = await Result(client, "telemetry", new() { ["appHost"] = host, ["limit"] = 1 });
+        Assert.True(unread.IsError == true && Text(unread).Contains("dashboard's logs and traces could not be read", StringComparison.Ordinal)
+            && !Text(unread).Contains(Passenger.App.Mcp.PassengerTools.Faulted, StringComparison.Ordinal), $"A dashboard's unreadable answer: {Text(unread)}");
         Assert.Equal("Stopped", (await Call(client, "stop")).GetString());
         Assert.Empty(resources.Errors);
     }

@@ -603,7 +603,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`BuildRunController.RerunAsync`): its AppHost's when it runs (what changed restarted), else its container run in fast mode
   (the services whose build changed restarted), else what the Run console has stopped and the chosen run again, another
   configuration's AppHost running on; what changed is read by one stamp of a build's output (`BuiltInputs.Stamp`, a file
-  gone as it is read left out) and `BuiltInputs.ChangedSince`, and a refusal is said.
+  gone as it is read left out) and `BuiltInputs.ChangedSince`, and a refusal is said; what came of it
+  (`BuildRunController.Reran`) and a start or restart Stop ended (`StoppedStarting`, `StoppedRestarting`) are worded once
+  for every kind.
 - `src/Passenger.App/Containers`: the person's container engine through their `docker` CLI and its current context
   (Docker Desktop, Colima, OrbStack, Podman's, a remote one alike), never the Engine API nor a Docker package.
   `ContainerEngine` is the process's (`Shared`; a window's `MainWindow.Engine`, a test's stand-in CLI): the CLI found
@@ -993,7 +995,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   each connection string's name, its database kept, Redis and RabbitMQ by the connection string's name, else the server
   itself), each `WithReference`d and `WaitFor`ed by the services that read it and its hosting integration referenced at
   the AppHost's own Aspire version (its SDK's, under central package management in Directory.Packages.props), prepared
-  under the state's `aspire-staging/` before any file is written, as one command of global undo. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
+  under the state's `aspire-staging/` before any file is written, as one command of global undo, its refusals and outcomes
+  in the status bar's words (`Refusals.NoSolution`, no closing periods), a staging folder it cannot remove logged. The Roslyn extension reads an AppHost's resource graph from its code (`AspireCodeHelp`, a bounded straight-line
   reading, never resource names guessed): a service that reads a connection string (`AspireSource.ConnectionUses`, the one
   reading of them, a compose file's check's too: GetConnectionString's or a client integration's connectionName constant,
   a `ConnectionStrings:` key) or service its AppHost never gives
@@ -1042,7 +1045,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Telemetry` (#405): a run's structured logs and traces, one implementation for every kind of run.
   `ServiceRun.Telemetry` is where a run's are read (`TelemetrySource`: an Aspire dashboard's telemetry API on this machine
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
-  services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either. `TelemetryView` is the
+  services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either, a read that fails said
+  in the same words by the view and an agent's `telemetry`, as the dashboard's failure, never Passenger's
+  (`TelemetrySource.Unread`, `NoDashboard`). `TelemetryView` is the
   one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
   the other page streams them), streaming only the page its host shows: the Aspire window's Structured logs and Traces
   pages, and the Containers window's Telemetry tab (`TelemetryView.Both`, the two pages under tabs of their own), shown for

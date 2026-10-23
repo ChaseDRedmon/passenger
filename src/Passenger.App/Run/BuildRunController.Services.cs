@@ -189,7 +189,7 @@ public sealed partial class BuildRunController
         }
         catch (OperationCanceledException)
         {
-            return $"{run.Name}'s restart was stopped";
+            return StoppedRestarting(run.Name);
         }
         catch (Exception failed) when (run.Refused(failed))
         {

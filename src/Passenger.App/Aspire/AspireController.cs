@@ -303,7 +303,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
             {
                 await StopAppAsync(app);
             }
-            return error is OperationCanceledException ? "Starting the Aspire application was stopped" : error.Message;
+            return error is OperationCanceledException ? BuildRunController.StoppedStarting(configuration.Name) : error.Message;
         }
         finally
         {
@@ -758,7 +758,7 @@ public sealed partial class AspireController(ProjectSession workspace, string st
         }
         catch (Exception error) when (profiling)
         {
-            app.ProfileStarted.TrySetResult(error is OperationCanceledException ? "Its start was stopped" : error.Message);
+            app.ProfileStarted.TrySetResult(error is OperationCanceledException ? BuildRunController.StoppedStarting(app.Name) : error.Message);
             throw;
         }
     }

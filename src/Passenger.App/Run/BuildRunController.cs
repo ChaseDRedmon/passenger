@@ -514,8 +514,16 @@ public sealed partial class BuildRunController
         }
     }
 
-    /// <summary>What a start Stop ended says.</summary>
+    /// <summary>What a start Stop ended says, every kind's: a program's, a container run's, an AppHost's.</summary>
     public static string StoppedStarting(string name) => $"{name} was stopped as it started";
+
+    /// <summary>What a restart of a run's services Stop ended says (Rerun's, a window's Restart, Hot Reload's), every kind's.</summary>
+    public static string StoppedRestarting(string name) => $"{name}'s restart was stopped";
+
+    /// <summary>What Rerun of a run of services says once done, every kind's: the services restarted with their new build
+    /// (with <paramref name="more"/>, what else came of it), or that nothing changed.</summary>
+    public static string Reran(string name, IReadOnlyList<string> restarted, string? more = null) => restarted.Count == 0
+        ? $"{name}: nothing changed, nothing restarted" : $"{name}: restarted {string.Join(", ", restarted)} with the new build{more}";
 
     /// <summary>A configuration's plan with its build before launch done: the plan to start, or why there is none (the
     /// folder left meanwhile among the reasons).</summary>
@@ -952,7 +960,7 @@ public sealed partial class BuildRunController
                     runs.Select(run => (run.App, run.Running.Where(s => s.Service.ChangedSinceStart(projects, s.Since)).Select(s => s.Service).ToList())).ToArray()));
                 if (session.IsEnded || work.IsStopped)
                 {
-                    return Said(StoppedStarting(chosen.Name));
+                    return Said(StoppedRestarting(chosen.Name));
                 }
                 if (!hostChanged)
                 {
@@ -968,14 +976,13 @@ public sealed partial class BuildRunController
                         }
                         restarted.AddRange(changes.Select(s => ((IRunService)s).Name));
                     }
-                    parts.Say(restarted.Count == 0 ? $"Nothing changed in {chosen.Name}: nothing restarted"
-                        : $"{chosen.Name}: built and restarted {string.Join(", ", restarted)}, whose code changed");
+                    parts.Say(Reran(chosen.Name, restarted));
                     return null;
                 }
             }
             catch (Exception error) when (error is IOException or InvalidOperationException or OperationCanceledException or TimeoutException)
             {
-                return Said(error is OperationCanceledException ? StoppedStarting(chosen.Name) : error.Message);
+                return Said(error is OperationCanceledException ? StoppedRestarting(chosen.Name) : error.Message);
             }
         }
         // An AppHost's own code changed: it and its services stop, then it is built and run again as it was run.

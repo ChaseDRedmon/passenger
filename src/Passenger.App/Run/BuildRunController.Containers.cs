@@ -481,8 +481,7 @@ public sealed partial class BuildRunController
             // Passenger pins the ports it can; with an older Compose the engine may have chosen another at the restart.
             string moved = failed is null && changed.Count > 0 && run.Address is { } before && await run.BrowserUrlAsync(CancellationToken.None) is { } now && now != before
                 ? $"; it now answers at {run.Address = now}" : string.Empty;
-            return Said(failed ?? (changed.Count == 0 ? $"{run.Plan.Name}: no service's build changed, nothing restarted"
-                : $"{run.Plan.Name}: restarted {string.Join(", ", changed.Select(c => c.Service))} with the new build{moved}"));
+            return Said(failed ?? Reran(run.Plan.Name, [.. changed.Select(c => c.Service)], moved));
         }
     }
 
@@ -521,7 +520,7 @@ public sealed partial class BuildRunController
             }
             catch (OperationCanceledException)
             {
-                return Said($"{run.Plan.Name}'s restart was stopped");
+                return Said(StoppedRestarting(run.Plan.Name));
             }
             return Done(await RestartServicesAsync(run, dotnet, work, "restarted from the Containers window"), $"{run.Plan.Name}: restarted its services");
         }
