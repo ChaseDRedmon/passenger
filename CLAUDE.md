@@ -822,20 +822,24 @@ window or takes the focus; it shows everything but the system's own window chrom
   certificate, user secrets: exit code 155, the dotnet host finding no app). Podman has no BuildKit, and Docker's buildx
   on it would start a BuildKit container of its own: a Dockerfile goes unchecked, said once in the status bar and
   Problems' Containers tab as one opens with the setting on (`EngineChecks.Limited`, `EngineState.Limit`). A stopped
-  Podman is said as Podman, its socket or machine to start. So a compose file or a Dockerfile runs, debugs (two services
-  at once), Hot Reloads and profiles on Podman as on Docker (ContainerRunsTests, ContainerRunDebuggingTests,
-  ContainerProfilingTests and the Mcp container classes pass with Podman alone; through Docker's CLI all but those its
-  own test images held up, last run before `Docker.Load`). Still open on Podman: a service the debugger could not attach
-  to after its restart, which Stop then does not take down (both ways), and with Podman alone a service's Debug taking
-  the run down and tools from a downloaded release, or copied in for a build naming Windows paths, ending in "exec format
-  error" (ContainerServicesTests, ContainerDebuggingTests). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
+  Podman is said as Podman, its socket or machine to start. Compose's `logs --follow`, the run's log, crashes (Compose
+  2.40 and 5.0: a nil State read for a die whose container is gone, as Podman's die comes) when a service is made anew,
+  which ended the run: on Podman `ContainerRun.RestartAsync` stops such a service first while another keeps the log going
+  (a run's only service still ends it; following the log again when it ends with the containers up is the run's own,
+  `ServiceRun`'s, to do). So a compose file or a Dockerfile runs, debugs (two services at once, or one service of a run),
+  Hot Reloads and profiles on Podman as on Docker: the ten container classes pass both ways (but for Ubuntu's own
+  fault below). An AppHost's container resource runs on the same Podman (DCP takes Docker's CLI on its socket, or Podman's
+  own `docker` as Podman), and #397's cleanup reads Podman's bare container names. On Ubuntu 26.04 the pasta AppArmor
+  profile refuses podman's SIGTERM, so a container's removal can fail ("rootless netns: kill network process: permission
+  denied"), Ubuntu's to fix (`signal (receive) peer=podman` in /etc/apparmor.d/usr.bin.pasta). Not handled: SELinux (Fedora, RHEL), whose bind mounts need
   relabelling (`:z`) or `label=disable`, untested on Ubuntu's AppArmor; rootless Docker, whose user mapping is the same
   with no keep-id. Docker's CLI 29 `docker run` on Podman 5.7's socket makes a container of one process (pids.max 1;
   Compose's get Podman's 2048), so the tests' own runs take `Docker.AnyPids`, their own builds `Docker.Load` (buildx's
   BuildKit container keeps a build in its cache), and they compare an image Passenger tagged by its short name
   (`Docker.Short`: Podman names one built here docker.io/library/…) and a command without Podman's init
-  (`Docker.WithoutInit`), read a published port however Compose words its address (":port" there), and take the
-  container's own log line over Buildah's echo of the CMD it builds. Every `docker rm -f` waits Podman's 10 s for a
+  (`Docker.WithoutInit`), read a published port however Compose words its address (":port" there), take the
+  container's own log line over Buildah's echo of the CMD it builds, and read the engine's processor from info's
+  Host.Arch where version has no server (`ContainerPrograms.Processor`). Every `docker rm -f` waits Podman's 10 s for a
   container that ignores SIGTERM, where Docker kills at once.
 - `src/Passenger.App/Aspire` (#338): Aspire's AppHosts run with Passenger as their IDE. `AspireController`
   (`ProjectSession.Aspire`) owns the folder's AppHosts and the project resources their orchestrator asks the IDE to start,

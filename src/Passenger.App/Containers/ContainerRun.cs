@@ -936,8 +936,9 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
             string tools = await ContainerTools.InContainerAsync(engine, container, stop)
                 ?? await ContainerTools.CopyIntoAsync(engine, container, await ContainerTools.FolderAsync(source, rid, null, stop), stop);
             DotnetProcess program = await HeldProgramAsync(engine, container, tools, service, stop);
-            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{.State.StartedAt}}", container], cancel: stop);
-            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim(), emulated);
+            // As JSON, RFC 3339 either way: Podman's own docker writes the time itself in Go's words, which its logs --since refuses.
+            ChildResult started = await engine.RunAsync(["inspect", "-f", "{{json .State.StartedAt}}", container], cancel: stop);
+            return (ServiceInContainer?)new ServiceInContainer(container, program, tools, started.Output.Trim().Trim('"'), emulated);
         }, stop);
     }
 
@@ -1183,6 +1184,11 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
 
         async Task<string?> RestartEachAsync(CancellationToken stop)
         {
+            // On Podman, stopped while another service keeps the run's log going: Compose's logs --follow crashes on Podman's late die.
+            if (made.Count > 0 && engine.Known is { IsPodman: true } && Plan.Touched.Except(made, StringComparer.Ordinal).Any())
+            {
+                await StreamAsync([.. Plan.Compose, "stop", "--", .. made], stop);
+            }
             foreach ((List<string> named, IReadOnlyList<string> words) in ((List<string>, IReadOnlyList<string>)[])[
                 (kept, [.. Plan.Compose, "restart", "--", .. kept]),
                 // As deployed, a service's image is built again from its Dockerfile and its container made anew from it.
