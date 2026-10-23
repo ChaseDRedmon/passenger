@@ -1105,7 +1105,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `AspireExecutionServer`, Aspire's IDE execution protocol (2024-03-03) on loopback: each orchestrator its own
   bearer token, kept hashed and compared in constant time and checked before anything is admitted, one ordinary request a
   connection (`AspireExecutionConnection`) with ten seconds for its headers, body and writes, its notifications over
-  WebSockets, and a create given up by its connection cancelled on its own. An AppHost is a project whose evaluation sets
+  WebSockets, and a create given up by its connection cancelled on its own; different resources' creates run at once, a
+  held start's attach included, one resource's (by the OTEL_SERVICE_NAME DCP tells it) creates and deletes in the order DCP
+  sent them, and a session's delete waits for its own create alone (#436), its instance's end for every one under way. An AppHost is a project whose evaluation sets
   `IsAspireHost` (`ProjectModel.IsAspireHost`, carried by the host's `evaluate`; an older `projectModels.json` forgotten), or a
   single-file `apphost.cs` (a C# file whose head names `Aspire.AppHost.Sdk`, `AspireAppHosts.IsSingleFile`), found among the
   files of the folder's one walk (`FileIndex.Walked`, `ProjectSession.AspireFiles`; none under a hidden folder), each C#
@@ -1134,8 +1136,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   for a resource with health reports, its http and https addresses as links through `Browse`; a row's menu the service
   actions first, as a container's row's menu begins, then its commands, each item greyed with why, `MainWindow.RowMenuItem`),
   and the tabs both windows name alike in one order (`RunWindows.Tabs`), Log first and shown at first: Log, the resources'
-  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their
-  start), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
+  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned or Refresh reading the shown ones again from
+  their start; a resource that comes or restarts, another generation, streams on its own after the lines shown while the
+  others' streams go on, #435), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
   relationships, environment, properties and volumes), Telemetry, the dashboard's structured logs and traces (the
   Telemetry view's two pages under it, as the Containers window's Telemetry tab has them, below), and AppHost Log, the
   AppHost's own console. What a resource says is masked as a container's
@@ -1243,8 +1246,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   and its key), an AppHost's its own dashboard (`AspireAppRun`), a container run's the dashboard it runs beside its
   services when its configuration collects them (`ContainerRun`); `AspireTelemetry` reads either, a read that fails said
   in the same words by the view and an agent's `telemetry`, as the dashboard's failure, never Passenger's
-  (`TelemetrySource.Unread`, `NoDashboard`). `TelemetryView` is the
-  one view of them (logs, traces put together by id, a span tree, each list kept by key through every snapshot by `RunRows.Put` so a click survives one, a log's trace and a span's logs a click apart, chosen as
+  (`TelemetrySource.Unread`, `NoDashboard`). A record costs what it adds (#437): the reader counts each resource's records
+  and their bytes as they come and go, measures a record once as it writes it (`Masked`), makes a trace again only when an
+  envelope touched it (`RecentTraces`, each span's start and end kept as numbers) and tells the view of logs what each
+  envelope added and evicted (`AspireLogBatch`), each log numbered in order of arrival off the UI thread
+  (`AspireStructuredLog.Sequence`). `TelemetryView` is the
+  one view of them (logs, traces put together by id, a span tree, each list kept by key so a click survives a landing:
+  the logs by their numbers, added after those listed and evicted from the front, a stream's first batch listing them
+  anew, so a landing costs the UI thread what came, as AspireStandInTests hold it with a thousand kept against ten; the
+  traces through `RunRows.Put`, the chosen one's tree walked again only when it changed; a log's trace and a span's logs a click apart, chosen as
   the other page streams them), streaming only the page its host shows: the Aspire and Containers windows' Telemetry tab
   (`TelemetryView.Both`, the two pages under tabs of their own, `ShowPage` choosing one), the Containers window's shown for
   a Compose project of the window's container run that collects telemetry, a service's or container's row its own
@@ -1778,7 +1788,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Each mode ends on
   SIGTERM as on the end of its input (`McpHost.EndOnSignal`, gone within `EndLimit` at the latest), since an agent's
   client may send it a moment after closing the input (OpenCode 1's, 20 ms after), and `--mcp-attach` ends the test
-  run's headless window by closing its input, so it takes its socket away before the watchdog would kill it. Every call on a
+  run's headless window by closing its input, so it takes its socket away before the watchdog would kill it. Each of their
+  connections, the proxy's to its window too, is a `PeerTransport`: an answer or notification to an end that has gone is
+  dropped as the connection's ordinary end, never an internal error, since the SDK sends some unawaited (a call's error
+  answer after its answer failed, a request given up by its token); a request's failure still reaches its sender. Every call on a
   window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
   `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
   else the person's answer to `AgentAdmissionDialog`; turning the setting off, or
@@ -1833,8 +1846,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   person's window (#278), where `ide_action` is, and its answer names the files a save left unsaved (a read-only one).
   `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
-  editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
-  there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
+  editor has not changed takes the disk's text first (`PassengerTools.DocumentAsync`), since an agent's own file tools
+  write there and ask at once: its length and time looked at off the UI thread and the file read and compared there only
+  once they changed since the editor last read it (`OpenDocument.TakeDiskTextAsync`, `DiskStamp`, with the text's version
+  then; a time within 2 s of its read trusted to show no second write), so a question of an open file costs the window
+  what it asks, not the file's size (#438, McpWindowTests holds it with 20,000 lines against ten). A call's wait for what
+  the IDE does wakes on the event or task of what it waits on (`When`, `On`, `Ends`: the C# server's state, a debugged
+  program's or an inspected app's, a file's checks, a profiled program's end, a run's end), `Until`'s 50 ms looks left only
+  where what it waits on raises nothing, each saying why; `refactor`'s project and solution scopes take their files from
+  the folder's index off the UI thread (`CodeFilesAsync`), and the tools are made once a process, off the UI thread
+  (`McpHost.Tools`, each call reaching its connection's `PassengerTools` through `McpHost.Serving`). `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
   (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
   names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything
@@ -2360,7 +2381,8 @@ window answers, a profile's samples, the debugger's evaluation limit), or that d
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
 written before each test, and a file a test adds goes through `project.Write`, which ends the shared server: a file
 every test opens is the project's from the start (`LongFileAssistTests`' 20,000 lines). A file a test only rewrote is put
-back and the server kept once it holds it as written again, which it reads through its own watcher
+back, with the time it was written at (the IDE refuses a server's edit to a file not open written in the last 2 s,
+`WorkspaceEdits.Catching`), and the server kept once it holds it as written again, which it reads through its own watcher
 (`WarmServer.HoldsAsync`, 10 s at most, else it is ended); a file that came or went, or one the server holds no document of
 (a project file), ends it. A window test that asks nothing of C# opens its window without the language server
 (`Ui.OpenFolder(folder, languageServer: false)`, a shared project's `Open(file, languageServer: false)`,
@@ -2626,7 +2648,9 @@ what it tests is held to a time, as `McpAttachTimingTests` hold the joins and ca
 `McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving
 the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
-client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
+client can drop its own when the call's token is cancelled, and sends it unawaited when it does not, so the rig's client
+is a `PeerTransport` too, which drops it when the test has killed its Passenger (else the next window test caught its
+failure). `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
 (headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through
 `AvaloniaApp.Debuggee`, its project `AvaloniaApp.HeadlessProject()`, as every headless app of tests/Debuggees is). The Windows on Arm VM runs a test
 filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's

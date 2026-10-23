@@ -43,6 +43,13 @@ public sealed class TelemetryView : IDisposable
     private (TelemetrySource Source, TelemetryPage Page, string? Resource)? watched;
     private (TelemetrySource Source, string? Resource)? shownFor;
     private Action? pending;
+
+    /// <summary>Log batches heard and not yet listed, each with the stream it came on and the resource it is shown for,
+    /// listed together as one landing.</summary>
+    private readonly List<(AspireLogBatch Batch, string? Resource, CancellationToken Stream)> heardLogs = [];
+
+    /// <summary>The logs stream whose first landing lists its logs anew: a stream read again sends what is kept from the start.</summary>
+    private CancellationToken freshLogs;
     private bool queued;
     private bool disposed;
     private DockPanel? both;
@@ -102,7 +109,8 @@ public sealed class TelemetryView : IDisposable
     /// <summary>The list item that shows a record (a log; a trace or a span by its id), whose row a click finds.</summary>
     public object? ItemOf(object record) => record switch
     {
-        AspireStructuredLog log => logItems.FirstOrDefault(item => item.Data.Data.GetRawText() == log.Data.GetRawText()),
+        AspireStructuredLog log => logItems.FirstOrDefault(item => ReferenceEquals(item.Data, log))
+            ?? logItems.FirstOrDefault(item => JsonElement.DeepEquals(item.Data.Data, log.Data)),
         AspireTrace trace => traceItems.FirstOrDefault(item => item.Key == trace.TraceId),
         SpanRow span => spanItems.FirstOrDefault(item => item.Key == span.Span.SpanId),
         _ => null,
@@ -244,22 +252,8 @@ public sealed class TelemetryView : IDisposable
         {
             if (page == TelemetryPage.Logs)
             {
-                await AspireTelemetry.WatchLogsAsync(source.Endpoint, source.ApiKey, all => Post(() =>
-                {
-                    if (disposed || cancel.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    IReadOnlyList<AspireStructuredLog> logs = resource is null ? all
-                        : [.. all.Where(log => TelemetrySource.Of(AspireJson.String(log.Data, "resourceName") ?? string.Empty, resource))];
-                    RunRows.Put(logItems, Keyed(logs, log => log.Data.GetRawText()));
-                    logsStatus.Text = $"Live · {logs.Count} retained structured logs";
-                    if (wantedLogs is { } wanted && Correlated(wanted.TraceId, wanted.SpanId) is { } found)
-                    {
-                        wantedLogs = null;
-                        StructuredLogs.SelectedItem = ItemOf(found);
-                    }
-                }, cancel), cancel).ConfigureAwait(false);
+                freshLogs = cancel;
+                await AspireTelemetry.WatchLogsAsync(source.Endpoint, source.ApiKey, batch => Heard(batch, resource, cancel), cancel).ConfigureAwait(false);
             }
             else
             {
@@ -271,9 +265,14 @@ public sealed class TelemetryView : IDisposable
                     }
                     IReadOnlyList<AspireTrace> found = resource is null ? all : [.. all.Where(trace => trace.Spans.Any(span => TelemetrySource.Of(span.Source ?? string.Empty, resource)))];
                     traces = found;
+                    AspireTrace? chosen = SelectedTrace;
                     RunRows.Put(traceItems, Keyed(found, trace => trace.TraceId));
-                    // The chosen trace's spans as they stand now (a late span added), the span chosen kept.
-                    ShowTrace(again: true);
+                    // The chosen trace's spans as they stand now (a late span added), the span chosen kept; a trace the
+                    // envelope did not touch is the same as before, its tree not walked again.
+                    if (!ReferenceEquals(SelectedTrace, chosen))
+                    {
+                        ShowTrace(again: true);
+                    }
                     tracesStatus.Text = $"Live · {traces.Count} retained traces";
                     if (wantedTrace is { } wanted && traces.FirstOrDefault(trace => trace.TraceId == wanted.TraceId) is { } listed)
                     {
@@ -321,17 +320,99 @@ public sealed class TelemetryView : IDisposable
             }
             queued = true;
         }
-        UiThread.Post(() =>
+        UiThread.Post(Land);
+    }
+
+    /// <summary>A log batch heard on the reader's thread, listed with those heard since at the next landing.</summary>
+    private void Heard(AspireLogBatch batch, string? resource, CancellationToken stream)
+    {
+        lock (gate)
         {
-            Action? apply;
-            lock (gate)
+            if (stream.IsCancellationRequested)
             {
-                apply = pending;
-                pending = null;
-                queued = false;
+                return;
             }
-            apply?.Invoke();
-        });
+            heardLogs.Add((batch, resource, stream));
+            if (queued)
+            {
+                return;
+            }
+            queued = true;
+        }
+        UiThread.Post(Land);
+    }
+
+    /// <summary>What came since the last landing, on the UI thread: the log batches in order, then the latest traces.</summary>
+    private void Land()
+    {
+        Action? apply;
+        (AspireLogBatch Batch, string? Resource, CancellationToken Stream)[] logs;
+        lock (gate)
+        {
+            apply = pending;
+            pending = null;
+            logs = [.. heardLogs];
+            heardLogs.Clear();
+            queued = false;
+        }
+        if (logs.Length > 0)
+        {
+            ListLogs(logs);
+        }
+        apply?.Invoke();
+    }
+
+    /// <summary>Lists what log batches changed, costing what came, never what is kept: each log added after those listed
+    /// (keyed by its arrival, given off the UI thread), each evicted taken from the front, where the oldest are; a stream's
+    /// first batch, what it keeps from the start, lists its logs anew, the log chosen kept chosen.</summary>
+    private void ListLogs(IReadOnlyList<(AspireLogBatch Batch, string? Resource, CancellationToken Stream)> heard)
+    {
+        bool listed = false;
+        foreach ((AspireLogBatch batch, string? resource, CancellationToken stream) in heard)
+        {
+            if (disposed || stream.IsCancellationRequested)
+            {
+                continue;
+            }
+            listed = true;
+            AspireStructuredLog? chosen = null;
+            if (stream == freshLogs)
+            {
+                freshLogs = default;
+                chosen = SelectedLog;
+                logItems.Clear();
+            }
+            foreach (AspireStructuredLog log in batch.Added)
+            {
+                if (resource is null || TelemetrySource.Of(log.ResourceName ?? string.Empty, resource))
+                {
+                    RunItem<AspireStructuredLog> item = new(log.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture), log);
+                    logItems.Add(item);
+                    if (chosen is not null && JsonElement.DeepEquals(log.Data, chosen.Data))
+                    {
+                        chosen = null;
+                        StructuredLogs.SelectedItem = item;
+                    }
+                }
+            }
+            foreach (AspireStructuredLog gone in batch.Evicted)
+            {
+                if (logItems.Count > 0 && ReferenceEquals(logItems[0].Data, gone))
+                {
+                    logItems.RemoveAt(0);
+                }
+            }
+        }
+        if (!listed)
+        {
+            return;
+        }
+        logsStatus.Text = $"Live · {logItems.Count} retained structured logs";
+        if (wantedLogs is { } wanted && Correlated(wanted.TraceId, wanted.SpanId) is { } found)
+        {
+            wantedLogs = null;
+            StructuredLogs.SelectedItem = ItemOf(found);
+        }
     }
 
     /// <summary>The chosen log's trace, its span chosen, on the traces page.</summary>

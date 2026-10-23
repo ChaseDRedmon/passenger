@@ -98,14 +98,23 @@ public sealed class OpenDocument : Observable
             return new OpenDocument(path, new FileText(string.Empty, new UTF8Encoding(false), false));
         }
         string name = System.IO.Path.GetFileName(path);
-        long length = new FileInfo(path).Length;
+        DiskStamp stamp = DiskStamp.Of(new FileInfo(path));
+        long length = stamp.Length;
         if (length > LargestText)
         {
             throw new IOException($"{name} is {length / (1024.0 * 1024):0.#} MB: the editor opens a file of up to {LargestText / (1024 * 1024)} MB as text");
         }
         FileText file = FileText.Load(path) ?? (asBytes ? FileText.Bytes(path) : throw new IOException($"{name} looks like a binary file."));
-        return new OpenDocument(path, file);
+        OpenDocument document = new(path, file);
+        document.ReadAt(stamp);
+        return document;
     }
+
+    /// <summary>The file's length and last write time as found just before the editor last read all of it, with the version of
+    /// the text it then held: while both hold, the editor holds what the disk does (<see cref="TakeDiskTextAsync"/>).</summary>
+    private (DiskStamp Stamp, int Version)? readAt;
+
+    private void ReadAt(DiskStamp? stamp) => readAt = stamp is { } found ? (found, Text.Version) : null;
 
     /// <summary>The largest file opened as text or as its bytes, as an image's preview is bounded too: plain text that size
     /// opens in a moment and takes keys at once, but the editor holds about six and a half times a file's size (a 100 MB
@@ -294,6 +303,10 @@ public sealed class OpenDocument : Observable
     /// all of the IDE's work.</summary>
     public bool IsChecking => checks > 0;
 
+    /// <summary>The file's own checks are all done again (<see cref="IsChecking"/> false), on the UI thread: what an agent's
+    /// diagnostics waits on.</summary>
+    public event EventHandler? Checked;
+
     /// <summary>Holds <see cref="IsChecking"/> until the scope ends, on the UI thread.</summary>
     public IDisposable Checking()
     {
@@ -311,7 +324,10 @@ public sealed class OpenDocument : Observable
             if (!released)
             {
                 released = true;
-                document.checks--;
+                if (--document.checks == 0)
+                {
+                    document.Checked?.Invoke(document, EventArgs.Empty);
+                }
             }
         }
     }
@@ -1027,9 +1043,10 @@ public sealed class OpenDocument : Observable
             return false;
         }
         FileText? file;
+        DiskStamp? stamp = null;
         try
         {
-            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FromDisk();
+            file = (IsModified && !overUnsaved) || (stamp = DiskStamp.Of(Path)) is null ? null : FromDisk();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -1039,8 +1056,59 @@ public sealed class OpenDocument : Observable
         {
             return false;
         }
+        bool taken = Take(file, same: Text.Snapshot.ToString() == file.Text);
+        ReadAt(stamp);
+        return taken;
+    }
+
+    /// <summary>Takes the file's text from disk when another program wrote it since the editor last read it (an agent's own
+    /// file tools, which write and then ask of it at once), never over unsaved changes, as <see cref="Reload"/> would: its
+    /// length and time looked at, and only once they changed the file read and compared, off the UI thread, so an agent's
+    /// many questions of one file between its writes cost the window nothing of the disk. A preview has no text to take.</summary>
+    public async Task TakeDiskTextAsync(CancellationToken cancel)
+    {
+        if (IsModified || !HoldsText)
+        {
+            return;
+        }
+        (DiskStamp Stamp, int Version)? known = readAt is { } at && at.Version == Text.Version ? at : null;
+        int version = Text.Version;
+        TextSnapshot held = Text.Snapshot;
+        string path = Path;
+        bool binary = IsBinary;
+        Encoding? chosen = Chosen;
+        (DiskStamp? stamp, FileText? file, bool same) = await BackgroundWork.Run(() =>
+        {
+            try
+            {
+                DiskStamp? now = DiskStamp.Of(path);
+                if (now is not { } found || known is { } kept && kept.Stamp.Holds(found))
+                {
+                    return ((DiskStamp?)null, (FileText?)null, true);
+                }
+                FileText? read = binary ? FileText.Bytes(path) : FileText.Load(path, chosen);
+                return (now, read, read is null || held.ToString() == read.Text);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return (null, null, true);
+            }
+        }, cancel);
+        // Typed into, or taken from disk by the watcher, while the disk was read: what the editor holds now stands.
+        if (file is null || IsModified || Text.Version != version)
+        {
+            return;
+        }
+        Take(file, same);
+        ReadAt(stamp);
+    }
+
+    /// <summary>The disk's text taken, as one undoable step over only the lines that differ, unless it is the
+    /// <paramref name="same"/> as the editor's; how it is stored taken either way. Whether the text changed.</summary>
+    private bool Take(FileText file, bool same)
+    {
         StoreAs(file);
-        if (Text.Snapshot.ToString() == file.Text)
+        if (same)
         {
             return false;
         }
@@ -1213,4 +1281,25 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
             _ => PlainText,
         };
     }
+}
+
+/// <summary>A file's length and last write time on disk, and when they were found.</summary>
+public readonly record struct DiskStamp(long Length, DateTime Written, DateTime Found)
+{
+    /// <summary>How long after its last write a file's time is trusted to show a second write: a coarse clock's tick (FAT's two
+    /// seconds) could hide one made in it.</summary>
+    private static readonly TimeSpan Racy = TimeSpan.FromSeconds(2);
+
+    /// <summary>A file's stamp now, or null when there is none there.</summary>
+    public static DiskStamp? Of(string path)
+    {
+        FileInfo info = new(path);
+        return info.Exists ? Of(info) : null;
+    }
+
+    public static DiskStamp Of(FileInfo info) => new(info.Length, info.LastWriteTimeUtc, DateTime.UtcNow);
+
+    /// <summary>Whether a file found as <paramref name="now"/> still holds what was read once this was found: its length and
+    /// time the same, that time far enough before the read for no second write to hide in its tick.</summary>
+    public bool Holds(DiskStamp now) => now.Length == Length && now.Written == Written && Found - Written > Racy;
 }

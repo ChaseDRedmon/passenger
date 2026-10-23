@@ -651,7 +651,14 @@ public sealed class ProfilingSession : IAsyncDisposable
         await LetGoAsync();
         Volatile.Write(ref disposed, 1);
         process.Dispose();
+        putAway.TrySetResult();
     }
+
+    private readonly TaskCompletionSource putAway = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Finishes once the run is put away (<see cref="DisposeAsync"/>), its program ended or going on unwatched,
+    /// <see cref="HasExited"/> true from then on: what a wait for the program's end, beside <see cref="ExitedAsync"/>, ends at.</summary>
+    public Task PutAway => putAway.Task;
 }
 
 /// <summary>Why a program could not be profiled, in words for the person: its folder or program missing, a start that

@@ -8,6 +8,34 @@ pattern shows. A **race in the IDE** is fixed in the IDE; waiting longer or tryi
 To add one: a line under its date, newest first, naming the test, the run, the cause in a sentence and the commit
 that fixed it, in one of the forms below. A failure not yet understood goes in only once it is.
 
+## 2026-10-23
+
+- `McpProcessesTests`' agent's Local History outlasting the person's window's pruning, the lead's landing run at 76647182
+  (its third process), straight after the class's killed-Passenger test failed there (#443, below; it passed alone): "The IDE
+  caught 1 error during the test: IOException: Failed to send message", from the agent's client's `PipeStream.WriteAsync`.
+  That test's finally killed Passenger before giving up its build call, and the MCP SDK's client, which drops its own
+  cancellation when its wait ends first but sends it unawaited when it cannot resume there at once (its canceller on a
+  thread with a context of its own), wrote it to the dead Passenger's input; the failed task, never observed, was caught
+  by the IDE's catcher when the collector found it, in the next window test. A call given up from such a thread after its
+  Passenger was killed, its output held open, showed the error every time, and none with the fix. **The test**: its
+  finally gives up before the kill, as its body does, and the rig's client drops what it tells a Passenger that has gone
+  (`PeerTransport`), as the IDE's own MCP connections now do, since the SDK's server also sends a failed answer's error
+  unawaited, which an agent going at that moment made an internal error (not seen in a run).
+- `CodeAssistTests`' right-click rename (`A_right_click_on_a_call…renames_it…`) straight after its line typed while a
+  rename is out (#430), every time in that order (found in #414's first part; it passed alone): "Sub-string not found:
+  Helper.Double(", the status saying "Rename was not applied: Helper.cs changed on disk as the language server worked this
+  out". The test before renamed Helper.cs, a file not open, on disk, and it was written back (by that test, else by the
+  fixture's reset) about 1.5 s before this test's rename, which the IDE refuses for a file not open written within 2 s of
+  its request (`WorkspaceEdits.Catching`), though the reset had seen the warm server hold it as written. Neither race:
+  **the fixture**, whose reset now puts a file back with the time it was written at, as the project was written.
+
+- `McpProcessesTests`' Passenger killed while it loads, runs, profiles, debugs and builds (#443), every run on 0.2.0 since
+  cd9ac656: "Assert.Subset() Failure", the program the agent's `run` started no longer among Passenger's processes when
+  the test listed them. `run`'s answer had not changed: its program was running after it and after the profiler's attach,
+  and was gone once `debug_start` had answered, since #408 (cd9ac656) makes Debug of the configuration Run runs end that
+  run first and the test debugged the configuration it had run. Neither race: **the test**, which now runs one launch
+  profile's configuration and debugs another's, so both programs run until Passenger is killed.
+
 ## 2026-10-22
 
 - `AspireTests`' real AppHost command (`A_real_AppHost_command_observes_confirmation_cancel_and_server_validated_input_from_the_window`),

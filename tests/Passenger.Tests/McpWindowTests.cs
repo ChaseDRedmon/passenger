@@ -168,6 +168,56 @@ public sealed class McpWindowTests : McpRig, IClassFixture<RestoredFolders>
         }
     }
 
+    /// <summary>An agent's question of an open file costs the person's window what it asks, not the file's size (#438): the
+    /// disk, which the agent's own file tools may have written, is looked at off the UI thread and the file read only once
+    /// its length or time changed, so editor_text of one line of an open 20,000-line file allocates on the UI thread about
+    /// what one of a ten-line file does, where every question read the whole file and made the editor's text a string again
+    /// there; and the agent's own write is still taken before its next question.</summary>
+    [AvaloniaFact]
+    public void An_agents_question_of_an_open_file_costs_the_window_what_it_asks_not_the_files_size()
+    {
+        string small = Path.Combine(Folder, "Small.txt");
+        string large = Path.Combine(Folder, "Large.txt");
+        File.WriteAllText(small, string.Concat(Enumerable.Range(1, 10).Select(i => $"line {i} of a short file\n")));
+        File.WriteAllText(large, string.Concat(Enumerable.Range(1, 20_000).Select(i => $"line {i} of a long file, some words to make it as long as code is\n")));
+        MainWindow window = AgentsWindow(Folder, languageServer: false);
+        Assert.Null(window.OpenFile(small));
+        Assert.Null(window.OpenFile(large));
+        Ui.Settle();
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            long few = Costs(small);
+            long many = Costs(large);
+            Assert.True(many < few + 64 * 1024,
+                $"editor_text of an open 20,000-line file allocated {many / 1024} KB on the UI thread, of a ten-line file {few / 1024} KB: the file is read again there at each question");
+
+            // The agent's own write, as its file tools make one, is the text its next question reads.
+            File.WriteAllText(large, "written by the agent's own tools\n" + File.ReadAllText(large));
+            string said = Text(Await(Task.Run(() => Result(client, "editor_text", new() { ["path"] = large, ["from"] = 1, ["to"] = 1 })), "the question after the agent's write"));
+            Assert.Contains("written by the agent's own tools", said, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Gone(client);
+            window.Close();
+        }
+
+        // The least one question of a file's first line allocated on the UI thread.
+        long Costs(string path)
+        {
+            long least = long.MaxValue;
+            for (int round = 0; round < 5; round++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                CallToolResult answer = Await(Task.Run(() => Result(client, "editor_text", new() { ["path"] = path, ["from"] = 1, ["to"] = 1 })), "the agent's question of the file");
+                least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+                Assert.Contains("line 1 of", Text(answer), StringComparison.Ordinal);
+            }
+            return least;
+        }
+    }
+
     /// <summary>A fault of the IDE's met by an agent's call, stood in for by an action that fails as no action should.</summary>
     [AvaloniaFact]
     public void An_agents_call_that_meets_a_fault_of_the_IDEs_is_answered_with_it_and_logged()
