@@ -231,7 +231,7 @@ public static partial class McpHost
         TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // The agent's own IDE: nobody else is at it to ask.
         AgentConnection connection = new(done.Token, attached: false);
-        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(ready.Task, connection));
+        McpServer server = McpServer.Create(new PeerTransport(new StreamServerTransport(input, output, "passenger")), Options(ready.Task, connection));
         // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
         _ = Task.Run(async () =>
         {

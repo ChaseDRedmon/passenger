@@ -1737,7 +1737,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   the app bundle on macOS, else `ChildProcesses.StartApart`) and waits for that folder's window). Each mode ends on
   SIGTERM as on the end of its input (`McpHost.EndOnSignal`, gone within `EndLimit` at the latest), since an agent's
   client may send it a moment after closing the input (OpenCode 1's, 20 ms after), and `--mcp-attach` ends the test
-  run's headless window by closing its input, so it takes its socket away before the watchdog would kill it. Every call on a
+  run's headless window by closing its input, so it takes its socket away before the watchdog would kill it. Each of their
+  connections, the proxy's to its window too, is a `PeerTransport`: an answer or notification to an end that has gone is
+  dropped as the connection's ordinary end, never an internal error, since the SDK sends some unawaited (a call's error
+  answer after its answer failed, a request given up by its token); a request's failure still reaches its sender. Every call on a
   window's connection waits until the agent is let in (`AgentConnection.AdmitAsync`): Enable MCP Server, the folder among
   `AppSettings.AgentFolders` (what the question's Always for this folder adds, settings.json's, never `settings_set`'s),
   else the person's answer to `AgentAdmissionDialog`; turning the setting off, or
@@ -2586,7 +2589,9 @@ what it tests is held to a time, as `McpAttachTimingTests` hold the joins and ca
 `McpSessionsTests` and the container classes take the rest by what the tools reach; each checks a tool's answer, leaving
 the window's own steps to the window's tests.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
-client can drop its own when the call's token is cancelled. `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
+client can drop its own when the call's token is cancelled, and sends it unawaited when it does not, so the rig's client
+is a `PeerTransport` too, which drops it when the test has killed its Passenger (else the next window test caught its
+failure). `McpAvaloniaAppTests` drive `tests/Debuggees/AgentApp`
 (headless, its popups windows of their own; `AgentAppFolder` copies and restores it once per class through
 `AvaloniaApp.Debuggee`, its project `AvaloniaApp.HeadlessProject()`, as every headless app of tests/Debuggees is). The Windows on Arm VM runs a test
 filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's

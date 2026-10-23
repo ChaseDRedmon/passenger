@@ -93,7 +93,7 @@ public sealed class McpProxy
         };
         using CancellationTokenSource gone = new();
         StreamServerTransport transport = new(input, output, "passenger");
-        McpServer server = McpServer.Create(transport, options);
+        McpServer server = McpServer.Create(new PeerTransport(transport), options);
         Task running = server.RunAsync(gone.Token);
         // The server waits out the calls still going when the agent goes, so its going is watched for here.
         // The system's request to end it (an agent's client may send SIGTERM a moment after closing the input) ends it so too.
@@ -313,7 +313,7 @@ public sealed class McpProxy
             try
             {
                 // The agent's own name, which the window shows the person when it asks.
-                joined = await McpClient.CreateAsync(new StreamClientTransport(stream, stream),
+                joined = await McpClient.CreateAsync(PeerTransport.Of(new StreamClientTransport(stream, stream)),
                     new McpClientOptions { ClientInfo = agent ?? new Implementation { Name = "An agent", Version = "0" }, ProtocolVersion = protocol }, cancellationToken: joiningCancel);
                 joined.RegisterNotificationHandler(NotificationMethods.ProgressNotification, Heard);
                 joinedSocket = stream.Socket;

@@ -168,7 +168,7 @@ public sealed class AgentSocket : IDisposable
             await using NetworkStream stream = new(client, ownsSocket: true);
             McpServerOptions options = await UiThread.InvokeAsync(() => McpHost.Options(window, connection));
             StreamServerTransport transport = new(stream, stream, "passenger");
-            await using McpServer server = McpServer.Create(transport, options);
+            await using McpServer server = McpServer.Create(new PeerTransport(transport), options);
             Task running = server.RunAsync(gone.Token);
             // The server waits out the calls still running when the agent goes, so its going is watched for here.
             await Task.WhenAny(running, transport.MessageReader.Completion);

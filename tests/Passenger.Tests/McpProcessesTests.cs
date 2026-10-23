@@ -222,13 +222,14 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         }
         finally
         {
+            // Given up before the kill, as above, so the client's word of it reaches a Passenger still there.
+            giveUp.Cancel();
             ChildProcesses.Kill(passenger);
             foreach (int id in started)
             {
                 Processes.Kill(id);
             }
-            // The build's call, given up, ends with the server; its failure is nobody's to report.
-            giveUp.Cancel();
+            // The build's call ends with the server; its failure is nobody's to report.
             _ = building?.ContinueWith(call => call.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
             if (client is not null)
             {

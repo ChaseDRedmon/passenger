@@ -10,6 +10,17 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
 
 ## 2026-10-23
 
+- `McpProcessesTests`' agent's Local History outlasting the person's window's pruning, the lead's landing run at 76647182
+  (its third process), straight after the class's killed-Passenger test failed there (#443, below; it passed alone): "The IDE
+  caught 1 error during the test: IOException: Failed to send message", from the agent's client's `PipeStream.WriteAsync`.
+  That test's finally killed Passenger before giving up its build call, and the MCP SDK's client, which drops its own
+  cancellation when its wait ends first but sends it unawaited when it cannot resume there at once (its canceller on a
+  thread with a context of its own), wrote it to the dead Passenger's input; the failed task, never observed, was caught
+  by the IDE's catcher when the collector found it, in the next window test. A call given up from such a thread after its
+  Passenger was killed, its output held open, showed the error every time, and none with the fix. **The test**: its
+  finally gives up before the kill, as its body does, and the rig's client drops what it tells a Passenger that has gone
+  (`PeerTransport`), as the IDE's own MCP connections now do, since the SDK's server also sends a failed answer's error
+  unawaited, which an agent going at that moment made an internal error (not seen in a run).
 - `CodeAssistTests`' right-click rename (`A_right_click_on_a_call…renames_it…`) straight after its line typed while a
   rename is out (#430), every time in that order (found in #414's first part; it passed alone): "Sub-string not found:
   Helper.Double(", the status saying "Rename was not applied: Helper.cs changed on disk as the language server worked this
