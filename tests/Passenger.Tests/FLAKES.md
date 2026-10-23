@@ -43,6 +43,12 @@ that fixed it, in one of the forms below. A failure not yet understood goes in o
   switch's settle waits out the same 400 ms pause, ten taking 4.05 s on the Mac against an unscaled 5 s. **The test**,
   which held the IDE's own pauses to a time: it holds how long a key waits for the window's thread (0bbb464f), 11 ms on
   the Mac, a window held 1 s failing it.
+- `ProfilerTests`' Attach Profiler that cannot write its snapshot, the Ubuntu VM at e2c80fa4 with the three fixes above
+  (it passed in the run there before, and in the Windows VM): "IOException: The file '…/snapshots/Waits-20261023-142354.nettrace' already
+  exists", from the test's own blocking of every name a snapshot could take for the next two minutes, the second before
+  included. The class's tests share the Waits project's snapshot folder, and a trace the test before it began in that
+  second already held the name, a file where the test made a folder. **The test**: where a trace has a name, it blocks the
+  one the profiler takes next (`-2`, as `ProfilingSession.NewTrace` names it).
 - `McpAvaloniaAppTests`' agent's run, drive and profile of AgentApp, CI run 39992190279 at e25b06d0, Linux and Windows (it
   passed on the Mac and in the Ubuntu VM): "profile failed: … Run's program uses the Run console: stop it first, or Attach
   Profiler to profile it". The agent's `stop` answered once it had killed Run's program, not once its end had landed in

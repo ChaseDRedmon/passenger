@@ -442,6 +442,11 @@ public sealed class ProfilerTests : IClassFixture<ProfilerTests.Waits>, IDisposa
             {
                 string stamp = now.AddSeconds(second).ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
                 string path = Path.Combine(window.SnapshotFolder, $"Waits-{stamp}.nettrace");
+                // A trace a test before began in that second has the name: the one the profiler would take next is blocked.
+                for (int again = 2; File.Exists(path); again++)
+                {
+                    path = Path.Combine(window.SnapshotFolder, $"Waits-{stamp}-{again}.nettrace");
+                }
                 Directory.CreateDirectory(path);
                 blocked.Add(path);
             }
