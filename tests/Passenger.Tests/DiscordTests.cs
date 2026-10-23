@@ -299,13 +299,22 @@ public sealed class DiscordResponsivenessTests : DiscordFolders
         discord.Start(answers: false);
         MainWindow window = Started();
         Ui.PumpUntil(() => discord.Connections > 0, "the window to reach the Discord that never answers", TimeSpan.FromSeconds(10));
-        Stopwatch switching = Stopwatch.StartNew();
-        for (int i = 0; i < 10; i++)
+        // How long a key waits for the window's thread as the files are switched, each switch's work landed, Discord's
+        // handshakes going unanswered meanwhile: never the switches' whole time, which the IDE's own pause after each (the
+        // path's outline asked again after 400 ms) fills, so that ten took 4 s of the 5 s they were once held to.
+        TimeSpan longest;
+        using (InputWait waits = new())
         {
-            window.OpenFile(Path.Combine(solution, i % 2 == 0 ? "One.cs" : "Two.cs"));
-            Ui.Settle();
+            for (int i = 0; i < 10; i++)
+            {
+                window.OpenFile(Path.Combine(solution, i % 2 == 0 ? "One.cs" : "Two.cs"));
+                Ui.Settle();
+            }
+            waits.Stop();
+            longest = waits.Longest;
         }
-        Assert.True(switching.Elapsed < TimeSpan.FromSeconds(5), $"Ten file switches took {switching.Elapsed.TotalSeconds:0.0} s with Discord not answering");
+        Assert.True(longest < TimeSpan.FromMilliseconds(500),
+            $"The window answered no input for {longest.TotalMilliseconds:F0} ms as files were switched with Discord not answering");
         Ui.PumpUntil(() => discord.Connections > 1, "the window to try again after the handshake went unanswered", TimeSpan.FromSeconds(10));
         Assert.True(Discords().Length == 1 && Discords()[0].Contains("did not answer the handshake", StringComparison.Ordinal),
             $"A Discord that never answers was said other than once:\n{string.Join('\n', Discords())}");
