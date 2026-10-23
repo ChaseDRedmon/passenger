@@ -188,6 +188,7 @@ public sealed class AspireExecutionServer : IAsyncDisposable
         {
             await HandleRequestAsync(context).ConfigureAwait(false);
             await context.WriteResponseAsync([]).ConfigureAwait(false);
+            await context.CloseAsync().ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested || shutdown.IsCancellationRequested) { }
         catch (IOException) { }

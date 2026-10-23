@@ -321,6 +321,28 @@ public sealed class AspireExecutionServerTests
         notifications.Abort();
     }
 
+    /// <summary>A refusal of a request the server read only in part reaches a client that reads it after the server is done
+    /// with the connection: the server shuts its side once it has answered and drops what is left unread until the client
+    /// closes, where closing with the rest of the request unread reset the connection, and Windows then threw away the
+    /// answer the client had not read yet (CI lost a 414 so).</summary>
+    [Theory]
+    [InlineData(414)]
+    [InlineData(401)]
+    public async Task A_refusal_of_a_request_read_in_part_reaches_a_client_that_reads_it_late(int expected)
+    {
+        await using AspireExecutionServer server = await AspireExecutionServer.StartAsync(
+            (launch, _) => Task.FromResult(new AspireProjectSession(launch.SessionId, 1)), (_, _) => Task.CompletedTask, Cancel);
+        // A request line past the limit, the rest of the request never read; or a token refused before the body is read.
+        string request = expected == 414
+            ? Head(server, "PUT", "/" + new string('x', 4096), "Content-Type: application/json\r\n") + Body
+            : Request(server, Body).Replace(server.Token, "incorrect", StringComparison.Ordinal);
+        using Wire wire = await Wire.Connect(server.Port);
+        await wire.Write(request);
+        Assert.True(await Waiting.UntilAsync(() => wire.Client.Available > 0, TimeSpan.FromSeconds(30), Cancel), "The server never answered the request it refused");
+        await Waiting.ForAsync(TimeSpan.FromMilliseconds(200), "the server's end of the connection to come after its answer, before the client reads it", Cancel);
+        Assert.Equal(expected, await wire.Status());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -16,6 +16,10 @@ internal sealed class AspireExecutionConnection : IAsyncDisposable
     private const int Committing = 1;
     private const int Committed = 2;
     private const int Aborted = 3;
+
+    /// <summary>How long a connection whose answer has gone waits for its peer to close, dropping what it still sends.</summary>
+    private static readonly TimeSpan Lingering = TimeSpan.FromSeconds(2);
+
     private readonly TcpClient client;
     private readonly NetworkStream stream;
     private readonly byte[] buffer = new byte[4096];
@@ -28,6 +32,7 @@ internal sealed class AspireExecutionConnection : IAsyncDisposable
     private int contentLength;
     private bool chunked;
     private bool expectContinue;
+    private bool upgraded;
     private CancellationTokenSource? monitoring;
     private Task? monitor;
     // Pending -> committing -> committed. Only a pending create belongs to the HTTP peer's lifetime.
@@ -468,6 +473,7 @@ internal sealed class AspireExecutionConnection : IAsyncDisposable
     {
         string accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(Header("Sec-WebSocket-Key")[0] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
         HasResponded = true;
+        upgraded = true;
         await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"), RequestAborted).ConfigureAwait(false);
         return WebSocket.CreateFromStream(new UpgradeStream(this), true, null, TimeSpan.FromSeconds(30));
     }
@@ -508,6 +514,39 @@ internal sealed class AspireExecutionConnection : IAsyncDisposable
     }
 
     public void Abort() => client.Dispose();
+
+    /// <summary>Ends the connection once its answer has gone, as an HTTP/1.1 server closes one: the sending side shut, so the
+    /// peer reads the answer to its end, then what the peer still sends read and dropped until it closes, for
+    /// <see cref="Lingering"/> at most. Closed with its request unread (a request line or headers past the limits, a body
+    /// an error answers before reading), the connection would be reset, and Windows then drops the answer the peer has
+    /// not read yet: a 414 was lost so.</summary>
+    public async Task CloseAsync()
+    {
+        if (!HasResponded || upgraded || RequestAborted.IsCancellationRequested)
+        {
+            return;
+        }
+        try
+        {
+            client.Client.Shutdown(SocketShutdown.Send);
+            using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(RequestAborted);
+            limit.CancelAfter(Lingering);
+            int dropped = 0;
+            while (dropped < MaximumBody)
+            {
+                int read = await stream.ReadAsync(buffer, limit.Token).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    return;
+                }
+                dropped += read;
+            }
+        }
+        catch (Exception gone) when (gone is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
+        {
+            // The peer went or kept on past the limit: the close that follows is all that is left.
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
