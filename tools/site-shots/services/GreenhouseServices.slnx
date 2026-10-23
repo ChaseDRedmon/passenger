@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Greenhouse.AppHost/Greenhouse.AppHost.csproj" />
+    <Project Path="src/Greenhouse.Api/Greenhouse.Api.csproj" />
+    <Project Path="src/Greenhouse.Sensors/Greenhouse.Sensors.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+</Solution>
