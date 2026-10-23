@@ -21,10 +21,13 @@ public partial class MainWindow
     private void AddMigrations()
     {
         MigrationsController controller = migrations = new MigrationsController(new MigrationsParts(Editors, Bottom, Dock, work, Say, () => session, () => buildRun,
-            ChooseAsync, (project, id, version) => NuGet.InstallAsync(project, id, version), FollowWritten, OpenFile, () => StateFolder)
+            ChooseAsync, (project, id, version) => NuGet.InstallAsync(project, id, version), (project, packages) => NuGet.InstallSetAsync(project, packages),
+            () => NuGet.FeedAsync(null), FollowWritten, OpenFile, () => StateFolder)
         {
             AsksNoOne = () => AgentsOwn,
         });
+        // The NuGet window's update of one of EF Core's packages is weighed against the project's provider first.
+        NuGet.BeforeInstall = controller.WeighUpdateAsync;
         MigrationsView view = migrationsView = new MigrationsView(controller);
         view.ActionRequested += (_, action) => Request(action);
         Dock.Add(new Docking.ToolWindow(ToolWindowIds.Migrations, "Migrations", "Icon.Database", view, Docking.ToolAnchor.BottomLeft)

@@ -14,7 +14,7 @@ namespace Passenger.App.Migrations;
 /// <summary>What the Migrations window works with: the window's editors (global undo, a script's tab), its Build window and
 /// tool windows, its actions' work and status bar, the session and its builds as they are now, the questions it asks the
 /// person (<c>Choose</c>: a title, a question and its answers, the default among them; null when they cancel), the NuGet
-/// window's one way a package goes in, and what follows a file Passenger wrote.</summary>
+/// window's one way packages go in (one, or several moved together) and its feeds, and what follows a file Passenger wrote.</summary>
 public sealed record MigrationsParts(
     EditorArea Editors,
     ToolViews Views,
@@ -25,6 +25,8 @@ public sealed record MigrationsParts(
     Func<BuildRunController> Builds,
     Func<string, string, IReadOnlyList<string>, string?, Task<string?>> Choose,
     Func<ProjectModel, string, string, Task<PackageOutcome>> Install,
+    Func<ProjectModel, IReadOnlyList<(string Id, string Version)>, Task<PackageOutcome>> InstallSet,
+    Func<Task<IPackageFeed>> Feed,
     Action<IReadOnlyList<string>> FollowWritten,
     Func<string, string?> OpenFile,
     Func<string> StateFolder)
@@ -553,9 +555,65 @@ public sealed class MigrationsController(MigrationsParts parts)
     }
 
     /// <summary>What a fix reaches beyond the folder, said in its question, since asking before the network is the rule.</summary>
-    private static string NetworkNote(EfGap gap) => gap.Fixes.Any(f => f.Kind is EfFixKind.PinTool or EfFixKind.UpdateGlobalTool or EfFixKind.AddDesign or EfFixKind.RestoreTools)
-        ? " Its fix downloads from the folder's package sources what the package cache lacks."
+    private static string NetworkNote(EfGap gap) =>
+        gap.Fixes.Any(f => f.Kind == EfFixKind.AlignProvider) ? " Its fix reads the folder's package sources for the versions that fit, and downloads what the package cache lacks."
+        : gap.Fixes.Any(f => Reaches(f.Kind)) ? " Its fix downloads from the folder's package sources what the package cache lacks."
         : string.Empty;
+
+    /// <summary>Whether a fix can reach the network: a tool installed or restored, a package added or moved.</summary>
+    private static bool Reaches(EfFixKind kind) => kind is EfFixKind.PinTool or EfFixKind.UpdateGlobalTool or EfFixKind.AddDesign or EfFixKind.RestoreTools
+        or EfFixKind.AlignProvider;
+
+    /// <summary>The NuGet window's Install or Update of one of EF Core's packages, weighed before it goes: one that would
+    /// leave a provider of the project behind (its range, the feed's metadata, holding not the new version) says so and
+    /// offers the set's update together (EF Core's packages to it, the provider to the newest version that supports it),
+    /// or the update as asked. Whether the window's own change goes on.</summary>
+    public async Task<bool> WeighUpdateAsync(ProjectModel project, string id, string version)
+    {
+        UiThread.Check();
+        if (!EfProviders.InSet(id) || EfRestore.Of(project.Path) is not { Runtime: not null } restore
+            || restore.Providers.FirstOrDefault(p => !EfProviders.InSet(p.Id) && !EfRestore.InRange(p.Range, version)) is not { } left)
+        {
+            return true;
+        }
+        string? up = null;
+        try
+        {
+            IPackageFeed feed = await parts.Feed();
+            foreach (string candidate in await feed.VersionsAsync(left.Id, Packages.VersionOrder.IsPrerelease(version), CancellationToken.None))
+            {
+                if (await EfProviders.RangeAsync(feed, left.Id, candidate, restore.Framework, CancellationToken.None) is { } range && EfRestore.InRange(range, version))
+                {
+                    up = candidate;
+                    break;
+                }
+            }
+        }
+        catch (Exception failed) when (FeedSet.IsFeedFailure(failed))
+        {
+            // The feeds unread: the update is asked about as one no provider supports yet.
+        }
+        string together = $"Update the Set to {version}";
+        string said = $"{left.Id} {left.Version} supports {EfRestore.Supports(left.Range)}; {id} {version} leaves it behind. "
+            + (up is null ? $"No version of {left.Id} in the feeds supports EF Core {version} yet."
+                : $"{left.Id} {up} supports it: {together} moves EF Core's packages to {version} and {left.Id} to {up} together.");
+        string? answer = await parts.Choose($"Update {id}", said, up is null ? ["Update Anyway"] : [together, "Update Anyway"], up is null ? null : together);
+        if (answer != together)
+        {
+            return answer is not null;
+        }
+        using CommandHistory.Recording recording = parts.Editors.Commands.Record(together);
+        WatchPackageFiles(recording, project);
+        List<(string, string)> moved = [.. project.Packages.Where(p => EfProviders.InSet(p.Name)).Select(p => (p.Name, version))];
+        if (!moved.Any(m => m.Item1.Equals(id, StringComparison.OrdinalIgnoreCase)))
+        {
+            moved.Add((id, version));
+        }
+        moved.Add((left.Id, up!));
+        PackageOutcome outcome = await parts.InstallSet(project, moved);
+        parts.Say(outcome.Done ? $"{together}: {left.Id} {up} with it" : outcome.Refused ?? $"{together} failed: the NuGet window's log says why");
+        return false;
+    }
 
     /// <summary>Puts a gap right as its fix says, from the window's button or a command's question: a file change is one
     /// step of global undo. Null once fixed, else why not.</summary>
@@ -572,6 +630,11 @@ public sealed class MigrationsController(MigrationsParts parts)
         {
             return Said(new EfDone(false, "Build the startup project first: its restore says which EF Core it has")).Said;
         }
+        // A fix asked for as the window lists by itself goes on once the listing is done.
+        if (running is not null && listing is { IsCompleted: false } pending)
+        {
+            await pending;
+        }
         if (running is { } under)
         {
             return Said(new EfDone(false, ActionWork.Busy(under))).Said;
@@ -583,6 +646,12 @@ public sealed class MigrationsController(MigrationsParts parts)
         running = work;
         try
         {
+            if (Reaches(fix.Kind) && !parts.AsksNoOne() && Mcp.AgentCall.Current is null
+                && Gaps.Concat(Failure is { } failed ? [failed] : []).FirstOrDefault(g => g.Fixes.Contains(fix)) is { } gap
+                && await parts.Choose(fix.Title, $"{gap.Said}.{NetworkNote(gap)}", [fix.Title], fix.Title) is null)
+            {
+                return "Fix cancelled";
+            }
             string? why = await FixAsync(fix, session, startup, runtime, work);
             parts.Say(why ?? $"{fix.Title}: done");
             return why;
@@ -612,6 +681,8 @@ public sealed class MigrationsController(MigrationsParts parts)
                 return await ToolCommandAsync(["tool", "restore"], startup.Folder, work);
             case EfFixKind.AddDesign:
                 return await AddPackageAsync(startup, EfRestore.DesignPackage, runtime);
+            case EfFixKind.AlignProvider:
+                return await AlignAsync(startup, runtime, work);
             case EfFixKind.AddFactory:
                 return AddFactory(session);
             case EfFixKind.ScriptPlain:
@@ -673,6 +744,52 @@ public sealed class MigrationsController(MigrationsParts parts)
     private async Task<string?> AddPackageAsync(ProjectModel project, string id, string version)
     {
         using CommandHistory.Recording recording = parts.Editors.Commands.Record($"Add {id} {version} to {project.Name}");
+        WatchPackageFiles(recording, project);
+        PackageOutcome outcome = await parts.Install(project, id, version);
+        return outcome.Done ? null : outcome.Refused ?? outcome.Said.LastOrDefault(l => l.Trim().Length > 0) ?? $"{id} could not be added to {project.Name}";
+    }
+
+    /// <summary>A provider behind the startup project's EF Core brought into step, as the feeds' metadata says fits
+    /// (<see cref="EfProviders.AlignAsync"/>): every project's packages moved as one step of global undo.</summary>
+    private async Task<string?> AlignAsync(ProjectModel startup, string runtime, Working work)
+    {
+        if (EfRestore.Of(startup.Path) is not { Behind: { } behind } restore)
+        {
+            return null;
+        }
+        work.Say($"Reading which versions of {behind.Id} and EF Core fit…");
+        IReadOnlyList<ProjectModel> projects = [.. new[] { startup, Project ?? startup }.Distinct()];
+        EfAlignment? alignment;
+        try
+        {
+            alignment = await EfProviders.AlignAsync(await parts.Feed(), projects, behind, runtime, restore.Framework, work.Stopping);
+        }
+        catch (Exception failed) when (FeedSet.IsFeedFailure(failed) && !work.IsStopped)
+        {
+            return $"The feeds could not say which versions fit: {failed.Message}";
+        }
+        if (alignment is null)
+        {
+            return $"No version of {behind.Id} in the feeds supports EF Core {runtime}, and none of EF Core it supports is there";
+        }
+        work.Say($"{alignment.Title}…");
+        using CommandHistory.Recording recording = parts.Editors.Commands.Record(alignment.Title);
+        foreach (EfMove move in alignment.Moves)
+        {
+            WatchPackageFiles(recording, move.Project);
+            PackageOutcome outcome = await parts.InstallSet(move.Project, move.Packages);
+            if (!outcome.Done)
+            {
+                return outcome.Refused ?? outcome.Said.LastOrDefault(l => l.Trim().Length > 0) ?? $"{alignment.Title} failed in {move.Project.Name}";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The files a package change writes, watched by a command of global undo: the project, its lock file and the
+    /// nearest Directory.Packages.props.</summary>
+    private static void WatchPackageFiles(CommandHistory.Recording recording, ProjectModel project)
+    {
         recording.Watch(project.Path);
         recording.Watch(Path.Combine(project.Folder, "packages.lock.json"));
         for (string? at = project.Folder; at is not null; at = Path.GetDirectoryName(at))
@@ -684,8 +801,6 @@ public sealed class MigrationsController(MigrationsParts parts)
                 break;
             }
         }
-        PackageOutcome outcome = await parts.Install(project, id, version);
-        return outcome.Done ? null : outcome.Refused ?? outcome.Said.LastOrDefault(l => l.Trim().Length > 0) ?? $"{id} could not be added to {project.Name}";
     }
 
     /// <summary>A design-time factory for the context, beside the project's file, from a template: the provider's own

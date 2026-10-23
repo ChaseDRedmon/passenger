@@ -34,6 +34,24 @@ public sealed class PackageManager
 
     public Task<bool> RemoveAsync(string project, string id) => Refused(id) ? Task.FromResult(false) : RunAsync(["remove", project, "package", id]);
 
+    /// <summary>Moves several packages to their versions together (EF Core's packages and a provider): each written without a
+    /// restore, so none is refused for a downgrade the others take back, then one restore of the project.</summary>
+    public async Task<bool> InstallSetAsync(string project, IReadOnlyList<(string Id, string Version)> packages)
+    {
+        if (packages.Any(p => Refused(p.Id, p.Version)))
+        {
+            return false;
+        }
+        foreach ((string id, string version) in packages)
+        {
+            if (!await RunAsync(["add", project, "package", id, "--version", version, "--no-restore"]))
+            {
+                return false;
+            }
+        }
+        return await RunAsync(["restore", project]);
+    }
+
     /// <summary>Ends a change still under way, its whole process tree, as the IDE closes.</summary>
     public void Stop()
     {

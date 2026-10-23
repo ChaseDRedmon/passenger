@@ -17,6 +17,10 @@ public enum EfFixKind
     /// <summary>Microsoft.EntityFrameworkCore.Design added to the startup project at the EF Core runtime's version.</summary>
     AddDesign,
 
+    /// <summary>A provider behind the project's EF Core brought into step: moved up where a version supports that EF Core,
+    /// else EF Core's packages moved to the newest version the provider supports (<see cref="EfProviders.AlignAsync"/>).</summary>
+    AlignProvider,
+
     /// <summary>An <c>IDesignTimeDbContextFactory</c> for the context, from a template.</summary>
     AddFactory,
 
@@ -74,10 +78,14 @@ public static partial class EfGaps
         }
         if (restore.Behind is { } behind)
         {
-            gaps.Add(new EfGap($"{behind.Id} {behind.Version} supports {EfRestore.Supports(behind.Range)}; {startup} has EF Core {runtime}", [], Blocks: false));
+            gaps.Add(new EfGap($"{behind.Id} {behind.Version} supports {EfRestore.Supports(behind.Range)}; {startup} has EF Core {runtime}",
+                [AlignFix(behind.Id)], Blocks: false));
         }
         return gaps;
     }
+
+    /// <summary>The fix that brings a provider and EF Core's packages into step.</summary>
+    public static EfFix AlignFix(string provider) => new(EfFixKind.AlignProvider, $"Bring {provider} and EF Core into Step");
 
     /// <summary>The fix that pins the local tool to the project's EF Core.</summary>
     public static EfFix PinFix(string runtime) => new(EfFixKind.PinTool, $"Pin the Local {EfTools.Id} to {runtime}");

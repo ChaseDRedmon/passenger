@@ -545,6 +545,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `FeedClient`, with its own credentials or else `CredentialProviders` (NuGet's plugin protocol, through
   ChildProcesses), never logged, and only to the feed's own host: another its answers name that asks for them is
   refused; an advisory's address from a feed is a link only when it is http or https (`Advisory.Link`, `Releases.Web`).
+  A package version's dependencies are `IPackageFeed.DependenciesAsync` (a v3 feed's nuspec in its flat container, else its
+  registration's catalog entry; a v2 feed's Dependencies field; a folder's nuspec), by framework (`PackageDependencies`).
   `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs, and every package change's one path (`InstallAsync`/`RemoveAsync`: one at a time, under
@@ -1153,13 +1155,20 @@ window or takes the focus; it shows everything but the system's own window chrom
   EF Core runtime resolved, its Design package, each provider and the range of EF Core its own dependency gives, the one
   place "the right version" is read, never EF Core's newest), the project built first when it has none, then each gap
   (`EfGaps.Before`: no `dotnet ef`, one of another version than the runtime (blocking only across majors), no Design package
-  in the startup project; a provider whose range leaves the runtime out is said, naming both versions) asked about with its fixes (`ChoiceDialog`, a
+  in the startup project, a provider whose range leaves the runtime out, said naming both versions) asked about with its fixes (`ChoiceDialog`, a
   question saying it downloads what the cache lacks), each fix one step of global undo: the local tool pinned to the
   runtime's version (`EfTools`: the nearest manifest inside the folder, else a `dotnet-tools.json` Passenger makes at its
   root; `dotnet tool install`/`update --allow-downgrade --tool-manifest`), the global tool's update only when asked, the
   Design package through the NuGet window's one path (`NuGetView.InstallAsync`: CPM, the package's own PrivateAssets, the
   lock file), a design-time factory from a template (`EfTemplates`, the provider's own `Use…` and the startup project's first
-  connection string). Then Passenger's own build of the project and the startup project (the Build window and Problems as
+  connection string), and a provider behind brought into step (`EfProviders.AlignAsync`, from the feeds' own metadata,
+  `IPackageFeed.DependenciesAsync`, read before anything changes: the provider moved up to the newest version whose range
+  holds the runtime, else EF Core's packages (`EfProviders.InSet`) moved to the newest version the provider supports, every
+  package of a project moved together by `NuGetView.InstallSetAsync`, each written with `--no-restore` and then one restore,
+  so none is refused for a downgrade the others take back). A fix's button asks first too when it reaches the network. The
+  NuGet window's own Install or Update of one of EF Core's packages is weighed first (`NuGetView.BeforeInstall`,
+  `MigrationsController.WeighUpdateAsync`): one that leaves the project's provider behind says so and offers the set's
+  update with the provider that supports it, or the update as asked. Then Passenger's own build of the project and the startup project (the Build window and Problems as
   any build's), then `dotnet ef … --no-build --prefix-output` through `ChildProcesses` (`EfRun`, the tool the manifest names
   run by `dotnet tool run`, else the person's global one by its program), its lines in the Build window, run in the folder
   and environment of the run configuration that runs the startup project (`LaunchPlan`: the database the run uses), a
@@ -2363,10 +2372,12 @@ property, or an environment variable, the person or CI sets; #400): without them
 Directory.Build.targets that takes them out of its AppHosts' references after the AppHost SDK adds them, and a test that
 runs an AppHost skips saying so (`AspireApp.Unavailable`);
 `MigrationsTests` work a SQLite console app (`ShopApp`) whose EF Core, Design package and `dotnet-ef` (at `EfCoreVersion`
-and `EfToolOlderVersion`, Directory.Packages.props) come from the package cache through the run's local feed:
-`tests/EfGraphs` (the SQLite provider's and the Design package's graph at net10.0, a restore-only project of the solution)
-puts the packages there and the test project's `PackageDownload` the tool at both versions, which `ShopApp` copies into
-`AvaloniaApp.Feed`; the run's own DOTNET_CLI_HOME keeps the person's global tool out of sight;
+and `EfCoreOlderVersion`, Directory.Packages.props) come from the package cache through the run's local feed:
+`tests/EfGraphs` (the SQLite provider's and the Design package's graph at net10.0, at both versions, restore-only projects
+of the solution) puts the packages there and the test project's `PackageDownload` the tool at both versions, which
+`ShopApp` copies into `AvaloniaApp.Feed` with EF Core's own packages, whose metadata the window reads; a stand-in provider
+(`ShopApp.Provider`, a nuspec alone) in a feed of the test's own supports only the EF Core its version names; the run's
+own DOTNET_CLI_HOME keeps the person's global tool out of sight;
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
 stand-in resource service the test drives (`AspireInteractionHost`, admitting only that key, recording the commands the

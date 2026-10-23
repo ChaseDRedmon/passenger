@@ -59,6 +59,14 @@ public sealed class MigrationsTests
             string sql = window.EditorArea.Active!.Text.Snapshot.ToString();
             Assert.Contains("CREATE TABLE \"Products\"", sql, StringComparison.Ordinal);
             Assert.Contains("\"Price\"", sql, StringComparison.Ordinal);
+
+            // Remove Last takes AddPrice's files away, asked first, and the list follows.
+            Tool(window, AppActions.RemoveLastMigration);
+            ChoiceDialog remove = Asked<ChoiceDialog>(window, "Remove Last's question");
+            Assert.Contains("AddPrice", string.Join(' ', remove.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text)), StringComparison.Ordinal);
+            Ui.ClickButton(remove, "Remove");
+            Ui.WaitFor(() => Rows(window) is [("Initial", true)], $"AddPrice removed and the list read again ({window.Status})", Slow);
+            Assert.Empty(Directory.GetFiles(Path.Combine(folder, "Migrations"), "*_AddPrice*.cs"));
         }
         finally
         {
@@ -93,6 +101,12 @@ public sealed class MigrationsTests
             Assert.Contains($"<PackageReference Include=\"Microsoft.EntityFrameworkCore.Design\" Version=\"{ShopApp.Version}\"", project, StringComparison.Ordinal);
             Assert.Contains("<PrivateAssets>all</PrivateAssets>", project, StringComparison.Ordinal);
             Ui.WaitFor(() => Gaps(window).Length == 0, $"no gap left ({Gaps(window)})");
+
+            // Each fix is one step of global undo: the Design package's, then the tool's, its manifest gone.
+            UndoFromExplorer(window, Path.Combine(folder, "Shop.csproj"));
+            Assert.DoesNotContain("Microsoft.EntityFrameworkCore.Design", File.ReadAllText(Path.Combine(folder, "Shop.csproj")), StringComparison.Ordinal);
+            UndoFromExplorer(window, Path.Combine(folder, "Shop.csproj"));
+            Assert.False(File.Exists(Path.Combine(folder, "dotnet-tools.json")), "Undo left the tool manifest the fix made");
         }
         finally
         {
@@ -124,6 +138,160 @@ public sealed class MigrationsTests
         {
             window.Close();
         }
+    }
+
+    [AvaloniaFact]
+    public void A_provider_behind_EF_Core_is_said_with_both_versions_and_EF_Core_moved_to_what_it_supports_as_one_undo_step()
+    {
+        string folder = ShopApp.Make(design: true, tool: ShopApp.Version, provider: "1.0.0", providers: [("1.0.0", $"[{ShopApp.Older}]")]);
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Migrations);
+            string said = $"{ShopApp.Provider} 1.0.0 supports EF Core {ShopApp.Older}; Shop has EF Core {ShopApp.Version}";
+            Ui.WaitFor(() => Gaps(window).Contains(said, StringComparison.Ordinal) && window.Migrations.Busy is null, $"the provider behind said with both versions ({Gaps(window)})", Slow);
+
+            // No version of the provider supports EF Core's newest: EF Core's packages go to the newest it supports.
+            string fix = $"Bring {ShopApp.Provider} and EF Core into Step";
+            Ui.ClickButton(window.MigrationsView, fix);
+            ChoiceDialog asked = Asked<ChoiceDialog>(window, "the fix's question, before it reads the feeds");
+            Ui.ClickButton(asked, fix);
+            string project = Path.Combine(folder, "Shop.csproj");
+            Ui.WaitFor(() => File.ReadAllText(project).Contains($"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Older}\"", StringComparison.Ordinal)
+                && File.ReadAllText(project).Contains($"Microsoft.EntityFrameworkCore.Design\" Version=\"{ShopApp.Older}\"", StringComparison.Ordinal)
+                && !Gaps(window).Contains(said, StringComparison.Ordinal) && window.Migrations.Busy is null,
+                $"EF Core's packages moved to {ShopApp.Older} and the gap gone ({window.Status}; gaps: {Gaps(window)})", Slow);
+            Assert.Contains($"{ShopApp.Provider}\" Version=\"1.0.0\"", File.ReadAllText(project), StringComparison.Ordinal);
+
+            // One step of global undo takes both back.
+            UndoFromExplorer(window, Path.Combine(folder, "Shop.csproj"));
+            Assert.Contains($"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\"", File.ReadAllText(project), StringComparison.Ordinal);
+            Assert.Contains($"Microsoft.EntityFrameworkCore.Design\" Version=\"{ShopApp.Version}\"", File.ReadAllText(project), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_provider_behind_EF_Core_moves_up_to_the_version_of_it_that_supports_the_projects_EF_Core()
+    {
+        string folder = ShopApp.Make(design: true, tool: ShopApp.Version, provider: "1.0.0",
+            providers: [("1.0.0", $"[{ShopApp.Older}]"), ("2.0.0", $"[{ShopApp.Version}]")]);
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Migrations);
+            Ui.WaitFor(() => Gaps(window).Contains($"{ShopApp.Provider} 1.0.0 supports", StringComparison.Ordinal) && window.Migrations.Busy is null, $"the provider behind ({Gaps(window)})", Slow);
+            string fix = $"Bring {ShopApp.Provider} and EF Core into Step";
+            Ui.ClickButton(window.MigrationsView, fix);
+            Ui.ClickButton(Asked<ChoiceDialog>(window, "the fix's question"), fix);
+            string project = Path.Combine(folder, "Shop.csproj");
+            Ui.WaitFor(() => File.ReadAllText(project).Contains($"{ShopApp.Provider}\" Version=\"2.0.0\"", StringComparison.Ordinal) && Gaps(window).Length == 0
+                && window.Migrations.Busy is null, $"the provider moved up to 2.0.0 ({window.Status}; gaps: {Gaps(window)})", Slow);
+            Assert.Contains($"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\"", File.ReadAllText(project), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_context_the_tools_cannot_make_is_said_with_why_and_a_design_time_factory_added_in_place_and_taken_back_by_undo()
+    {
+        string folder = ShopApp.Make(design: true, tool: ShopApp.Version, program: """
+            using Microsoft.EntityFrameworkCore;
+
+            using ShopContext context = new(new DbContextOptionsBuilder<ShopContext>().UseSqlite("Data Source=shop.db").Options);
+            Console.WriteLine(context.Products.Count());
+
+            public sealed class Product
+            {
+                public int Id { get; set; }
+                public string Name { get; set; } = "";
+            }
+
+            public sealed class ShopContext(DbContextOptions<ShopContext> options) : DbContext(options)
+            {
+                public DbSet<Product> Products => Set<Product>();
+            }
+
+            """);
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        try
+        {
+            window.ShowToolWindow(ToolWindowIds.Migrations);
+            string said = "dotnet ef cannot make ShopContext: no host in Shop registers it, and it has no parameterless constructor or design-time factory";
+            Ui.WaitFor(() => Gaps(window).Contains(said, StringComparison.Ordinal) && window.Migrations.Busy is null, $"why the context cannot be made ({window.Status}; gaps: {Gaps(window)})", Slow);
+
+            Ui.ClickButton(window.MigrationsView, "Add a Design-Time Factory for ShopContext");
+            string factory = Path.Combine(folder, "ShopContextFactory.cs");
+            Ui.WaitFor(() => File.Exists(factory), "the factory written");
+            Assert.Contains("IDesignTimeDbContextFactory<ShopContext>", File.ReadAllText(factory), StringComparison.Ordinal);
+            Assert.Contains("options.UseSqlite(", File.ReadAllText(factory), StringComparison.Ordinal);
+
+            Tool(window, AppActions.MigrationsRefresh);
+            Ui.WaitFor(() => window.Migrations.Listed && window.Migrations.Busy is null, $"the migrations listed through the factory ({window.Status}; gaps: {Gaps(window)})", Slow);
+            Assert.DoesNotContain("cannot make", Gaps(window), StringComparison.Ordinal);
+
+            UndoFromExplorer(window, Path.Combine(folder, "Shop.csproj"));
+            Assert.False(File.Exists(factory), "Undo left the factory it added");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void The_NuGet_windows_update_of_EF_Core_past_its_provider_warns_and_updates_the_set_with_the_provider_together()
+    {
+        string folder = ShopApp.Make(design: true, tool: null, provider: "1.0.0", ef: ShopApp.Older,
+            providers: [("1.0.0", $"[{ShopApp.Older}]"), ("2.0.0", $"[{ShopApp.Version}]")]);
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        try
+        {
+            Ui.WaitFor(() => window.Projects is [{ IsEvaluated: true }], "the shop's project read");
+            window.ShowToolWindow(ToolWindowIds.NuGet);
+            Passenger.App.ToolWindows.NuGetView nuget = window.NuGet;
+            nuget.Query = "Microsoft.EntityFrameworkCore.Sqlite";
+            Task searched = nuget.RefreshAsync();
+            Ui.Landed(() => searched.IsCompleted && nuget.Selected?.Id == "Microsoft.EntityFrameworkCore.Sqlite", "the SQLite provider found and chosen");
+            nuget.ChosenVersion = ShopApp.Version;
+            Task<bool> update = nuget.InstallAsync(window.Projects[0]);
+
+            ChoiceDialog asked = Asked<ChoiceDialog>(window, "the update's warning");
+            string words = string.Join(' ', asked.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text));
+            Assert.Contains($"{ShopApp.Provider} 1.0.0 supports EF Core {ShopApp.Older}; Microsoft.EntityFrameworkCore.Sqlite {ShopApp.Version} leaves it behind", words, StringComparison.Ordinal);
+            Ui.ClickButton(asked, $"Update the Set to {ShopApp.Version}");
+            Ui.Landed(() => update.IsCompleted && !nuget.IsBusy, "the set's update");
+            string project = File.ReadAllText(Path.Combine(folder, "Shop.csproj"));
+            Assert.Contains($"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ShopApp.Version}\"", project, StringComparison.Ordinal);
+            Assert.Contains($"Microsoft.EntityFrameworkCore.Design\" Version=\"{ShopApp.Version}\"", project, StringComparison.Ordinal);
+            Assert.Contains($"{ShopApp.Provider}\" Version=\"2.0.0\"", project, StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Undo from the Solution view, a row chosen there, its question answered yes: the last command taken back.</summary>
+    private static void UndoFromExplorer(MainWindow window, string path)
+    {
+        List<string> asked = [];
+        window.Confirm = (_, question, _) =>
+        {
+            asked.Add(question);
+            return Task.FromResult(true);
+        };
+        window.ExplorerView.Reveal(path);
+        Ui.Settle();
+        Ui.ClickRow(window, window.ExplorerView.Tree.Rows.First(r => r.Name.StartsWith(Path.GetFileNameWithoutExtension(path), StringComparison.Ordinal)));
+        Ui.Run(window, Passenger.Editor.EditorActions.Undo);
+        Assert.True(asked.Count == 1, $"Undo asked {asked.Count} questions: {string.Join(" | ", asked)}");
     }
 
     private static string Gaps(MainWindow window) => string.Join(" | ", window.MigrationsView.GapsShown);
@@ -167,18 +335,41 @@ internal static class ShopApp
 {
     public static string Version { get; } = AvaloniaApp.Metadata("EfCoreVersion");
 
-    public static string Older { get; } = AvaloniaApp.Metadata("EfToolOlderVersion");
+    public static string Older { get; } = AvaloniaApp.Metadata("EfCoreOlderVersion");
 
-    public static string Make(bool design, string? tool)
+    /// <summary>The stand-in provider's id: a provider of EF Core of another maker, as the feed's metadata describes it.</summary>
+    public const string Provider = "Passenger.EntityFrameworkCore.StandIn";
+
+    /// <summary>The app in a folder of its own: the Design package or not, the local tool at a version or none, the stand-in
+    /// provider at a version (its versions in a feed of the test's own, each with the range of EF Core it supports), and a
+    /// Program.cs of the test's in place of the shop's.</summary>
+    public static string Make(bool design, string? tool, string? provider = null, IReadOnlyList<(string Version, string Range)>? providers = null, string? program = null,
+        string? ef = null)
     {
+        ef ??= Version;
         string folder = TestFolders.Create("shop");
         Feed();
-        AvaloniaApp.UseFeed(folder);
-        string packages = $"    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{Version}\" />\n"
-            + (design ? $"    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Design\" Version=\"{Version}\" PrivateAssets=\"all\" />\n" : string.Empty);
+        string standIns = TestFolders.Create("standins");
+        foreach ((string version, string range) in providers ?? [])
+        {
+            StandIn(standIns, version, range);
+        }
+        File.WriteAllText(Path.Combine(folder, "nuget.config"), $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="feed" value="{System.Security.SecurityElement.Escape(AvaloniaApp.Feed)}" />
+                <add key="standins" value="{System.Security.SecurityElement.Escape(standIns)}" />
+              </packageSources>
+            </configuration>
+            """);
+        string packages = $"    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{ef}\" />\n"
+            + (design ? $"    <PackageReference Include=\"Microsoft.EntityFrameworkCore.Design\" Version=\"{ef}\" PrivateAssets=\"all\" />\n" : string.Empty)
+            + (provider is null ? string.Empty : $"    <PackageReference Include=\"{Provider}\" Version=\"{provider}\" />\n");
         TestFolders.Write(folder, "Shop.csproj", TestProjects.Console("<Nullable>enable</Nullable>", "<ImplicitUsings>enable</ImplicitUsings>")
             .With($"  <ItemGroup>\n{packages}  </ItemGroup>\n"));
-        TestFolders.Write(folder, "Program.cs", """
+        TestFolders.Write(folder, "Program.cs", program ?? """
             using Microsoft.EntityFrameworkCore;
 
             using ShopContext context = new();
@@ -226,11 +417,41 @@ internal static class ShopApp
         File.WriteAllText(program, File.ReadAllText(program).Replace("    public string Name { get; set; } = \"\";\n", "    public string Name { get; set; } = \"\";\n    public decimal Price { get; set; }\n", StringComparison.Ordinal));
     }
 
-    /// <summary>The tool at both versions and the Design package, copied from the package cache into the run's local feed.</summary>
+    /// <summary>A stand-in provider's package in a feed: a nuspec alone, depending on EF Core's relational layer within the
+    /// range given, as a provider that trails EF Core's releases does.</summary>
+    private static void StandIn(string feed, string version, string range)
+    {
+        using System.IO.Compression.ZipArchive package = System.IO.Compression.ZipFile.Open(Path.Combine(feed, $"{Provider}.{version}.nupkg"), System.IO.Compression.ZipArchiveMode.Create);
+        using StreamWriter nuspec = new(package.CreateEntry($"{Provider}.nuspec").Open());
+        nuspec.Write($"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+              <metadata>
+                <id>{Provider}</id>
+                <version>{version}</version>
+                <authors>Passenger's tests</authors>
+                <description>A stand-in provider of EF Core that supports {range}</description>
+                <dependencies>
+                  <group targetFramework="{TestProjects.Framework}">
+                    <dependency id="Microsoft.EntityFrameworkCore.Relational" version="{range}" />
+                  </group>
+                </dependencies>
+              </metadata>
+            </package>
+            """);
+    }
+
+    /// <summary>The tool at both versions, the Design package and EF Core at both versions, copied from the package cache into
+    /// the run's local feed, whose metadata the window reads for the versions that fit.</summary>
     private static void Feed()
     {
         string cache = AvaloniaApp.Metadata("NuGetPackageRoot");
-        foreach ((string id, string version) in new[] { ("dotnet-ef", Version), ("dotnet-ef", Older), ("microsoft.entityframeworkcore.design", Version) })
+        foreach ((string id, string version) in new[]
+        {
+            ("dotnet-ef", Version), ("dotnet-ef", Older), ("microsoft.entityframeworkcore.design", Version),
+            ("microsoft.entityframeworkcore", Version), ("microsoft.entityframeworkcore", Older),
+            ("microsoft.entityframeworkcore.sqlite", Version), ("microsoft.entityframeworkcore.sqlite", Older),
+        })
         {
             string package = Path.Combine(cache, id, version, $"{id}.{version}.nupkg");
             Assert.True(File.Exists(package), $"{id} {version} is not in the package cache at {package}: restore the tests first");
