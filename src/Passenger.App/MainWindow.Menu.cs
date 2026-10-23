@@ -512,6 +512,25 @@ public partial class MainWindow
         return actionItem;
     }
 
+    /// <summary>An item of a tool window's row menu (the Containers and Aspire windows'), its action's as the window's menus
+    /// show it: its title and keys, greyed with why while it cannot run, worked out each time the menu opens, and run there
+    /// when chosen.</summary>
+    private MenuItem RowMenuItem(string id)
+    {
+        IdeAction action = actions![id]!;
+        MenuItem item = new() { Header = action.Title };
+        actions.ShowKeys(item, action.Id);
+        ToolTip.SetShowOnDisabled(item, true);
+        item.AttachedToVisualTree += (_, _) =>
+        {
+            string? why = actions.WhyNot(action.Id, actions.Context());
+            item.IsEnabled = why is null;
+            ToolTip.SetTip(item, why);
+        };
+        item.Click += (_, _) => Request(action.Id);
+        return item;
+    }
+
     private static MenuItem FlyoutListed(ListedItem listed)
     {
         MenuItem item = new()

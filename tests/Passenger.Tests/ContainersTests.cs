@@ -830,6 +830,59 @@ public sealed class ContainersTests
         }
     }
 
+    /// <summary>A container its restart policy starts again after each crash, and one that exited with an error, show red as
+    /// failed, as an Aspire resource's failure does, where the first showed green as running and the second grey; one a Stop
+    /// ended (SIGKILL's 137) and one that exited cleanly show stopped, and each dot's tip says the engine's words.</summary>
+    [AvaloniaFact]
+    public void A_container_that_keeps_restarting_or_exited_with_an_error_shows_failed_and_one_stopped_shows_stopped()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "The stand-in engine is a shell script");
+        (string cli, _) = StandInEngine(TestFolders.Create("ctr-failed-"), up: true, more: [
+            """{"ID":"5a5d0c0ffee3","Names":"crashy","Image":"busybox:1.37","State":"restarting","Status":"Restarting (1) 3 seconds ago","Ports":"","Labels":""}""",
+            """{"ID":"5a5d0c0ffee4","Names":"broken","Image":"busybox:1.37","State":"exited","Status":"Exited (1) 2 minutes ago","Ports":"","Labels":""}""",
+            """{"ID":"5a5d0c0ffee5","Names":"halted","Image":"busybox:1.37","State":"exited","Status":"Exited (137) 1 minute ago","Ports":"","Labels":""}"""]);
+        MainWindow window = new() { Width = 1200, Height = 800, Engine = new ContainerEngine(cli: cli) };
+        window.Show();
+        window.OpenFolder(TestFolders.Create("ctr-failed-window-"));
+        Ui.Settle();
+        try
+        {
+            ContainersView view = Shown(window);
+            Ui.WaitFor(() => Row(view, "crashy") is not null && Row(view, "halted") is not null, "the stand-in's containers listed");
+            foreach ((string name, string colour, string said) in (ReadOnlySpan<(string, string, string)>)[
+                ("crashy", "Passenger.Error", "Restarting (1) 3 seconds ago"), ("broken", "Passenger.Error", "Exited (1) 2 minutes ago"),
+                ("halted", "Passenger.TextMuted", "Exited (137) 1 minute ago"), ("solo", "Passenger.TextMuted", "Exited (0) 2 minutes ago")])
+            {
+                RunRowView row = view.GetVisualDescendants().OfType<RunRowView>().Single(r => r.Shown?.Label == name);
+                Ui.Click(row.GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == name));
+                Assert.Equal(name, view.Chosen?.Label);
+                Avalonia.Controls.Shapes.Ellipse dot = row.GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Ellipse>().Single();
+                Assert.True(window.TryFindResource(colour, window.ActualThemeVariant, out object? expected) && expected is Avalonia.Media.ISolidColorBrush brush
+                    && dot.Fill is Avalonia.Media.ISolidColorBrush fill && fill.Color == brush.Color,
+                    $"{name}'s dot is {(dot.Fill as Avalonia.Media.ISolidColorBrush)?.Color}, where a container {said} shows {colour}");
+                Assert.Equal($"{name}: {said}", ToolTip.GetTip(dot));
+            }
+
+            // A container's menu begins with the service actions, as an Aspire resource's does, greyed with why while no run
+            // of the folder's has it as a .NET service.
+            TextBlock crashy = view.GetVisualDescendants().OfType<RunRowView>().Single(r => r.Shown?.Label == "crashy")
+                .GetVisualDescendants().OfType<TextBlock>().First(text => text.Text == "crashy");
+            Ui.Click(crashy);
+            Ui.RightClick(crashy);
+            ContextMenu menu = view.GetVisualDescendants().OfType<ListBox>().Single().ContextMenu ?? throw new Xunit.Sdk.XunitException("The row has no menu");
+            Ui.WaitFor(() => menu.IsOpen, "crashy's menu to open");
+            MenuItem[] first = [.. menu.Items.OfType<Control>().TakeWhile(item => item is MenuItem).Cast<MenuItem>()];
+            Assert.Equal(["Debug Service", "Attach to Service", "Run Service without Debugger", "Profile Service"], first.Select(item => (string?)item.Header));
+            Assert.All(first, item => Assert.True(!item.IsEnabled && ToolTip.GetTip(item) is "No container run is under way: Run, Debug or Profile a container configuration first",
+                $"{item.Header} is {(item.IsEnabled ? "enabled" : "greyed")}, saying {ToolTip.GetTip(item)}"));
+            menu.Close();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void A_stopped_containers_log_stays_as_it_was_read_while_the_window_reads_the_engine_again()
     {
@@ -902,16 +955,17 @@ public sealed class ContainersTests
     /// <summary>A docker of the test's own whose engine is running or not as its <c>state</c> file says ("up" or "down"):
     /// a Linux server at <paramref name="host"/> with no Compose v2 and no buildx, holding a container of a Compose project
     /// "shop" (service web, port 8080) and a stopped one of its own whose id begins as web's, whose events go on while it is
-    /// up, whose logs are what <paramref name="logs"/> (a shell command) writes, and whose stats what
-    /// <paramref name="stats"/> does. The CLI and the state file.</summary>
+    /// up, whose logs are what <paramref name="logs"/> (a shell command) writes, whose stats what <paramref name="stats"/>
+    /// does, and which lists <paramref name="more"/> containers too (a line of <c>docker ps --format json</c> each). The CLI
+    /// and the state file.</summary>
     internal static (string Cli, string State) StandInEngine(string folder, bool up, string host = "unix:///nowhere/docker.sock",
-        string logs = "echo 'hello from the stand-in web'", string stats = "exit 1")
+        string logs = "echo 'hello from the stand-in web'", string stats = "exit 1", IReadOnlyList<string>? more = null)
     {
         string state = Path.Combine(folder, "state");
         File.WriteAllText(state, up ? "up" : "down");
         const string Down = "echo 'Cannot connect to the Docker daemon at unix:///nowhere/docker.sock. Is the docker daemon running?' >&2; exit 1";
         string cli = Path.Combine(folder, "docker");
-        File.WriteAllText(cli, string.Join('\n',
+        File.WriteAllText(cli, string.Join('\n', (string[])[
             "#!/bin/sh",
             "here=$(dirname \"$0\")",
             "running=$(cat \"$here/state\")",
@@ -924,14 +978,16 @@ public sealed class ContainersTests
             $"[ \"$running\" = up ] || {{ {Down}; }}",
             "case \"$1\" in",
             "  ps) echo '{\"ID\":\"5a5d0c0ffee1\",\"Names\":\"shop-web-1\",\"Image\":\"busybox:1.37\",\"State\":\"running\",\"Status\":\"Up 5 minutes\",\"Ports\":\"0.0.0.0:8080->80/tcp\",\"Labels\":\"com.docker.compose.project=shop,com.docker.compose.service=web\"}'",
-            "    echo '{\"ID\":\"5a5d0c0ffee2\",\"Names\":\"solo\",\"Image\":\"busybox:1.37\",\"State\":\"exited\",\"Status\":\"Exited (0) 2 minutes ago\",\"Ports\":\"\",\"Labels\":\"\"}' ;;",
+            "    echo '{\"ID\":\"5a5d0c0ffee2\",\"Names\":\"solo\",\"Image\":\"busybox:1.37\",\"State\":\"exited\",\"Status\":\"Exited (0) 2 minutes ago\",\"Ports\":\"\",\"Labels\":\"\"}'",
+            .. (more ?? []).Select(line => $"    echo '{line}'"),
+            "    ;;",
             "  images|volume|network) ;;",
             $"  logs) {logs} ;;",
             $"  stats) {stats} ;;",
             "  events) while [ \"$(cat \"$here/state\")\" = up ]; do sleep 0.2; done ;;",
             "  *) exit 1 ;;",
             "esac",
-            string.Empty));
+            string.Empty]));
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);

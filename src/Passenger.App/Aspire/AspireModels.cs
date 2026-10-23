@@ -24,6 +24,10 @@ public sealed class AspireResource(JsonElement data)
     public string? HealthStatus => AspireJson.String(Data, "healthStatus");
     public string? Source => AspireJson.String(Data, "source");
 
+    /// <summary>Whether it is a .NET project its AppHost runs (a service of its run, which the service actions reach), not a
+    /// container, an executable, a parameter or an external resource.</summary>
+    public bool IsProject => AspireJson.String(Data, "resourceType") == "Project" && Source is { } source && Path.IsPathFullyQualified(source);
+
     /// <summary>Whether the AppHost hides the resource: false when it says nothing of it, as the CLI's snapshot of one it
     /// shows need not.</summary>
     public bool IsHidden => Data.TryGetProperty("isHidden", out JsonElement hidden) && hidden.ValueKind == JsonValueKind.True;

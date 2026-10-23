@@ -166,6 +166,75 @@ public sealed class McpContainerDebuggingTests : McpRig
         }
     }
 
+    /// <summary>A run whose configuration (a Docker Compose project's launch profile) says Don't start web lists it not started;
+    /// an agent's debug_start naming it as its resource starts it later in that run, built and held, stopped in its Main,
+    /// api left as it runs; and stop takes every container of the project down, web's with the rest.</summary>
+    [Fact]
+    public async Task An_agents_debug_start_of_a_service_marked_Dont_start_starts_it_later_in_the_run_and_stop_takes_it_down()
+    {
+        Assert.SkipWhen(Docker.WhyNot is not null, Docker.WhyNot ?? string.Empty);
+        CancellationToken test = TestContext.Current.CancellationToken;
+        await Task.Run(() => ContainerPrograms.Publish($"linux-{ContainerPrograms.Processor()}"), test);
+        (string shop, string project) = ContainerRunsTests.Shop("agentlater");
+        DeleteAtEnd(shop);
+        File.Move(Path.Combine(shop, "compose.yaml"), Path.Combine(shop, "docker-compose.yml"));
+        File.WriteAllText(Path.Combine(shop, "docker-compose.dcproj"), """
+            <?xml version="1.0" encoding="utf-8"?>
+            <Project ToolsVersion="15.0" Sdk="Microsoft.Docker.Sdk">
+              <PropertyGroup Label="Globals">
+                <ProjectVersion>2.1</ProjectVersion>
+                <DockerTargetOS>Linux</DockerTargetOS>
+              </PropertyGroup>
+            </Project>
+            """);
+        Directory.CreateDirectory(Path.Combine(shop, "Properties"));
+        File.WriteAllText(Path.Combine(shop, "Properties", "launchSettings.json"), """
+            {
+              "profiles": {
+                "Web later": {
+                  "commandName": "DockerCompose",
+                  "serviceActions": { "web": "DoNotStart", "api": "StartWithoutDebugging", "cache": "StartWithoutDebugging" }
+                }
+              }
+            }
+            """);
+        File.WriteAllText(Path.Combine(shop, "Shop.slnx"),
+            "<Solution>\n  <Project Path=\"Web/Web.csproj\" />\n  <Project Path=\"Api/Api.csproj\" />\n  <Project Path=\"docker-compose.dcproj\" />\n</Solution>\n");
+        await using McpClient client = await Start(["--mcp", shop], languageServer: false);
+        await Call(client, "breakpoint_set", new() { ["path"] = "Web/Program.cs", ["line"] = 1 });
+        try
+        {
+            JsonElement ran = await Call(client, "run", new() { ["configuration"] = "docker-compose: Web later" });
+            Dictionary<string, string> states = await Task.Run(() => ContainerRunsTests.States(project), test);
+            Assert.True(states.GetValueOrDefault("api") == "running" && !states.ContainsKey("web"), $"The run left these: {string.Join(", ", states)}; it answered {ran}");
+            JsonElement unstarted = (await Call(client, "workspace")).GetProperty("containerRun").GetProperty("resources").EnumerateArray()
+                .Single(r => r.GetProperty("name").GetString() == "web");
+            Assert.True(unstarted.GetProperty("state").GetString() == "Not started", $"workspace listed web, marked Don't start, as {unstarted}");
+            string apiStarted = await Task.Run(() => ContainerRunsTests.Started(project, "api"), test);
+
+            // Started later in the run, from Passenger's build, held, so its startup stops at Main's breakpoint.
+            JsonElement stop = await Call(client, "debug_start", new() { ["resource"] = "web", ["waitSeconds"] = 120 });
+            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.Contains("Web/Program.cs:1:", StringComparison.Ordinal),
+                $"debug_start of web, marked Don't start, answered: {stop}");
+            states = await Task.Run(() => ContainerRunsTests.States(project), test);
+            Assert.True(states.GetValueOrDefault("web") == "running" && states.GetValueOrDefault("api") == "running", $"debug_start of web left these: {string.Join(", ", states)}");
+            Assert.Equal(apiStarted, await Task.Run(() => ContainerRunsTests.Started(project, "api"), test));
+
+            Assert.Equal("Stopped", Text(await Call(client, "stop")));
+            Assert.True(await Waiting.UntilAsync(() => Docker.NoneLeft(project), TimeSpan.FromMinutes(2), test),
+                $"stop left the project's containers behind: {Docker.Run("ps", "-a", "--filter", $"label=com.docker.compose.project={project}", "--format", "{{.Names}} {{.Status}}")}");
+        }
+        finally
+        {
+            await Call(client, "stop");
+            // The headless IDE's state is not the run's, whose end removes only its own images: these go here.
+            foreach (string image in Docker.Run("images", "-q", "--filter", $"label=com.docker.compose.project={project}").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Docker.Run("rmi", "-f", image);
+            }
+        }
+    }
+
     /// <summary>An agent's run never replaces the person's own containers of the project, refusing with why; a compose
     /// configuration's debug_start an agent gives up on as its held services come up, and a run it stops as it comes up,
     /// take the run down rather than leaving it up for no one; and a run up as a --mcp IDE's input ends goes with the IDE.</summary>

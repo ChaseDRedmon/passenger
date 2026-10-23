@@ -21,10 +21,9 @@ public enum TelemetryPage
 }
 
 /// <summary>A run's structured logs and traces as its dashboard keeps them (<see cref="TelemetrySource"/>), the one view of
-/// them every kind of run has: the Aspire window's Structured logs and Traces pages and the Containers window's Telemetry tab
-/// are each one of these. A page streams only while its host shows it (<see cref="Watch"/>), every resource's or one
-/// resource's or Compose service's; a log's trace and a span's logs are a click apart. Bounded recent history, as the
-/// dashboard's API gives it.</summary>
+/// them every kind of run has: the Aspire and Containers windows' Telemetry tab is each one of these (<see cref="Both"/>). A
+/// page streams only while its host shows it (<see cref="Watch"/>), every resource's or one resource's or Compose service's;
+/// a log's trace and a span's logs are a click apart. Bounded recent history, as the dashboard's API gives it.</summary>
 public sealed class TelemetryView : IDisposable
 {
     private readonly OutputView logDetails = new(toolbar: false);
@@ -47,6 +46,7 @@ public sealed class TelemetryView : IDisposable
     private bool queued;
     private bool disposed;
     private DockPanel? both;
+    private Action<TelemetryPage>? choose;
 
     /// <summary>A log's trace, or a span's logs, asked for before the other page streamed them: chosen as they come.</summary>
     private (string TraceId, string? SpanId)? wantedTrace;
@@ -151,6 +151,7 @@ public sealed class TelemetryView : IDisposable
                 Border tabBar = new() { Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = strip };
                 tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
                 both = WithHeader(tabBar, page);
+                choose = Choose;
 
                 void Choose(TelemetryPage chosen)
                 {
@@ -167,6 +168,13 @@ public sealed class TelemetryView : IDisposable
 
     /// <summary>The page <see cref="Both"/> shows was chosen, which the host streams.</summary>
     public event EventHandler<TelemetryPage>? ShownChanged;
+
+    /// <summary>Shows a page in <see cref="Both"/>, as its tab's click does.</summary>
+    public void ShowPage(TelemetryPage page)
+    {
+        _ = Both;
+        choose!(page);
+    }
 
     /// <summary>Streams a page from the source (every resource's records, or <paramref name="resource"/>'s alone), or nothing:
     /// called by the host as what it shows changes. The same source, page and resource again keep the stream.</summary>
@@ -286,14 +294,12 @@ public sealed class TelemetryView : IDisposable
         catch (Exception error) when (error is IOException or InvalidDataException or InvalidOperationException or TimeoutException or ArgumentException
             or NotSupportedException or System.Net.Http.HttpRequestException)
         {
-            string reason = ContainerSecrets.InValue(error.Message.Replace(source.ApiKey, ContainerSecrets.Masked, StringComparison.Ordinal));
-            reason = reason.Replace('\r', ' ').Replace('\n', ' ');
-            reason = reason.Length > 512 ? reason[..512] : reason;
+            string reason = source.Unread(error);
             UiThread.Post(() =>
             {
                 if (!disposed && !cancel.IsCancellationRequested)
                 {
-                    label.Text = $"Dashboard telemetry unavailable: {reason} Refresh to reconnect.";
+                    label.Text = $"{reason}. Refresh to reconnect.";
                 }
             });
         }

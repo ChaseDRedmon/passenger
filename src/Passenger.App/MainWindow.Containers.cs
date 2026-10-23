@@ -44,7 +44,8 @@ public partial class MainWindow
         actions!.Add(new IdeAction(AppActions.ContainersRefresh, "Refresh", "Containers", context => _ = containersView!.RefreshAsync()));
         actions.Add(new IdeAction(AppActions.ContainerScale, "Scale Service…", "Containers", context => _ = ScaleAsync(Chosen()!))
         {
-            WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } ? null : "No Compose service is chosen in the Containers window",
+            WhyNot = _ => Chosen() is { Kind: ContainerRowKind.Service, Project: not null } chosen
+                ? chosen.LeftUnstarted ? ContainerCommands.NotStarted(chosen) : null : "No Compose service is chosen in the Containers window",
             Works = AppActions.ContainerScale,
         });
         actions.Add(new IdeAction(AppActions.ContainerPrune, "Prune…", "Containers", context => _ = PruneAsync(Chosen()))
@@ -59,8 +60,10 @@ public partial class MainWindow
         });
         actions.Add(new IdeAction(AppActions.ContainerShell, "Open Shell", "Containers", context => _ = OpenShellAsync(Chosen()!.Container!)) { WhyNot = OneContainer, Words = ["docker exec", "Attach"] });
 
-        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title));
+        AddServiceActions();
+        ContainersView view = new(new ContainersParts(() => Engine, work, Say, Browse, () => StateFolder, id => actions[id]!.Title, RowMenuItem));
         containersView = view;
+        view.RowChosen += (_, _) => lastServiceWindow = ToolWindowIds.Containers;
         // An AppHost's containers under it, as its run's resources name them (the folder's AppHosts that run now).
         view.AppHostOf = container => session is { IsEnded: false } current
             && current.Aspire.Apps.FirstOrDefault(app => app.KnownContainerIds.Any(id => ContainerRow.SameId(id, container.Id))) is { } run
@@ -68,6 +71,7 @@ public partial class MainWindow
         view.ActionRequested += (_, action) => Request(action);
         view.LinkClicked += (_, link) => OpenLink(link);
         view.TelemetryOf = project => session.ContainerRun is { } run && run.Plan.ProjectName == project ? run.Telemetry : null;
+        view.UnstartedOf = project => buildRun.Containers is { } run && run.Plan.ProjectName == project ? run.Unstarted : [];
         view.StateRead += (_, state) => ShowEngine(state);
         view.Files.Opened += (_, copy) => OpenCopy(copy);
         view.Files.Problem += (_, problem) => status.Text = problem;
@@ -80,7 +84,6 @@ public partial class MainWindow
             Chosen = () => view.Chosen,
         });
         ActionButtons.ShowMarked(view, actions);
-        AddServiceActions(view);
     }
 
     /// <summary>The window's folder opened: when it holds a Compose file or a Dockerfile, the engine is asked once, off the

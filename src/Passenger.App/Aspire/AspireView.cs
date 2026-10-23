@@ -29,11 +29,11 @@ public sealed record AspireRow(AspireResource Resource, int Depth, bool Expands,
 /// AppHost's own console. An AppHost the window runs streams live; another is read through the CLI.</summary>
 public sealed class AspireView : DockPanel, IDisposable
 {
-    private const string DetailsPage = "Details";
-    private const string ConsolePage = "Console";
-    private const string LogsPage = "Structured logs";
-    private const string TracesPage = "Traces";
-    private const string AppHostPage = "AppHost console";
+    // The tabs' names are those every list of a run's services has, in its order (RunWindows.Tabs).
+    private const string LogTab = RunWindows.LogTab;
+    private const string DetailsTab = RunWindows.DetailsTab;
+    private const string TelemetryTab = RunWindows.TelemetryTab;
+    private const string AppHostTab = RunWindows.AppHostLogTab;
 
     private readonly AspireClient client;
     private readonly TextBlock status = new() { Classes = { "muted" }, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Text = "Choose a running Aspire AppHost, or refresh to discover one." };
@@ -57,7 +57,7 @@ public sealed class AspireView : DockPanel, IDisposable
     private Func<AspireSelection, string, Func<bool>, CancellationToken, Task>? argumentCommand;
     private CancellationTokenSource? consoleReading;
     private int consoleGeneration;
-    private string currentPage = DetailsPage;
+    private string currentPage = LogTab;
     private bool liveResources;
     private int resourceUpdateVersion;
     private bool displayVisible;
@@ -68,6 +68,7 @@ public sealed class AspireView : DockPanel, IDisposable
     private readonly Dictionary<string, string> streamedResources = new(StringComparer.Ordinal);
     private Func<string, bool>? requestAction;
     private ActionRegistry? actionRegistry;
+    private Func<string, MenuItem>? actionItem;
     private string? pendingCommand;
     private AspireSelection? pendingCommandSelection;
     private Uri? pendingLink;
@@ -79,13 +80,12 @@ public sealed class AspireView : DockPanel, IDisposable
         AutomationProperties.SetName(AppSelector, "Aspire AppHost");
         ToolTip.SetTip(AppSelector, "Running AppHost (every request uses its absolute project path)");
         StackPanel bar = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { AppSelector } };
+        // Its Refresh, then the service actions as every list of a run's services groups them (titled once bound), then the
+        // resource's own.
         foreach ((string action, string icon, string tip) in (ReadOnlySpan<(string, string, string)>)[
             (AppActions.AspireDiscover, "Icon.Search", "Discover running Aspire AppHosts"),
             (AppActions.AspireRefresh, "Icon.Rerun", "Refresh resources"),
-            (AppActions.AspireDebug, "Icon.Debug", "Debug the chosen service from its start"),
-            (AppActions.AspireAttach, "Icon.Attach", "Attach to the chosen service as it runs"),
-            (AppActions.AspireRun, "Icon.RunOutline", "Run the chosen service without the debugger"),
-            (AppActions.AspireProfile, "Icon.Profile", "Profile the chosen service"),
+            .. RunWindows.ServiceActions.Select(service => (service.Action, service.Icon, service.Action)),
             (AppActions.AspireCommand, "Icon.Menu", "The chosen resource's commands"),
             (AppActions.AspireOpenLink, "Icon.Endpoints", "Open one of the chosen resource's addresses"),
             (AppActions.AspireSource, "Icon.DocumentText", "Open the chosen resource's source"),
@@ -115,6 +115,7 @@ public sealed class AspireView : DockPanel, IDisposable
             if (!updating)
             {
                 Chose();
+                RowChosen?.Invoke(this, EventArgs.Empty);
             }
         };
         RunRows.Toggles(ResourceList, () => Chosen is { Expands: true }, () => Toggle(Chosen));
@@ -136,7 +137,8 @@ public sealed class AspireView : DockPanel, IDisposable
         Telemetry = new TelemetryView(AppActions.AspireShowTrace, AppActions.AspireShowRelatedLogs, id => requestAction?.Invoke(id) == true);
         Telemetry.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
         Telemetry.Folders = () => SelectedApp is { } app ? [Path.GetDirectoryName(app.AppHostPath)!] : [];
-        Telemetry.PageWanted += (_, wanted) => ShowPage(wanted == TelemetryPage.Logs ? LogsPage : TracesPage);
+        Telemetry.PageWanted += (_, _) => ShowPage(TelemetryTab);
+        Telemetry.ShownChanged += (_, _) => UpdateTelemetry();
         foreach (OutputView output in new[] { Console })
         {
             output.LinkClicked += (_, link) => LinkClicked?.Invoke(this, link);
@@ -144,11 +146,17 @@ public sealed class AspireView : DockPanel, IDisposable
         }
 
         StackPanel strip = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center };
-        AddPage(DetailsPage, Details, strip);
-        AddPage(ConsolePage, Log, strip);
-        AddPage(LogsPage, Telemetry.LogsPage, strip);
-        AddPage(TracesPage, Telemetry.TracesPage, strip);
-        AddPage(AppHostPage, WithHeader(readiness, appHostConsole), strip);
+        Dictionary<string, Control> contents = new(StringComparer.Ordinal)
+        {
+            [LogTab] = Log,
+            [DetailsTab] = Details,
+            [TelemetryTab] = Telemetry.Both,
+            [AppHostTab] = WithHeader(readiness, appHostConsole),
+        };
+        foreach (string name in RunWindows.Tabs.Where(contents.ContainsKey))
+        {
+            AddPage(name, contents[name], strip);
+        }
         Border tabBar = new()
         {
             [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1),
@@ -171,7 +179,7 @@ public sealed class AspireView : DockPanel, IDisposable
                 SetDisplayVisible(false);
             }
         };
-        ShowPage(DetailsPage);
+        ShowPage(LogTab);
         ShowResource();
         ShowEmpty();
     }
@@ -213,7 +221,7 @@ public sealed class AspireView : DockPanel, IDisposable
     public string Status => status.Text ?? string.Empty;
     public IReadOnlyList<AspireResource> ResourceSnapshots => resources;
 
-    /// <summary>The page shown: Details, Console, Structured logs, Traces or AppHost console.</summary>
+    /// <summary>The tab shown: Log, Details, Telemetry or AppHost Log.</summary>
     public string ShownPage => currentPage;
 
     /// <summary>Opens an address in the browser (the window's one way to it).</summary>
@@ -257,8 +265,9 @@ public sealed class AspireView : DockPanel, IDisposable
         }
     }
 
-    /// <summary>The window's actions run by the toolbar's buttons (each showing its work), the tabs and the rows' menus.</summary>
-    public void BindActions(ActionRegistry actions, Func<string, bool> request)
+    /// <summary>The window's actions run by the toolbar's buttons (each showing its work), the tabs and the rows' menus, whose
+    /// items <paramref name="item"/> makes as the window's row menus make them (greyed with why).</summary>
+    public void BindActions(ActionRegistry actions, Func<string, bool> request, Func<string, MenuItem> item)
     {
         if (actionRegistry is not null)
         {
@@ -266,6 +275,7 @@ public sealed class AspireView : DockPanel, IDisposable
         }
         actionRegistry = actions;
         requestAction = request;
+        actionItem = item;
         foreach ((Button button, string action) in tools)
         {
             ActionTips.Set(button, action, actions[action]?.Title ?? ToolTip.GetTip(button) as string ?? action);
@@ -388,6 +398,9 @@ public sealed class AspireView : DockPanel, IDisposable
     }
 
     public event EventHandler<AspireApp?>? AppSelectionChanged;
+
+    /// <summary>A person chose a resource's row (a click, the keys), never the list read again.</summary>
+    public event EventHandler? RowChosen;
     public event EventHandler<AspireSelection?>? ResourceSelectionChanged;
     public event EventHandler? RefreshRequested;
     public event EventHandler<LinkTarget>? LinkClicked;
@@ -716,7 +729,7 @@ public sealed class AspireView : DockPanel, IDisposable
     private void UpdateConsole(bool again = false)
     {
         UiThread.Check();
-        if (disposed || !displayVisible || currentPage != ConsolePage || SelectedApp is not { } app || ConsoleProvider is null)
+        if (disposed || !displayVisible || currentPage != LogTab || SelectedApp is not { } app || ConsoleProvider is null)
         {
             StopConsole();
             streamedResources.Clear();
@@ -766,7 +779,7 @@ public sealed class AspireView : DockPanel, IDisposable
             {
                 await UiThread.InvokeAsync(() =>
                 {
-                    if (!disposed && displayVisible && !cancel.IsCancellationRequested && version == consoleGeneration && currentPage == ConsolePage
+                    if (!disposed && displayVisible && !cancel.IsCancellationRequested && version == consoleGeneration && currentPage == LogTab
                         && SelectedApp?.AppHostPath == selected.AppHostPath
                         && streamedResources.GetValueOrDefault(selected.Resource.Name) == selected.Resource.Generation)
                     {
@@ -821,7 +834,7 @@ public sealed class AspireView : DockPanel, IDisposable
 
     private void UpdateTelemetry() =>
         Telemetry.Watch(!disposed && displayVisible && SelectedApp is { } selected ? TelemetryProvider?.Invoke(selected.AppHostPath) : null,
-            currentPage switch { LogsPage => TelemetryPage.Logs, TracesPage => TelemetryPage.Traces, _ => null });
+            currentPage == TelemetryTab ? Telemetry.Shown : null);
 
     private async Task WorkAsync(int version, CancellationToken cancel, Func<Task> work)
     {
@@ -1011,21 +1024,19 @@ public sealed class AspireView : DockPanel, IDisposable
             .OfType<Uri>(),
     ];
 
-    /// <summary>A row's menu: the chosen resource's actions as the toolbar runs them, then its commands.</summary>
+    /// <summary>A row's menu, in the order every list of a run's services gives one: the service actions first (greyed with
+    /// why on a resource that is no .NET service), then its commands, then its address, source and container.</summary>
     private IReadOnlyList<Control> RowMenu()
     {
-        if (Selection is not { } selected || actionRegistry is not { } actions)
+        if (Selection is not { } selected || actionItem is not { } made)
         {
             return [];
         }
-        Control Item(string id) => ListMenus.Item(actions[id]?.Title ?? id, null, () => requestAction?.Invoke(id));
+        Control Item(string id) => made(id);
         IReadOnlyList<Control> advertised = CommandItems(selected);
         return
         [
-            Item(AppActions.AspireDebug),
-            Item(AppActions.AspireAttach),
-            Item(AppActions.AspireRun),
-            Item(AppActions.AspireProfile),
+            .. RunWindows.ServiceActions.Select(service => Item(service.Action)),
             .. advertised.Count > 0 ? (Control[])[new Separator(), .. advertised] : [],
             new Separator(),
             Item(AppActions.AspireOpenLink),
@@ -1052,14 +1063,20 @@ public sealed class AspireView : DockPanel, IDisposable
 
     public static string PageAction(string name) => name switch
     {
-        DetailsPage => AppActions.AspireResources, ConsolePage => AppActions.AspireConsole,
-        LogsPage => AppActions.AspireLogs, TracesPage => AppActions.AspireTraces,
-        AppHostPage => AppActions.AspireAppHostConsole,
+        LogTab => AppActions.AspireConsole, DetailsTab => AppActions.AspireResources,
+        TelemetryTab => AppActions.AspireTelemetry, AppHostTab => AppActions.AspireAppHostConsole,
         _ => throw new ArgumentException("Unknown Aspire page.", nameof(name)),
     };
 
-    /// <summary>The pages' names, as their tabs and actions say them.</summary>
-    public static IReadOnlyList<string> Pages { get; } = [DetailsPage, ConsolePage, LogsPage, TracesPage, AppHostPage];
+    /// <summary>The tabs' names, as their tabs and actions say them, in their order.</summary>
+    public static IReadOnlyList<string> Pages { get; } = [.. RunWindows.Tabs.Where(tab => tab is LogTab or DetailsTab or TelemetryTab or AppHostTab)];
+
+    /// <summary>Shows the Telemetry tab on one of its pages, as a log's trace or a span's logs asks for it.</summary>
+    public void ShowTelemetry(TelemetryPage shown)
+    {
+        ShowPage(TelemetryTab);
+        Telemetry.ShowPage(shown);
+    }
 
     private static TextBlock Said() => new() { Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
 

@@ -15,6 +15,11 @@ public static class ContainerCommands
         {
             return (null, "No container, project, image, volume or network is chosen in the Containers window");
         }
+        // No container yet: its Start goes through the run that left it unstarted, which starts it.
+        if (row.LeftUnstarted && action != "start")
+        {
+            return (null, NotStarted(row));
+        }
         if (row.Project is { } project)
         {
             List<string> words = [.. project.Arguments];
@@ -58,6 +63,12 @@ public static class ContainerCommands
         }
         return (null, null);
     }
+
+    /// <summary>How a service row its run left unstarted says what starts it.</summary>
+    public static string NotStarted(ContainerRow row) => $"{row.Name} is not started: {StartsIt}";
+
+    /// <summary>Why a service its run left unstarted is, and what starts it.</summary>
+    public const string StartsIt = "its run configuration says Don't start; its Start, Run, Debug or Profile starts it";
 
     /// <summary>The words a stage of the action says while it runs ("Stopping web…").</summary>
     public static string Stage(string action, ContainerRow row) => action switch

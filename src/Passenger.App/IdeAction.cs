@@ -109,6 +109,10 @@ public sealed class ActionContext(OpenDocument? file, CodeEditor editor, object?
     /// there.</summary>
     public Explorer.ExplorerNode? ExplorerRow { get; init; }
 
+    /// <summary>The .NET service of a run whose gutter menu this is, which the service actions act on in place of the one
+    /// chosen in the Containers or Aspire window.</summary>
+    public Run.ChosenService? Service { get; init; }
+
     private static string? SymbolAt(CodeEditor editor)
     {
         Selection primary = editor.Selections.Primary;
