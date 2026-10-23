@@ -173,17 +173,35 @@ public sealed partial record BackingService(string Service, string Image, string
     }
 
     /// <summary>Where a project in the same compose project reaches it, for a connection string named so with the app's
-    /// own value: the database the value names is kept.</summary>
-    public string ConnectionString(string name, string value) => (Service, Database(name, value)) switch
+    /// own value: the database the value names is kept; at the compose service of its own name, or the one named
+    /// <paramref name="host"/> (one a compose file has of another name).</summary>
+    public string ConnectionString(string name, string value, string? host = null) => (Service, Database(name, value), host ?? Service) switch
     {
-        ("postgres", var database) => $"Host=postgres;Port=5432;Database={database};Username=postgres;Password=${{POSTGRES_PASSWORD:-postgres}}",
-        ("sqlserver", var database) => $"Server=sqlserver,1433;Database={database};User Id=sa;Password=${{MSSQL_SA_PASSWORD:-Passenger_dev1}};TrustServerCertificate=True",
-        ("redis", _) => "redis:6379",
-        ("rabbitmq", { } vhost) => $"amqp://app:${{RABBITMQ_PASSWORD:-app}}@rabbitmq:5672/{Uri.EscapeDataString(vhost)}",
-        ("rabbitmq", null) => "amqp://app:${RABBITMQ_PASSWORD:-app}@rabbitmq:5672",
-        (_, { } database) => $"mongodb://mongo:27017/{database}",
-        _ => "mongodb://mongo:27017",
+        ("postgres", var database, var at) => $"Host={at};Port=5432;Database={database};Username=postgres;Password=${{POSTGRES_PASSWORD:-postgres}}",
+        ("sqlserver", var database, var at) => $"Server={at},1433;Database={database};User Id=sa;Password=${{MSSQL_SA_PASSWORD:-Passenger_dev1}};TrustServerCertificate=True",
+        ("redis", _, var at) => $"{at}:6379",
+        ("rabbitmq", { } vhost, var at) => $"amqp://app:${{RABBITMQ_PASSWORD:-app}}@{at}:5672/{Uri.EscapeDataString(vhost)}",
+        ("rabbitmq", null, var at) => $"amqp://app:${{RABBITMQ_PASSWORD:-app}}@{at}:5672",
+        (_, { } database, var at) => $"mongodb://{at}:27017/{database}",
+        (_, _, var at) => $"mongodb://{at}:27017",
     };
+
+    /// <summary>The kind a compose service's image is, by its repository's name (its registry, tag and digest aside:
+    /// postgres, docker.io/library/redis:7, mcr.microsoft.com/mssql/server); null for any other.</summary>
+    public static BackingService? OfImage(string? image)
+    {
+        if (image is not { Length: > 0 })
+        {
+            return null;
+        }
+        string repository = image.Split('@')[0];
+        int slash = repository.LastIndexOf('/');
+        int colon = repository.LastIndexOf(':');
+        repository = colon > slash ? repository[..colon] : repository;
+        return Known.FirstOrDefault(k => k.Image.Split(':')[0] is { } known
+            && (repository.Equals(known, StringComparison.OrdinalIgnoreCase) || repository.EndsWith("/" + known, StringComparison.OrdinalIgnoreCase)
+                || (known.Contains('/', StringComparison.Ordinal) && repository.EndsWith(known[(known.IndexOf('/') + 1)..], StringComparison.OrdinalIgnoreCase))));
+    }
 
     /// <summary>What compose.yaml says over it of the databases the apps' connection strings name: SQL Server's image
     /// makes none, nor Postgres' more than POSTGRES_DB's, so the rest are the app's to make.</summary>

@@ -75,6 +75,95 @@ public static partial class ComposeFixes
         return [.. fixes.Select(f => f with { Again = now => For(now, fault).FirstOrDefault(again => again.Title == f.Title) })];
     }
 
+    /// <summary>Set a variable in a service's environment, as the file writes it there: a <c>NAME: "value"</c> after the
+    /// mapping's last entry, a <c>- NAME=value</c> after the list's, or an environment made under the service after its last
+    /// key; an empty flow collection (<c>{}</c>, <c>[]</c>) made the block it goes in. A value of null is the person's to
+    /// fill in, the caret left where it goes. None where the text sets it already, has no such service, or writes its
+    /// environment in a form Passenger cannot be sure of (a flow collection with entries); worked out again as it is chosen.</summary>
+    public static IReadOnlyList<EditorFix> SetVariable(TextSnapshot snapshot, string service, string variable, string? value, string detail)
+    {
+        string text = snapshot.ToString();
+        ComposeText read = ComposeText.Of(text);
+        string[] path = ["services", service];
+        if (read.At(path) is not { } holder || holder.ValueStart >= 0)
+        {
+            return [];
+        }
+        string unit = new(' ', Indent(read, text));
+        string br = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        string title = $"Set {variable} in {service}'s environment";
+        string quoted = $"\"{(value ?? string.Empty).Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+        string mapped = $"{variable}: {quoted}";
+        // An empty value's caret between its quotes, where the person types it.
+        int mappedCaret = value is null ? mapped.Length - 1 : mapped.Length;
+        string listed = $"- {variable}={value}";
+        EditorFix? fix = null;
+        if (read.At([.. path, "environment"]) is { } environment)
+        {
+            IReadOnlyList<ComposeEntry> entries = [.. Children(read, environment.Path)];
+            if (entries.Any(e => IsIndex(e.Path[^1])
+                ? e.Scalar?.Split('=')[0].Trim().Equals(variable, StringComparison.OrdinalIgnoreCase) == true
+                : e.Path[^1].Equals(variable, StringComparison.OrdinalIgnoreCase)))
+            {
+                return [];
+            }
+            string inner = new string(' ', Column(text, environment.KeyStart)) + unit;
+            if (environment.ValueStart >= 0 || (entries.Count == 0 && FlowValue(text, environment) is { Length: > 0 }))
+            {
+                // On the key's line: an empty flow mapping or sequence becomes the block the entry goes in.
+                string flow = FlowValue(text, environment) ?? string.Empty;
+                int open = text.IndexOf(flow, environment.KeyEnd, StringComparison.Ordinal);
+                string? block = flow switch
+                {
+                    "{}" => $"{br}{inner}{mapped}",
+                    "[]" => $"{br}{inner}{listed}",
+                    _ => null,
+                };
+                fix = block is null || open < 0 ? null
+                    : new EditorFix(title, detail, TextRange.FromBounds(environment.KeyEnd + 1, open + flow.Length), block)
+                    {
+                        Caret = flow == "{}" ? block.Length - mapped.Length + mappedCaret : block.Length,
+                    };
+            }
+            else if (entries.Count == 0)
+            {
+                string entry = $"{inner}{mapped}";
+                fix = new EditorFix(title, detail, new TextRange(AfterLine(text, environment.KeyEnd), 0), entry + br) { Caret = entry.Length - mapped.Length + mappedCaret };
+            }
+            else
+            {
+                bool list = IsIndex(entries[0].Path[^1]);
+                string indent = new(' ', Column(text, entries[0].KeyStart));
+                int at = Lines(read, text, environment).End;
+                string before = at == text.Length && !text.EndsWith('\n') ? br : string.Empty;
+                string entry = $"{before}{indent}{(list ? listed : mapped)}";
+                fix = new EditorFix(title, detail, new TextRange(at, 0), entry + br) { Caret = list ? entry.Length : entry.Length - mapped.Length + mappedCaret };
+            }
+        }
+        else
+        {
+            IReadOnlyList<ComposeEntry> keys = [.. Children(read, path)];
+            string indent = keys.Count > 0 ? new string(' ', Column(text, keys[0].KeyStart)) : new string(' ', Column(text, holder.KeyStart)) + unit;
+            int at = Lines(read, text, holder).End;
+            string before = at == text.Length && !text.EndsWith('\n') ? br : string.Empty;
+            string entry = $"{before}{indent}environment:{br}{indent}{unit}{mapped}";
+            fix = new EditorFix(title, detail, new TextRange(at, 0), entry + br) { Caret = entry.Length - mapped.Length + mappedCaret };
+        }
+        return fix is null ? [] : [fix with { Again = now => SetVariable(now, service, variable, value, detail).FirstOrDefault() }];
+    }
+
+    /// <summary>What a key's line holds after it, its comment aside: a flow collection or scalar written there; null for none.</summary>
+    private static string? FlowValue(string text, ComposeEntry key)
+    {
+        int end = text.IndexOf('\n', key.KeyEnd) is int next and >= 0 ? next : text.Length;
+        string after = text[Math.Min(key.KeyEnd + 1, end)..end].TrimEnd('\r');
+        int comment = after.IndexOf(" #", StringComparison.Ordinal);
+        string value = (comment >= 0 ? after[..comment] : after).Trim();
+        return value.Length == 0 ? null : value;
+    }
+
+    private static int Column(string text, int offset) => offset - LineStart(text, offset);
+
     /// <summary>Every place the fault's service names its name, in the order written.</summary>
     internal static IReadOnlyList<ComposeReference> References(ComposeText read, string text, ComposeFault fault)
     {

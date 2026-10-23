@@ -29,7 +29,12 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
     /// <summary>The most of a value a hint shows.</summary>
     private const int Longest = 48;
 
+    /// <summary>The folder's code as the check under way reads it, taken as it starts.</summary>
+    private volatile ComposeCode? code;
+
     protected override bool AsTyped => true;
+
+    protected override void Starting() => code = Owner.Code?.Invoke();
 
     protected override bool Hints => true;
 
@@ -79,6 +84,10 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
             }
             bool own = PathNames.Same(owner, path);
             found.Add(Place($"Compose: {message}", owner, own, message, own ? snapshot : Disk(owner)));
+        }
+        if (model.Succeeded && code is { } reading)
+        {
+            found.AddRange(await ComposeConnections.FindAsync(reading, folder, path, snapshot, model.Output, cancel));
         }
         IReadOnlyDictionary<string, string> resolved = values.Result;
         foreach ((int start, int end, string expression) in interpolations)
@@ -349,7 +358,10 @@ internal sealed partial class ComposeCheck(EngineChecks owner, OpenDocument docu
         }
         if (ComposeFixes.Read(said) is { } fault && ComposeFixes.Place(text.ToString(), fault) is { } named)
         {
-            return new Finding(ProblemSeverity.Error, message, file, text.GetPosition(named.Start), own ? named : null) { Fault = own ? fault : null };
+            return new Finding(ProblemSeverity.Error, message, file, text.GetPosition(named.Start), own ? named : null)
+            {
+                Fixes = own ? now => ComposeFixes.For(now, fault) : null,
+            };
         }
         TextRange range = Lines(text, 0, 0);
         if (ParserPlace().Match(said) is { Success: true } parsed)
