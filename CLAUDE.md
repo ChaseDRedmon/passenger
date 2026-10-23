@@ -1231,8 +1231,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   known (`EfGaps.After`: the Design package, a context the tools cannot make, several contexts, no tool, tools not
   restored, an applied migration removed), shown in the window under the gaps with its fix as a button; EF's warning that
   the tool is older than the runtime is read as the gap it is. Without a person to ask (an agent's call or its own IDE)
-  a blocking gap refuses the command, naming its fix, which `app.migrations.fix` (Fix What Migrations Lack, the window's
-  first fix) applies.
+  a blocking gap refuses the command, naming its fix. The gaps' fixes are Passenger's own fixes
+  (`MainWindow.MigrationFixes`) on the startup project's file and on each context's declaration (`Declared`, read from the
+  project's C# files), so Show Context Actions and an agent's `code_actions`/`apply_code_action` offer and make them (an
+  MSBuild file's code_actions list its own fixes where it has any); an agent runs the Migrations actions by `ide_action` with
+  `input` for what they would ask (`MainWindow.MigrationsForAgentAsync`: Refresh's context, Add's name, Update's or Update
+  to's target, Script's FROM..TO), each answering what it came to with the context's migrations and every gap with its
+  fixes' titles and where code_actions finds them; `app.migrations.fix` makes the first fix shown.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test

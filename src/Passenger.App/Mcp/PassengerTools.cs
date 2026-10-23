@@ -408,6 +408,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
             case XamlServed xaml:
                 return (IReadOnlyList<string>)[.. (await XamlActions(xaml, Offset(xaml.Document, line, column)))
                     .Select(a => a.Choices.Count == 0 ? $"{a.Title} [{a.Kind}]" : $"{a.Title} [{a.Kind}], choices: {string.Join("; ", a.Choices)}")];
+            case MSBuildServed when window.Assist.OwnFixes(served.Document, Offset(served.Document, line, column)) is { Count: > 0 } own:
+                return (IReadOnlyList<string>)[.. own.Select(f => $"{f.Title} [quickfix]")];
             case MSBuildServed:
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
@@ -435,6 +437,8 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
         {
             case XamlServed xaml:
                 return await ApplyXamlAction(xaml, Offset(xaml.Document, line, column), title, choice, name);
+            case MSBuildServed when window.Assist.OwnFixes(served.Document, Offset(served.Document, line, column)).FirstOrDefault(f => f.Title == title) is { } ownFix:
+                return await ApplyOwnFix(served.Document, ownFix, patience, name);
             case MSBuildServed:
                 throw Lacks(served, "fixes or refactorings", MSBuildHas);
         }
@@ -1329,9 +1333,12 @@ public sealed partial class PassengerTools(MainWindow window, AgentConnection? c
 
     [McpServerTool(Name = "ide_action", Title = "Run an IDE action", Destructive = true), Description(
         "Runs one of the IDE's actions by its id, as its shortcut would (app.build, app.debug.stepOver, app.code.rename...; " +
-        "ide_actions lists them). An id no action has, or one that cannot run now, is an error saying why.")]
-    public Task<string> IdeAction(string action, CancellationToken cancel = default) => OnUi(cancel, () =>
-        Task.FromResult(window.Actions.Run(action) is { } why ? throw new InvalidOperationException($"{action} did not run: {why}") : $"Ran {action}"));
+        "ide_actions lists them). An id no action has, or one that cannot run now, is an error saying why. input: what an " +
+        "app.migrations.* action asks (add's name, updateTo's target, script's FROM..TO).")]
+    public Task<string> IdeAction(string action, string? input = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        action.StartsWith("app.migrations.", StringComparison.Ordinal) && window.Actions[action] is not null ? await window.MigrationsForAgentAsync(action, input, cancel)
+        : input is not null ? throw new InvalidOperationException($"{action} takes no input")
+        : window.Actions.Run(action) is { } why ? throw new InvalidOperationException($"{action} did not run: {why}") : $"Ran {action}");
 
     [McpServerTool(Name = "ide_actions", Title = "The IDE's actions", ReadOnly = true), Description(
         "Every action ide_action runs (those with no shortcut too), as id: name [group] (shortcut on this platform), " +

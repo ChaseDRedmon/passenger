@@ -62,7 +62,7 @@ internal sealed record EfSetting(ProjectModel Project, ProjectModel Startup, str
 /// its version, the Design package: <see cref="EfGaps.Before"/>, each gap asked about with its fix and fixed as one step of
 /// global undo), built by Passenger's own build, then run as <c>dotnet ef … --no-build</c> with its output in the Build
 /// window, its failure read into one line with its fix. One command at a time. A UI-thread object.</summary>
-public sealed class MigrationsController(MigrationsParts parts)
+public sealed partial class MigrationsController(MigrationsParts parts)
 {
     private ProjectSession? bound;
     private Working? running;
@@ -101,6 +101,10 @@ public sealed class MigrationsController(MigrationsParts parts)
     /// command that changes the migrations).</summary>
     public IReadOnlyList<EfPending> Pending { get; private set; } = [];
 
+    /// <summary>Where the chosen project's contexts are declared, read from its C# files as the projects are read: where a
+    /// gap's fixes are offered (Show Context Actions, an agent's code_actions) beside the startup project's file.</summary>
+    public IReadOnlyList<EfPending> Declared { get; private set; } = [];
+
     /// <summary>The code Problems lists a context's pending model changes under.</summary>
     public const string PendingCode = "Migrations";
 
@@ -137,8 +141,67 @@ public sealed class MigrationsController(MigrationsParts parts)
         Startups = Project is null ? [] : StartupsOf(Project, all);
         Startup = Startups.FirstOrDefault(p => Startup is { } was && PathNames.Same(p.Path, was.Path)) ?? Startups.FirstOrDefault();
         FindGaps();
+        if (Project is { } project)
+        {
+            BackgroundWork.Track(FindDeclaredAsync(project));
+        }
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>The project's contexts' declarations read off the UI thread, kept while it is still the one chosen.</summary>
+    private async Task FindDeclaredAsync(ProjectModel project)
+    {
+        IReadOnlyList<EfPending> found = await Task.Run(() => DeclaredIn(project.Folder));
+        if (Project == project)
+        {
+            Declared = found;
+        }
+    }
+
+    /// <summary>The classes a project's C# files declare deriving from a DbContext (bin and obj passed over), each at its name.</summary>
+    private static IReadOnlyList<EfPending> DeclaredIn(string folder)
+    {
+        List<EfPending> found = [];
+        foreach (string file in CodeFiles(folder))
+        {
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(file);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            for (int line = 0; line < lines.Length; line++)
+            {
+                if (ContextClass().Match(lines[line]) is { Success: true } declared)
+                {
+                    found.Add(new EfPending(declared.Groups[1].Value, PathNames.Canonical(file), new Passenger.Text.TextPosition(line, declared.Groups[1].Index)));
+                }
+            }
+        }
+        return found;
+    }
+
+    /// <summary>A project's C# files, but those under its bin and obj.</summary>
+    private static IEnumerable<string> CodeFiles(string folder)
+    {
+        IEnumerable<string> files;
+        try
+        {
+            files = [.. Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories)];
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+        return files.Where(file => Path.GetRelativePath(folder, file).Split(Path.DirectorySeparatorChar)[0] is not ("bin" or "obj"));
+    }
+
+    /// <summary>A class declared on one line deriving from a DbContext (IdentityDbContext&lt;User&gt; too), its name captured.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bclass\s+(\w+)\b[^{;]*:\s*[^{;]*?\b\w*DbContext\b(?!\w)")]
+    private static partial System.Text.RegularExpressions.Regex ContextClass();
 
     /// <summary>Chooses the project whose contexts are listed, by path; its startup project chosen afresh.</summary>
     public void ChooseProject(string path)
@@ -385,7 +448,7 @@ public sealed class MigrationsController(MigrationsParts parts)
                 return Failed(setting, scripted, idempotent);
             }
             parts.OpenFile(PathNames.Canonical(file));
-            return Done($"Scripted the migrations of {setting.Context ?? setting.Project.Name}{(idempotent ? ", idempotent" : string.Empty)}");
+            return Done($"Scripted the migrations of {setting.Context ?? setting.Project.Name}{(idempotent ? ", idempotent," : string.Empty)} into {PathNames.Canonical(file)}");
         });
 
     /// <summary>Bundles the chosen context's migrations into a program that applies them, in the startup project's output.</summary>
@@ -691,9 +754,13 @@ public sealed class MigrationsController(MigrationsParts parts)
         }
     }
 
+    /// <summary>The files the last fix wrote, which an agent's apply_code_action names.</summary>
+    public IReadOnlyList<string> Touched { get; private set; } = [];
+
     private async Task<string?> FixAsync(EfFix fix, ProjectSession session, ProjectModel startup, string runtime, Working work)
     {
         work.Say($"{fix.Title}…");
+        Touched = [];
         switch (fix.Kind)
         {
             case EfFixKind.PinTool:
@@ -742,6 +809,7 @@ public sealed class MigrationsController(MigrationsParts parts)
             : ["tool", "update", EfTools.Id, "--version", runtime, "--allow-downgrade", "--tool-manifest", manifest];
         string? failed = await ToolCommandAsync(arguments, Path.GetDirectoryName(manifest)!, work);
         parts.FollowWritten([manifest]);
+        Touched = [manifest];
         return failed;
     }
 
@@ -772,6 +840,7 @@ public sealed class MigrationsController(MigrationsParts parts)
         using CommandHistory.Recording recording = parts.Editors.Commands.Record($"Add {id} {version} to {project.Name}");
         WatchPackageFiles(recording, project);
         PackageOutcome outcome = await parts.Install(project, id, version);
+        Touched = outcome.Changed;
         return outcome.Done ? null : outcome.Refused ?? outcome.Said.LastOrDefault(l => l.Trim().Length > 0) ?? $"{id} could not be added to {project.Name}";
     }
 
@@ -804,6 +873,7 @@ public sealed class MigrationsController(MigrationsParts parts)
         {
             WatchPackageFiles(recording, move.Project);
             PackageOutcome outcome = await parts.InstallSet(move.Project, move.Packages);
+            Touched = [.. Touched, .. outcome.Changed];
             if (!outcome.Done)
             {
                 return outcome.Refused ?? outcome.Said.LastOrDefault(l => l.Trim().Length > 0) ?? $"{alignment.Title} failed in {move.Project.Name}";
@@ -852,6 +922,7 @@ public sealed class MigrationsController(MigrationsParts parts)
         using CommandHistory.Recording recording = parts.Editors.Commands.Record($"Add a Design-Time Factory for {context.Name}");
         recording.Watch(file);
         FileText.Save(file, EfTemplates.Factory(context, restore, EfTemplates.ConnectionOf(startup.Folder)), new UTF8Encoding(false), false);
+        Touched = [file];
         parts.FollowWritten([file]);
         parts.OpenFile(PathNames.Canonical(file));
         return null;
@@ -983,13 +1054,8 @@ public sealed class MigrationsController(MigrationsParts parts)
     {
         string name = context.Split('.').Last();
         System.Text.RegularExpressions.Regex declared = new($@"\bclass\s+{System.Text.RegularExpressions.Regex.Escape(name)}\b");
-        foreach (string file in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
+        foreach (string file in CodeFiles(folder))
         {
-            string relative = Path.GetRelativePath(folder, file);
-            if (relative.StartsWith("bin" + Path.DirectorySeparatorChar, StringComparison.Ordinal) || relative.StartsWith("obj" + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            {
-                continue;
-            }
             string[] lines;
             try
             {
