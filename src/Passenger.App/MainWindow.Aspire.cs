@@ -71,6 +71,7 @@ public partial class MainWindow
         PrepareAspireContainerCleanup(next);
         view.BindActions(Actions, id => Request(id));
         view.Browse = Browse;
+        view.LeftUnstarted = (path, resource) => next.Aspire.FindApp(path)?.IsLeftUnstarted(resource) == true;
         view.TelemetryProvider = path => next.Aspire.FindApp(path) is { DashboardEndpoint: { } endpoint } app
             ? (endpoint, app.DashboardApiKey) : null;
         view.SelectContainer = id => _ = ShowAspireContainerAsync(next, id);

@@ -16,8 +16,9 @@ public sealed class AspireDetailsPane(Action<Uri> browse, Action<string> open) :
     /// <summary>The resource shown, or null.</summary>
     public AspireResource? Resource { get; private set; }
 
-    /// <summary>Shows a resource's details, or says to choose one.</summary>
-    public void Show(AspireResource? resource)
+    /// <summary>Shows a resource's details, or says to choose one; one its run left unstarted (<paramref name="leftUnstarted"/>,
+    /// as its configuration says Don't start) is Not started, never a failure.</summary>
+    public void Show(AspireResource? resource, bool leftUnstarted = false)
     {
         UiThread.Check();
         Resource = resource;
@@ -27,14 +28,18 @@ public sealed class AspireDetailsPane(Action<Uri> browse, Action<string> open) :
             return;
         }
         // Shown again as each of the AppHost's updates comes: tables that show what they showed stay, a press on a link kept.
-        Show(() => Fill(resource));
+        Show(() => Fill(resource, leftUnstarted));
     }
 
-    private void Fill(AspireResource resource)
+    private void Fill(AspireResource resource, bool leftUnstarted)
     {
         JsonElement data = resource.Data;
         List<(string, Control)> about = [("Type", Words(Text(data, "resourceType") ?? Text(data, "type") ?? "Unknown"))];
-        about.Add(("State", State(resource.State ?? "Unknown", Health(resource))));
+        about.Add(("State", leftUnstarted ? State(AspireAppRun.NotStarted, null) : State(resource.State ?? "Unknown", Health(resource))));
+        if (leftUnstarted)
+        {
+            about.Add(("Why", Words(AspireAppRun.NotStartedWhy, brush: "Passenger.TextMuted")));
+        }
         if (resource.Source is { } source)
         {
             about.Add(("Source", Path.IsPathFullyQualified(source)

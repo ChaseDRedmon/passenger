@@ -1049,6 +1049,14 @@ public sealed class AspireAppRun : ServiceRun
     /// <summary>The services started at least once in this run, whose hold is the model's from then on.</summary>
     private readonly HashSet<string> decided = new(StringComparer.Ordinal);
 
+    /// <summary>The services it left unstarted, as their configuration says Don't start, until a start of theirs is asked.</summary>
+    private readonly HashSet<string> unstarted = new(StringComparer.Ordinal);
+
+    /// <summary>How a resource the run left unstarted is said, where DCP says the start it refused failed, and why.</summary>
+    public const string NotStarted = "Not started";
+
+    public const string NotStartedWhy = "Its run configuration says Don't start; its Start command runs it";
+
     /// <summary>Each service's next start, as a restart waits for it: its failure, or null once started and attached to.</summary>
     private readonly Dictionary<string, TaskCompletionSource<string?>> nextStarts = new(StringComparer.Ordinal);
 
@@ -1182,6 +1190,7 @@ public sealed class AspireAppRun : ServiceRun
     {
         resource.Sequence = ++started;
         string name = ((IRunService)resource).Name;
+        unstarted.Remove(name);
         if (decided.Add(name) && first() is { } held)
         {
             Brought([(resource, held)]);
@@ -1191,7 +1200,25 @@ public sealed class AspireAppRun : ServiceRun
 
     /// <summary>Whether a service's start is its first in this run and its configuration says Don't start it: refused then,
     /// and decided from then on, so a start asked later (the Aspire window's) runs it, unheld.</summary>
-    internal bool LeftUnstarted(string name, bool dontStart) => dontStart && decided.Add(name);
+    internal bool LeftUnstarted(string name, bool dontStart)
+    {
+        if (!dontStart || !decided.Add(name))
+        {
+            return false;
+        }
+        unstarted.Add(name);
+        return true;
+    }
+
+    /// <summary>Whether a resource is a service the run left unstarted, as its configuration says Don't start: DCP's
+    /// FailedToStart for the start the run refused, by the service's name (its display name, or the resource's name with
+    /// DCP's suffix).</summary>
+    public bool IsLeftUnstarted(AspireResource resource) => resource.State == "FailedToStart" && unstarted.Any(name =>
+        resource.Name == name || resource.DisplayName == name || resource.Name.StartsWith(name + "-", StringComparison.Ordinal));
+
+    /// <summary>A resource's state as Passenger says it, the window's rows and Details and an agent's answers alike:
+    /// <see cref="NotStarted"/> for one the run left unstarted, else DCP's own.</summary>
+    public string? StateOf(AspireResource resource) => IsLeftUnstarted(resource) ? NotStarted : resource.State;
 
     /// <summary>A service's start has landed: started, attached to where held, or failed (<paramref name="failure"/>).</summary>
     internal void Landed(AspireResourceRun resource, string? failure)
