@@ -276,7 +276,10 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
             old.Push(new ConsoleLogLine { Text = "stale generation", LineNumber = 4 });
             Ui.WaitFor(() => Console(window).Contains("new generation", StringComparison.Ordinal), "the new generation's output");
             Assert.DoesNotContain("stale generation", Console(window), StringComparison.Ordinal);
-            Assert.DoesNotContain("line 2", Console(window), StringComparison.Ordinal);
+            // The lines shown before the restart stay, the new generation's read after them, as a console reads.
+            Assert.True(Console(window).IndexOf("[apiservice] line 3", StringComparison.Ordinal) is >= 0 and int before
+                && before < Console(window).IndexOf("[apiservice] new generation", StringComparison.Ordinal),
+                $"The new generation's lines did not follow those shown before its restart: {Console(window)}");
             next.Push(
                 new ConsoleLogLine { Text = $"{project.Program}(3,4): error ASPIRETEST: request source", LineNumber = 2 },
                 new ConsoleLogLine { Text = "See https://example.com/aspire/help.", LineNumber = 3 });
@@ -311,6 +314,55 @@ public sealed class AspireStandInTests(StandInAppHost project) : IClassFixture<S
         }
 
         static ConsoleLogLine Line(int number) => new() { Text = $"line {number}", LineNumber = number };
+    }
+
+    /// <summary>One resource's restart costs what it changed (#435): with three resources' consoles merged and shown, a new
+    /// generation of one ends its own stream alone and reads its lines again after those shown; the others' streams go on as
+    /// they were, never asked for again, and every line already shown stays.</summary>
+    [AvaloniaFact]
+    public void A_resources_restart_reads_only_its_own_console_again()
+    {
+        project.Reset();
+        AspireInteractionHost backend = Ui.Await(AspireInteractionHost.StartAsync(project.KeyFile), "the stand-in resource service");
+        foreach (string name in (string[])["apiservice", "worker", "cache"])
+        {
+            backend.PushResource(new Resource { Name = name, DisplayName = name, Uid = name, ResourceType = "Project", State = "Running" });
+        }
+        MainWindow window = OpenRunning(backend);
+        try
+        {
+            FindAction(window, "Show Aspire Log");
+            Ui.WaitFor(() => backend.Consoles.Length == 3, "the three resources' console subscriptions");
+            AspireInteractionHost.ConsoleSubscription api = Of("apiservice"), worker = Of("worker"), cache = Of("cache");
+            api.Push(new ConsoleLogLine { Text = "api began", LineNumber = 1 });
+            worker.Push(new ConsoleLogLine { Text = "worker began", LineNumber = 1 });
+            cache.Push(new ConsoleLogLine { Text = "cache began", LineNumber = 1 });
+            string[] began = ["[apiservice] api began", "[worker] worker began", "[cache] cache began"];
+            Ui.WaitFor(() => began.All(line => Console(window).Contains(line, StringComparison.Ordinal)), "the three resources' lines merged");
+
+            backend.PushResource(new Resource { Name = "apiservice", DisplayName = "apiservice", Uid = "apiservice again", ResourceType = "Project", State = "Running" });
+            Ui.WaitFor(() => api.Closed.Task.IsCompleted && backend.Consoles.Count(console => console.ResourceName == "apiservice") == 2,
+                "the restarted resource's console to be read again");
+            Of("apiservice").Push(new ConsoleLogLine { Text = "api began again", LineNumber = 1 });
+            worker.Push(new ConsoleLogLine { Text = "worker goes on", LineNumber = 2 });
+            Ui.WaitFor(() => Console(window).Contains("[apiservice] api began again", StringComparison.Ordinal)
+                && Console(window).Contains("[worker] worker goes on", StringComparison.Ordinal), "the restarted resource's lines and the others' going on");
+            Assert.False(worker.Closed.Task.IsCompleted || cache.Closed.Task.IsCompleted, "One resource's restart ended the others' console streams");
+            Assert.Equal(1, backend.Consoles.Count(console => console.ResourceName == "worker"));
+            Assert.Equal(1, backend.Consoles.Count(console => console.ResourceName == "cache"));
+            string shown = Console(window);
+            Assert.All(began, line => Assert.Contains(line, shown, StringComparison.Ordinal));
+            Assert.True(shown.IndexOf("[apiservice] api began", StringComparison.Ordinal) < shown.IndexOf("[apiservice] api began again", StringComparison.Ordinal),
+                $"The restarted resource's lines did not follow those shown before: {shown}");
+            Assert.Empty(backend.Errors);
+        }
+        finally
+        {
+            window.Close();
+            Ui.Await(Complete(backend.DisposeAsync().AsTask()), "the stand-in resource service to stop");
+        }
+
+        AspireInteractionHost.ConsoleSubscription Of(string name) => backend.Consoles.Last(console => console.ResourceName == name);
     }
 
     [AvaloniaFact]

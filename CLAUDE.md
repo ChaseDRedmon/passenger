@@ -1132,8 +1132,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   for a resource with health reports, its http and https addresses as links through `Browse`; a row's menu the service
   actions first, as a container's row's menu begins, then its commands, each item greyed with why, `MainWindow.RowMenuItem`),
   and the tabs both windows name alike in one order (`RunWindows.Tabs`), Log first and shown at first: Log, the resources'
-  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned reading the shown ones again from their
-  start), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
+  consoles merged with a toggle each and Find (`MergedLog`, a toggle turned or Refresh reading the shown ones again from
+  their start; a resource that comes or restarts, another generation, streams on its own after the lines shown while the
+  others' streams go on, #435), the chosen one's Details (`AspireDetailsPane`, `DetailsTables`: the resource, its health reports, URLs,
   relationships, environment, properties and volumes), Telemetry, the dashboard's structured logs and traces (the
   Telemetry view's two pages under it, as the Containers window's Telemetry tab has them, below), and AppHost Log, the
   AppHost's own console. What a resource says is masked as a container's
