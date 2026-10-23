@@ -96,7 +96,7 @@ public sealed class PackageManager
             }
             start.RedirectStandardOutput = true;
             start.RedirectStandardError = true;
-            Line?.Invoke(this, ChildProcesses.Display(start));
+            Line?.Invoke(this, ChildProcesses.Shown(start));
             (bool succeeded, bool fileInUse) = await RunOnceAsync(start);
             if (succeeded || !fileInUse || attempt == Attempts || stopped)
             {

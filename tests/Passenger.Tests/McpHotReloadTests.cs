@@ -39,8 +39,8 @@ public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
         // Run on to a line, then moved back to do a line again.
         await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 2 });
         Assert.StartsWith("Program.cs:2:", (await Call(client, "debug_start")).GetProperty("location").GetString(), StringComparison.Ordinal);
-        await Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 2 });
-        JsonElement ranTo = await Call(client, "debug_run_to", new() { ["path"] = "Program.cs", ["line"] = 4 });
+        await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 2, ["remove"] = true });
+        JsonElement ranTo = await Call(client, "debug_continue", new() { ["path"] = "Program.cs", ["line"] = 4 });
         Assert.StartsWith("Program.cs:4:", ranTo.GetProperty("location").GetString(), StringComparison.Ordinal);
         Assert.Equal("11", Local(ranTo, "total"));
         JsonElement moved = await Call(client, "debug_set_next_statement", new() { ["path"] = "Program.cs", ["line"] = 3 });
@@ -53,15 +53,15 @@ public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
         Assert.StartsWith("System.InvalidOperationException: operation 1", thrown.GetProperty("exception").GetString(), StringComparison.Ordinal);
         Assert.StartsWith("Program.cs:8:", thrown.GetProperty("location").GetString(), StringComparison.Ordinal);
         // Removed while paused, it lets the second turn's pass: the next stop is the loop's, line 3 done twice.
-        await Call(client, "breakpoint_remove", new() { ["exception"] = "System.InvalidOperationException" });
+        await Call(client, "breakpoint_set", new() { ["exception"] = "System.InvalidOperationException", ["remove"] = true });
         await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 12 });
         JsonElement looped = await Call(client, "debug_continue");
         Assert.True(looped.GetProperty("location").GetString()!.StartsWith("Program.cs:12:", StringComparison.Ordinal) && Local(looped, "total") == "121",
             $"With the exception breakpoint removed, the program did not run on to the loop, line 3 done twice: {looped}");
 
         // An edit to a method's body, made while the program is paused, is applied at once and runs from the next call.
-        await Call(client, "open_file", new() { ["path"] = "Helper.cs", ["line"] = 8, ["column"] = 25 });
-        await Call(client, "type", new() { ["text"] = " + 1" });
+        await Call(client, "open", new() { ["path"] = "Helper.cs", ["line"] = 8, ["column"] = 25 });
+        await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = " + 1" });
         JsonElement applied = await Call(client, "hot_reload");
         Assert.True(applied.GetProperty("result").GetString() == "applied" && applied.GetProperty("methods").GetInt32() == 1
             && applied.GetProperty("files").EnumerateArray().Select(f => f.GetString()).SequenceEqual(["Helper.cs"]) && !applied.GetProperty("restartNeeded").GetBoolean(),
@@ -70,8 +70,8 @@ public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
 
         // A field's type the runtime cannot change: named at its line, nothing applied, and with restart false the program
         // goes on in the code it has, still paused where it was.
-        await Call(client, "open_file", new() { ["path"] = "Helper.cs", ["line"] = 3, ["column"] = 12 });
-        await Call(client, "type", new() { ["text"] = "u" });
+        await Call(client, "open", new() { ["path"] = "Helper.cs", ["line"] = 3, ["column"] = 12 });
+        await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "u" });
         JsonElement rude = await Call(client, "hot_reload", new() { ["restart"] = false });
         Assert.True(rude.GetProperty("result").GetString() == "restartNeeded" && rude.GetProperty("restartNeeded").GetBoolean() && !rude.GetProperty("restarted").GetBoolean(),
             $"Changing a field's type did not say a restart is needed, or restarted unasked: {rude}");
@@ -145,7 +145,7 @@ public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
 
     /// <summary>Run with Hot Reload (Settings' Hot Reload, or run's hotReload, since the headless IDE keeps the default settings)
     /// runs the program under dotnet watch, which takes saved edits: hot_reload saves them and answers with what dotnet watch
-    /// said of them, and run_output shows the program running them.</summary>
+    /// said of them, and output shows the program running them.</summary>
     [Fact]
     public async Task An_agent_applies_hot_reload_changes_to_what_run_runs_under_dotnet_watch_and_is_told_what_dotnet_watch_made_of_them()
     {
@@ -160,19 +160,19 @@ public sealed class McpHotReloadTests : McpRig, IClassFixture<RestoredFolders>
         string output = string.Empty;
         await Waiting.UntilAsync(async () =>
         {
-            output = (await Call(client, "run_output", new() { ["lines"] = 100000 })).GetString()!;
+            output = (await Call(client, "output", new() { ["lines"] = 100000 })).GetString()!;
             return output.Contains("before the edit", StringComparison.Ordinal) && output.Contains("Waiting for changes", StringComparison.Ordinal);
         }, TimeSpan.FromMinutes(2), Cancel, TimeSpan.FromMilliseconds(500));
         Assert.True(output.Contains("Waiting for changes", StringComparison.Ordinal), $"dotnet watch never watched the program:\n{output[..Math.Min(output.Length, 3000)]}");
 
-        await Call(client, "open_file", new() { ["path"] = "Program.cs", ["line"] = 9, ["column"] = 51 });
-        await Call(client, "type", new() { ["text"] = ", edited" });
+        await Call(client, "open", new() { ["path"] = "Program.cs", ["line"] = 9, ["column"] = 51 });
+        await Call(client, "app_type", new() { ["app"] = "ide", ["text"] = ", edited" });
         JsonElement applied = await Call(client, "hot_reload");
         Assert.True(applied.GetProperty("result").GetString() == "applied" && applied.GetProperty("said").GetString()!.Contains("dotnet watch applied the changes", StringComparison.Ordinal),
-            $"dotnet watch did not apply the saved edit: {applied}\n{(await Call(client, "run_output")).GetString()}");
+            $"dotnet watch did not apply the saved edit: {applied}\n{(await Call(client, "output")).GetString()}");
         await Waiting.UntilAsync(async () =>
         {
-            output = (await Call(client, "run_output")).GetString()!;
+            output = (await Call(client, "output")).GetString()!;
             return output.Contains("before the edit, edited", StringComparison.Ordinal);
         }, TimeSpan.FromSeconds(30), Cancel, TimeSpan.FromMilliseconds(500));
         Assert.True(output.Contains("before the edit, edited", StringComparison.Ordinal), $"The running program never ran the edit:\n{output[Math.Max(0, output.Length - 3000)..]}");

@@ -8,8 +8,8 @@ namespace Passenger.Tests;
 
 /// <summary>The Requests window: a web app on EF Core and SQLite that Run runs, followed while the window shows with no
 /// change to the app, lists each request it serves with its status, the route of the folder's code it reached and the SQL
-/// commands it issued, a command run again and again for one request marked (an N+1); a request opens at its handler, one
-/// that failed where its exception was thrown.</summary>
+/// commands it issued, a command run again and again for one request marked (an N+1), a value its Password column takes
+/// as dots; a request opens at its handler, one that failed where its exception was thrown.</summary>
 public sealed class LiveRequestsTests
 {
     private const string Program = """
@@ -34,6 +34,16 @@ public sealed class LiveRequestsTests
             string password = name + "-secret";
             return db.Orders.Any(o => o.Customer == password) ? "in" : "out";
         });
+        app.MapGet("/sign-up/{name}", (string name, Shop db) =>
+        {
+            Customer customer = new() { Name = name, Password = name + "-first" };
+            db.Customers.Add(customer);
+            db.SaveChanges();
+            customer.Password = name + "-second";
+            db.SaveChanges();
+            string kept = name + "-second";
+            return db.Customers.Count(c => c.Password == kept) == 1 ? "signed up" : "lost";
+        });
         app.MapGet("/boom", Fail);
         app.Run();
 
@@ -44,6 +54,17 @@ public sealed class LiveRequestsTests
             public DbSet<Order> Orders => Set<Order>();
 
             public DbSet<Line> Lines => Set<Line>();
+
+            public DbSet<Customer> Customers => Set<Customer>();
+        }
+
+        public class Customer
+        {
+            public int Id { get; set; }
+
+            public string Name { get; set; } = "";
+
+            public string Password { get; set; } = "";
         }
 
         public class Order
@@ -71,7 +92,7 @@ public sealed class LiveRequestsTests
         try
         {
             window.ShowToolWindow(ToolWindowIds.Requests);
-            Ui.WaitFor(() => window.Session.Routes.All.Count == 4, "the app's four routes, read from its code", TimeSpan.FromMinutes(3));
+            Ui.WaitFor(() => window.Session.Routes.All.Count == 5, "the app's five routes, read from its code", TimeSpan.FromMinutes(3));
             port.LetGo(Path.Combine(folder, "gate"));
             Assert.True(window.SelectConfiguration("Shop: http"), $"No configuration Shop: http among {string.Join(", ", window.Configurations.Select(c => c.Name))}");
             Ui.Launched(window, window.RunAsync(), "the shop to start", TimeSpan.FromMinutes(2));
@@ -92,13 +113,14 @@ public sealed class LiveRequestsTests
                 Assert.Equal("Grace", Get(client, $"http://127.0.0.1:{port.Port}/orders/2"));
                 Assert.Equal("Ada: 0, Grace: 0, Linus: 0", Get(client, $"http://127.0.0.1:{port.Port}/orders"));
                 Assert.Equal("out", Get(client, $"http://127.0.0.1:{port.Port}/sign-in/ada"));
+                Assert.Equal("signed up", Get(client, $"http://127.0.0.1:{port.Port}/sign-up/ada"));
                 HttpResponseMessage failed = Task.Run(() => client.GetAsync($"http://127.0.0.1:{port.Port}/boom")).GetAwaiter().GetResult();
                 Assert.Equal(500, (int)failed.StatusCode);
             }
             try
             {
-                Ui.WaitFor(() => window.RequestLog.Requests.Count(r => r.Status is not null) == 4 && window.RequestLog.Requests.Sum(r => r.Commands.Count) == 6,
-                    "the four requests, listed as they ended, with their six commands", TimeSpan.FromSeconds(30));
+                Ui.WaitFor(() => window.RequestLog.Requests.Count(r => r.Status is not null) == 5 && window.RequestLog.Requests.Sum(r => r.Commands.Count) == 9,
+                    "the five requests, listed as they ended, with their nine commands", TimeSpan.FromSeconds(30));
             }
             catch (TimeoutException)
             {
@@ -121,6 +143,24 @@ public sealed class LiveRequestsTests
             Assert.DoesNotContain("ada-secret", window.Requests.Rows.OfType<RequestsView.CommandRow>().Select(r => r.Command.Text + r.Command.Parameters).Aggregate(string.Empty, string.Concat), StringComparison.Ordinal);
             Assert.False(one.HasRepeats, "A request that ran one command was marked as an N+1");
 
+            // EF names an INSERT's and an UPDATE's parameters @p0, @p1…, which say nothing of their columns: a value written
+            // to the Password column, or compared with it, is masked by the column its command's text has it fill or meet,
+            // in the row's tooltip, while the name written beside it shows as logged.
+            LiveRequest signUp = window.RequestLog.Requests.Single(r => r.Path == "/sign-up/ada");
+            Assert.Equal(["INSERT", "UPDATE", "SELECT"], signUp.Commands.Select(c => c.Text.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries)[0]));
+            Ui.WaitFor(() => signUp.Commands.All(c => c.Parameters is not null), () => $"the sign-up's parameters, from EF Core's logs of its commands: "
+                + $"[{string.Join(" | ", signUp.Commands.Select(c => $"{c.Text} => {c.Parameters ?? "none"}"))}]; the console: "
+                + string.Join(" | ", window.BottomPanel.Run.Document.Snapshot.ToString().Split('\n').Where(l => l.Contains("Parameters", StringComparison.Ordinal) || l.Contains("Customers", StringComparison.Ordinal))));
+            Assert.Contains("='ada'", signUp.Commands[0].Parameters, StringComparison.Ordinal);
+            string[] tips = CommandTips(window, signUp);
+            Assert.Equal(3, tips.Length);
+            foreach (string said in (string[])[.. signUp.Commands.Select(c => c.Parameters!), .. tips])
+            {
+                Assert.True(said.Contains($"='{Passenger.App.Containers.ContainerSecrets.Masked}'", StringComparison.Ordinal)
+                    && !said.Contains("ada-first", StringComparison.Ordinal) && !said.Contains("ada-second", StringComparison.Ordinal),
+                    $"A value of the Password column shows in the clear, or not as dots: {said}");
+            }
+
             // The orders' list counts each order's lines with a command of its own: the same text three times, an N+1.
             LiveRequest all = window.RequestLog.Requests.Single(r => r.Path == "/orders");
             Assert.Equal(4, all.Commands.Count);
@@ -128,7 +168,7 @@ public sealed class LiveRequestsTests
             Assert.Equal([false, true, true, true], all.Commands.Select(c => c.Repeated));
             Assert.Equal(3, all.Commands[1].Runs);
             // Listed newest first, each request followed by its commands.
-            Assert.Equal(["/boom", "/sign-in/ada", "/orders", "/orders/2"], window.Requests.Rows.OfType<LiveRequest>().Select(r => r.Path));
+            Assert.Equal(["/boom", "/sign-up/ada", "/sign-in/ada", "/orders", "/orders/2"], window.Requests.Rows.OfType<LiveRequest>().Select(r => r.Path));
 
             LiveRequest boom = window.RequestLog.Requests.Single(r => r.Path == "/boom");
             Assert.Equal(500, boom.Status);
@@ -144,6 +184,14 @@ public sealed class LiveRequestsTests
             Ui.WaitFor(() => window.EditorArea.Active?.Path.EndsWith(".sql", StringComparison.Ordinal) == true, "the command's text, opened in a tab");
             Assert.Equal($"-- {read.Parameters}\n{read.Text}", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
             Assert.True(window.EditorArea.CodeEditor.IsReadOnly, "A command's text opened as something to edit");
+            // The sign-up's INSERT opens with the Password column's value as dots in the comment over it.
+            LiveCommand insert = signUp.Commands[0];
+            window.Requests.Open(window.Requests.Rows.OfType<RequestsView.CommandRow>().Single(r => r.Command == insert));
+            Ui.WaitFor(() => window.EditorArea.CodeEditor.Document.Snapshot.ToString().StartsWith("-- ", StringComparison.Ordinal)
+                && window.EditorArea.CodeEditor.Document.Snapshot.ToString().Contains("INSERT", StringComparison.Ordinal), "the sign-up's INSERT, opened in a tab");
+            string opened = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+            Assert.Equal($"-- {insert.Parameters}\n{insert.Text}", opened);
+            Assert.DoesNotContain("ada-first", opened, StringComparison.Ordinal);
         }
         finally
         {
@@ -238,6 +286,27 @@ public sealed class LiveRequestsTests
             }
             return id;
         }
+    }
+
+    /// <summary>The tooltip of each of a request's command rows, as the pointer resting on the row shows it, each row
+    /// scrolled into view first.</summary>
+    private static string[] CommandTips(MainWindow window, LiveRequest request)
+    {
+        Avalonia.Controls.ListBox list = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.Requests).OfType<Avalonia.Controls.ListBox>().Single();
+        IReadOnlyList<object> rows = window.Requests.Rows;
+        List<string> tips = [];
+        for (int at = 0; at < rows.Count; at++)
+        {
+            if (rows[at] is RequestsView.CommandRow row && row.Request == request)
+            {
+                list.ScrollIntoView(at);
+                Ui.Settle();
+                Avalonia.Controls.Control shown = list.ContainerFromIndex(at) ?? throw new Xunit.Sdk.XunitException($"The command row {at} is not shown");
+                tips.Add(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(shown).OfType<Avalonia.Controls.Control>()
+                    .Select(Avalonia.Controls.ToolTip.GetTip).OfType<string>().First());
+            }
+        }
+        return [.. tips];
     }
 
     /// <summary>The shop written into a folder and restored from the run's local feed, its launch profile serving at the port

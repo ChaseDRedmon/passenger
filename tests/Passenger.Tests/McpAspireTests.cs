@@ -229,7 +229,7 @@ public sealed class McpAspireTests : McpRig, IClassFixture<RestoredFolders>
             ProcessRunner runner = Assert.Single(window.AspireRuntime.Apps).Runner;
             Ui.PumpUntil(() => runner.Shown().ToString().Contains("starting", StringComparison.Ordinal), "the AppHost's startup console marker");
             int port = new Uri("http://" + File.ReadAllText(endpointFile)).Port;
-            Task<string?> reading = Task.Run(async () => (await Call(client, "run_output")).GetString());
+            Task<string?> reading = Task.Run(async () => (await Call(client, "output")).GetString());
             Ui.PumpUntil(() => reading.IsCompleted, "reading the starting AppHost's console");
             Assert.Contains("starting", reading.GetAwaiter().GetResult(), StringComparison.Ordinal);
 

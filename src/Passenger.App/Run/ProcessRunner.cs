@@ -195,7 +195,7 @@ public sealed class ProcessRunner : IDisposable
 
     private string? Launch(ProcessStartInfo start, TaskCompletionSource<int>? waited)
     {
-        console.Append($"{ChildProcesses.Display(start)}\n");
+        console.Append($"{ChildProcesses.Shown(start)}\n");
         Process started;
         try
         {

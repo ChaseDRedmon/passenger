@@ -40,6 +40,12 @@ public static class ChildProcesses
     /// pipes is read at once, and only a job it left running, which holds them for as long as it lives, takes longer.</summary>
     private static readonly TimeSpan OutputGrace = TimeSpan.FromSeconds(2);
 
+    /// <summary>How a command line is said wherever Passenger logs or shows one (a child's start and end in the log, what
+    /// this throws, a console's echo of what it runs): <see cref="Display"/> until the IDE gives its mask for secrets as it
+    /// starts, so no program's secret reaches the log or a window, whoever started it. The command line itself, which any
+    /// process on the machine can read, is the starter's to keep secrets off (an environment variable is the child's alone).</summary>
+    public static Func<ProcessStartInfo, string> Shown { get; set; } = Display;
+
     /// <summary>A program and its arguments, to run in a folder (the IDE's own when none is given).</summary>
     public static ProcessStartInfo Command(string program, IEnumerable<string> arguments, string? folder = null)
     {
@@ -111,7 +117,7 @@ public static class ChildProcesses
         string command = Display(start);
         long began = Stopwatch.GetTimestamp();
         Process process = new() { StartInfo = start, EnableRaisingEvents = true };
-        process.Exited += (_, _) => OnExited(process, command, began, answers);
+        process.Exited += (_, _) => OnExited(process, start, command, began, answers);
         try
         {
             process.Start();
@@ -124,7 +130,7 @@ public static class ChildProcesses
         Lifeline.Adopt(process);
         // An id the IDE ended before, whose end went untold (its process disposed first), is another child's now.
         EndedHere.TryRemove(process.Id, out _);
-        Started?.Invoke(null, new ChildStart(process.Id, command, start.WorkingDirectory));
+        Started?.Invoke(null, new ChildStart(process.Id, command, start.WorkingDirectory) { Start = start });
         if (closeInput)
         {
             process.StandardInput.Close();
@@ -141,12 +147,12 @@ public static class ChildProcesses
     {
         Lifeline.AdoptGroup(processId);
         EndedHere.TryRemove(processId, out _);
-        Started?.Invoke(null, new ChildStart(processId, Display(start), start.WorkingDirectory));
+        Started?.Invoke(null, new ChildStart(processId, Display(start), start.WorkingDirectory) { Start = start });
     }
 
     /// <summary>An adopted program's end, for the IDE's log as a child's is told.</summary>
     public static void Exited(int processId, ProcessStartInfo start, int exitCode, TimeSpan time) =>
-        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time, EndedHere.TryRemove(processId, out _)));
+        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time, EndedHere.TryRemove(processId, out _)) { Start = start });
 
     /// <summary>Says the IDE is ending a child by asking it to (an exit request, its input closed): however it then exits,
     /// a pipe it still writes to closed under it included (SIGPIPE's 141), it did not fail. <see cref="Kill"/> says it too.</summary>
@@ -225,15 +231,15 @@ public static class ChildProcesses
             cancel.ThrowIfCancellationRequested();
             if (output.Overran || errors.Overran)
             {
-                throw new ChildOutputException($"{Display(start)} wrote more than the {mostOutput} characters read of it, and was ended");
+                throw new ChildOutputException($"{Shown(start)} wrote more than the {mostOutput} characters read of it, and was ended");
             }
-            throw new TimeoutException($"{Display(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
+            throw new TimeoutException($"{Shown(start)} had not ended after {limit.GetValueOrDefault().TotalSeconds:0} s");
         }
         // What a job out of the kill's reach still holds (on Windows, which ends a tree, one whose parent has gone) is let go.
         Forget(read);
         if (output.Overran || errors.Overran)
         {
-            throw new ChildOutputException($"{Display(start)} wrote more than the {mostOutput} characters read of it");
+            throw new ChildOutputException($"{Shown(start)} wrote more than the {mostOutput} characters read of it");
         }
         return new ChildResult(process.ExitCode, output.Text, errors.Text);
     }
@@ -383,30 +389,35 @@ public static class ChildProcesses
             start.StartDetached = true;
         }
         using Process process = Process.Start(start) ?? throw new InvalidOperationException($"{start.FileName} did not start");
-        Started?.Invoke(null, new ChildStart(process.Id, Display(start), start.WorkingDirectory));
+        Started?.Invoke(null, new ChildStart(process.Id, Display(start), start.WorkingDirectory) { Start = start });
         // What it writes is nobody's: its pipes closed here, its writes to them fail, which .NET's console passes over.
         process.StandardInput.Close();
         process.StandardOutput.Close();
         process.StandardError.Close();
     }
 
-    /// <summary>A command as a person would type it, each word quoted that needs to be: for the Run window and the log.</summary>
-    public static string Display(ProcessStartInfo start) =>
+    /// <summary>A command as a person would type it, each word quoted that needs to be, as it runs (the log and a console
+    /// say it through <see cref="Shown"/>).</summary>
+    public static string Display(ProcessStartInfo start) => Display(start, word => word);
+
+    /// <summary><see cref="Display(ProcessStartInfo)"/> with each word (the program, each argument, or the arguments whole when
+    /// given as one string) as <paramref name="said"/> says it, before it is quoted.</summary>
+    public static string Display(ProcessStartInfo start, Func<string, string> said) =>
         string.Join(' ', start.ArgumentList.Count > 0 || start.Arguments.Length == 0
-            ? [Quote(start.FileName), .. start.ArgumentList.Select(Quote)]
-            : [Quote(start.FileName), start.Arguments]);
+            ? [Quote(said(start.FileName)), .. start.ArgumentList.Select(a => Quote(said(a)))]
+            : [Quote(said(start.FileName)), said(start.Arguments)]);
 
     private static string Quote(string word) =>
         word.Length > 0 && !word.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'') ? word : $"\"{word.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
-    private static void OnExited(Process process, string command, long began, IReadOnlyCollection<int>? answers)
+    private static void OnExited(Process process, ProcessStartInfo start, string command, long began, IReadOnlyCollection<int>? answers)
     {
         try
         {
             int id = process.Id;
             bool ended = EndedHere.TryRemove(id, out _);
             int code = process.ExitCode;
-            Ended?.Invoke(null, new ChildEnd(id, command, code, Stopwatch.GetElapsedTime(began), ended, answers?.Contains(code) == true));
+            Ended?.Invoke(null, new ChildEnd(id, command, code, Stopwatch.GetElapsedTime(began), ended, answers?.Contains(code) == true) { Start = start });
         }
         catch (InvalidOperationException)
         {
@@ -427,20 +438,29 @@ public sealed record ChildResult(int ExitCode, string Output, string Error)
     public bool Succeeded => ExitCode == 0;
 }
 
-/// <summary>A child's start: its process, the command, and the folder it runs in (the IDE's own when empty).</summary>
+/// <summary>A child's start: its process, the command as it ran, and the folder it runs in (the IDE's own when empty); its
+/// line for the log says the command as <see cref="ChildProcesses.Shown"/> does, its secrets masked.</summary>
 public sealed record ChildStart(int ProcessId, string Command, string Folder)
 {
-    public override string ToString() => $"Process {ProcessId} started{(Folder.Length > 0 ? $" in {Folder}" : string.Empty)}: {Command}";
+    /// <summary>What it was started from, for the words of its command line.</summary>
+    public ProcessStartInfo? Start { get; init; }
+
+    public override string ToString() =>
+        $"Process {ProcessId} started{(Folder.Length > 0 ? $" in {Folder}" : string.Empty)}: {(Start is { } start ? ChildProcesses.Shown(start) : Command)}";
 }
 
-/// <summary>A child's end: its process, the command, its exit code and how long it ran, whether the IDE ended it, and
-/// whether its exit code is its answer to the question it was asked.</summary>
+/// <summary>A child's end: its process, the command as it ran, its exit code and how long it ran, whether the IDE ended it,
+/// and whether its exit code is its answer to the question it was asked; its line for the log says the command as
+/// <see cref="ChildProcesses.Shown"/> does, its secrets masked.</summary>
 public sealed record ChildEnd(int ProcessId, string Command, int ExitCode, TimeSpan Time, bool EndedByIde = false, bool Answered = false)
 {
+    /// <summary>What it was started from, for the words of its command line.</summary>
+    public ProcessStartInfo? Start { get; init; }
+
     /// <summary>Worth a line in the IDE's log: the IDE did not end it, and it failed or ran long enough for a person to wait
     /// on it. Git's quick reads run on every save, and would bury the rest.</summary>
     public bool Notable => !EndedByIde && ((ExitCode != 0 && !Answered) || Time >= TimeSpan.FromSeconds(1));
 
     public override string ToString() =>
-        $"Process {ProcessId} {(EndedByIde ? "ended by the IDE, " : string.Empty)}exited with code {ExitCode} after {Time.TotalSeconds:0.00} s: {Command}";
+        $"Process {ProcessId} {(EndedByIde ? "ended by the IDE, " : string.Empty)}exited with code {ExitCode} after {Time.TotalSeconds:0.00} s: {(Start is { } start ? ChildProcesses.Shown(start) : Command)}";
 }

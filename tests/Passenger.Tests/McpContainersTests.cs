@@ -58,8 +58,8 @@ public sealed class McpContainersTests : McpRig, IClassFixture<RestoredFolders>
         Assert.Contains($"Compose project {project}", status, StringComparison.Ordinal);
         Assert.Contains("ticker: running", status, StringComparison.Ordinal);
         Assert.Equal("running", Docker.Run("compose", "-p", project, "ps", "--format", "{{.State}}"));
-        Assert.True(await Waiting.UntilAsync(async () => Text(await Call(client, "run_output")).Contains("ticker-up", StringComparison.Ordinal), TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken),
-            "run_output never had the service's log");
+        Assert.True(await Waiting.UntilAsync(async () => Text(await Call(client, "output")).Contains("ticker-up", StringComparison.Ordinal), TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken),
+            "output never had the service's log");
 
         Assert.Equal("Stopped", Text(await Call(client, "stop")));
         Assert.Equal(string.Empty, Docker.Run("ps", "-aq", "--filter", $"label=com.docker.compose.project={project}"));

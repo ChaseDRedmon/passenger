@@ -59,7 +59,7 @@ just site-shots [SCENE...] # site/images/<scene>-<dark|light>.webp retaken (afte
 
 **Use Passenger on itself.** `.mcp.json` starts Passenger's MCP server over this repository (`tools/mcp.sh`), so its
 tools are the quickest way to ask Roslyn about Passenger's code (`diagnostics`, `find_symbol`, `outline`, `usages`),
-to debug the IDE's own projects, and to look at the window (`screenshot`). It runs from an APFS clone of the last
+to debug the IDE's own projects, and to look at the window (`app_screenshot` with `app` ide). It runs from an APFS clone of the last
 Debug build, so `just build` never changes the files under it; reconnect the server to pick a new build up. A tool's
 lines and columns count from 1 and its paths are the folder's. Anything it gets wrong is a Passenger bug to fix.
 
@@ -119,7 +119,15 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
   input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
-  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A fork costs a large process tens of
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). Every command line it says (a child's
+  start and end in the log, what it throws) and every console's echo of one go through `ChildProcesses.Shown`, which the
+  IDE makes `ContainerSecrets.CommandLine` as it starts (`IdeErrors.Install`): `InSaid`'s mask on each word alone (a
+  `--password=…` masks its value, never the words after it, as a whole line's connection-string rule would), also knowing the
+  secret-named values of the child's own environment, so no program's secret reaches the log or a window, whoever started
+  it; `ChildStart.Command` and `ChildEnd.Command` stay the command as it ran, for what watches the programs. A command line
+  is any process's on the machine to read, so no command line Passenger starts holds a secret: one a program can take
+  otherwise is given it so (the Migrations window's connection strings, as its environment), or not made (the development
+  certificate exported for containers as PEM with no password, #442). A fork costs a large process tens of
   milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
   thread's), on the caller's thread otherwise: every git command (`Git`) starts so, and every start an async caller
   makes (the project host, a test host, NuGet's changes and credential providers, dotnet ef, the container engine's
@@ -576,7 +584,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
   `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol
   traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
-  ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar. A rotation
+  ones, each command line's secrets masked, `ChildProcesses.Shown`); Help | Show Log opens the folder. What the language server says to show reaches the status bar. A rotation
   moves the log aside first, so one another program holds where it is (Windows: a reader not sharing deletion) is
   written on past the limit with its rotated logs kept, and tried again once it has grown a tenth of the limit more.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
@@ -610,7 +618,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs, and every package change's one path (`InstallAsync`/`RemoveAsync`: one at a time, under
-  `Changing`, answering a `PackageOutcome`), which MCP's `nuget_install` and `nuget_remove` take too. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
+  `Changing`, answering a `PackageOutcome`), which MCP's `nuget_install` (with `remove` too) takes. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
   `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
   restore's NuGetAudit does; the window marks vulnerable installed versions and offers the lowest that fixes them.
   `StandInFeed` is the tests' v3 feed on loopback (optional credentials, an advisory resource); tests never reach
@@ -676,21 +684,28 @@ window or takes the focus; it shows everything but the system's own window chrom
   `*Activity.RootId`, which ties a command to its request; `Microsoft-Extensions-Logging`'s `FormattedMessage` for EF Core's
   log of each command (20101, the app's own logging, tied by its `ActivityTraceId`), which names its parameters; and the
   runtime's counters once a second, which keep the stream's reader handing on what it holds. Only while someone looks: the
-  window shows, or an agent asked (run_output's `requests`, `RequestsForAgentAsync`, until another folder opens); it follows
+  window shows, or an agent asked (`output`'s `requests`, `RequestsForAgentAsync`, until another folder opens); it follows
   from the moment it shows or a program starts, and lets go as it hides or the program ends. `RequestLog` takes the events
   on the UI thread a batch at a time (500 requests kept, each with the program that served it) and tells what the batch
   changed (`RequestChanges`: the requests that came, changed and went), which alone the list puts in, draws again in place
   or takes out, every other row keeping its control; it marks a command its request ran `LiveCommand.RepeatedAt` times or
   more (counted by its text, `LiveRequest.ByText`) as repeated (the request as N+1) and one over `SlowMilliseconds` as slow (a
   non-query with the rows it changed, a query with its reader's reads, EF Core's ReadCount), gives each command the
-  parameters its log names (`CommandParameters`: each value as `ContainerSecrets.Shown` shows a value of that name, a
-  secret's as dots, '?' where the app does not log values; a log heard before its command kept masked), and each request
+  parameters its log names (a log matched to its command by the command's text trimmed, as EF logs it, SaveChanges' ending
+  in a line break; `CommandParameters`: each value as `ContainerSecrets.Shown` shows a value of that name, or as a
+  secret's where the column the command's text has it fill or meet is named as one (`CommandParameters.Columns`: an
+  INSERT's column list against each row of its VALUES, SQL Server's MERGE source's columns, a SET's or a WHERE's
+  `column = @p` either way round), since EF names an INSERT's and an UPDATE's parameters `@p0`, `@p1`…; a secret's as dots
+  with its size left out, '?' where the app does not log values; a log heard before its command kept masked; the row's
+  tooltip, the command's tab and an agent's `output` all show these), and each request
   the route it reached in its program's project (`RouteRequests.Fits`, a literal template before one with parameters,
   looked for again as routes are read, `Reroute`). A request opens where its exception was thrown in the folder's code,
   else at its route's handler; a command's text opens read-only, its parameters as a comment over it, from a copy under the
   state's `cache/requests/` (`RequestLog.IsCommandCopy`, `MainWindow.OpenSql`, as an EF Core query's SQL the debugger read
   opens, its bar saying so: `OpenDocument.Origin`). `LiveRequestsTests` run a web app on EF Core and SQLite
-  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback, and hold
+  (tests/EfGraphs' packages, `ShopApp.Version`, its sensitive data logging on) and send it requests from loopback (a
+  sign-up writes, changes and looks up a customer's Password column, its values dots in the row's tooltip, the command's
+  tab and, in `McpRequestsTests`, the agent's answer), and hold
   a request heard with 500 listed to what one costs the UI thread with 5 (the app's events stood in for by the profiler's);
   `LiveRequestsDebuggingTests` (Alone) debug it, `McpRequestsTests` have an agent read it, and `ContainerServicesTests`
   follow a Compose run's services in their containers.
@@ -799,7 +814,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   CLI says of a failure is shown and logged through one helper, `ContainerSecrets.InSaid` (`Masking` for a stream), the
   docker CLI's and Compose's (`ContainerEngine.Said`, ComposeCheck's error, a run's line of what failed and Compose's own
   output in the Run console, `ConsoleSink.PumpAsync`'s `shown`, a whole line at a time) as the aspire CLI's
-  (`AspireClient.SanitizeDiagnostic`): each value it knows to be a secret's (given, this process's environment's
+  (`AspireClient.SanitizeDiagnostic`), and so is every command line Passenger logs or echoes (`ContainerSecrets.CommandLine`,
+  through `ChildProcesses.Shown`): each value it knows to be a secret's (given, this process's environment's
   secret-named variables', the .env's in the folder Compose ran in, which it interpolates and echoes: `parsing
   "••••••"`; four characters at least) as the dots wherever it stands, then on each line a `NAME=value` or `"NAME": value`
   whose name is a secret's, an Authorization header, a URL's credentials and a connection string's part by the rule. Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
@@ -890,7 +906,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   or dotnet publish, `ComposeDeclarations.Built`, else the configuration's choice, else the .dcproj's), and every command
   takes Passenger's override from the folder's state (`workspaces/…/containers/<config>.override.yaml`, JSON, written
   after the host's build, the person's alone to read on macOS and Linux from the moment it is made, as a single service's
-  compose file is (`OwnFiles`), since it names the certificate's password and the configuration's environment): labels on
+  compose file is (`OwnFiles`), since it holds the configuration's environment): labels on
   every service, image build and network;
   in fast mode each .NET service it starts its runtime
   stage (`DockerfileStages.FastStage`), `dotnet /passenger/app/X.dll` as PID 1 (`init`) over the build's output mounted
@@ -905,8 +921,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   and Trust running `--trust` or Run over HTTP; a run an agent's call started (`Mcp.AgentCall.Current`) or an agent's own
   IDE (`MainWindow.AgentsOwn`, `--mcp`'s, not `--no-mcp`'s) asks no one and runs over HTTP, saying so in the status bar and
   the call's answer (`ContainerRun.Notes`); a start stopped closes the question; then exported, again once the check names
-  another certificate than the one exported (its thumbprint kept beside it), into a folder only the person enters, made so
-  before dev-certs writes there, its files theirs alone to read (`OwnFiles`), the run's `ContainerRun.Certificate`; with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
+  another certificate than the one exported (its thumbprint kept beside it), as PEM with its key unencrypted (`-ep
+  aspnetapp.pem --format Pem --no-password`, the key `aspnetapp.key` beside it: dev-certs takes a password only on its
+  command line, #442) into a folder only the person enters, made so before dev-certs writes there, its files theirs alone
+  to read (`OwnFiles`), an earlier Passenger's .pfx and password deleted there, the run's `ContainerRun.Certificate`,
+  mounted read-only at `/https` and given to Kestrel as `ASPNETCORE_Kestrel__Certificates__Default__Path` and `__KeyPath`
+  (an Aspire AppHost's run exports nothing, its services on this machine reading its store); with none, `OverHttp` turns its https addresses and HTTPS ports to HTTP, and a
   failure is said in the status bar, a click from the Run window's line of what dev-certs said; the wait for the answer
   holds no `BackgroundWork`; `DotnetWords` is the dotnet it runs through, a test's stand-in by `MainWindow.DevCertificates`)
   and in Development the project's own user secrets (its UserSecretsId's folder alone, mounted at
@@ -1015,11 +1035,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   the gutter's run icons (`RunMark`, `MainWindow.RunMarks.cs`) stand beside a used compose file's services and a used
   Dockerfile's final FROM, their menu running or debugging that one service (`BuildRunController.RunContainersAsync`). `ContainerRunsTests`
   run them against the engine on aspnet:10.0 and busybox (with a fast-mode run up, a build twice and a configuration's
-  plan each end as without one, #433); their HTTPS test exports the machine's development certificate
-  first and skips, saying why, when the export does not come back (on macOS a locked login keychain asks for its password,
-  which the IDE's own export waits a minute for, `DevelopmentCertificate.ExportLimit`; its check answered trusted by a
-  stand-in, so it asks nothing), their certificate question's test answers with a shell stand-in for dev-certs that trusts
-  nothing on the machine (`DevCerts`, which AspireStandInTests' and McpAspireTests' HTTPS AppHost take too), and their SDK container image (unlabelled, the SDK's) is removed by the test that
+  plan each end as without one, #433); their HTTPS test serves a certificate made for the test and thrown away, its PEM
+  and key written by a dev-certs stand-in whose check answers trusted (the machine's store never read, so nothing asks the
+  person), and checks the service serves that one, their certificate question's test answers with a shell stand-in for
+  dev-certs that trusts nothing on the machine (`DevCerts`, which AspireStandInTests' and McpAspireTests' HTTPS AppHost
+  take too), both hold every command line the run started (`ChildProcesses.Started`) to naming no password, and their SDK container image (unlabelled, the SDK's) is removed by the test that
   made it.
   `ContainerTools` is the
   container tools on this side (`src/Passenger.ContainerTools`, below): a copy for a system (`ContainerSystem.Rid`: the
@@ -1210,7 +1230,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   and any other file's typing pause, completion, actions and declarations cost Aspire nothing (AspireCodeHelpTests holds a
   pause to it by what it allocates; McpLanguagesTests has an agent go to, set and rename as the window does). An agent's
   `run`, `debug_start`, `debug_attach`, `profile` and `stop` take `resource`, a resource's name or `AppHostPath::name`
-  (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `run_output` with it reads a service's
+  (`PassengerTools.Aspire.cs`; a compose service's name too, the run of services'), `output` with it reads a service's
   own console (a compose service's log), `workspace` lists the AppHosts running with each resource's target (one whose resource connection has
   ended, or that sends no resources within 30 s, with that as its state and none listed:
   `AspireInteractions.GetResourcesAsync` says either in words, never as a cancellation) beside the container run, each
@@ -1279,8 +1299,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   an agent's answer): a compose run's .NET service's resolved connection strings (Compose's model) given again at the port
   Compose published their database's service on (`compose port`, on the engine's machine, `ContainerPort.LinkOn`), the
   rest (database, user, password) as the service has it; an AppHost's resource's own, which this machine reaches already;
-  given as the environment the app's configuration reads, and as `--connection` to `database update`, `migrations list` and
-  `dbcontext info` where there is one, the command line never showing it; a manifest's tool never restored whose package the cache holds is
+  given as the environment the app's configuration reads (`ConnectionStrings__X`), never on dotnet ef's command line, which
+  any process on the machine can read: EF takes a connection string from outside only as `--connection`, an argument (a
+  response file dotnet ef expands onto ef.dll's command line), so a context that reads none from its configuration
+  reaches the database its own code names, as the run's app does; a manifest's tool never restored whose package the cache holds is
   restored and the command run again. After a listing, a command that changes the migrations, and any build the window's
   commands did not start (once the window has listed, then listing again with no build of its own), the context is checked
   for model changes no migration covers (`dotnet ef migrations has-pending-model-changes`, EF Core 8 on; `Pending`): each is
@@ -1462,7 +1484,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   starts there). A test project's first Project launch profile gives its variables to its tests. A configuration that
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
   `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
-  (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
+  (`DebugController.RunInTerminal`), and `debug_input` and `output`'s debug use that tab. In a program's tab, Run, Debug,
   Rerun, Stop and the debugger's keys stay with the IDE. Console links come from `ToolWindows/ConsoleLinks` (URLs, .NET
   stack frames, compiler messages; in the terminal also paths to any file, hidden until Cmd/Ctrl), drawn by
   `CodeEditor.Links` and `TerminalView.Links`; `MainWindow.Browse` is the only way the IDE opens a browser (recording
@@ -1684,8 +1706,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   refused by `StaleAsync` for a file not open the server may not have read (the agent's own write a moment before), the
   call waits until `DocumentTexts` says the server holds the disk's text (else for the 2 s to pass) and works it out
   again, 10 s in all, a file so seen trusted until it is written again; the window's commands still refuse at once. `app_details` is the
-  Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` and
-  `breakpoint_remove` take `control` and `property` for Break When Value Changes, waiting for
+  Live Visual Tree's details for an agent (value sources; styles with why each applies or not); `breakpoint_set` (with
+  `remove` too) takes `control` and `property` for Break When Value Changes, waiting for
   `LiveTreeController.Watching`; `debug_state` carries `bindingValues`, and with several programs debugged lists them
   (`sessions`): the debug tools and `stop` take `session`, a Debug tab's name, else act on the one paused, else the only
   one, and are refused naming them when they cannot tell (`PassengerTools.TabFor`; `stop` naming none is Stop All,
@@ -1693,7 +1715,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`MainWindow.ApplyHotReloadAsync`: `DebugController.ApplyAllAsync` under the action's work, given a `HotReloadRestart`, the
   window's `SettingsRestart`, an agent's `RestartForAgentAsync`, which never asks; under dotnet watch, `SaveForWatchAsync`'s
   last word); the headless `--mcp` IDE
-  starts on the default settings, so `run` takes `hotReload` and `run_output` reads the Run console; `debug_start` on a
+  starts on the default settings, so `run` takes `hotReload` and `output` reads the Run console; `debug_start` on a
   container configuration debugs each service in a session of its own, answering with them (`sessions`). An agent gets as much
   from a container run's services as from an AppHost's resources (`PassengerTools.Services.cs`): `workspace` lists the
   container run beside the AppHosts (`ContainerRunInfo`: its configuration, Compose project, how it was started, state),
@@ -1705,7 +1727,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   or still starting its health check), has ended or waitSeconds pass, with its run's resources one line each, its notes
   and its own console (`ResourceAnswer`, `Standing`: an AppHost's waited on through its resource stream, a compose
   service's through the engine's events), one its run runs itself (a backing service, an AppHost's container) run by
-  nothing and answered as it stands. `run_output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
+  nothing and answered as it stands. `output` of a compose service is its log (`ComposeLogAsync`, `compose logs`), and
   `telemetry` of a container run that collects none says to turn its configuration's Collect logs and traces on.
   `container_action` given an AppHost resource runs one of its advertised commands by its name, or start, stop and
   restart as Aspire's `resource-…` ones (`AspireCommandOfAsync`, `MainWindow.ExecuteAspireResourceCommandAsync`, through
@@ -1718,7 +1740,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   range found by asking `AppSettings.Clamped`, an unknown name or choice refused and Enable MCP Server never changed;
   `find_in_files`/`replace_in_files` are the window's own search in its scopes and masks once `FileIndex.IsWalking` is
   false; the `local_history` tools wait for `LocalHistory.IsRecording`, their revert `RevertLocalHistoryAsync`;
-  `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `build_output` the Build
+  `problems` is Problems' Toolset, Build and Solution tabs (after `CSharpService.IsAnalysing`), `output` of build the Build
   console, and `profile` takes `attach` (and `container`, a container's program). The tools reach the
   folder through the window's `ProjectSession` as each call finds it, and the
   window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output, whose window no other
@@ -1747,7 +1769,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   window a tool neither `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`,
   `AgentConnection.AllowAsync`: one question per tool, which every call of it waits on and the last to give up takes
   away), and `open` asks before it replaces their folder. What runs code in a debugged program or changes it
-  (`debug_evaluate`, `debug_set_value`, `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
+  (`debug_evaluate`, its `value` set too, and `debug_input`) and `breakpoint_set` (whose condition runs in later sessions
   too) are `Destructive`; `save_all`, `stop` and the debugger's steps are not, the owner's choice (#278). No wait on
   the person is unbounded (#255): each question goes through `MainWindow.AskForAgentAsync`, which closes it unanswered
   after `MainWindow.AgentAnswerLimit` (2 minutes), the call then saying nobody answered and a later one asking again, brings the window forward (`Attention.Ask` bounces
@@ -1771,14 +1793,24 @@ window or takes the focus; it shows everything but the system's own window chrom
   OpenCode 1's opencode.json with a 10-minute timeout, which progress starts over, and OpenCode 2's `mcp.servers` with
   Code Mode off and a 30-minute execution timeout, which progress does not: checked against both by hand, #255) naming
   this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy, and says when `--mcp FOLDER` (asks
-  nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent to
-  begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
+  nothing) suits better than `--mcp-attach`. `McpHost.Instructions` tell an agent the parameters
+  several tools share, to begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
-  angle brackets never unicode escapes), and every tool's schema is `McpHost.Lean`'s (no null default or null type). An
+  angle brackets never unicode escapes), and every tool is `McpHost.Lean`'s (no null default or null type, no title in its annotations). An
   agent pays for the tool list every session (69 KB before #236's trim, 55 KB after it, held under 60 KB by McpDebuggingTests until
-  Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call), so it says each thing once: the
-  element query in `app_tree`'s description, which the other app_ tools' `control` points at; the wait for an agent's
-  own write in the instructions; lines and columns from 1 never per parameter. `edit` replaces text in one file as the editor does (found once as written,
+  Aspire's resources and telemetry took it to 60.6 KB, and under 62 KB since, the owner's call, which 0.2.0 reached at 61,990
+  bytes; its folds and trim below took it to 46,512, so 15.5 KB are free), so it says each thing once: the element query
+  (`control`, `filter`) in `app_tree`'s description, and every app_ tool's `app` and `window` in `app_windows`'; the wait
+  for an agent's own write, and the parameters several tools share (`configuration`, `arguments`, `waitSeconds`,
+  `session`, `resource`), in the instructions; a tool's title once (`Lean` drops the SDK's copy in its annotations); a
+  parameter described only where its tool's description does not already name what it takes; lines and columns from 1
+  never per parameter. Nor does it hold a tool another covers (the
+  owner's call, 0.2.0): `open` shows a file at a line and column, the app_ tools with `app` ide picture Passenger's own
+  windows and type into its editor at the caret, `hierarchy` has implementations, `debug_continue` runs to a line,
+  `debug_evaluate` sets a `value`, `breakpoint_set` and `nuget_install` take `remove`, and `output` reads the Run, Debug
+  and Build consoles. `save_all` stays a tool of its own, not `ide_action`'s `app.saveAll`: it is never asked about on a
+  person's window (#278), where `ide_action` is, and its answer names the files a save left unsaved (a read-only one).
+  `edit` replaces text in one file as the editor does (found once as written,
   else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
   editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
   there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
@@ -1786,7 +1818,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder's code is one line of their modules (`Frames`); a run, debug, test run or profile refused for a failed build
   names that build's errors (`WithBuildErrors`, by the `BuildOutcome` of the build it ran, `LaunchBuild`; a refusal for anything
   else names none); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
-  for first. `nuget_install`/`nuget_remove` answer a `PackageChange`: the version installed and the files that changed
+  for first. `nuget_install` (and its `remove`) answers a `PackageChange`: the version installed and the files that changed
   (the project, the nearest Directory.Packages.props). `profile`'s hot spots in the folder's code carry `source`
   (path:line of the method's first sequence point: `Profiler/MethodSources` reads the module's PDB by the trace's
   module path and method token, `HotSpot.Code`; the line the editor's, through `ServerPlaces.Compiled`). A resume of a debugged test run (`debug_continue`, `debug_step`)
@@ -2000,7 +2032,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   applies a changed signature as a delete plus an add and recompiles only members whose code changed, so `StaleCallers`
   blocks an update that leaves a loaded module's unchanged code calling the deleted body (ENC0033 at the new
   declaration); under dotnet watch, `SaveForWatchAsync` follows dotnet watch's words 10 s (`PASSENGER_WATCH_LATER_MS`) past its first, the last
-  standing. MCP's nuget_install and nuget_remove have open project files take the disk's text before answering
+  standing. MCP's nuget_install has open project files take the disk's text before answering
   (`MainWindow.FollowWritten`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
   net8.0, carried under `inspector/`, never put in the app's build): a startup hook `LiveApp.For` gives a launch whose
@@ -2524,7 +2556,9 @@ of the solution) puts the packages there and the test project's `PackageDownload
 (`ShopApp.Provider`, a nuspec alone) in a feed of the test's own supports only the EF Core its version names; the run's
 own DOTNET_CLI_HOME keeps the person's global tool out of sight; `MigrationsPostgresTests` list, add and update the
 migrations of a web app on Npgsql's provider (tests/EfGraphs/Npgsql, `NpgsqlEfVersion`) against the Postgres its fast-mode
-compose run brings up beside it, at the port Compose published it on, and skip, saying so, unless the engine holds
+compose run brings up beside it, at the port Compose published it on, its password in no command line Passenger ran
+nor the IDE's log (`LogsTests` see a secret among a program's own arguments as dots in the log and the Run console's
+echo), and skip, saying so, unless the engine holds
 `postgres:17-alpine`, which they never pull;
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a

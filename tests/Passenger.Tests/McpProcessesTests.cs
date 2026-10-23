@@ -57,8 +57,8 @@ public sealed class McpProcessesTests : McpRig, IClassFixture<RestoredFolders>
         McpClient client = Await(Task.Run(() => Start(["--mcp", Folder], languageServer: false)), "the agent's Passenger starting");
         try
         {
-            Await(Task.Run(() => Call(client, "open_file", new() { ["path"] = "Notes.txt" })), "the agent opening Notes.txt");
-            Await(Task.Run(() => Call(client, "type", new() { ["text"] = "second " })), "the agent typing");
+            Await(Task.Run(() => Call(client, "open", new() { ["path"] = "Notes.txt" })), "the agent opening Notes.txt");
+            Await(Task.Run(() => Call(client, "app_type", new() { ["app"] = "ide", ["text"] = "second " })), "the agent typing");
             Await(Task.Run(() => Call(client, "save_all")), "the agent saving");
         }
         finally
