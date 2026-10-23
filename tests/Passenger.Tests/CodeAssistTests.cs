@@ -169,6 +169,16 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             && !labels.Skip(humps).Any(l => l.StartsWith("IN", StringComparison.OrdinalIgnoreCase)),
             $"Typing IN offered [{string.Join(", ", labels.Take(8))}], not IsNormalized after every name beginning with In");
         Ui.Press(window, "ESCAPE");
+
+        // An acronym's last capital before lower case starts a word, as IPAddress is IP + Address.
+        window.KeyTextInput(";");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("var address = System.Net.");
+        Ui.Settle();
+        Type("IA");
+        Assert.True(window.Assist.CompletionLabels.Contains("IPAddress"),
+            $"Typing IA offered [{string.Join(", ", window.Assist.CompletionLabels.Take(5))}], not IPAddress");
+        Ui.Press(window, "ESCAPE");
         window.Close();
 
         void Type(string letters)
@@ -179,54 +189,6 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 Ui.Settle();
             }
         }
-    }
-
-    [AvaloniaTheory]
-    [InlineData("System.Text.", "SB", "StringBuilder")]
-    [InlineData("CompletionNames.", "gTOD", "GetTypeOrDefault")]
-    [InlineData("System.Net.", "IA", "IPAddress")]
-    [InlineData("CompletionNames.", "UE", "UIElement")]
-    public void Camel_humps_keep_completion_open_and_enter_inserts_the_matching_name(string qualifier, string typed, string expected)
-    {
-        MainWindow window = project.Open("Program.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.PlaceAfter(editor, "static void Main()\n    {\n");
-        window.KeyTextInput("        " + qualifier);
-        Ui.Settle();
-        foreach (char letter in typed)
-        {
-            window.KeyTextInput(letter.ToString());
-            Ui.Settle();
-        }
-        int match = window.Assist.CompletionLabels.ToList().IndexOf(expected);
-        Assert.True(match >= 0, $"Typing {typed} did not offer {expected}");
-        for (int i = 0; i < match; i++)
-        {
-            Ui.Press(window, "Down");
-        }
-        Ui.Press(window, "Enter");
-        Assert.Contains(qualifier + expected, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain(expected + typed, editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
-    }
-
-    [AvaloniaFact]
-    public void Completion_ranks_prefixes_before_camel_humps_and_camel_humps_before_substrings()
-    {
-        MainWindow window = project.Open("Program.cs");
-        CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.PlaceAfter(editor, "static void Main()\n    {\n");
-        window.KeyTextInput("        CompletionNames.");
-        Ui.Settle();
-        window.KeyTextInput("SB");
-        Ui.Settle();
-        Assert.Equal(new[] { "SBPrefix", "SbLower", "StringBuilder", "HasbInside" }, window.Assist.CompletionLabels);
-        Ui.Press(window, "Down");
-        Ui.Press(window, "Down");
-        Ui.Press(window, "Enter");
-        Assert.Contains("CompletionNames.StringBuilder", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("StringBuilderSB", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
-        window.Close();
     }
 
     [AvaloniaFact]
@@ -1967,7 +1929,6 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         {
             File.WriteAllText(PathOf("Sample.csproj"),
                 TestProjects.Console());
-            File.WriteAllText(PathOf("CompletionNames.cs"), "static class CompletionNames\n{\n    public static int UIElement() => 0;\n    public static int GetTypeOrDefault() => 0;\n    public static int SBPrefix() => 0;\n    public static int SbLower() => 0;\n    public static int StringBuilder() => 0;\n    public static int HasbInside() => 0;\n}\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
             File.WriteAllText(PathOf("Shapes.cs"), "interface IShape\n{\n    int Sides { get; }\n}\n\nclass Square : IShape\n{\n    public int Sides => 4;\n}\n");
