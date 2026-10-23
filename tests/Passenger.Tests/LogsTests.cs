@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.App.Containers;
 
 namespace Passenger.Tests;
 
@@ -174,6 +175,67 @@ public sealed class LogsTests : IDisposable
             window.ApplySettings(window.Settings with { TraceProtocols = false, LogEveryProgram = false });
             window.Close();
         }
+    }
+
+    /// <summary>A secret given a program on its command line (an argument naming a password, a URL's credentials) reaches
+    /// neither the IDE's log, with every program logged, nor the Run console's echo of the command: both say it as dots, as
+    /// every secret Passenger says is, while the program is given it whole.</summary>
+    [AvaloniaFact]
+    public void A_secret_on_a_programs_command_line_is_masked_in_the_ides_log_and_the_run_consoles_echo()
+    {
+        const string Password = "lantern-7f3a";
+        const string Token = "quill-9e2b";
+        File.WriteAllText(Path.Combine(folder, "Given.csproj"), TestProjects.Console());
+        File.WriteAllText(Path.Combine(folder, "Program.cs"),
+            $"System.Console.WriteLine(args is [\"--password={Password}\", \"https://ada:{Token}@db.example/shop\"] ? \"given whole\" : \"given otherwise\");\n");
+        Restore.Run(folder);
+        List<string> ran = [];
+        EventHandler<Passenger.Core.ChildStart> heard = (_, child) =>
+        {
+            lock (ran)
+            {
+                ran.Add(child.Command);
+            }
+        };
+        Passenger.Core.ChildProcesses.Started += heard;
+        MainWindow window = Ui.OpenFolder(folder, languageServer: false);
+        window.ApplySettings(window.Settings with { LogEveryProgram = true });
+        try
+        {
+            Ui.WaitFor(() => window.Configurations.Any(c => c.Name.StartsWith("Given", StringComparison.Ordinal)), "the project's run configuration", TimeSpan.FromMinutes(1));
+            Ui.Launched(window, window.RunAsync($"--password={Password} https://ada:{Token}@db.example/shop"), "the program to start", TimeSpan.FromMinutes(2));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the program to end");
+            string console = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(console.Contains("given whole", StringComparison.Ordinal), $"The program was not given its arguments whole:\n{console}");
+            string[] given;
+            lock (ran)
+            {
+                given = [.. ran.Where(c => c.Contains(Password, StringComparison.Ordinal))];
+            }
+            Assert.True(given.Length == 1 && given[0].Contains(Token, StringComparison.Ordinal), $"The program's command line did not carry what it was given: {string.Join(" | ", given)}");
+
+            string masked = $"--password={ContainerSecrets.Masked} https://ada:{ContainerSecrets.Masked}@db.example/shop";
+            Assert.True(console.Contains(masked, StringComparison.Ordinal) && !console.Contains(Password, StringComparison.Ordinal) && !console.Contains(Token, StringComparison.Ordinal),
+                $"The Run console's echo of the command shows its secrets:\n{console}");
+            // Its start and its end, each logged as every program is, the end told on another thread once it has gone.
+            Ui.WaitFor(() => Ui.IdeLog().Split('\n').Count(l => l.Contains(masked, StringComparison.Ordinal)) >= 2, "the program's start and end to be logged");
+            string log = WholeIdeLog();
+            Assert.True(!log.Contains(Password, StringComparison.Ordinal) && !log.Contains(Token, StringComparison.Ordinal),
+                $"The IDE's log has a program's secrets in the clear:\n{string.Join('\n', log.Split('\n').Where(l => l.Contains(Password, StringComparison.Ordinal) || l.Contains(Token, StringComparison.Ordinal)))}");
+        }
+        finally
+        {
+            Passenger.Core.ChildProcesses.Started -= heard;
+            window.ApplySettings(window.Settings with { LogEveryProgram = false });
+            window.Close();
+        }
+    }
+
+    /// <summary>The IDE's log with the logs it rotated aside, so a line rotated away during a test is still read.</summary>
+    internal static string WholeIdeLog()
+    {
+        IdeErrors.Flush();
+        return string.Join('\n', Directory.GetFiles(IdeErrors.LogFolder, "passenger*.log").Select(Ui.Shared));
     }
 
     [AvaloniaFact]

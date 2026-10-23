@@ -842,7 +842,7 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         {
             return missing.Message;
         }
-        parts.Views.Build.Append($"{ChildProcesses.Display(start)}\n");
+        parts.Views.Build.Append($"{ChildProcesses.Shown(start)}\n");
         Task<EfOutcome> running = EfRun.RunAsync(start, Tell, work.Stopping);
         BackgroundWork.Track(running);
         EfOutcome outcome = await running;
@@ -1001,11 +1001,8 @@ public sealed partial class MigrationsController(MigrationsParts parts)
         {
             arguments.AddRange(["--context", context]);
         }
-        // The commands that reach the database take the run's own, where it has one connection string.
-        if (setting.Database?.Connection is { } connection && verb is ["database", "update", ..] or ["migrations", "list", ..] or ["dbcontext", "info", ..])
-        {
-            arguments.AddRange(["--connection", connection]);
-        }
+        // A run's database is given only as the environment its app reads, never as --connection: a command line is any
+        // process's to read, and dotnet ef expands even a response file onto ef.dll's.
         System.Diagnostics.ProcessStartInfo start;
         try
         {
@@ -1020,8 +1017,8 @@ public sealed partial class MigrationsController(MigrationsParts parts)
             start.Environment[name] = value;
         }
         work.Say($"{Title(work.Stage).TrimEnd('…')}: dotnet ef {string.Join(' ', verb.TakeWhile(v => !v.StartsWith('-')))}…");
-        // The command line names no password: the connection given is said by where it reaches.
-        parts.Views.Build.Append($"\n{ChildProcesses.Display(start).Replace(setting.Database?.Connection ?? "\0", "…", StringComparison.Ordinal)}\n"
+        // The database a run gives is said by where it reaches, its connection string being the environment's.
+        parts.Views.Build.Append($"\n{ChildProcesses.Shown(start)}\n"
             + (setting.Database is { } database ? $"Against {database.Where}\n" : string.Empty));
         Task<EfOutcome> running = EfRun.RunAsync(start, Tell, work.Stopping);
         BackgroundWork.Track(running);

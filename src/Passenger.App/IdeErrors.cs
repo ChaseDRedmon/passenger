@@ -99,6 +99,8 @@ public static class IdeErrors
             Flush();
         };
         Logger.Sink = new Sink();
+        // No program's secret reaches the log or a console's echo of its command line, whoever started it.
+        Core.ChildProcesses.Shown = Containers.ContainerSecrets.CommandLine;
         // Every program at debug level, as Rider's debug log of its processes; otherwise those worth a person's look.
         Core.ChildProcesses.Started += (_, start) =>
         {

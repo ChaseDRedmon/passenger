@@ -127,7 +127,9 @@ public static partial class DevelopmentCertificate
             }
             Forget(state);
             string password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-            ChildResult exported = await ChildProcesses.RunAsync(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), limit: ExportLimit, cancel: cancel);
+            // dev-certs takes its password on its command line alone: the log and any word of the command mask it.
+            ChildResult exported = await ChildProcesses.RunAsync(ChildProcesses.Hiding(dotnet(["dev-certs", "https", "-ep", file, "-p", password], folder), password),
+                limit: ExportLimit, cancel: cancel);
             if (!exported.Succeeded || !File.Exists(file))
             {
                 return (null, $"dotnet dev-certs https -ep ended with exit code {exported.ExitCode}: {Said(exported)}");

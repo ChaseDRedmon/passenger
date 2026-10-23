@@ -1489,7 +1489,7 @@ public sealed class ContainerRun(ContainerPlan plan, ContainerEngine engine, Con
     {
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        console.Write($"{ChildProcesses.Display(start)}\n");
+        console.Write($"{ChildProcesses.Shown(start)}\n");
         Queue<string> said = new();
         using Process process = ChildProcesses.Start(start);
         // What Compose says of a failure echoes what it interpolated: shown as every error of the engine is, its secrets masked.

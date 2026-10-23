@@ -7,9 +7,9 @@ using Passenger.Core;
 namespace Passenger.App.Migrations;
 
 /// <summary>The database a run of the startup project uses, as this machine reaches it: the connection strings to give
-/// dotnet ef (as the environment the app's configuration reads), the one to give as <c>--connection</c> where there is one,
-/// and where it is, in words.</summary>
-public sealed record EfRunDatabase(IReadOnlyDictionary<string, string> Environment, string? Connection, string Where);
+/// dotnet ef as the environment the app's configuration reads (never on its command line, which any process can read), and
+/// where it is, in words.</summary>
+public sealed record EfRunDatabase(IReadOnlyDictionary<string, string> Environment, string Where);
 
 /// <summary>Finds the database a compose run or an AppHost gives the startup project. A compose service's connection string
 /// names its database by its service's name, which only the containers reach: it is given again at the port Compose
@@ -55,7 +55,7 @@ public static class EfDatabases
                 where ??= $"{reached.Where}, as {run.Name} publishes it";
             }
         }
-        return environment.Count == 0 ? null : new EfRunDatabase(environment, environment.Count == 1 ? environment.Values.Single() : null, where!);
+        return environment.Count == 0 ? null : new EfRunDatabase(environment, where!);
     }
 
     /// <summary>The database an AppHost that runs now gives the startup project as one of its resources; null when none does.</summary>
@@ -69,8 +69,7 @@ public static class EfDatabases
                     .ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
                 if (environment.Count > 0)
                 {
-                    return new EfRunDatabase(environment, environment.Count == 1 ? environment.Values.Single() : null,
-                        $"the database {resource.ResourceName ?? startup.Name} of {app.Name} has");
+                    return new EfRunDatabase(environment, $"the database {resource.ResourceName ?? startup.Name} of {app.Name} has");
                 }
             }
         }

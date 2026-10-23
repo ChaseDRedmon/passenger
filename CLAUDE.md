@@ -119,7 +119,15 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
   input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
-  group per child, which a watchdog shell kills once Passenger's pipe to it closes). A fork costs a large process tens of
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). Every command line it says (a child's
+  start and end in the log, what it throws) and every console's echo of one go through `ChildProcesses.Shown`, which the
+  IDE makes `ContainerSecrets.CommandLine` as it starts (`IdeErrors.Install`): `InSaid`'s mask on each word alone (a
+  `--password=…` masks its value, never the words after it, as a whole line's connection-string rule would), also knowing the
+  secret-named values of the child's own environment and those its starter names secrets with `ChildProcesses.Hiding`
+  (dev-certs' export password after `-p`), so no program's secret reaches the log or a window, whoever started it;
+  `ChildStart.Command` and `ChildEnd.Command` stay the command as it ran, for what watches the programs. A command line is
+  any process's on the machine to read, so a secret a program can take otherwise is given it so (the Migrations window's
+  connection strings, as its environment). A fork costs a large process tens of
   milliseconds (#233), so `RunAsync` and `StartAsync` start a child off a caller that has a context of its own (the UI
   thread's), on the caller's thread otherwise: every git command (`Git`) starts so; `Start` stays on the caller's
   thread for what needs the child at once (a console's `ProcessRunner`, `Builder.ProcessId`). A child the IDE ends (`Kill`, or
@@ -558,7 +566,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
   `roslyn/` (the server's own logs), `lsp.log`, `dap.log`, `vstest.log` and `mcp.log`. Settings | Diagnostics turns on protocol
   traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
-  ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar. A rotation
+  ones, each command line's secrets masked, `ChildProcesses.Shown`); Help | Show Log opens the folder. What the language server says to show reaches the status bar. A rotation
   moves the log aside first, so one another program holds where it is (Windows: a reader not sharing deletion) is
   written on past the limit with its rotated logs kept, and tried again once it has grown a tenth of the limit more.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
@@ -781,7 +789,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   CLI says of a failure is shown and logged through one helper, `ContainerSecrets.InSaid` (`Masking` for a stream), the
   docker CLI's and Compose's (`ContainerEngine.Said`, ComposeCheck's error, a run's line of what failed and Compose's own
   output in the Run console, `ConsoleSink.PumpAsync`'s `shown`, a whole line at a time) as the aspire CLI's
-  (`AspireClient.SanitizeDiagnostic`): each value it knows to be a secret's (given, this process's environment's
+  (`AspireClient.SanitizeDiagnostic`), and so is every command line Passenger logs or echoes (`ContainerSecrets.CommandLine`,
+  through `ChildProcesses.Shown`): each value it knows to be a secret's (given, this process's environment's
   secret-named variables', the .env's in the folder Compose ran in, which it interpolates and echoes: `parsing
   "••••••"`; four characters at least) as the dots wherever it stands, then on each line a `NAME=value` or `"NAME": value`
   whose name is a secret's, an Authorization header, a URL's credentials and a connection string's part by the rule. Open Shell is `docker exec -it … sh` in a Terminal tab, an image with no shell said. Prune and a volume's
@@ -1261,8 +1270,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   an agent's answer): a compose run's .NET service's resolved connection strings (Compose's model) given again at the port
   Compose published their database's service on (`compose port`, on the engine's machine, `ContainerPort.LinkOn`), the
   rest (database, user, password) as the service has it; an AppHost's resource's own, which this machine reaches already;
-  given as the environment the app's configuration reads, and as `--connection` to `database update`, `migrations list` and
-  `dbcontext info` where there is one, the command line never showing it; a manifest's tool never restored whose package the cache holds is
+  given as the environment the app's configuration reads (`ConnectionStrings__X`), never on dotnet ef's command line, which
+  any process on the machine can read: EF takes a connection string from outside only as `--connection`, an argument (a
+  response file dotnet ef expands onto ef.dll's command line), so a context that reads none from its configuration
+  reaches the database its own code names, as the run's app does; a manifest's tool never restored whose package the cache holds is
   restored and the command run again. After a listing, a command that changes the migrations, and any build the window's
   commands did not start (once the window has listed, then listing again with no build of its own), the context is checked
   for model changes no migration covers (`dotnet ef migrations has-pending-model-changes`, EF Core 8 on; `Pending`): each is
@@ -2501,7 +2512,9 @@ of the solution) puts the packages there and the test project's `PackageDownload
 (`ShopApp.Provider`, a nuspec alone) in a feed of the test's own supports only the EF Core its version names; the run's
 own DOTNET_CLI_HOME keeps the person's global tool out of sight; `MigrationsPostgresTests` list, add and update the
 migrations of a web app on Npgsql's provider (tests/EfGraphs/Npgsql, `NpgsqlEfVersion`) against the Postgres its fast-mode
-compose run brings up beside it, at the port Compose published it on, and skip, saying so, unless the engine holds
+compose run brings up beside it, at the port Compose published it on, its password in no command line Passenger ran
+nor the IDE's log (`LogsTests` see a secret among a program's own arguments as dots in the log and the Run console's
+echo), and skip, saying so, unless the engine holds
 `postgres:17-alpine`, which they never pull;
 `AspireStandInTests` need none of it and run everywhere: the window runs a stand-in AppHost (`StandInAppHost`, a console
 project that sets IsAspireHost and writes the resource service key the IDE gave it to a file) whose launch profile names a
