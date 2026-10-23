@@ -79,6 +79,7 @@ public sealed partial class CodeEditor : Control
         blink = new DispatcherTimer(TimeSpan.FromMilliseconds(530), DispatcherPriority.Background, (_, _) =>
         {
             caretOn = !caretOn;
+            Blinks++;
             InvalidateVisual();
         });
         document.ChangedFirst += OnChangedFirst;
