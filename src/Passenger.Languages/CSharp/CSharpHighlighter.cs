@@ -10,10 +10,10 @@ namespace Passenger.Languages.CSharp;
 /// shares (<see cref="Current"/>, <see cref="Parsed"/>). Roslyn reads the document's own snapshots, told the
 /// range each edit changed, so each parse is incremental and runs on a worker thread. Nothing is classified ahead:
 /// the editor asks for the lines it draws, and they are classified from the newest tree there and
-/// then (Roslyn's trees are immutable and safe to read from any thread). Edits made since that tree
-/// was parsed are mapped back to find the tree's text and forward again to place its colours, so a
-/// word being typed keeps its colour and typing never flashes plain. A keystroke costs the lines on
-/// screen, whatever the size of the file.</summary>
+/// then (Roslyn's trees are immutable and safe to read from any thread), each line's colours kept while that tree stands.
+/// Edits made since that tree was parsed are mapped back to find the tree's text and forward again to place its colours,
+/// so a word being typed keeps its colour and typing never flashes plain. A keystroke costs the lines it changed until the
+/// parse lands, then the lines on screen, whatever the size of the file.</summary>
 public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder, IDisposable
 {
     /// <summary>The symbols a Debug build defines, so <c>#if DEBUG</c> code is coloured as code until
@@ -53,6 +53,18 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
 
     /// <summary>The ranges asked of the newest text, which the next parse classifies ahead.</summary>
     private readonly List<(int Start, int Length)> asked = [];
+
+    /// <summary>Each line's colours as read from <see cref="tree"/>, by where the line starts in the text of
+    /// <see cref="linesVersion"/>: its length with its break, and its colours relative to its start. Carried from one
+    /// version to the next while the tree stands (<see cref="CarryLines"/>), let go as another lands; the other is the one
+    /// a carry fills.</summary>
+    private Dictionary<int, (int Length, SyntaxSpan[] Spans)> lines = [];
+    private Dictionary<int, (int Length, SyntaxSpan[] Spans)> spareLines = [];
+    private int linesVersion = -1;
+    private long classified;
+
+    /// <summary>The most lines kept, past which they are let go: a few screens.</summary>
+    private const int MostLines = 4096;
 
     public CSharpHighlighter(TextDocument document)
     {
@@ -118,25 +130,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
         {
             asked.Add((start, length));
         }
-        // The range in the tree's text: the visible range carried back through the edits since.
-        int from = start;
-        int to = start + length;
-        for (int i = sinceTree.Count - 1; i >= 0; i--)
-        {
-            from = CarriedSpans.Back(sinceTree[i].Edits, from, toEnd: false);
-            to = CarriedSpans.Back(sinceTree[i].Edits, to, toEnd: true);
-        }
-        SyntaxNode root = tree.GetRoot();
-        // One character to the left, so a word being typed at its end is found and its colour
-        // carried over the new letters.
-        from = sinceTree.Count > 0 ? from - 1 : from;
-        TextSpan range = TextSpan.FromBounds(Math.Clamp(from, 0, root.FullSpan.End), Math.Clamp(to, 0, root.FullSpan.End));
-        List<SyntaxSpan> spans = CSharpClassifier.Classify(root, range);
-        foreach ((_, IReadOnlyList<TextEdit> batch) in sinceTree)
-        {
-            CarriedSpans.Forward(spans, batch);
-        }
-        SyntaxSpan[] result = [.. spans];
+        SyntaxSpan[] result = WholeLines(snapshot, start, length) is (int first, int last) ? ByLine(snapshot, first, last) : [.. Classified(start, length)];
         if (cached.Count >= 256)
         {
             cached.Clear();
@@ -144,6 +138,148 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
         cached[(start, length)] = result;
         return result;
     }
+
+    /// <summary>A range's colours read from the tree: the range carried back through the edits since to the tree's text,
+    /// classified there, and the colours carried forward again.</summary>
+    private List<SyntaxSpan> Classified(int start, int length)
+    {
+        int from = start;
+        int to = start + length;
+        for (int i = sinceTree.Count - 1; i >= 0; i--)
+        {
+            from = CarriedSpans.Back(sinceTree[i].Edits, from, toEnd: false);
+            to = CarriedSpans.Back(sinceTree[i].Edits, to, toEnd: true);
+        }
+        SyntaxNode root = tree!.GetRoot();
+        // One character to the left, so a word being typed at its end is found and its colour
+        // carried over the new letters.
+        from = sinceTree.Count > 0 ? from - 1 : from;
+        TextSpan range = TextSpan.FromBounds(Math.Clamp(from, 0, root.FullSpan.End), Math.Clamp(to, 0, root.FullSpan.End));
+        List<SyntaxSpan> spans = CSharpClassifier.Classify(root, range);
+        Interlocked.Add(ref classified, range.Length);
+        foreach ((_, IReadOnlyList<TextEdit> batch) in sinceTree)
+        {
+            CarriedSpans.Forward(spans, batch);
+        }
+        return spans;
+    }
+
+    /// <summary>The first and last line of a range of whole lines of the text as it stands (as a frame asks for its runs of
+    /// lines), null for any other: part of a line (a wrapped row, a long line's window, a place) is classified as asked.</summary>
+    private (int First, int Last)? WholeLines(TextSnapshot snapshot, int start, int length)
+    {
+        if (!ReferenceEquals(snapshot, text.Snapshot) || length <= 0 || start + length > snapshot.Length)
+        {
+            return null;
+        }
+        LineSpan first = snapshot.GetLine(snapshot.GetLineFromOffset(start));
+        LineSpan last = snapshot.GetLine(snapshot.GetLineFromOffset(start + length - 1));
+        return first.Start == start && last.EndIncludingBreak == start + length ? (first.Line, last.Line) : null;
+    }
+
+    /// <summary>The colours of whole lines, each line's as kept (<see cref="lines"/>) or, for a run of lines with none kept,
+    /// classified at once and kept line by line.</summary>
+    private SyntaxSpan[] ByLine(TextSnapshot snapshot, int first, int last)
+    {
+        if (linesVersion != version || lines.Count > MostLines)
+        {
+            lines.Clear();
+            linesVersion = version;
+        }
+        List<SyntaxSpan> spans = [];
+        for (int line = first; line <= last;)
+        {
+            if (Kept(snapshot.GetLine(line)) is { } kept)
+            {
+                Add(spans, kept, snapshot.GetLine(line).Start);
+                line++;
+                continue;
+            }
+            int run = line;
+            while (line <= last && Kept(snapshot.GetLine(line)) is null)
+            {
+                line++;
+            }
+            LineSpan top = snapshot.GetLine(run);
+            LineSpan bottom = snapshot.GetLine(line - 1);
+            List<SyntaxSpan> found = Classified(top.Start, bottom.EndIncludingBreak - top.Start);
+            for (int each = run; each < line; each++)
+            {
+                LineSpan of = snapshot.GetLine(each);
+                SyntaxSpan[] pieces = Pieces(found, of.Start, of.EndIncludingBreak);
+                lines[of.Start] = (of.EndIncludingBreak - of.Start, pieces);
+                Add(spans, pieces, of.Start);
+            }
+        }
+        return [.. spans];
+    }
+
+    /// <summary>A line's colours as kept for the text as it stands, relative to its start; null when none are kept.</summary>
+    private SyntaxSpan[]? Kept(LineSpan line) =>
+        lines.TryGetValue(line.Start, out (int Length, SyntaxSpan[] Spans) kept) && kept.Length == line.EndIncludingBreak - line.Start ? kept.Spans : null;
+
+    /// <summary>The parts of colours that fall on a line, relative to its start: a comment over several lines is a piece on
+    /// each.</summary>
+    private static SyntaxSpan[] Pieces(List<SyntaxSpan> spans, int start, int end)
+    {
+        List<SyntaxSpan>? pieces = null;
+        foreach (SyntaxSpan span in spans)
+        {
+            int from = Math.Max(span.Start, start);
+            int to = Math.Min(span.Start + span.Length, end);
+            if (to > from)
+            {
+                (pieces ??= []).Add(new SyntaxSpan(from - start, to - from, span.Kind));
+            }
+        }
+        return pieces is null ? [] : [.. pieces];
+    }
+
+    private static void Add(List<SyntaxSpan> spans, SyntaxSpan[] pieces, int lineStart)
+    {
+        foreach (SyntaxSpan piece in pieces)
+        {
+            spans.Add(piece with { Start = piece.Start + lineStart });
+        }
+    }
+
+    /// <summary>The lines' colours carried through an edit while the tree they were read from stands, which would read them
+    /// the same: those of the lines it did not reach kept, moved with the text after it, so a key classifies again only the
+    /// lines it changed rather than every line on screen (each key while a solution loads, the parse falling behind).</summary>
+    private void CarryLines(IReadOnlyList<TextEdit> edits)
+    {
+        if (linesVersion != version || lines.Count == 0 || edits.Count == 0)
+        {
+            lines.Clear();
+            linesVersion = version + 1;
+            return;
+        }
+        int from = edits[0].Start;
+        int to = edits[^1].Start + edits[^1].Length;
+        int shift = 0;
+        foreach (TextEdit edit in edits)
+        {
+            shift += edit.Text.Length - edit.Length;
+        }
+        spareLines.Clear();
+        foreach ((int start, (int Length, SyntaxSpan[] Spans) kept) in lines)
+        {
+            if (start + kept.Length < from)
+            {
+                spareLines[start] = kept;
+            }
+            else if (start > to)
+            {
+                spareLines[start + shift] = kept;
+            }
+        }
+        (lines, spareLines) = (spareLines, lines);
+        linesVersion = version + 1;
+    }
+
+    /// <summary>How many characters the editor's asks have had classified from the tree on the UI thread: what drawing the
+    /// lines on screen costs a key, for a test to count rather than time.</summary>
+    public long CharactersClassified => Interlocked.Read(ref classified);
 
     /// <summary>A bracket and its pair (<see cref="BracePairs"/>), read from <see cref="Current"/> once the first parse has
     /// landed, so a frame never waits for one. Near or <paramref name="far"/>, the pair is read from the bracket's own node,
@@ -160,6 +296,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
         text = text.With(e.After, e.Edits);
+        CarryLines(e.Edits);
         version++;
         if (sinceTree.Count == 0 || sinceTree[^1].Version == parsingVersion || !CarriedSpans.Join(sinceTree, version, e.Edits))
         {
@@ -215,6 +352,7 @@ public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder
                     parsedText.ForgetHistory();
                     sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
                     cached.Clear();
+                    lines.Clear();
                     Changed?.Invoke(this, EventArgs.Empty);
                     if (parsedVersion == version)
                     {

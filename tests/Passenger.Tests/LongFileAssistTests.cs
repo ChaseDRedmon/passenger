@@ -222,6 +222,47 @@ public sealed class LongFileAssistTests : IClassFixture<LongFileAssistTests.Proj
         window.Close();
     }
 
+    /// <summary>Until the parse catches up with a key (it falls behind while a solution loads), the lines on screen keep the
+    /// colours read for them from the tree before the key, carried through it: a key classifies again the line it changed
+    /// and no other, where every line drawn was classified again at every key; and they are the colours the tree gives once
+    /// the parse has landed. Counted in the characters classified on the UI thread, not a time; the key is an edit made as
+    /// typing makes it, since the window's input runs its loop as a key ends, where a quick parse lands.</summary>
+    [AvaloniaFact]
+    public void Until_the_parse_catches_up_a_key_classifies_again_only_the_line_it_changed()
+    {
+        string source = Project.Long;
+        MainWindow window = project.Open("Long.cs");
+        OpenDocument document = window.EditorArea.Active!;
+        Passenger.Languages.CSharp.CSharpHighlighter syntax = document.Syntax!;
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.Selections = SelectionSet.Single(source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + 0".Length);
+        editor.Focus();
+        Ui.Settle();
+        TextSnapshot text = document.Text.Snapshot;
+        int start = text.GetLineStart(0);
+        int end = text.GetLine(80).EndIncludingBreak;
+        _ = syntax.GetSpans(text, start, end - start);
+
+        // The key made as typing makes it, through the editor but not its input, which runs the window's loop as it ends,
+        // where a quick parse lands: the parse lands only once the loop runs again.
+        long before = syntax.CharactersClassified;
+        int caret = editor.Selections.Primary.Caret;
+        editor.ApplyEdits([new TextEdit(caret, 0, "1")], SelectionSet.Single(caret + 1));
+        TextSnapshot typed = document.Text.Snapshot;
+        Assert.True(syntax.Newest is null, "The key's parse landed before the screen's colours were read");
+        Assert.Equal(text.Length + 1, typed.Length);
+        SyntaxSpan[] carried = [.. syntax.GetSpans(typed, start, end + 1 - start)];
+        long classified = syntax.CharactersClassified - before;
+        Assert.True(classified < (end - start) / 10,
+            $"A key classified {classified} characters again of the {end - start} on screen: it classified every line drawn, not the one it changed");
+
+        Ui.Settle();
+        SyntaxSpan[] landed = [.. syntax.GetSpans(typed, start, end + 1 - start)];
+        Assert.True(carried.SequenceEqual(landed),
+            $"The colours carried through the key differ from the tree's once its parse landed, first at {carried.Zip(landed).FirstOrDefault(pair => pair.First != pair.Second)}");
+        window.Close();
+    }
+
     /// <summary>A file of 20,000 lines is a million numbers of tokens, which the server takes a second to make and the IDE
     /// megabytes to read: while typing goes on with pauses, only the lines on screen are asked for again (Rider's and VS
     /// Code's way), and what only the server colours on screen is coloured from them; once typing stops, the whole file is

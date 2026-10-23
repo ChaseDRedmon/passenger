@@ -199,7 +199,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
-  the screen's lines first and the whole file only once typing stops. A finder never tells its answer inside the
+  the screen's lines first and the whole file only once typing stops. Each line's colours read from the tree are kept
+  and carried through the edits made until the next parse lands (`CSharpHighlighter`'s lines, by a frame's runs of whole
+  lines; `CharactersClassified` counts what the UI thread classifies), so a key classifies again only the lines it
+  changed, however far the parse falls behind (as while a solution loads). A finder never tells its answer inside the
   document's `Changed` (`FoldScan` awaits its scan with `ForceYielding`): the open file moves its regions through the
   edit in a later handler of the same event, so regions told during it were moved twice.
 - `src/Passenger.Xaml`: Passenger's own XAML core, no UI and no Avalonia, which WPF (#187) shares: `Syntax` (XmlTree and
